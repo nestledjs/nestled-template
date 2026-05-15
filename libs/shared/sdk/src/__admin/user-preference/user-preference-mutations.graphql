@@ -1,0 +1,20 @@
+mutation __AdminCreateUserPreference($input: CreateUserPreferenceInput!) {
+  createUserPreference(input: $input) {
+    ...__AdminUserPreferenceDetails
+  }
+}
+
+mutation __AdminDeleteUserPreference($userPreferenceId: String!) {
+  deleteUserPreference(userPreferenceId: $userPreferenceId) {
+    id
+  }
+}
+
+mutation __AdminUpdateUserPreference(
+  $userPreferenceId: String!
+  $input: UpdateUserPreferenceInput!
+) {
+  updateUserPreference(userPreferenceId: $userPreferenceId, input: $input) {
+    ...__AdminUserPreferenceDetails
+  }
+}

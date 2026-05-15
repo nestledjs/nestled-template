@@ -1,0 +1,17 @@
+mutation createSecurityEvent($input: CreateSecurityEventInput!) {
+  createSecurityEvent(input: $input) {
+    ...SecurityEventDetails
+  }
+}
+
+mutation deleteSecurityEvent($securityEventId: String!) {
+  deleteSecurityEvent(securityEventId: $securityEventId) {
+    id
+  }
+}
+
+mutation updateSecurityEvent($securityEventId: String!, $input: UpdateSecurityEventInput!) {
+  updateSecurityEvent(securityEventId: $securityEventId, input: $input) {
+    ...SecurityEventDetails
+  }
+}

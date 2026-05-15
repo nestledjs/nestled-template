@@ -1,0 +1,17 @@
+fragment __AdminOrganizationSummary on Organization {
+  id
+  createdAt
+  updatedAt
+  name
+  logoId
+  logo {
+    id
+  }
+  subscription {
+    id
+  }
+}
+
+fragment __AdminOrganizationDetails on Organization {
+  ...__AdminOrganizationSummary
+}

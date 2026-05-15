@@ -1,0 +1,17 @@
+mutation __AdminCreateAuditLog($input: CreateAuditLogInput!) {
+  createAuditLog(input: $input) {
+    ...__AdminAuditLogDetails
+  }
+}
+
+mutation __AdminDeleteAuditLog($auditLogId: String!) {
+  deleteAuditLog(auditLogId: $auditLogId) {
+    id
+  }
+}
+
+mutation __AdminUpdateAuditLog($auditLogId: String!, $input: UpdateAuditLogInput!) {
+  updateAuditLog(auditLogId: $auditLogId, input: $input) {
+    ...__AdminAuditLogDetails
+  }
+}

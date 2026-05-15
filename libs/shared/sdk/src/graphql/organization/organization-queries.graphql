@@ -1,0 +1,59 @@
+query myOrganizations {
+  myOrganizations {
+    ...OrganizationList
+  }
+}
+
+query organizationRoles($organizationId: String!) {
+  organizationRoles(organizationId: $organizationId) {
+    id
+    name
+    description
+    permissions {
+      id
+      action
+      subject
+    }
+  }
+}
+
+query organizationInvitations($organizationId: String!) {
+  organizationInvitations(organizationId: $organizationId) {
+    id
+    email
+    status
+    expiresAt
+    role {
+      id
+      name
+    }
+    inviter {
+      id
+      firstName
+      lastName
+    }
+  }
+}
+
+query myOrganizationsWithMembers {
+  myOrganizations {
+    ...OrganizationDetails
+  }
+}
+
+query userOrganizationMembers($organizationId: String!) {
+  userOrganizationMembers(organizationId: $organizationId) {
+    ...OrganizationMemberList
+  }
+}
+
+query getInvitationDetails($token: String!) {
+  getInvitationDetails(token: $token) {
+    id
+    email
+    organizationName
+    roleName
+    inviterName
+    expiresAt
+  }
+}

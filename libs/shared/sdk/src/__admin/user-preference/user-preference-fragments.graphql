@@ -1,0 +1,15 @@
+fragment __AdminUserPreferenceSummary on UserPreference {
+  id
+  createdAt
+  updatedAt
+  userId
+  key
+  value
+  user {
+    id
+  }
+}
+
+fragment __AdminUserPreferenceDetails on UserPreference {
+  ...__AdminUserPreferenceSummary
+}

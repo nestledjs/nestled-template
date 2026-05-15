@@ -1,0 +1,15 @@
+fragment __AdminOAuthAccountSummary on OAuthAccount {
+  id
+  createdAt
+  updatedAt
+  provider
+  providerUserId
+  userId
+  user {
+    id
+  }
+}
+
+fragment __AdminOAuthAccountDetails on OAuthAccount {
+  ...__AdminOAuthAccountSummary
+}

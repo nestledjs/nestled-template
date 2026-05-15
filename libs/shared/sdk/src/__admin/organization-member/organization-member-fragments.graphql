@@ -1,0 +1,21 @@
+fragment __AdminOrganizationMemberSummary on OrganizationMember {
+  id
+  createdAt
+  updatedAt
+  roleId
+  userId
+  organizationId
+  role {
+    id
+  }
+  user {
+    id
+  }
+  organization {
+    id
+  }
+}
+
+fragment __AdminOrganizationMemberDetails on OrganizationMember {
+  ...__AdminOrganizationMemberSummary
+}

@@ -1,0 +1,39 @@
+query UserFiles($limit: Int, $offset: Int) {
+  userFiles(limit: $limit, offset: $offset) {
+    id
+    url
+    publicUrl
+    filename
+    originalName
+    mimeType
+    size
+    width
+    height
+    provider
+    metadata
+    createdAt
+    folder
+  }
+}
+
+query OrganizationFiles($organizationId: String!, $limit: Int, $offset: Int) {
+  organizationFiles(organizationId: $organizationId, limit: $limit, offset: $offset) {
+    id
+    url
+    publicUrl
+    filename
+    originalName
+    mimeType
+    size
+    width
+    height
+    provider
+    metadata
+    createdAt
+    folder
+  }
+}
+
+query GetSignedUrl($uploadId: String!, $expiresIn: Int) {
+  getSignedUrl(uploadId: $uploadId, expiresIn: $expiresIn)
+}

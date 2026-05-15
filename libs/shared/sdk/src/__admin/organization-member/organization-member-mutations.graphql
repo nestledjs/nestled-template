@@ -1,0 +1,20 @@
+mutation __AdminCreateOrganizationMember($input: CreateOrganizationMemberInput!) {
+  createOrganizationMember(input: $input) {
+    ...__AdminOrganizationMemberDetails
+  }
+}
+
+mutation __AdminDeleteOrganizationMember($organizationMemberId: String!) {
+  deleteOrganizationMember(organizationMemberId: $organizationMemberId) {
+    id
+  }
+}
+
+mutation __AdminUpdateOrganizationMember(
+  $organizationMemberId: String!
+  $input: UpdateOrganizationMemberInput!
+) {
+  updateOrganizationMember(organizationMemberId: $organizationMemberId, input: $input) {
+    ...__AdminOrganizationMemberDetails
+  }
+}

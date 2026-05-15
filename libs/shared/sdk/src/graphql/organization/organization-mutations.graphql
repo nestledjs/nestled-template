@@ -1,0 +1,52 @@
+mutation userCreateOrganization($input: CreateOrganizationInput!) {
+  userCreateOrganization(input: $input) {
+    ...OrganizationDetails
+  }
+}
+
+mutation userDeleteOrganization($organizationId: String!) {
+  userDeleteOrganization(organizationId: $organizationId)
+}
+
+mutation userUpdateOrganization($organizationId: String!, $input: UpdateOrganizationInput!) {
+  userUpdateOrganization(organizationId: $organizationId, input: $input) {
+    ...OrganizationDetails
+  }
+}
+
+mutation createOrganizationInvitation($input: CreateInvitationInput!) {
+  createOrganizationInvitation(input: $input)
+}
+
+mutation resendOrganizationInvitation($input: ResendInvitationInput!) {
+  resendOrganizationInvitation(input: $input)
+}
+
+mutation acceptOrganizationInvitation($input: AcceptInvitationInput!) {
+  acceptOrganizationInvitation(input: $input) {
+    ...OrganizationDetails
+  }
+}
+
+mutation rejectOrganizationInvitation($input: RejectInvitationInput!) {
+  rejectOrganizationInvitation(input: $input)
+}
+
+mutation addOrganizationMember($input: AddOrganizationMemberInput!) {
+  addOrganizationMember(input: $input)
+}
+
+mutation removeOrganizationMember($input: RemoveOrganizationMemberInput!) {
+  removeOrganizationMember(input: $input)
+}
+
+mutation updateOrganizationMemberRole($input: UpdateMemberRoleInput!) {
+  updateOrganizationMemberRole(input: $input)
+}
+
+mutation switchActiveOrganization($input: SwitchOrganizationInput!) {
+  switchActiveOrganization(input: $input) {
+    id
+    activeOrganizationId
+  }
+}

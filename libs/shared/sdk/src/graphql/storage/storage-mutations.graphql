@@ -1,0 +1,64 @@
+mutation UploadUserAvatar($file: Upload!) {
+  uploadUserAvatar(file: $file) {
+    id
+    url
+    publicUrl
+    filename
+    originalName
+    mimeType
+    size
+    width
+    height
+    provider
+    folder
+    metadata
+    createdAt
+  }
+}
+
+mutation UploadOrganizationLogo($file: Upload!, $organizationId: String!) {
+  uploadOrganizationLogo(file: $file, organizationId: $organizationId) {
+    id
+    url
+    publicUrl
+    filename
+    originalName
+    mimeType
+    size
+    width
+    height
+    provider
+    folder
+    metadata
+    createdAt
+  }
+}
+
+mutation UploadFile($file: Upload!, $folder: String) {
+  uploadFile(file: $file, folder: $folder) {
+    id
+    url
+    publicUrl
+    filename
+    originalName
+    mimeType
+    size
+    width
+    height
+    provider
+    metadata
+    createdAt
+  }
+}
+
+mutation DeleteFile($uploadId: String!) {
+  deleteFile(uploadId: $uploadId)
+}
+
+mutation RemoveOrganizationLogo($organizationId: String!) {
+  removeOrganizationLogo(organizationId: $organizationId)
+}
+
+mutation RemoveUserAvatar {
+  removeUserAvatar
+}

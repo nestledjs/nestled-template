@@ -1,0 +1,2250 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+input AcceptInvitationInput {
+  token: String!
+}
+
+input AddOrganizationMemberInput {
+  organizationId: String!
+  roleId: String!
+  userId: String!
+}
+
+type Address {
+  address1: String
+  address2: String
+  addressType: AddressType!
+  city: String
+  country: Country
+  countryId: String
+  createdAt: DateTime!
+  id: String!
+  isPrimary: Boolean!
+  organization: Organization
+  organizationId: String
+  postalCode: String
+  region: String
+  updatedAt: DateTime!
+  user: User
+  userId: String
+}
+
+enum AddressType {
+  EVENT
+  HOME
+  OTHER
+  VENUE
+  WORK
+}
+
+type AdminAnalytics {
+  avgApiResponseTime: Float!
+  avgSessionDuration: Float!
+  dailyActiveUsers: Int!
+  dauChange: Float!
+  errorRate: Float!
+  featureUsage: [AdminAnalyticsFeature!]!
+  mauChange: Float!
+  monthlyActiveUsers: Int!
+  newUsersToday: Int!
+  systemUptime: Float!
+  topEndpoints: [AdminAnalyticsEndpoint!]!
+  totalGraphQLOperations: Int!
+}
+
+type AdminAnalyticsEndpoint {
+  avgResponseTime: Float!
+  errorRate: Float!
+  name: String!
+  requests: Int!
+}
+
+type AdminAnalyticsFeature {
+  adoptionRate: Float!
+  featureName: String!
+  totalUses: Int!
+  uniqueUsers: Int!
+}
+
+input AdminAuditLogFiltersInput {
+  action: String
+  endDate: DateTime
+  entityType: String
+  organizationId: String
+  skip: Int
+  startDate: DateTime
+  take: Int
+  userId: String
+}
+
+type AdminAuditLogsResponse {
+  logs: [AuditLog!]!
+  skip: Int!
+  take: Int!
+  total: Int!
+}
+
+type AdminDashboardStats {
+  activeSessions: Int!
+  activeSubscriptions: Int!
+  recentSecurityEvents: Int!
+  totalOrganizations: Int!
+  totalUsers: Int!
+}
+
+input AdminOrganizationFiltersInput {
+  search: String
+  skip: Int
+  take: Int
+}
+
+type AdminOrganizationsResponse {
+  organizations: [Organization!]!
+  skip: Int!
+  take: Int!
+  total: Int!
+}
+
+input AdminSecurityEventFiltersInput {
+  endDate: DateTime
+  eventType: SecurityEventType
+  ipAddress: String
+  skip: Int
+  startDate: DateTime
+  take: Int
+  userId: String
+}
+
+type AdminSecurityEventsResponse {
+  events: [SecurityEvent!]!
+  skip: Int!
+  take: Int!
+  total: Int!
+}
+
+input AdminUserFiltersInput {
+  accountLocked: Boolean
+  emailVerified: Boolean
+  isSuperAdmin: Boolean
+  lastLoginAfter: DateTime
+  lastLoginBefore: DateTime
+  organizationId: String
+  registeredAfter: DateTime
+  registeredBefore: DateTime
+  search: String
+  skip: Float = 0
+  sortBy: String = "createdAt"
+  sortOrder: String = "desc"
+  take: Float = 50
+  twoFactorEnabled: Boolean
+}
+
+type AdminUsersResponse {
+  skip: Int!
+  take: Int!
+  total: Int!
+  users: [User!]!
+}
+
+type ApiToken {
+  createdAt: DateTime!
+  expiresAt: DateTime
+  id: String!
+  lastUsedAt: DateTime
+  name: String!
+  revoked: Boolean!
+  tokenHash: String!
+  updatedAt: DateTime!
+  user: User
+  userId: String!
+}
+
+type AuditLog {
+  action: String!
+  changes: JSONObject
+  createdAt: DateTime!
+  entityId: String!
+  entityType: String!
+  id: String!
+  organization: Organization
+  organizationId: String
+  updatedAt: DateTime!
+  user: User
+  userId: String!
+}
+
+input ChangeEmailInput {
+  newEmail: String!
+}
+
+input ChangePasswordInput {
+  currentPassword: String!
+  newPassword: String!
+}
+
+type CorePaging {
+  count: Float
+  filteredTotal: Float
+  hasNext: Boolean
+  hasPrev: Boolean
+  page: Float
+  pages: Float
+  skip: Float
+  take: Float
+  total: Float
+}
+
+type Country {
+  addresses: [Address!]
+  alpha2: String!
+  alpha3: String!
+  countryCode: String!
+  createdAt: DateTime!
+  id: String!
+  intermediateRegion: String!
+  intermediateRegionCode: String!
+  iso3166_2: String!
+  name: String!
+  region: String!
+  regionCode: String!
+  subRegion: String!
+  subRegionCode: String!
+  updatedAt: DateTime!
+}
+
+input CreateAddressInput {
+  address1: String
+  address2: String
+  addressType: AddressType
+  city: String
+  countryId: String
+  createdAt: DateTime
+  id: String
+  isPrimary: Boolean
+  organizationId: String
+  postalCode: String
+  region: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input CreateApiTokenInput {
+  createdAt: DateTime
+  expiresAt: DateTime
+  id: String
+  lastUsedAt: DateTime
+  name: String!
+  revoked: Boolean
+  tokenHash: String!
+  updatedAt: DateTime
+  userId: String!
+}
+
+input CreateAuditLogInput {
+  action: String!
+  changes: JSON
+  createdAt: DateTime
+  entityId: String!
+  entityType: String!
+  id: String
+  organizationId: String
+  updatedAt: DateTime
+  userId: String!
+}
+
+input CreateCountryInput {
+  addressesIds: [String!]
+  alpha2: String!
+  alpha3: String!
+  countryCode: String!
+  createdAt: DateTime
+  id: String
+  intermediateRegion: String!
+  intermediateRegionCode: String!
+  iso3166_2: String!
+  name: String!
+  region: String!
+  regionCode: String!
+  subRegion: String!
+  subRegionCode: String!
+  updatedAt: DateTime
+}
+
+input CreateEmailInput {
+  createdAt: DateTime
+  email: String!
+  emailType: EmailType
+  id: String
+  organizationId: String
+  primary: Boolean
+  public: Boolean
+  updatedAt: DateTime
+  userId: String
+  verified: Boolean
+  verifyExpires: DateTime
+  verifyToken: String
+}
+
+input CreateInvitationInput {
+  email: String!
+  organizationId: String!
+  roleId: String!
+}
+
+input CreateInviteInput {
+  createdAt: DateTime
+  email: String!
+  expiresAt: DateTime!
+  id: String
+  inviterId: String!
+  organizationId: String!
+  roleId: String
+  status: InviteStatus
+  token: String!
+  updatedAt: DateTime
+}
+
+input CreateLinkInput {
+  createdAt: DateTime
+  id: String
+  name: String!
+  organizationId: String
+  updatedAt: DateTime
+  url: String!
+  userId: String
+}
+
+input CreateLoginAttemptInput {
+  createdAt: DateTime
+  email: String!
+  id: String
+  ipAddress: String
+  location: String
+  reason: FailureReason
+  success: Boolean
+  updatedAt: DateTime
+  userAgent: String
+  userId: String
+}
+
+input CreateOAuthAccountInput {
+  createdAt: DateTime
+  id: String
+  provider: String!
+  providerUserId: String!
+  updatedAt: DateTime
+  userId: String!
+}
+
+input CreateOrganizationInput {
+  AuditLogIds: [String!]
+  TeamIds: [String!]
+  addressesIds: [String!]
+  createdAt: DateTime
+  emailsIds: [String!]
+  id: String
+  imagesIds: [String!]
+  invitesIds: [String!]
+  linksIds: [String!]
+  logoId: String
+  membersIds: [String!]
+  name: String!
+  phoneNumbersIds: [String!]
+  rolesIds: [String!]
+  subscriptionId: String
+  updatedAt: DateTime
+}
+
+input CreateOrganizationMemberInput {
+  createdAt: DateTime
+  id: String
+  organizationId: String!
+  roleId: String!
+  updatedAt: DateTime
+  userId: String!
+}
+
+input CreatePasswordHistoryInput {
+  createdAt: DateTime
+  id: String
+  passwordHash: String!
+  userId: String!
+}
+
+input CreatePermissionInput {
+  action: String!
+  description: String
+  id: String
+  rolesIds: [String!]
+  subject: String!
+}
+
+input CreatePhoneNumberInput {
+  createdAt: DateTime
+  id: String
+  organizationId: String
+  phone: String!
+  phoneType: PhoneType
+  primary: Boolean
+  updatedAt: DateTime
+  userId: String
+}
+
+input CreatePlanInput {
+  active: Boolean
+  createdAt: DateTime
+  description: String
+  features: JSON
+  id: String
+  interval: String!
+  limits: JSON
+  name: String!
+  price: Float!
+  stripePriceId: String
+  stripeProductId: String
+  subscriptionsIds: [String!]
+  trialPeriodDays: Int
+  updatedAt: DateTime
+}
+
+input CreateRoleInput {
+  description: String
+  id: String
+  invitesIds: [String!]
+  membersIds: [String!]
+  name: String!
+  organizationId: String
+  permissionsIds: [String!]
+  teamMembersIds: [String!]
+}
+
+input CreateSecurityEventInput {
+  createdAt: DateTime
+  eventType: SecurityEventType!
+  id: String
+  ipAddress: String
+  metadata: JSON
+  updatedAt: DateTime
+  userAgent: String
+  userId: String!
+}
+
+input CreateStoredFileInput {
+  createdAt: DateTime
+  filename: String!
+  folder: String
+  height: Int
+  id: String
+  metadata: JSON
+  mimeType: String!
+  organizationId: String
+  organizationLogoId: String
+  originalName: String!
+  provider: StorageProvider!
+  providerFileId: String!
+  publicUrl: String
+  size: Int!
+  updatedAt: DateTime
+  url: String!
+  userAvatarId: String
+  userId: String
+  width: Int
+}
+
+input CreateSubscriptionInput {
+  cancelAt: DateTime
+  cancelAtPeriodEnd: Boolean
+  canceledAt: DateTime
+  createdAt: DateTime
+  id: String
+  organizationId: String!
+  planId: String!
+  status: SubscriptionStatus
+  stripeCurrentPeriodEnd: DateTime
+  stripeCustomerId: String
+  stripePriceId: String
+  stripeSubscriptionId: String
+  trialEnd: DateTime
+  trialStart: DateTime
+  updatedAt: DateTime
+}
+
+input CreateTeamInput {
+  createdAt: DateTime
+  description: String
+  id: String
+  membersIds: [String!]
+  name: String!
+  organizationId: String!
+  updatedAt: DateTime
+}
+
+input CreateTeamMemberInput {
+  createdAt: DateTime
+  id: String
+  roleId: String!
+  teamId: String!
+  updatedAt: DateTime
+  userId: String!
+}
+
+input CreateUserInput {
+  AuditLogIds: [String!]
+  SecurityEventIds: [String!]
+  TeamMemberIds: [String!]
+  UserPreferenceIds: [String!]
+  activeOrganizationId: String
+  activeSessionsIds: [String!]
+  addressesIds: [String!]
+  apiTokensIds: [String!]
+  avatarId: String
+  bio: String
+  createdAt: DateTime
+  deactivatedAt: DateTime
+  displayName: String
+  emailValidated: Boolean
+  emailsIds: [String!]
+  failedLoginCount: Int
+  firstName: String
+  id: String
+  imagesIds: [String!]
+  invitesSentIds: [String!]
+  isActive: Boolean
+  isSuperAdmin: Boolean
+  lastFailedLogin: DateTime
+  lastName: String
+  lastSuccessfulLogin: DateTime
+  linksIds: [String!]
+  lockedUntil: DateTime
+  loginAttemptsIds: [String!]
+  oAuthAccountsIds: [String!]
+  organizationsIds: [String!]
+  password: String
+  passwordHistoryIds: [String!]
+  passwordResetExpires: DateTime
+  passwordResetToken: String
+  phoneNumbersIds: [String!]
+  privacyPolicyAcceptedAt: DateTime
+  termsAcceptedAt: DateTime
+  twoFactorEnabled: Boolean
+  twoFactorMethod: TwoFactorMethod
+  twoFactorRecoveryCodes: [String!]!
+  twoFactorSecret: String
+  updatedAt: DateTime
+  validateEmailToken: String
+  validateEmailTokenExpires: DateTime
+}
+
+input CreateUserPreferenceInput {
+  createdAt: DateTime
+  id: String
+  key: String!
+  updatedAt: DateTime
+  userId: String!
+  value: String!
+}
+
+input CreateUserSessionInput {
+  createdAt: DateTime
+  deviceInfo: String
+  id: String
+  ipAddress: String
+  isValid: Boolean
+  lastActiveAt: DateTime
+  twoFactorVerified: Boolean
+  updatedAt: DateTime
+  userId: String!
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+"""An arbitrary-precision Decimal type"""
+scalar Decimal
+
+input Disable2FAInput {
+  password: String!
+}
+
+type Email {
+  createdAt: DateTime!
+  email: String!
+  emailType: EmailType!
+  id: String!
+  organization: Organization
+  organizationId: String
+  primary: Boolean!
+  public: Boolean!
+  updatedAt: DateTime!
+  user: User
+  userId: String
+  verified: Boolean!
+  verifyExpires: DateTime
+  verifyToken: String
+}
+
+enum EmailType {
+  OTHER
+  PERSONAL
+  WORK
+}
+
+input EmulateUserInput {
+  userId: String!
+}
+
+type Enable2FAOutput {
+  backupCodes: [String!]!
+  success: Boolean!
+}
+
+type ExportUserDataOutput {
+  exportedAt: DateTime!
+  userData: JSONObject!
+  userId: String!
+}
+
+enum FailureReason {
+  ACCOUNT_DISABLED
+  ACCOUNT_LOCKED
+  EXPIRED_TOKEN
+  INVALID_2FA
+  INVALID_EMAIL
+  INVALID_PASSWORD
+  TOO_MANY_ATTEMPTS
+}
+
+input ForgotPasswordInput {
+  email: String!
+}
+
+input GenerateApiTokenInput {
+  expiresAt: DateTime
+  name: String!
+}
+
+type GenerateApiTokenOutput {
+  apiToken: ApiToken!
+  token: String!
+}
+
+type InvitationDetails {
+  email: String!
+  expiresAt: DateTime!
+  id: String!
+  inviterName: String!
+  organizationName: String!
+  roleName: String!
+}
+
+type Invite {
+  createdAt: DateTime!
+  email: String!
+  expiresAt: DateTime!
+  id: String!
+  inviter: User
+  inviterId: String!
+  organization: Organization
+  organizationId: String!
+  role: Role
+  roleId: String
+  status: InviteStatus!
+  token: String!
+  updatedAt: DateTime!
+}
+
+enum InviteStatus {
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  PENDING
+}
+
+"""
+The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSON
+
+"""
+The `JSONObject` scalar type represents JSON objects as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSONObject
+
+type Link {
+  createdAt: DateTime!
+  id: String!
+  name: String!
+  organization: Organization
+  organizationId: String
+  updatedAt: DateTime!
+  url: String!
+  user: User
+  userId: String
+}
+
+input LinkOAuthInput {
+  provider: OAuthProvider!
+
+  """OAuth access token or authorization code"""
+  token: String!
+}
+
+input ListAddressInput {
+  address1: String
+  address2: String
+  addressType: AddressType
+  city: String
+  countryId: String
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  isPrimary: Boolean
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  postalCode: String
+  region: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userId: String
+}
+
+input ListApiTokenInput {
+  createdAt: DateTime
+  expiresAt: DateTime
+  filters: JSONObject
+  id: String
+  lastUsedAt: DateTime
+  name: String
+  orderBy: String
+  orderDirection: String
+  revoked: Boolean
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  tokenHash: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input ListAuditLogInput {
+  action: String
+  changes: JSON
+  createdAt: DateTime
+  entityId: String
+  entityType: String
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userId: String
+}
+
+input ListCountryInput {
+  addressesIds: [String!]
+  alpha2: String
+  alpha3: String
+  countryCode: String
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  intermediateRegion: String
+  intermediateRegionCode: String
+  iso3166_2: String
+  name: String
+  orderBy: String
+  orderDirection: String
+  region: String
+  regionCode: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  subRegion: String
+  subRegionCode: String
+  take: Float = 20
+  updatedAt: DateTime
+}
+
+input ListEmailInput {
+  createdAt: DateTime
+  email: String
+  emailType: EmailType
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  primary: Boolean
+  public: Boolean
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userId: String
+  verified: Boolean
+  verifyExpires: DateTime
+  verifyToken: String
+}
+
+input ListInviteInput {
+  createdAt: DateTime
+  email: String
+  expiresAt: DateTime
+  filters: JSONObject
+  id: String
+  inviterId: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  roleId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  status: InviteStatus
+  take: Float = 20
+  token: String
+  updatedAt: DateTime
+}
+
+input ListLinkInput {
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  name: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  url: String
+  userId: String
+}
+
+input ListLoginAttemptInput {
+  createdAt: DateTime
+  email: String
+  filters: JSONObject
+  id: String
+  ipAddress: String
+  location: String
+  orderBy: String
+  orderDirection: String
+  reason: FailureReason
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  success: Boolean
+  take: Float = 20
+  updatedAt: DateTime
+  userAgent: String
+  userId: String
+}
+
+input ListOAuthAccountInput {
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  provider: String
+  providerUserId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userId: String
+}
+
+input ListOrganizationInput {
+  AuditLogIds: [String!]
+  TeamIds: [String!]
+  addressesIds: [String!]
+  createdAt: DateTime
+  emailsIds: [String!]
+  filters: JSONObject
+  id: String
+  imagesIds: [String!]
+  invitesIds: [String!]
+  linksIds: [String!]
+  logoId: String
+  membersIds: [String!]
+  name: String
+  orderBy: String
+  orderDirection: String
+  phoneNumbersIds: [String!]
+  rolesIds: [String!]
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  subscriptionId: String
+  take: Float = 20
+  updatedAt: DateTime
+}
+
+input ListOrganizationMemberInput {
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  roleId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userId: String
+}
+
+input ListPasswordHistoryInput {
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  passwordHash: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  userId: String
+}
+
+input ListPermissionInput {
+  action: String
+  description: String
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  rolesIds: [String!]
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  subject: String
+  take: Float = 20
+}
+
+input ListPhoneNumberInput {
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  phone: String
+  phoneType: PhoneType
+  primary: Boolean
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userId: String
+}
+
+input ListPlanInput {
+  active: Boolean
+  createdAt: DateTime
+  description: String
+  features: JSON
+  filters: JSONObject
+  id: String
+  interval: String
+  limits: JSON
+  name: String
+  orderBy: String
+  orderDirection: String
+  price: Float
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  stripePriceId: String
+  stripeProductId: String
+  subscriptionsIds: [String!]
+  take: Float = 20
+  trialPeriodDays: Int
+  updatedAt: DateTime
+}
+
+input ListRoleInput {
+  description: String
+  filters: JSONObject
+  id: String
+  invitesIds: [String!]
+  membersIds: [String!]
+  name: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  permissionsIds: [String!]
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  teamMembersIds: [String!]
+}
+
+input ListSecurityEventInput {
+  createdAt: DateTime
+  eventType: SecurityEventType
+  filters: JSONObject
+  id: String
+  ipAddress: String
+  metadata: JSON
+  orderBy: String
+  orderDirection: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userAgent: String
+  userId: String
+}
+
+input ListStoredFileInput {
+  createdAt: DateTime
+  filename: String
+  filters: JSONObject
+  folder: String
+  height: Int
+  id: String
+  metadata: JSON
+  mimeType: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  organizationLogoId: String
+  originalName: String
+  provider: StorageProvider
+  providerFileId: String
+  publicUrl: String
+  search: String
+  searchFields: [String!]
+  size: Int
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  url: String
+  userAvatarId: String
+  userId: String
+  width: Int
+}
+
+input ListSubscriptionInput {
+  cancelAt: DateTime
+  cancelAtPeriodEnd: Boolean
+  canceledAt: DateTime
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  planId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  status: SubscriptionStatus
+  stripeCurrentPeriodEnd: DateTime
+  stripeCustomerId: String
+  stripePriceId: String
+  stripeSubscriptionId: String
+  take: Float = 20
+  trialEnd: DateTime
+  trialStart: DateTime
+  updatedAt: DateTime
+}
+
+input ListTeamInput {
+  createdAt: DateTime
+  description: String
+  filters: JSONObject
+  id: String
+  membersIds: [String!]
+  name: String
+  orderBy: String
+  orderDirection: String
+  organizationId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+}
+
+input ListTeamMemberInput {
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  orderBy: String
+  orderDirection: String
+  roleId: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  teamId: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input ListUserInput {
+  AuditLogIds: [String!]
+  SecurityEventIds: [String!]
+  TeamMemberIds: [String!]
+  UserPreferenceIds: [String!]
+  activeOrganizationId: String
+  activeSessionsIds: [String!]
+  addressesIds: [String!]
+  apiTokensIds: [String!]
+  avatarId: String
+  bio: String
+  createdAt: DateTime
+  deactivatedAt: DateTime
+  displayName: String
+  emailValidated: Boolean
+  emailsIds: [String!]
+  failedLoginCount: Int
+  filters: JSONObject
+  firstName: String
+  id: String
+  imagesIds: [String!]
+  invitesSentIds: [String!]
+  isActive: Boolean
+  isSuperAdmin: Boolean
+  lastFailedLogin: DateTime
+  lastName: String
+  lastSuccessfulLogin: DateTime
+  linksIds: [String!]
+  lockedUntil: DateTime
+  loginAttemptsIds: [String!]
+  oAuthAccountsIds: [String!]
+  orderBy: String
+  orderDirection: String
+  organizationsIds: [String!]
+  password: String
+  passwordHistoryIds: [String!]
+  passwordResetExpires: DateTime
+  passwordResetToken: String
+  phoneNumbersIds: [String!]
+  privacyPolicyAcceptedAt: DateTime
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  termsAcceptedAt: DateTime
+  twoFactorEnabled: Boolean
+  twoFactorMethod: TwoFactorMethod
+  twoFactorRecoveryCodes: [String!]
+  twoFactorSecret: String
+  updatedAt: DateTime
+  validateEmailToken: String
+  validateEmailTokenExpires: DateTime
+}
+
+input ListUserPreferenceInput {
+  createdAt: DateTime
+  filters: JSONObject
+  id: String
+  key: String
+  orderBy: String
+  orderDirection: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  updatedAt: DateTime
+  userId: String
+  value: String
+}
+
+input ListUserSessionInput {
+  createdAt: DateTime
+  deviceInfo: String
+  filters: JSONObject
+  id: String
+  ipAddress: String
+  isValid: Boolean
+  lastActiveAt: DateTime
+  orderBy: String
+  orderDirection: String
+  search: String
+  searchFields: [String!]
+  skip: Float = 0
+  take: Float = 20
+  twoFactorVerified: Boolean
+  updatedAt: DateTime
+  userId: String
+}
+
+type LoginAttempt {
+  createdAt: DateTime!
+  email: String!
+  id: String!
+  ipAddress: String
+  location: String
+  reason: FailureReason
+  success: Boolean!
+  updatedAt: DateTime!
+  user: User
+  userAgent: String
+  userId: String
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+  remember: Boolean
+}
+
+type Mutation {
+  acceptOrganizationInvitation(input: AcceptInvitationInput!): Organization!
+  addOrganizationMember(input: AddOrganizationMemberInput!): Boolean!
+  adminActivateUser(userId: String!): User!
+  adminDeactivateUser(userId: String!): User!
+  adminForcePasswordReset(userId: String!): User!
+  adminVerifyEmail(emailId: String!, userId: String!): User!
+  cancelSubscription: Subscription!
+  changeEmail(input: ChangeEmailInput!): Boolean!
+  changePassword(input: ChangePasswordInput!): Boolean!
+  complete2FALogin(code: String!, tempToken: String!): UserToken
+  createAddress(input: CreateAddressInput!): Address
+  createApiToken(input: CreateApiTokenInput!): ApiToken
+  createAuditLog(input: CreateAuditLogInput!): AuditLog
+  createCheckoutSession(priceId: String!): String!
+  createCountry(input: CreateCountryInput!): Country
+  createEmail(input: CreateEmailInput!): Email
+  createInvite(input: CreateInviteInput!): Invite
+  createLink(input: CreateLinkInput!): Link
+  createLoginAttempt(input: CreateLoginAttemptInput!): LoginAttempt
+  createOAuthAccount(input: CreateOAuthAccountInput!): OAuthAccount
+  createOrganization(input: CreateOrganizationInput!): Organization
+  createOrganizationInvitation(input: CreateInvitationInput!): String!
+  createOrganizationMember(input: CreateOrganizationMemberInput!): OrganizationMember
+  createPasswordHistory(input: CreatePasswordHistoryInput!): PasswordHistory
+  createPermission(input: CreatePermissionInput!): Permission
+  createPhoneNumber(input: CreatePhoneNumberInput!): PhoneNumber
+  createPlan(input: CreatePlanInput!): Plan
+  createPortalSession: String!
+  createRole(input: CreateRoleInput!): Role
+  createSecurityEvent(input: CreateSecurityEventInput!): SecurityEvent
+  createStoredFile(input: CreateStoredFileInput!): StoredFile
+  createSubscription(input: CreateSubscriptionInput!): Subscription
+  createTeam(input: CreateTeamInput!): Team
+  createTeamMember(input: CreateTeamMemberInput!): TeamMember
+  createUser(input: CreateUserInput!): User
+  createUserPreference(input: CreateUserPreferenceInput!): UserPreference
+  createUserSession(input: CreateUserSessionInput!): UserSession
+  deleteAddress(addressId: String!): Address
+  deleteApiToken(apiTokenId: String!): ApiToken
+  deleteAuditLog(auditLogId: String!): AuditLog
+  deleteCountry(countryId: String!): Country
+  deleteEmail(emailId: String!): Email
+  deleteFile(uploadId: String!): Boolean!
+  deleteInvite(inviteId: String!): Invite
+  deleteLink(linkId: String!): Link
+  deleteLoginAttempt(loginAttemptId: String!): LoginAttempt
+  deleteOAuthAccount(oAuthAccountId: String!): OAuthAccount
+  deleteOrganization(organizationId: String!): Organization
+  deleteOrganizationMember(organizationMemberId: String!): OrganizationMember
+  deletePasswordHistory(passwordHistoryId: String!): PasswordHistory
+  deletePermission(permissionId: String!): Permission
+  deletePhoneNumber(phoneNumberId: String!): PhoneNumber
+  deletePlan(planId: String!): Plan
+  deleteRole(roleId: String!): Role
+  deleteSecurityEvent(securityEventId: String!): SecurityEvent
+  deleteStoredFile(storedFileId: String!): StoredFile
+  deleteSubscription(subscriptionId: String!): Subscription
+  deleteTeam(teamId: String!): Team
+  deleteTeamMember(teamMemberId: String!): TeamMember
+  deleteUser(userId: String!): User
+  deleteUserAccount: Boolean!
+  deleteUserPreference(userPreferenceId: String!): UserPreference
+  deleteUserSession(userSessionId: String!): UserSession
+  disable2FA(input: Disable2FAInput!): Boolean!
+  emulateUser(input: EmulateUserInput!): UserToken
+  enable2FA(input: Verify2FAInput!): Enable2FAOutput!
+  endEmulation: UserToken
+  forgotPassword(input: ForgotPasswordInput!): Boolean
+  generateApiToken(input: GenerateApiTokenInput!): GenerateApiTokenOutput!
+  invalidateAllSessions: Float!
+  invalidateSession(sessionId: String!): Boolean!
+  linkOAuthAccount(input: LinkOAuthInput!): Boolean!
+  login(input: LoginInput!): UserToken
+  logout: Boolean
+  register(input: RegisterInput!): UserToken
+  registerWithInvitation(input: RegisterWithInvitationInput!): UserToken
+  rejectOrganizationInvitation(input: RejectInvitationInput!): Boolean!
+  removeOrganizationLogo(organizationId: String!): Boolean!
+  removeOrganizationMember(input: RemoveOrganizationMemberInput!): Boolean!
+  removeUserAvatar: Boolean!
+  resendOrganizationInvitation(input: ResendInvitationInput!): Boolean!
+  resendVerificationEmail(email: String!): Boolean!
+  resetPassword(input: ResetPasswordInput!): User
+  revokeApiToken(tokenId: String!): ApiToken!
+  rotateApiToken(input: RotateApiTokenInput!): GenerateApiTokenOutput!
+  setup2FA: Setup2FAOutput!
+  switchActiveOrganization(input: SwitchOrganizationInput!): User!
+  syncStripePrice(priceId: String!): Boolean!
+  syncStripePrices: Boolean!
+  syncStripeProduct(productId: String!): Boolean!
+  syncStripeProducts: Boolean!
+  syncStripeSubscription(subscriptionId: String!): Boolean!
+  transferOrganizationOwnership(input: TransferOwnershipInput!): Boolean!
+  unlinkOAuthAccount(input: UnlinkOAuthInput!): Boolean!
+  unlockAccount(userId: String!): User!
+  updateAddress(addressId: String!, input: UpdateAddressInput!): Address
+  updateApiToken(apiTokenId: String!, input: UpdateApiTokenInput!): ApiToken
+  updateAuditLog(auditLogId: String!, input: UpdateAuditLogInput!): AuditLog
+  updateCountry(countryId: String!, input: UpdateCountryInput!): Country
+  updateEmail(emailId: String!, input: UpdateEmailInput!): Email
+  updateInvite(input: UpdateInviteInput!, inviteId: String!): Invite
+  updateLink(input: UpdateLinkInput!, linkId: String!): Link
+  updateLoginAttempt(input: UpdateLoginAttemptInput!, loginAttemptId: String!): LoginAttempt
+  updateOAuthAccount(input: UpdateOAuthAccountInput!, oAuthAccountId: String!): OAuthAccount
+  updateOrganization(input: UpdateOrganizationInput!, organizationId: String!): Organization
+  updateOrganizationMember(input: UpdateOrganizationMemberInput!, organizationMemberId: String!): OrganizationMember
+  updateOrganizationMemberRole(input: UpdateMemberRoleInput!): Boolean!
+  updatePasswordHistory(input: UpdatePasswordHistoryInput!, passwordHistoryId: String!): PasswordHistory
+  updatePermission(input: UpdatePermissionInput!, permissionId: String!): Permission
+  updatePhoneNumber(input: UpdatePhoneNumberInput!, phoneNumberId: String!): PhoneNumber
+  updatePlan(input: UpdatePlanInput!, planId: String!): Plan
+  updateRole(input: UpdateRoleInput!, roleId: String!): Role
+  updateSecurityEvent(input: UpdateSecurityEventInput!, securityEventId: String!): SecurityEvent
+  updateStoredFile(input: UpdateStoredFileInput!, storedFileId: String!): StoredFile
+  updateSubscription(input: UpdateSubscriptionInput!, subscriptionId: String!): Subscription
+  updateTeam(input: UpdateTeamInput!, teamId: String!): Team
+  updateTeamMember(input: UpdateTeamMemberInput!, teamMemberId: String!): TeamMember
+  updateUser(input: UpdateUserInput!, userId: String!): User
+  updateUserPreference(input: UpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
+  updateUserSession(input: UpdateUserSessionInput!, userSessionId: String!): UserSession
+  uploadFile(file: Upload!, folder: String): UploadedFile!
+  uploadOrganizationLogo(file: Upload!, organizationId: String!): UploadedFile!
+  uploadUserAvatar(file: Upload!): UploadedFile!
+  userCreateOrganization(input: CreateOrganizationInput!): Organization!
+  userCreateUserPreference(input: SecureCreateUserPreferenceInput!): UserPreference
+  userDeleteOrganization(organizationId: String!): Boolean!
+  userDeleteUserPreference(userPreferenceId: String!): UserPreference
+  userUpdateOrganization(input: UpdateOrganizationInput!, organizationId: String!): Organization!
+  userUpdateUserPreference(input: SecureUpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
+  verify2FACode(input: Verify2FAInput!): Boolean!
+  verifyEmail(input: VerifyEmailInput!): User!
+  verifyEmailChange(token: String!): User!
+}
+
+type OAuthAccount {
+  createdAt: DateTime!
+  id: String!
+  provider: String!
+  providerUserId: String!
+  updatedAt: DateTime!
+  user: User
+  userId: String!
+}
+
+"""OAuth provider types"""
+enum OAuthProvider {
+  GITHUB
+  GOOGLE
+}
+
+type OAuthProviderInfo {
+  enabled: Boolean!
+  name: String!
+  provider: OAuthProvider!
+}
+
+type Organization {
+  AuditLog: [AuditLog!]
+  Team: [Team!]
+  addresses: [Address!]
+  createdAt: DateTime!
+  emails: [Email!]
+  id: String!
+  images: [StoredFile!]
+  invites: [Invite!]
+  links: [Link!]
+  logo: StoredFile
+  logoId: String
+  members: [OrganizationMember!]
+  name: String!
+  phoneNumbers: [PhoneNumber!]
+  roles: [Role!]
+  subscription: Subscription
+  updatedAt: DateTime!
+}
+
+type OrganizationMember {
+  createdAt: DateTime!
+  id: String!
+  organization: Organization
+  organizationId: String!
+  role: Role
+  roleId: String!
+  updatedAt: DateTime!
+  user: User
+  userId: String!
+}
+
+type PasswordHistory {
+  createdAt: DateTime!
+  id: String!
+  passwordHash: String!
+  user: User
+  userId: String!
+}
+
+type Permission {
+  action: String!
+  description: String
+  id: String!
+  roles: [Role!]
+  subject: String!
+}
+
+type PhoneNumber {
+  createdAt: DateTime!
+  id: String!
+  organization: Organization
+  organizationId: String
+  phone: String!
+  phoneType: PhoneType!
+  primary: Boolean!
+  updatedAt: DateTime!
+  user: User
+  userId: String
+}
+
+enum PhoneType {
+  HOME
+  MOBILE
+  OTHER
+  WORK
+}
+
+type Plan {
+  active: Boolean!
+  createdAt: DateTime!
+  description: String
+  features: JSONObject
+  id: String!
+  interval: String!
+  limits: JSONObject
+  name: String!
+  price: Decimal!
+  stripePriceId: String
+  stripeProductId: String
+  subscriptions: [Subscription!]
+  trialPeriodDays: Int
+  updatedAt: DateTime!
+}
+
+type Query {
+  address(addressId: String!): Address
+  addresses(input: ListAddressInput): [Address!]
+  addressesCount(input: ListAddressInput): CorePaging
+  adminAnalytics: AdminAnalytics!
+  adminAuditLogs(filters: AdminAuditLogFiltersInput): AdminAuditLogsResponse!
+  adminDashboardStats: AdminDashboardStats!
+  adminOrganizations(filters: AdminOrganizationFiltersInput): AdminOrganizationsResponse!
+  adminSecurityEvents(filters: AdminSecurityEventFiltersInput): AdminSecurityEventsResponse!
+  adminUserDetails(userId: String!): User!
+  adminUsers(filters: AdminUserFiltersInput): AdminUsersResponse!
+  apiToken(apiTokenId: String!): ApiToken
+  apiTokens(input: ListApiTokenInput): [ApiToken!]
+  apiTokensCount(input: ListApiTokenInput): CorePaging
+  auditLog(auditLogId: String!): AuditLog
+  auditLogs(input: ListAuditLogInput): [AuditLog!]
+  auditLogsCount(input: ListAuditLogInput): CorePaging
+  availableOAuthProviders: [OAuthProviderInfo!]!
+  availablePlans: [Plan!]!
+  countries(input: ListCountryInput): [Country!]
+  countriesCount(input: ListCountryInput): CorePaging
+  country(countryId: String!): Country
+  currentPlan: Plan
+  currentSubscription: Subscription
+  currentUsage: String!
+  email(emailId: String!): Email
+  emails(input: ListEmailInput): [Email!]
+  emailsCount(input: ListEmailInput): CorePaging
+  exportUserData: ExportUserDataOutput!
+  getInvitationDetails(token: String!): InvitationDetails!
+  getSignedUrl(expiresIn: Int, uploadId: String!): String!
+  getUserSessions: [UserSessionOutput!]!
+  invite(inviteId: String!): Invite
+  invites(input: ListInviteInput): [Invite!]
+  invitesCount(input: ListInviteInput): CorePaging
+  link(linkId: String!): Link
+  links(input: ListLinkInput): [Link!]
+  linksCount(input: ListLinkInput): CorePaging
+  listApiTokens: [ApiToken!]!
+  loginAttempt(loginAttemptId: String!): LoginAttempt
+  loginAttempts(input: ListLoginAttemptInput): [LoginAttempt!]
+  loginAttemptsCount(input: ListLoginAttemptInput): CorePaging
+  me: User
+  myOrganizations: [Organization!]!
+  mySecurityEvents(input: ListSecurityEventInput): [SecurityEvent!]!
+  oAuthAccount(oAuthAccountId: String!): OAuthAccount
+  oAuthAccounts(input: ListOAuthAccountInput): [OAuthAccount!]
+  oAuthAccountsCount(input: ListOAuthAccountInput): CorePaging
+  organization(organizationId: String!): Organization
+  organizationFiles(limit: Int, offset: Int, organizationId: String!): [UploadedFile!]!
+  organizationInvitations(organizationId: String!): [Invite!]!
+  organizationMember(organizationMemberId: String!): OrganizationMember
+  organizationMembers(input: ListOrganizationMemberInput): [OrganizationMember!]
+  organizationMembersCount(input: ListOrganizationMemberInput): CorePaging
+  organizationRoles(organizationId: String!): [Role!]!
+  organizations(input: ListOrganizationInput): [Organization!]
+  organizationsCount(input: ListOrganizationInput): CorePaging
+  passwordHistories(input: ListPasswordHistoryInput): [PasswordHistory!]
+  passwordHistoriesCount(input: ListPasswordHistoryInput): CorePaging
+  passwordHistory(passwordHistoryId: String!): PasswordHistory
+  permission(permissionId: String!): Permission
+  permissions(input: ListPermissionInput): [Permission!]
+  permissionsCount(input: ListPermissionInput): CorePaging
+  phoneNumber(phoneNumberId: String!): PhoneNumber
+  phoneNumbers(input: ListPhoneNumberInput): [PhoneNumber!]
+  phoneNumbersCount(input: ListPhoneNumberInput): CorePaging
+  plan(planId: String!): Plan
+  plans(input: ListPlanInput): [Plan!]
+  plansCount(input: ListPlanInput): CorePaging
+  role(roleId: String!): Role
+  roles(input: ListRoleInput): [Role!]
+  rolesCount(input: ListRoleInput): CorePaging
+  securityEvent(securityEventId: String!): SecurityEvent
+  securityEvents(input: ListSecurityEventInput): [SecurityEvent!]
+  securityEventsByType(eventType: SecurityEventType!, limit: Float): [SecurityEvent!]!
+  securityEventsCount(input: ListSecurityEventInput): CorePaging
+  securitySummary: SecuritySummary!
+  storedFile(storedFileId: String!): StoredFile
+  storedFiles(input: ListStoredFileInput): [StoredFile!]
+  storedFilesCount(input: ListStoredFileInput): CorePaging
+  subscription(subscriptionId: String!): Subscription
+  subscriptions(input: ListSubscriptionInput): [Subscription!]
+  subscriptionsCount(input: ListSubscriptionInput): CorePaging
+  team(teamId: String!): Team
+  teamMember(teamMemberId: String!): TeamMember
+  teamMembers(input: ListTeamMemberInput): [TeamMember!]
+  teamMembersCount(input: ListTeamMemberInput): CorePaging
+  teams(input: ListTeamInput): [Team!]
+  teamsCount(input: ListTeamInput): CorePaging
+  uptime: Float
+  user(userId: String!): User
+  userFiles(limit: Int, offset: Int): [UploadedFile!]!
+  userGetUserPreference(userPreferenceId: String!): UserPreference
+  userGetUserPreferences: [UserPreference!]
+  userOrganizationMembers(organizationId: String!): [OrganizationMember!]!
+  userPreference(userPreferenceId: String!): UserPreference
+  userPreferences(input: ListUserPreferenceInput): [UserPreference!]
+  userPreferencesCount(input: ListUserPreferenceInput): CorePaging
+  userSecurityEvents(limit: Float): [SecurityEvent!]!
+  userSession(userSessionId: String!): UserSession
+  userSessions(input: ListUserSessionInput): [UserSession!]
+  userSessionsCount(input: ListUserSessionInput): CorePaging
+  users(input: ListUserInput): [User!]
+  usersCount(input: ListUserInput): CorePaging
+}
+
+input RegisterInput {
+  avatarUrl: String
+  email: String!
+  firstName: String
+  lastName: String
+  organizationName: String
+  password: String!
+  phone: String
+  username: String
+}
+
+input RegisterWithInvitationInput {
+  avatarUrl: String
+  email: String!
+  firstName: String!
+  invitationToken: String!
+  lastName: String!
+  password: String!
+  phone: String
+}
+
+input RejectInvitationInput {
+  token: String!
+}
+
+input RemoveOrganizationMemberInput {
+  organizationId: String!
+  userId: String!
+}
+
+input ResendInvitationInput {
+  invitationId: String!
+}
+
+input ResetPasswordInput {
+  password: String!
+  token: String!
+}
+
+type Role {
+  description: String
+  id: String!
+  invites: [Invite!]
+  members: [OrganizationMember!]
+  name: String!
+  organization: Organization
+  organizationId: String
+  permissions: [Permission!]
+  teamMembers: [TeamMember!]
+}
+
+input RotateApiTokenInput {
+  keepOldTokenActive: Boolean = false
+  tokenId: String!
+}
+
+input SecureCreateUserPreferenceInput {
+  key: String!
+  value: String!
+}
+
+input SecureUpdateUserPreferenceInput {
+  key: String
+  value: String
+}
+
+type SecurityEvent {
+  createdAt: DateTime!
+  eventType: SecurityEventType!
+  id: String!
+  ipAddress: String
+  metadata: JSONObject
+  updatedAt: DateTime!
+  user: User
+  userAgent: String
+  userId: String!
+}
+
+enum SecurityEventType {
+  ACCOUNT_LOCKED
+  ACCOUNT_UNLOCKED
+  API_TOKEN_CREATED
+  API_TOKEN_REVOKED
+  API_TOKEN_ROTATED
+  EMAIL_CHANGED
+  LOGIN_LOCATION_CHANGE
+  PASSWORD_CHANGED
+  PASSWORD_RESET_REQUESTED
+  RECOVERY_CODES_GENERATED
+  SUSPICIOUS_LOGIN_ATTEMPT
+  TWO_FACTOR_DISABLED
+  TWO_FACTOR_ENABLED
+}
+
+type SecuritySummary {
+  lastPasswordChange: DateTime
+  recentEventsCount: Int!
+  suspiciousAttemptsLast30Days: Int!
+}
+
+type Setup2FAOutput {
+  otpauthUrl: String!
+  qrCode: String!
+  secret: String!
+}
+
+"""The storage provider used for file uploads"""
+enum StorageProvider {
+  CLOUDINARY
+  GCS
+  IMAGEKIT
+  LOCAL
+  S3
+}
+
+type StoredFile {
+  createdAt: DateTime!
+  filename: String!
+  folder: String
+  height: Int
+  id: String!
+  metadata: JSONObject
+  mimeType: String!
+  organization: Organization
+  organizationId: String
+  organizationLogo: Organization
+  originalName: String!
+  provider: StorageProvider!
+  providerFileId: String!
+  publicUrl: String
+  size: Int!
+  updatedAt: DateTime!
+  url: String!
+  user: User
+  userAvatar: User
+  userId: String
+  width: Int
+}
+
+type Subscription {
+  cancelAt: DateTime
+  cancelAtPeriodEnd: Boolean!
+  canceledAt: DateTime
+  createdAt: DateTime!
+  id: String!
+  organization: Organization
+  organizationId: String!
+  plan: Plan
+  planId: String!
+  status: SubscriptionStatus!
+  stripeCurrentPeriodEnd: DateTime
+  stripeCustomerId: String
+  stripePriceId: String
+  stripeSubscriptionId: String
+  trialEnd: DateTime
+  trialStart: DateTime
+  updatedAt: DateTime!
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  PAST_DUE
+  TRIALING
+}
+
+input SwitchOrganizationInput {
+  organizationId: String!
+}
+
+type Team {
+  createdAt: DateTime!
+  description: String
+  id: String!
+  members: [TeamMember!]
+  name: String!
+  organization: Organization
+  organizationId: String!
+  updatedAt: DateTime!
+}
+
+type TeamMember {
+  createdAt: DateTime!
+  id: String!
+  role: Role
+  roleId: String!
+  team: Team
+  teamId: String!
+  updatedAt: DateTime!
+  user: User
+  userId: String!
+}
+
+input TransferOwnershipInput {
+  newOwnerUserId: String!
+  organizationId: String!
+}
+
+enum TwoFactorMethod {
+  AUTHENTICATOR
+  EMAIL
+  NONE
+  SMS
+}
+
+input UnlinkOAuthInput {
+  provider: OAuthProvider!
+}
+
+input UpdateAddressInput {
+  address1: String
+  address2: String
+  addressType: AddressType
+  city: String
+  countryId: String
+  createdAt: DateTime
+  id: String
+  isPrimary: Boolean
+  organizationId: String
+  postalCode: String
+  region: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input UpdateApiTokenInput {
+  createdAt: DateTime
+  expiresAt: DateTime
+  id: String
+  lastUsedAt: DateTime
+  name: String
+  revoked: Boolean
+  tokenHash: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input UpdateAuditLogInput {
+  action: String
+  changes: JSON
+  createdAt: DateTime
+  entityId: String
+  entityType: String
+  id: String
+  organizationId: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input UpdateCountryInput {
+  addressesIds: [String!]
+  alpha2: String
+  alpha3: String
+  countryCode: String
+  createdAt: DateTime
+  id: String
+  intermediateRegion: String
+  intermediateRegionCode: String
+  iso3166_2: String
+  name: String
+  region: String
+  regionCode: String
+  subRegion: String
+  subRegionCode: String
+  updatedAt: DateTime
+}
+
+input UpdateEmailInput {
+  createdAt: DateTime
+  email: String
+  emailType: EmailType
+  id: String
+  organizationId: String
+  primary: Boolean
+  public: Boolean
+  updatedAt: DateTime
+  userId: String
+  verified: Boolean
+  verifyExpires: DateTime
+  verifyToken: String
+}
+
+input UpdateInviteInput {
+  createdAt: DateTime
+  email: String
+  expiresAt: DateTime
+  id: String
+  inviterId: String
+  organizationId: String
+  roleId: String
+  status: InviteStatus
+  token: String
+  updatedAt: DateTime
+}
+
+input UpdateLinkInput {
+  createdAt: DateTime
+  id: String
+  name: String
+  organizationId: String
+  updatedAt: DateTime
+  url: String
+  userId: String
+}
+
+input UpdateLoginAttemptInput {
+  createdAt: DateTime
+  email: String
+  id: String
+  ipAddress: String
+  location: String
+  reason: FailureReason
+  success: Boolean
+  updatedAt: DateTime
+  userAgent: String
+  userId: String
+}
+
+input UpdateMemberRoleInput {
+  organizationId: String!
+  roleId: String!
+  userId: String!
+}
+
+input UpdateOAuthAccountInput {
+  createdAt: DateTime
+  id: String
+  provider: String
+  providerUserId: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input UpdateOrganizationInput {
+  AuditLogIds: [String!]
+  TeamIds: [String!]
+  addressesIds: [String!]
+  createdAt: DateTime
+  emailsIds: [String!]
+  id: String
+  imagesIds: [String!]
+  invitesIds: [String!]
+  linksIds: [String!]
+  logoId: String
+  membersIds: [String!]
+  name: String
+  phoneNumbersIds: [String!]
+  rolesIds: [String!]
+  subscriptionId: String
+  updatedAt: DateTime
+}
+
+input UpdateOrganizationMemberInput {
+  createdAt: DateTime
+  id: String
+  organizationId: String
+  roleId: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input UpdatePasswordHistoryInput {
+  createdAt: DateTime
+  id: String
+  passwordHash: String
+  userId: String
+}
+
+input UpdatePermissionInput {
+  action: String
+  description: String
+  id: String
+  rolesIds: [String!]
+  subject: String
+}
+
+input UpdatePhoneNumberInput {
+  createdAt: DateTime
+  id: String
+  organizationId: String
+  phone: String
+  phoneType: PhoneType
+  primary: Boolean
+  updatedAt: DateTime
+  userId: String
+}
+
+input UpdatePlanInput {
+  active: Boolean
+  createdAt: DateTime
+  description: String
+  features: JSON
+  id: String
+  interval: String
+  limits: JSON
+  name: String
+  price: Float
+  stripePriceId: String
+  stripeProductId: String
+  subscriptionsIds: [String!]
+  trialPeriodDays: Int
+  updatedAt: DateTime
+}
+
+input UpdateRoleInput {
+  description: String
+  id: String
+  invitesIds: [String!]
+  membersIds: [String!]
+  name: String
+  organizationId: String
+  permissionsIds: [String!]
+  teamMembersIds: [String!]
+}
+
+input UpdateSecurityEventInput {
+  createdAt: DateTime
+  eventType: SecurityEventType
+  id: String
+  ipAddress: String
+  metadata: JSON
+  updatedAt: DateTime
+  userAgent: String
+  userId: String
+}
+
+input UpdateStoredFileInput {
+  createdAt: DateTime
+  filename: String
+  folder: String
+  height: Int
+  id: String
+  metadata: JSON
+  mimeType: String
+  organizationId: String
+  organizationLogoId: String
+  originalName: String
+  provider: StorageProvider
+  providerFileId: String
+  publicUrl: String
+  size: Int
+  updatedAt: DateTime
+  url: String
+  userAvatarId: String
+  userId: String
+  width: Int
+}
+
+input UpdateSubscriptionInput {
+  cancelAt: DateTime
+  cancelAtPeriodEnd: Boolean
+  canceledAt: DateTime
+  createdAt: DateTime
+  id: String
+  organizationId: String
+  planId: String
+  status: SubscriptionStatus
+  stripeCurrentPeriodEnd: DateTime
+  stripeCustomerId: String
+  stripePriceId: String
+  stripeSubscriptionId: String
+  trialEnd: DateTime
+  trialStart: DateTime
+  updatedAt: DateTime
+}
+
+input UpdateTeamInput {
+  createdAt: DateTime
+  description: String
+  id: String
+  membersIds: [String!]
+  name: String
+  organizationId: String
+  updatedAt: DateTime
+}
+
+input UpdateTeamMemberInput {
+  createdAt: DateTime
+  id: String
+  roleId: String
+  teamId: String
+  updatedAt: DateTime
+  userId: String
+}
+
+input UpdateUserInput {
+  AuditLogIds: [String!]
+  SecurityEventIds: [String!]
+  TeamMemberIds: [String!]
+  UserPreferenceIds: [String!]
+  activeOrganizationId: String
+  activeSessionsIds: [String!]
+  addressesIds: [String!]
+  apiTokensIds: [String!]
+  avatarId: String
+  bio: String
+  createdAt: DateTime
+  deactivatedAt: DateTime
+  displayName: String
+  emailValidated: Boolean
+  emailsIds: [String!]
+  failedLoginCount: Int
+  firstName: String
+  id: String
+  imagesIds: [String!]
+  invitesSentIds: [String!]
+  isActive: Boolean
+  isSuperAdmin: Boolean
+  lastFailedLogin: DateTime
+  lastName: String
+  lastSuccessfulLogin: DateTime
+  linksIds: [String!]
+  lockedUntil: DateTime
+  loginAttemptsIds: [String!]
+  oAuthAccountsIds: [String!]
+  organizationsIds: [String!]
+  password: String
+  passwordHistoryIds: [String!]
+  passwordResetExpires: DateTime
+  passwordResetToken: String
+  phoneNumbersIds: [String!]
+  privacyPolicyAcceptedAt: DateTime
+  termsAcceptedAt: DateTime
+  twoFactorEnabled: Boolean
+  twoFactorMethod: TwoFactorMethod
+  twoFactorRecoveryCodes: [String!]
+  twoFactorSecret: String
+  updatedAt: DateTime
+  validateEmailToken: String
+  validateEmailTokenExpires: DateTime
+}
+
+input UpdateUserPreferenceInput {
+  createdAt: DateTime
+  id: String
+  key: String
+  updatedAt: DateTime
+  userId: String
+  value: String
+}
+
+input UpdateUserSessionInput {
+  createdAt: DateTime
+  deviceInfo: String
+  id: String
+  ipAddress: String
+  isValid: Boolean
+  lastActiveAt: DateTime
+  twoFactorVerified: Boolean
+  updatedAt: DateTime
+  userId: String
+}
+
+"""The `Upload` scalar type represents a file upload."""
+scalar Upload
+
+type UploadedFile {
+  createdAt: DateTime!
+  filename: String!
+  folder: String
+  height: Int
+  id: String!
+  metadata: JSON
+  mimeType: String!
+  organizationId: String
+  originalName: String!
+  provider: StorageProvider!
+  providerFileId: String!
+  publicUrl: String
+  size: Int!
+  updatedAt: DateTime!
+  url: String!
+  userId: String
+  width: Int
+}
+
+type User {
+  AuditLog: [AuditLog!]
+  SecurityEvent: [SecurityEvent!]
+  TeamMember: [TeamMember!]
+  UserPreference: [UserPreference!]
+  activeOrganizationId: String
+  activeSessions: [UserSession!]
+  addresses: [Address!]
+  apiTokens: [ApiToken!]
+  avatar: StoredFile
+  avatarId: String
+  bio: String
+  createdAt: DateTime!
+  deactivatedAt: DateTime
+  displayName: String
+  emailValidated: Boolean!
+  emails: [Email!]
+  failedLoginCount: Int!
+  firstName: String
+  id: String!
+  images: [StoredFile!]
+  invitesSent: [Invite!]
+  isActive: Boolean!
+  isEmulating: Boolean
+  isSuperAdmin: Boolean!
+  lastFailedLogin: DateTime
+  lastName: String
+  lastSuccessfulLogin: DateTime
+  links: [Link!]
+  lockedUntil: DateTime
+  loginAttempts: [LoginAttempt!]
+  oAuthAccounts: [OAuthAccount!]
+  organizations: [OrganizationMember!]
+  originalAdminId: String
+  password: String
+  passwordHistory: [PasswordHistory!]
+  passwordResetExpires: DateTime
+  passwordResetToken: String
+  phoneNumbers: [PhoneNumber!]
+  privacyPolicyAcceptedAt: DateTime
+  termsAcceptedAt: DateTime
+  twoFactorEnabled: Boolean!
+  twoFactorMethod: TwoFactorMethod!
+  twoFactorRecoveryCodes: [String!]!
+  twoFactorSecret: String
+  updatedAt: DateTime!
+  validateEmailToken: String
+  validateEmailTokenExpires: DateTime
+}
+
+type UserPreference {
+  createdAt: DateTime!
+  id: String!
+  key: String!
+  updatedAt: DateTime!
+  user: User
+  userId: String!
+  value: String!
+}
+
+type UserSession {
+  createdAt: DateTime!
+  deviceInfo: String
+  id: String!
+  ipAddress: String
+  isValid: Boolean!
+  lastActiveAt: DateTime!
+  twoFactorVerified: Boolean!
+  updatedAt: DateTime!
+  user: User
+  userId: String!
+}
+
+type UserSessionOutput {
+  createdAt: DateTime!
+  deviceInfo: String
+  id: String!
+  ipAddress: String
+  isCurrent: Boolean!
+  isValid: Boolean!
+  lastActiveAt: DateTime!
+  twoFactorVerified: Boolean!
+}
+
+type UserToken {
+  """Indicates if 2FA verification is required"""
+  requires2FA: Boolean
+
+  """Temporary token for 2FA verification"""
+  tempToken: String
+
+  """JWT Bearer token"""
+  token: String
+  user: User
+}
+
+input Verify2FAInput {
+  code: String!
+}
+
+input VerifyEmailInput {
+  token: String!
+}

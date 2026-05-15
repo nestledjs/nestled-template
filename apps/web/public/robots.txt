@@ -1,0 +1,25 @@
+User-agent: *
+Allow: /
+
+# Allow indexing of public directory
+Allow: /directory/
+Allow: /directory/member/
+Allow: /directory/chapter/
+
+# Disallow private areas
+Disallow: /admin/
+Disallow: /members/
+Disallow: /leaders/
+
+# Allow blog and main pages
+Allow: /blog/
+Allow: /post/
+Allow: /about
+Allow: /contact
+Allow: /
+
+# Sitemap location
+Sitemap: https://nestled-templatenow.com/sitemap.xml
+
+# Crawl-delay for politeness
+Crawl-delay: 1

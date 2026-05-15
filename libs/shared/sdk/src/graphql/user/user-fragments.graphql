@@ -1,0 +1,29 @@
+fragment UserList on User {
+  id
+  createdAt
+  updatedAt
+  firstName
+  lastName
+  bio
+  displayName
+  password
+  passwordResetToken
+  passwordResetExpires
+  emailValidated
+  validateEmailToken
+  validateEmailTokenExpires
+  twoFactorEnabled
+  twoFactorSecret
+  lastSuccessfulLogin
+  lastFailedLogin
+  failedLoginCount
+  lockedUntil
+  isActive
+  deactivatedAt
+  termsAcceptedAt
+  privacyPolicyAcceptedAt
+}
+
+fragment UserDetails on User {
+  ...UserList
+}

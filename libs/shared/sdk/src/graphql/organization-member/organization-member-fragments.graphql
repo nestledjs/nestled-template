@@ -1,0 +1,27 @@
+fragment OrganizationMemberList on OrganizationMember {
+  id
+  createdAt
+  updatedAt
+  userId
+  roleId
+  user {
+    id
+    firstName
+    lastName
+    emails {
+      id
+      email
+      primary
+      verified
+    }
+  }
+  role {
+    id
+    name
+    description
+  }
+}
+
+fragment OrganizationMemberDetails on OrganizationMember {
+  ...OrganizationMemberList
+}

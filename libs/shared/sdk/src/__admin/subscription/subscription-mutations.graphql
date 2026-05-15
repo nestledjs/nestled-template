@@ -1,0 +1,17 @@
+mutation __AdminCreateSubscription($input: CreateSubscriptionInput!) {
+  createSubscription(input: $input) {
+    ...__AdminSubscriptionDetails
+  }
+}
+
+mutation __AdminDeleteSubscription($subscriptionId: String!) {
+  deleteSubscription(subscriptionId: $subscriptionId) {
+    id
+  }
+}
+
+mutation __AdminUpdateSubscription($subscriptionId: String!, $input: UpdateSubscriptionInput!) {
+  updateSubscription(subscriptionId: $subscriptionId, input: $input) {
+    ...__AdminSubscriptionDetails
+  }
+}

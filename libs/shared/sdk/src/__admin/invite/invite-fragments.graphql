@@ -1,0 +1,25 @@
+fragment __AdminInviteSummary on Invite {
+  id
+  createdAt
+  updatedAt
+  expiresAt
+  email
+  token
+  inviterId
+  organizationId
+  status
+  roleId
+  inviter {
+    id
+  }
+  organization {
+    id
+  }
+  role {
+    id
+  }
+}
+
+fragment __AdminInviteDetails on Invite {
+  ...__AdminInviteSummary
+}

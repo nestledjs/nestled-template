@@ -1,0 +1,28 @@
+query AdminPlatformOrganizations($filters: AdminOrganizationFiltersInput) {
+  adminOrganizations(filters: $filters) {
+    organizations {
+      id
+      name
+      createdAt
+      updatedAt
+      members {
+        id
+        userId
+        role {
+          name
+        }
+      }
+      subscription {
+        id
+        status
+        plan {
+          name
+          price
+        }
+      }
+    }
+    total
+    skip
+    take
+  }
+}

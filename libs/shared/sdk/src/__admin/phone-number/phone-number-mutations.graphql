@@ -1,0 +1,17 @@
+mutation __AdminCreatePhoneNumber($input: CreatePhoneNumberInput!) {
+  createPhoneNumber(input: $input) {
+    ...__AdminPhoneNumberDetails
+  }
+}
+
+mutation __AdminDeletePhoneNumber($phoneNumberId: String!) {
+  deletePhoneNumber(phoneNumberId: $phoneNumberId) {
+    id
+  }
+}
+
+mutation __AdminUpdatePhoneNumber($phoneNumberId: String!, $input: UpdatePhoneNumberInput!) {
+  updatePhoneNumber(phoneNumberId: $phoneNumberId, input: $input) {
+    ...__AdminPhoneNumberDetails
+  }
+}

@@ -1,0 +1,20 @@
+query OAuthAccount($oAuthAccountId: String!) {
+  oAuthAccount(oAuthAccountId: $oAuthAccountId) {
+    ...OAuthAccountDetails
+  }
+}
+
+query OAuthAccounts($input: ListOAuthAccountInput) {
+  oAuthAccounts(input: $input) {
+    ...OAuthAccountList
+  }
+  counters: oAuthAccountsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query OAuthAccountPagination($input: ListOAuthAccountInput) {
+  counters: oAuthAccountsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

@@ -1,0 +1,20 @@
+query SecurityEvent($securityEventId: String!) {
+  securityEvent(securityEventId: $securityEventId) {
+    ...SecurityEventDetails
+  }
+}
+
+query SecurityEvents($input: ListSecurityEventInput) {
+  securityEvents(input: $input) {
+    ...SecurityEventList
+  }
+  counters: securityEventsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query SecurityEventPagination($input: ListSecurityEventInput) {
+  counters: securityEventsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

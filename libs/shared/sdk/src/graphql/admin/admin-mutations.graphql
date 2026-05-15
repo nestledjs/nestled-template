@@ -1,0 +1,36 @@
+mutation AdminDeactivateUser($userId: String!) {
+  adminDeactivateUser(userId: $userId) {
+    id
+    isActive
+    deactivatedAt
+  }
+}
+
+mutation AdminActivateUser($userId: String!) {
+  adminActivateUser(userId: $userId) {
+    id
+    isActive
+    deactivatedAt
+  }
+}
+
+mutation AdminVerifyEmail($userId: String!, $emailId: String!) {
+  adminVerifyEmail(userId: $userId, emailId: $emailId) {
+    id
+    emailValidated
+    emails {
+      id
+      email
+      verified
+      primary
+    }
+  }
+}
+
+mutation AdminForcePasswordReset($userId: String!) {
+  adminForcePasswordReset(userId: $userId) {
+    id
+    passwordResetToken
+    passwordResetExpires
+  }
+}

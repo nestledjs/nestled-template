@@ -1,0 +1,35 @@
+fragment __AdminStoredFileSummary on StoredFile {
+  id
+  createdAt
+  updatedAt
+  provider
+  providerFileId
+  folder
+  filename
+  originalName
+  mimeType
+  size
+  url
+  publicUrl
+  width
+  height
+  metadata
+  userId
+  organizationId
+  user {
+    id
+  }
+  organization {
+    id
+  }
+  userAvatar {
+    id
+  }
+  organizationLogo {
+    id
+  }
+}
+
+fragment __AdminStoredFileDetails on StoredFile {
+  ...__AdminStoredFileSummary
+}

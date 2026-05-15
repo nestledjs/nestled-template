@@ -1,0 +1,9 @@
+fragment TeamMemberList on TeamMember {
+  id
+  createdAt
+  updatedAt
+}
+
+fragment TeamMemberDetails on TeamMember {
+  ...TeamMemberList
+}

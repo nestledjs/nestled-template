@@ -1,0 +1,18 @@
+fragment __AdminApiTokenSummary on ApiToken {
+  id
+  createdAt
+  updatedAt
+  userId
+  tokenHash
+  name
+  expiresAt
+  lastUsedAt
+  revoked
+  user {
+    id
+  }
+}
+
+fragment __AdminApiTokenDetails on ApiToken {
+  ...__AdminApiTokenSummary
+}

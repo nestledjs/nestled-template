@@ -1,0 +1,508 @@
+generator client {
+  provider      = "prisma-client"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  output        = "../prisma-generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Models (Alphabetical Order)
+
+model Address {
+  id             String        @id @default(uuid())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  address1       String?
+  address2       String?
+  city           String?
+  region         String?
+  postalCode     String?
+  addressType    AddressType   @default(WORK)
+  isPrimary      Boolean       @default(false)
+  countryId      String?
+  country        Country?      @relation(fields: [countryId], references: [id])
+  userId         String?
+  user           User?         @relation("Address_belongsTo_User", fields: [userId], references: [id])
+  organizationId String?
+  organization   Organization? @relation("Address_belongsTo_Organization", fields: [organizationId], references: [id])
+}
+
+model ApiToken {
+  id         String    @id @default(uuid())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  userId     String
+  user       User      @relation("User_hasMany_APITokens", fields: [userId], references: [id])
+  tokenHash  String    @unique
+  name       String
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  revoked    Boolean   @default(false)
+}
+
+model AuditLog {
+  id             String        @id @default(uuid())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  entityId       String
+  entityType     String
+  action         String
+  userId         String
+  user           User          @relation(fields: [userId], references: [id])
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  changes        Json?
+}
+
+model Country {
+  id                     String    @id @default(uuid())
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  name                   String
+  alpha2                 String    @unique
+  alpha3                 String    @unique
+  countryCode            String
+  iso3166_2              String
+  region                 String
+  subRegion              String
+  intermediateRegion     String
+  regionCode             String
+  subRegionCode          String
+  intermediateRegionCode String
+  addresses              Address[]
+}
+
+model Email {
+  id             String        @id @default(uuid())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  email          String        @unique
+  public         Boolean       @default(false)
+  primary        Boolean       @default(false)
+  verified       Boolean       @default(false)
+  verifyToken    String?
+  verifyExpires  DateTime?
+  userId         String?
+  emailType      EmailType     @default(WORK)
+  organizationId String?
+  user           User?         @relation("Email_belongsTo_User", fields: [userId], references: [id])
+  organization   Organization? @relation("Email_belongsTo_Organization", fields: [organizationId], references: [id])
+}
+
+model Invite {
+  id             String       @id @default(uuid())
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  expiresAt      DateTime
+  email          String
+  token          String       @unique
+  inviterId      String
+  inviter        User         @relation("Invite_sentBy_User", fields: [inviterId], references: [id])
+  organizationId String
+  organization   Organization @relation("Invite_belongsTo_Organization", fields: [organizationId], references: [id])
+  status         InviteStatus @default(PENDING)
+  roleId         String? // The ID of the role the user will be granted upon accepting
+  role           Role?        @relation(fields: [roleId], references: [id])
+}
+
+model Link {
+  id             String        @id @default(uuid())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  name           String
+  url            String
+  userId         String?
+  organizationId String?
+  user           User?         @relation("Link_belongsTo_User", fields: [userId], references: [id])
+  organization   Organization? @relation("Link_belongsTo_Organization", fields: [organizationId], references: [id])
+}
+
+model LoginAttempt {
+  id        String         @id @default(uuid())
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  userId    String?
+  user      User?          @relation(fields: [userId], references: [id])
+  email     String
+  success   Boolean        @default(false)
+  ipAddress String?
+  userAgent String?
+  location  String?
+  reason    FailureReason?
+}
+
+model OAuthAccount {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  provider       String
+  providerUserId String
+  userId         String
+  user           User     @relation("User_hasMany_OAuthAccounts", fields: [userId], references: [id])
+
+  @@unique([provider, providerUserId])
+}
+
+model Organization {
+  id           String               @id @default(uuid())
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  name         String
+  logoId       String?              @unique
+  logo         StoredFile?          @relation("Organization_logo", fields: [logoId], references: [id], onDelete: SetNull)
+  emails       Email[]              @relation("Email_belongsTo_Organization")
+  links        Link[]               @relation("Link_belongsTo_Organization")
+  phoneNumbers PhoneNumber[]        @relation("PhoneNumber_belongsTo_Organization")
+  images       StoredFile[]         @relation("StoredFile_belongsTo_Organization")
+  members      OrganizationMember[] @relation("OrganizationMember_belongsTo_Organization")
+  addresses    Address[]            @relation("Address_belongsTo_Organization")
+  invites      Invite[]             @relation("Invite_belongsTo_Organization")
+  AuditLog     AuditLog[]
+  Team         Team[]
+  subscription Subscription?
+  roles        Role[]
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  roleId         String
+  role           Role         @relation(fields: [roleId], references: [id])
+  userId         String
+  user           User         @relation("OrganizationMember_belongsTo_User", fields: [userId], references: [id])
+  organizationId String
+  organization   Organization @relation("OrganizationMember_belongsTo_Organization", fields: [organizationId], references: [id])
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  action      String
+  subject     String
+  description String?
+  roles       Role[]  @relation("RolePermissions")
+
+  @@unique([action, subject])
+}
+
+model PhoneNumber {
+  id             String        @id @default(uuid())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  phone          String        @unique
+  phoneType      PhoneType     @default(MOBILE)
+  userId         String?
+  primary        Boolean       @default(false)
+  organizationId String?
+  user           User?         @relation("PhoneNumber_belongsTo_User", fields: [userId], references: [id])
+  organization   Organization? @relation("PhoneNumber_belongsTo_Organization", fields: [organizationId], references: [id])
+}
+
+model Plan {
+  id              String         @id @default(uuid())
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  name            String         @unique
+  description     String?
+  price           Decimal
+  interval        String // 'month', 'year', 'one_time'
+  features        Json? // Array of feature descriptions
+  limits          Json? // Usage limits: { members: 5, storage: 1000, apiCalls: 10000 }
+  active          Boolean        @default(true)
+  stripeProductId String?        @unique
+  stripePriceId   String?        @unique
+  trialPeriodDays Int?
+  subscriptions   Subscription[]
+}
+
+model Role {
+  id             String               @id @default(uuid())
+  name           String
+  description    String?
+  organizationId String?
+  organization   Organization?        @relation(fields: [organizationId], references: [id])
+  permissions    Permission[]         @relation("RolePermissions")
+  members        OrganizationMember[]
+  teamMembers    TeamMember[]
+  invites        Invite[]
+
+  @@unique([name, organizationId])
+}
+
+model SecurityEvent {
+  id        String            @id @default(uuid())
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  userId    String
+  user      User              @relation(fields: [userId], references: [id])
+  eventType SecurityEventType
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+}
+
+model Subscription {
+  id                     String             @id @default(uuid())
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  organizationId         String             @unique
+  organization           Organization       @relation(fields: [organizationId], references: [id])
+  planId                 String
+  plan                   Plan               @relation(fields: [planId], references: [id])
+  stripeCustomerId       String?            @unique
+  stripeSubscriptionId   String?            @unique
+  stripePriceId          String?
+  stripeCurrentPeriodEnd DateTime?
+  trialStart             DateTime?
+  trialEnd               DateTime?
+  cancelAt               DateTime?
+  canceledAt             DateTime?
+  cancelAtPeriodEnd      Boolean            @default(false)
+  status                 SubscriptionStatus @default(INCOMPLETE)
+}
+
+/// Team CRUD operations default to admin-only access for security.
+/// TODO: When RBAC is fully implemented, consider adding a custom @RequirePermission guard
+/// that checks permissions dynamically (e.g., @RequirePermission('team.create')).
+/// For user-specific operations (myTeams, joinTeam, etc.), create separate custom resolvers
+/// with appropriate authorization logic that validates team membership and permissions.
+model Team {
+  id             String       @id @default(uuid())
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  name           String
+  description    String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  members        TeamMember[]
+}
+
+/// TeamMember CRUD operations default to admin-only access for security.
+/// TODO: When RBAC is fully implemented, add custom resolvers for user operations like:
+/// - addTeamMember (checks if user has team.addMember permission)
+/// - removeTeamMember (checks if user is team admin or the member being removed)
+/// - updateTeamMemberRole (checks if user has team.manageRoles permission)
+model TeamMember {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  roleId    String
+  role      Role     @relation(fields: [roleId], references: [id])
+}
+
+model StoredFile {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Storage info
+  provider       StorageProvider
+  providerFileId String // Provider-specific ID/key
+  folder         String?
+
+  // File info
+  filename     String
+  originalName String
+  mimeType     String
+  size         Int
+
+  // URLs
+  url       String
+  publicUrl String?
+
+  // Image metadata (if applicable)
+  width  Int?
+  height Int?
+
+  // Generic metadata
+  metadata Json?
+
+  // Relations
+  userId           String?
+  organizationId   String?
+  user             User?         @relation("StoredFile_belongsTo_User", fields: [userId], references: [id])
+  organization     Organization? @relation("StoredFile_belongsTo_Organization", fields: [organizationId], references: [id])
+  userAvatar       User?         @relation("User_avatar")
+  organizationLogo Organization? @relation("Organization_logo")
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([provider])
+}
+
+model User {
+  id                        String               @id @default(uuid())
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  firstName                 String?
+  lastName                  String?
+  isSuperAdmin              Boolean              @default(false)
+  bio                       String?
+  displayName               String?              @unique
+  password                  String?
+  passwordResetToken        String?
+  passwordResetExpires      DateTime?
+  emailValidated            Boolean              @default(false)
+  validateEmailToken        String?              @unique
+  validateEmailTokenExpires DateTime?
+  emails                    Email[]              @relation("Email_belongsTo_User")
+  links                     Link[]               @relation("Link_belongsTo_User")
+  phoneNumbers              PhoneNumber[]        @relation("PhoneNumber_belongsTo_User")
+  avatarId                  String?              @unique
+  avatar                    StoredFile?          @relation("User_avatar", fields: [avatarId], references: [id], onDelete: SetNull)
+  images                    StoredFile[]         @relation("StoredFile_belongsTo_User")
+  organizations             OrganizationMember[] @relation("OrganizationMember_belongsTo_User")
+  activeOrganizationId      String?
+  addresses                 Address[]            @relation("Address_belongsTo_User")
+  invitesSent               Invite[]             @relation("Invite_sentBy_User")
+  twoFactorEnabled          Boolean              @default(false)
+  twoFactorSecret           String?
+  twoFactorRecoveryCodes    String[]
+  twoFactorMethod           TwoFactorMethod      @default(NONE)
+  activeSessions            UserSession[]
+  passwordHistory           PasswordHistory[]
+  loginAttempts             LoginAttempt[]
+  lastSuccessfulLogin       DateTime?
+  lastFailedLogin           DateTime?
+  failedLoginCount          Int                  @default(0)
+  lockedUntil               DateTime?
+  AuditLog                  AuditLog[]
+  UserPreference            UserPreference[]
+  TeamMember                TeamMember[]
+  SecurityEvent             SecurityEvent[]
+  isActive                  Boolean              @default(true)
+  deactivatedAt             DateTime?
+  termsAcceptedAt           DateTime?
+  privacyPolicyAcceptedAt   DateTime?
+  apiTokens                 ApiToken[]           @relation("User_hasMany_APITokens")
+  oAuthAccounts             OAuthAccount[]       @relation("User_hasMany_OAuthAccounts")
+}
+
+/// @crudAuth: { "readOne": "user", "readMany": "user", "create": "user", "update": "user", "delete": "user" }
+model UserPreference {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  key       String
+  value     String
+
+  @@unique([userId, key])
+}
+
+model UserSession {
+  id                String   @id @default(uuid())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastActiveAt      DateTime @default(now())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  deviceInfo        String?
+  ipAddress         String?
+  isValid           Boolean  @default(true)
+  twoFactorVerified Boolean  @default(false)
+}
+
+/// @skipCrud
+model PasswordHistory {
+  id           String   @id @default(uuid())
+  createdAt    DateTime @default(now())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passwordHash String
+
+  @@index([userId, createdAt])
+}
+
+// Enums (Alphabetical Order)
+
+enum AddressType {
+  HOME
+  WORK
+  VENUE
+  EVENT
+  OTHER
+}
+
+enum EmailType {
+  PERSONAL
+  WORK
+  OTHER
+}
+
+enum FailureReason {
+  INVALID_PASSWORD
+  INVALID_EMAIL
+  ACCOUNT_LOCKED
+  ACCOUNT_DISABLED
+  INVALID_2FA
+  EXPIRED_TOKEN
+  TOO_MANY_ATTEMPTS
+}
+
+enum ImageType {
+  AVATAR
+  BACKGROUND
+  OTHER
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum PhoneType {
+  HOME
+  WORK
+  MOBILE
+  OTHER
+}
+
+enum SecurityEventType {
+  PASSWORD_CHANGED
+  EMAIL_CHANGED
+  TWO_FACTOR_ENABLED
+  TWO_FACTOR_DISABLED
+  RECOVERY_CODES_GENERATED
+  ACCOUNT_LOCKED
+  ACCOUNT_UNLOCKED
+  SUSPICIOUS_LOGIN_ATTEMPT
+  PASSWORD_RESET_REQUESTED
+  LOGIN_LOCATION_CHANGE
+  API_TOKEN_CREATED
+  API_TOKEN_REVOKED
+  API_TOKEN_ROTATED
+}
+
+enum StorageProvider {
+  LOCAL
+  S3
+  CLOUDINARY
+  IMAGEKIT
+  GCS
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+}
+
+enum TwoFactorMethod {
+  NONE
+  AUTHENTICATOR
+  SMS
+  EMAIL
+}

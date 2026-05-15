@@ -1,0 +1,28 @@
+mutation Setup2FA {
+  setup2FA {
+    secret
+    qrCode
+    otpauthUrl
+  }
+}
+
+mutation Enable2FA($input: Verify2FAInput!) {
+  enable2FA(input: $input) {
+    success
+    backupCodes
+  }
+}
+
+mutation Disable2FA($input: Disable2FAInput!) {
+  disable2FA(input: $input)
+}
+
+mutation Verify2FACode($input: Verify2FAInput!) {
+  verify2FACode(input: $input)
+}
+
+mutation Complete2FALogin($tempToken: String!, $code: String!) {
+  complete2FALogin(tempToken: $tempToken, code: $code) {
+    ...UserTokenDetails
+  }
+}

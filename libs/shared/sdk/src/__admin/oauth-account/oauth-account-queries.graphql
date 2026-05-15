@@ -1,0 +1,20 @@
+query __AdminOAuthAccount($oAuthAccountId: String!) {
+  oAuthAccount(oAuthAccountId: $oAuthAccountId) {
+    ...__AdminOAuthAccountDetails
+  }
+}
+
+query __AdminOAuthAccounts($input: ListOAuthAccountInput) {
+  oAuthAccounts(input: $input) {
+    ...__AdminOAuthAccountSummary
+  }
+  counters: oAuthAccountsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminOAuthAccountPagination($input: ListOAuthAccountInput) {
+  counters: oAuthAccountsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

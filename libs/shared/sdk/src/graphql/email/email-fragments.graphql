@@ -1,0 +1,15 @@
+fragment EmailList on Email {
+  id
+  createdAt
+  updatedAt
+  email
+  public
+  primary
+  verified
+  verifyToken
+  verifyExpires
+}
+
+fragment EmailDetails on Email {
+  ...EmailList
+}

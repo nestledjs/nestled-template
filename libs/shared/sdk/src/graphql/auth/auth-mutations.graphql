@@ -1,0 +1,83 @@
+mutation Login($input: LoginInput!) {
+  login(input: $input) {
+    ...UserTokenDetails
+  }
+}
+
+mutation Register($input: RegisterInput!) {
+  register(input: $input) {
+    ...UserTokenDetails
+  }
+}
+
+mutation RegisterWithInvitation($input: RegisterWithInvitationInput!) {
+  registerWithInvitation(input: $input) {
+    ...UserTokenDetails
+  }
+}
+
+mutation Logout {
+  logout
+}
+
+mutation ForgotPassword($input: ForgotPasswordInput!) {
+  forgotPassword(input: $input)
+}
+
+mutation ResetPassword($input: ResetPasswordInput!) {
+  resetPassword(input: $input) {
+    ...AuthUserDetails
+  }
+}
+
+mutation VerifyEmail($input: VerifyEmailInput!) {
+  verifyEmail(input: $input) {
+    ...AuthUserDetails
+  }
+}
+
+mutation ResendVerificationEmail($email: String!) {
+  resendVerificationEmail(email: $email)
+}
+
+mutation EmulateUser($input: EmulateUserInput!) {
+  emulateUser(input: $input) {
+    ...UserTokenDetails
+  }
+}
+
+mutation EndEmulation {
+  endEmulation {
+    ...UserTokenDetails
+  }
+}
+
+mutation ChangeEmail($input: ChangeEmailInput!) {
+  changeEmail(input: $input)
+}
+
+mutation VerifyEmailChange($token: String!) {
+  verifyEmailChange(token: $token) {
+    ...AuthUserDetails
+  }
+}
+
+mutation ChangePassword($input: ChangePasswordInput!) {
+  changePassword(input: $input)
+}
+
+mutation LinkOAuthAccount($input: LinkOAuthInput!) {
+  linkOAuthAccount(input: $input)
+}
+
+mutation UnlinkOAuthAccount($input: UnlinkOAuthInput!) {
+  unlinkOAuthAccount(input: $input)
+}
+
+mutation InvalidateSession($sessionId: String!) {
+  invalidateSession(sessionId: $sessionId)
+}
+
+mutation InvalidateAllSessions {
+  invalidateAllSessions
+}

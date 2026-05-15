@@ -1,0 +1,10 @@
+fragment PermissionList on Permission {
+  id
+  action
+  subject
+  description
+}
+
+fragment PermissionDetails on Permission {
+  ...PermissionList
+}

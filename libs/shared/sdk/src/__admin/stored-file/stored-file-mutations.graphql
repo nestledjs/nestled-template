@@ -1,0 +1,17 @@
+mutation __AdminCreateStoredFile($input: CreateStoredFileInput!) {
+  createStoredFile(input: $input) {
+    ...__AdminStoredFileDetails
+  }
+}
+
+mutation __AdminDeleteStoredFile($storedFileId: String!) {
+  deleteStoredFile(storedFileId: $storedFileId) {
+    id
+  }
+}
+
+mutation __AdminUpdateStoredFile($storedFileId: String!, $input: UpdateStoredFileInput!) {
+  updateStoredFile(storedFileId: $storedFileId, input: $input) {
+    ...__AdminStoredFileDetails
+  }
+}

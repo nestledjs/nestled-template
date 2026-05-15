@@ -1,0 +1,17 @@
+mutation createLink($input: CreateLinkInput!) {
+  createLink(input: $input) {
+    ...LinkDetails
+  }
+}
+
+mutation deleteLink($linkId: String!) {
+  deleteLink(linkId: $linkId) {
+    id
+  }
+}
+
+mutation updateLink($linkId: String!, $input: UpdateLinkInput!) {
+  updateLink(linkId: $linkId, input: $input) {
+    ...LinkDetails
+  }
+}

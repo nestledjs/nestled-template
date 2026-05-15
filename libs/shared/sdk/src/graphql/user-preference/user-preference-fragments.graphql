@@ -1,0 +1,11 @@
+fragment UserPreferenceList on UserPreference {
+  id
+  createdAt
+  updatedAt
+  key
+  value
+}
+
+fragment UserPreferenceDetails on UserPreference {
+  ...UserPreferenceList
+}

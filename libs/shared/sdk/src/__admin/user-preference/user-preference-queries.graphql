@@ -1,0 +1,20 @@
+query __AdminUserPreference($userPreferenceId: String!) {
+  userPreference(userPreferenceId: $userPreferenceId) {
+    ...__AdminUserPreferenceDetails
+  }
+}
+
+query __AdminUserPreferences($input: ListUserPreferenceInput) {
+  userPreferences(input: $input) {
+    ...__AdminUserPreferenceSummary
+  }
+  counters: userPreferencesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminUserPreferencePagination($input: ListUserPreferenceInput) {
+  counters: userPreferencesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

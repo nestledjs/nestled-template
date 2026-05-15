@@ -1,0 +1,15 @@
+query ExportUserData {
+  exportUserData {
+    userData
+    exportedAt
+    userId
+  }
+}
+
+mutation DeleteUserAccount {
+  deleteUserAccount
+}
+
+mutation TransferOrganizationOwnership($input: TransferOwnershipInput!) {
+  transferOrganizationOwnership(input: $input)
+}

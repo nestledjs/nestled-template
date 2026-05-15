@@ -1,0 +1,17 @@
+mutation __AdminCreateEmail($input: CreateEmailInput!) {
+  createEmail(input: $input) {
+    ...__AdminEmailDetails
+  }
+}
+
+mutation __AdminDeleteEmail($emailId: String!) {
+  deleteEmail(emailId: $emailId) {
+    id
+  }
+}
+
+mutation __AdminUpdateEmail($emailId: String!, $input: UpdateEmailInput!) {
+  updateEmail(emailId: $emailId, input: $input) {
+    ...__AdminEmailDetails
+  }
+}

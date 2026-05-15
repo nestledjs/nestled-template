@@ -1,0 +1,17 @@
+mutation GenerateApiToken($input: GenerateApiTokenInput!) {
+  generateApiToken(input: $input) {
+    ...GeneratedApiToken
+  }
+}
+
+mutation RotateApiToken($input: RotateApiTokenInput!) {
+  rotateApiToken(input: $input) {
+    ...GeneratedApiToken
+  }
+}
+
+mutation RevokeApiToken($tokenId: String!) {
+  revokeApiToken(tokenId: $tokenId) {
+    ...ApiTokenDetails
+  }
+}

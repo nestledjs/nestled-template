@@ -1,0 +1,20 @@
+query __AdminPermission($permissionId: String!) {
+  permission(permissionId: $permissionId) {
+    ...__AdminPermissionDetails
+  }
+}
+
+query __AdminPermissions($input: ListPermissionInput) {
+  permissions(input: $input) {
+    ...__AdminPermissionSummary
+  }
+  counters: permissionsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminPermissionPagination($input: ListPermissionInput) {
+  counters: permissionsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

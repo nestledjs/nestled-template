@@ -1,0 +1,20 @@
+query LoginAttempt($loginAttemptId: String!) {
+  loginAttempt(loginAttemptId: $loginAttemptId) {
+    ...LoginAttemptDetails
+  }
+}
+
+query LoginAttempts($input: ListLoginAttemptInput) {
+  loginAttempts(input: $input) {
+    ...LoginAttemptList
+  }
+  counters: loginAttemptsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query LoginAttemptPagination($input: ListLoginAttemptInput) {
+  counters: loginAttemptsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

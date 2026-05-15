@@ -1,0 +1,18 @@
+fragment PlanList on Plan {
+  id
+  createdAt
+  name
+  description
+  price
+  interval
+  features
+  limits
+  active
+  trialPeriodDays
+  stripeProductId
+  stripePriceId
+}
+
+fragment PlanDetails on Plan {
+  ...PlanList
+}

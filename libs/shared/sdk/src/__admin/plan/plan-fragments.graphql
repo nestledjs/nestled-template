@@ -1,0 +1,19 @@
+fragment __AdminPlanSummary on Plan {
+  id
+  createdAt
+  updatedAt
+  name
+  description
+  price
+  interval
+  features
+  limits
+  active
+  stripeProductId
+  stripePriceId
+  trialPeriodDays
+}
+
+fragment __AdminPlanDetails on Plan {
+  ...__AdminPlanSummary
+}

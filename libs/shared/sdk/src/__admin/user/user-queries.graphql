@@ -1,0 +1,20 @@
+query __AdminUser($userId: String!) {
+  user(userId: $userId) {
+    ...__AdminUserDetails
+  }
+}
+
+query __AdminUsers($input: ListUserInput) {
+  users(input: $input) {
+    ...__AdminUserSummary
+  }
+  counters: usersCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminUserPagination($input: ListUserInput) {
+  counters: usersCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

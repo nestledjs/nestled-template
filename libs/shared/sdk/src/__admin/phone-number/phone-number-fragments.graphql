@@ -1,0 +1,20 @@
+fragment __AdminPhoneNumberSummary on PhoneNumber {
+  id
+  createdAt
+  updatedAt
+  phone
+  phoneType
+  userId
+  primary
+  organizationId
+  user {
+    id
+  }
+  organization {
+    id
+  }
+}
+
+fragment __AdminPhoneNumberDetails on PhoneNumber {
+  ...__AdminPhoneNumberSummary
+}

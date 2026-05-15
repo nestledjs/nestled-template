@@ -1,0 +1,17 @@
+mutation createAuditLog($input: CreateAuditLogInput!) {
+  createAuditLog(input: $input) {
+    ...AuditLogDetails
+  }
+}
+
+mutation deleteAuditLog($auditLogId: String!) {
+  deleteAuditLog(auditLogId: $auditLogId) {
+    id
+  }
+}
+
+mutation updateAuditLog($auditLogId: String!, $input: UpdateAuditLogInput!) {
+  updateAuditLog(auditLogId: $auditLogId, input: $input) {
+    ...AuditLogDetails
+  }
+}

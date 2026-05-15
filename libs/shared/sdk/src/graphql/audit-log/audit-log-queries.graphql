@@ -1,0 +1,20 @@
+query AuditLog($auditLogId: String!) {
+  auditLog(auditLogId: $auditLogId) {
+    ...AuditLogDetails
+  }
+}
+
+query AuditLogs($input: ListAuditLogInput) {
+  auditLogs(input: $input) {
+    ...AuditLogList
+  }
+  counters: auditLogsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query AuditLogPagination($input: ListAuditLogInput) {
+  counters: auditLogsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

@@ -1,0 +1,35 @@
+fragment SubscriptionList on Subscription {
+  id
+  createdAt
+  updatedAt
+  organizationId
+  planId
+  plan {
+    id
+    name
+    price
+    interval
+    features
+    limits
+    active
+    trialPeriodDays
+  }
+  stripeCustomerId
+  stripeSubscriptionId
+  stripePriceId
+  stripeCurrentPeriodEnd
+  trialStart
+  trialEnd
+  cancelAt
+  canceledAt
+  cancelAtPeriodEnd
+  status
+}
+
+fragment SubscriptionDetails on Subscription {
+  ...SubscriptionList
+  organization {
+    id
+    name
+  }
+}

@@ -1,0 +1,24 @@
+packages:
+  - apps/**
+  - libs/**
+  - tools/*
+
+onlyBuiltDependencies:
+  - '@apollo/protobufjs'
+  - '@nestjs/core'
+  - '@parcel/watcher'
+  - "@prisma/adapter-pg"
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@prisma/extension-optimize'
+  - '@swc/core'
+  - '@tailwindcss/oxide'
+  - es5-ext
+  - esbuild
+  - express
+  - ioredis
+  - nx
+  - prisma
+  - prisma-graphql-type-decimal
+  - type-graphql
+  - unrs-resolver

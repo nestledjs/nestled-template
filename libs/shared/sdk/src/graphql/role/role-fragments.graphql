@@ -1,0 +1,9 @@
+fragment RoleList on Role {
+  id
+  name
+  description
+}
+
+fragment RoleDetails on Role {
+  ...RoleList
+}

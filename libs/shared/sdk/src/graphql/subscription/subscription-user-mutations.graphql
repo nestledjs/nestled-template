@@ -1,0 +1,13 @@
+mutation CreateCheckoutSession($priceId: String!) {
+  createCheckoutSession(priceId: $priceId)
+}
+
+mutation CreatePortalSession {
+  createPortalSession
+}
+
+mutation CancelSubscription {
+  cancelSubscription {
+    ...SubscriptionDetails
+  }
+}

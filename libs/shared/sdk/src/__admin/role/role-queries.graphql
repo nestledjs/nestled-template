@@ -1,0 +1,20 @@
+query __AdminRole($roleId: String!) {
+  role(roleId: $roleId) {
+    ...__AdminRoleDetails
+  }
+}
+
+query __AdminRoles($input: ListRoleInput) {
+  roles(input: $input) {
+    ...__AdminRoleSummary
+  }
+  counters: rolesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminRolePagination($input: ListRoleInput) {
+  counters: rolesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "files": [],
+  "include": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./libs/api/prisma"
+    },
+    {
+      "path": "./libs/api/config"
+    },
+    {
+      "path": "./libs/api/core/data-access"
+    },
+    {
+      "path": "./libs/api/core/feature"
+    },
+    {
+      "path": "./libs/api/core/models"
+    },
+    {
+      "path": "./libs/api/core/helpers"
+    },
+    {
+      "path": "./libs/api/custom"
+    },
+    {
+      "path": "./libs/api/smtp-mailer/data-access"
+    },
+    {
+      "path": "./libs/api/generated-crud/data-access"
+    },
+    {
+      "path": "./libs/api/generated-crud/feature"
+    },
+    {
+      "path": "./libs/api/utils"
+    }
+  ],
+  "compilerOptions": {
+    "esModuleInterop": true
+  }
+}

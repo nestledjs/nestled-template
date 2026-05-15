@@ -1,0 +1,23 @@
+{
+  "name": "api-prisma",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/api/prisma/src",
+  "projectType": "library",
+  "tags": ["scope:api"],
+  "targets": {
+    "generate": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "prisma generate --schema=libs/api/prisma/src/lib/schemas/schema.prisma"
+      },
+      "outputs": ["{workspaceRoot}/libs/api/prisma/src/lib/prisma-generated"]
+    },
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/{projectRoot}"],
+      "options": {
+        "jestConfig": "libs/api/prisma/jest.config.ts"
+      }
+    }
+  }
+}

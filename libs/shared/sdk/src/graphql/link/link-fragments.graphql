@@ -1,0 +1,11 @@
+fragment LinkList on Link {
+  id
+  createdAt
+  updatedAt
+  name
+  url
+}
+
+fragment LinkDetails on Link {
+  ...LinkList
+}

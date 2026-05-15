@@ -1,0 +1,60 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "es2015",
+    "module": "esnext",
+    "lib": ["es2021", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@nestled-template/api/config": ["libs/api/config/src/index.ts"],
+      "@nestled-template/api/core/data-access": ["libs/api/core/data-access/src/index.ts"],
+      "@nestled-template/api/core/feature": ["libs/api/core/feature/src/index.ts"],
+      "@nestled-template/api/core/helpers": ["libs/api/core/helpers/src/index.ts"],
+      "@nestled-template/api/core/models": ["libs/api/core/models/src/index.ts"],
+      "@nestled-template/api/custom": ["libs/api/custom/src/index.ts"],
+      "@nestled-template/api/generated-crud/data-access": [
+        "libs/api/generated-crud/data-access/src/index.ts"
+      ],
+      "@nestled-template/api/generated-crud/feature": [
+        "libs/api/generated-crud/feature/src/index.ts"
+      ],
+      "@nestled-template/api/integrations": ["libs/api/integrations/src/index.ts"],
+      "@nestled-template/api/prisma": ["libs/api/prisma/src/index.ts"],
+      "@nestled-template/api/utils": ["libs/api/utils/src/index.ts"],
+      "@nestled-template/shared/apollo": ["libs/shared/apollo/src/index.ts"],
+      "@nestled-template/shared/sdk": ["libs/shared/sdk/src/index.ts"],
+      "@nestled-template/shared/styles": ["libs/shared/styles/src/index.ts"],
+      "@nestled-template/shared/utils": ["libs/shared/utils/src/index.ts"],
+      "@nestled-template/web": ["libs/web/src/index.ts"],
+      "@nestled-template/web-ui": ["libs/web-ui/src/index.ts"]
+    },
+    "esModuleInterop": true
+  },
+  "exclude": [
+    "node_modules",
+    "tmp",
+    "dist",
+    "build",
+    "coverage",
+    ".next",
+    ".turbo",
+    ".nx",
+    "cypress",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "libs/api/prisma/src/lib/prisma-generated",
+    "libs/shared/sdk/src/generated"
+  ],
+  "include": ["vite-env.d.ts"]
+}

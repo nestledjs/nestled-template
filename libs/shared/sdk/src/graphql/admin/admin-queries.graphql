@@ -1,0 +1,130 @@
+query AdminUserManagement($filters: AdminUserFiltersInput) {
+  adminUsers(filters: $filters) {
+    users {
+      id
+      firstName
+      lastName
+      isSuperAdmin
+      createdAt
+      lastSuccessfulLogin
+      twoFactorEnabled
+      lockedUntil
+      emails {
+        email
+        verified
+        primary
+      }
+      organizations {
+        organization {
+          id
+          name
+        }
+        role {
+          name
+        }
+      }
+    }
+    total
+    skip
+    take
+  }
+}
+
+query AdminUserManagementDetails($userId: String!) {
+  adminUserDetails(userId: $userId) {
+    id
+    firstName
+    lastName
+    isSuperAdmin
+    createdAt
+    updatedAt
+    lastSuccessfulLogin
+    twoFactorEnabled
+    lockedUntil
+    failedLoginCount
+    emails {
+      id
+      email
+      verified
+      primary
+    }
+    organizations {
+      id
+      organization {
+        id
+        name
+        createdAt
+      }
+      role {
+        id
+        name
+        permissions {
+          action
+          subject
+        }
+      }
+    }
+    TeamMember {
+      id
+      team {
+        id
+        name
+      }
+      role {
+        name
+      }
+    }
+    activeSessions {
+      id
+      ipAddress
+      deviceInfo
+      lastActiveAt
+      isValid
+    }
+    AuditLog {
+      id
+      action
+      entityType
+      entityId
+      changes
+      createdAt
+    }
+  }
+}
+
+query AdminAnalytics {
+  adminAnalytics {
+    dailyActiveUsers
+    dauChange
+    monthlyActiveUsers
+    mauChange
+    newUsersToday
+    avgSessionDuration
+    avgApiResponseTime
+    totalGraphQLOperations
+    errorRate
+    systemUptime
+    topEndpoints {
+      name
+      requests
+      avgResponseTime
+      errorRate
+    }
+    featureUsage {
+      featureName
+      uniqueUsers
+      totalUses
+      adoptionRate
+    }
+  }
+}
+
+query AdminDashboardStats {
+  adminDashboardStats {
+    totalUsers
+    totalOrganizations
+    activeSessions
+    recentSecurityEvents
+    activeSubscriptions
+  }
+}

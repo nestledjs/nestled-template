@@ -1,0 +1,17 @@
+mutation createPermission($input: CreatePermissionInput!) {
+  createPermission(input: $input) {
+    ...PermissionDetails
+  }
+}
+
+mutation deletePermission($permissionId: String!) {
+  deletePermission(permissionId: $permissionId) {
+    id
+  }
+}
+
+mutation updatePermission($permissionId: String!, $input: UpdatePermissionInput!) {
+  updatePermission(permissionId: $permissionId, input: $input) {
+    ...PermissionDetails
+  }
+}

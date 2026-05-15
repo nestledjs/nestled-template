@@ -1,0 +1,17 @@
+mutation createOAuthAccount($input: CreateOAuthAccountInput!) {
+  createOAuthAccount(input: $input) {
+    ...OAuthAccountDetails
+  }
+}
+
+mutation deleteOAuthAccount($oAuthAccountId: String!) {
+  deleteOAuthAccount(oAuthAccountId: $oAuthAccountId) {
+    id
+  }
+}
+
+mutation updateOAuthAccount($oAuthAccountId: String!, $input: UpdateOAuthAccountInput!) {
+  updateOAuthAccount(oAuthAccountId: $oAuthAccountId, input: $input) {
+    ...OAuthAccountDetails
+  }
+}

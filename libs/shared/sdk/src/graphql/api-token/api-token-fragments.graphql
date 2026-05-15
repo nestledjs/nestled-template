@@ -1,0 +1,20 @@
+fragment ApiTokenList on ApiToken {
+  id
+  createdAt
+  updatedAt
+  name
+  expiresAt
+  lastUsedAt
+  revoked
+}
+
+fragment ApiTokenDetails on ApiToken {
+  ...ApiTokenList
+}
+
+fragment GeneratedApiToken on GenerateApiTokenOutput {
+  token
+  apiToken {
+    ...ApiTokenDetails
+  }
+}

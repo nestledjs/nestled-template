@@ -1,0 +1,21 @@
+fragment __AdminTeamMemberSummary on TeamMember {
+  id
+  createdAt
+  updatedAt
+  teamId
+  userId
+  roleId
+  team {
+    id
+  }
+  user {
+    id
+  }
+  role {
+    id
+  }
+}
+
+fragment __AdminTeamMemberDetails on TeamMember {
+  ...__AdminTeamMemberSummary
+}

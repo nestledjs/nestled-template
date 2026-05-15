@@ -1,0 +1,19 @@
+query Me {
+  me {
+    ...AuthUserDetails
+  }
+}
+
+query AvailableOAuthProviders {
+  availableOAuthProviders {
+    provider
+    enabled
+    name
+  }
+}
+
+query GetUserSessions {
+  getUserSessions {
+    ...ActiveSessionInfo
+  }
+}

@@ -1,0 +1,20 @@
+query User($userId: String!) {
+  user(userId: $userId) {
+    ...UserDetails
+  }
+}
+
+query Users($input: ListUserInput) {
+  users(input: $input) {
+    ...UserList
+  }
+  counters: usersCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query UserPagination($input: ListUserInput) {
+  counters: usersCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

@@ -1,0 +1,12 @@
+fragment AuditLogList on AuditLog {
+  id
+  createdAt
+  updatedAt
+  entityType
+  action
+  changes
+}
+
+fragment AuditLogDetails on AuditLog {
+  ...AuditLogList
+}

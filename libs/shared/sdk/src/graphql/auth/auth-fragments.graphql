@@ -1,0 +1,52 @@
+fragment UserTokenDetails on UserToken {
+  token
+  user {
+    ...AuthUserDetails
+  }
+  requires2FA
+  tempToken
+}
+
+fragment AuthUserDetails on User {
+  id
+  firstName
+  lastName
+  displayName
+  bio
+  isSuperAdmin
+  emailValidated
+  twoFactorEnabled
+  createdAt
+  updatedAt
+  isEmulating
+  originalAdminId
+  emails {
+    id
+    email
+    primary
+    verified
+  }
+  phoneNumbers {
+    id
+    phone
+    primary
+  }
+  avatar {
+    id
+    url
+    publicUrl
+    filename
+    mimeType
+    createdAt
+  }
+  images {
+    id
+    url
+    publicUrl
+    filename
+    mimeType
+    metadata
+    folder
+    createdAt
+  }
+}

@@ -1,0 +1,20 @@
+query __AdminSecurityEvent($securityEventId: String!) {
+  securityEvent(securityEventId: $securityEventId) {
+    ...__AdminSecurityEventDetails
+  }
+}
+
+query __AdminSecurityEvents($input: ListSecurityEventInput) {
+  securityEvents(input: $input) {
+    ...__AdminSecurityEventSummary
+  }
+  counters: securityEventsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminSecurityEventPagination($input: ListSecurityEventInput) {
+  counters: securityEventsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

@@ -1,0 +1,5 @@
+export * from './local-storage.service'
+export * from './s3-storage.service'
+export * from './cloudinary-storage.service'
+export * from './imagekit-storage.service'
+export * from './gcs-storage.service'

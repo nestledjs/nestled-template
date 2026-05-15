@@ -1,0 +1,61 @@
+query AdminPlatformSecurityEvents($filters: AdminSecurityEventFiltersInput) {
+  adminSecurityEvents(filters: $filters) {
+    events {
+      id
+      eventType
+      ipAddress
+      userAgent
+      metadata
+      createdAt
+      user {
+        id
+        firstName
+        lastName
+        emails {
+          email
+        }
+      }
+    }
+    total
+    skip
+    take
+  }
+}
+
+query AdminPlatformAuditLogs($filters: AdminAuditLogFiltersInput) {
+  adminAuditLogs(filters: $filters) {
+    logs {
+      id
+      action
+      entityType
+      entityId
+      changes
+      createdAt
+      user {
+        id
+        firstName
+        lastName
+        emails {
+          email
+        }
+      }
+      organization {
+        id
+        name
+      }
+    }
+    total
+    skip
+    take
+  }
+}
+
+query AdminDashboardStats {
+  adminDashboardStats {
+    totalUsers
+    totalOrganizations
+    activeSessions
+    recentSecurityEvents
+    activeSubscriptions
+  }
+}

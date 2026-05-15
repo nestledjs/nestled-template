@@ -1,0 +1,20 @@
+query __AdminOrganization($organizationId: String!) {
+  organization(organizationId: $organizationId) {
+    ...__AdminOrganizationDetails
+  }
+}
+
+query __AdminOrganizations($input: ListOrganizationInput) {
+  organizations(input: $input) {
+    ...__AdminOrganizationSummary
+  }
+  counters: organizationsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminOrganizationPagination($input: ListOrganizationInput) {
+  counters: organizationsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

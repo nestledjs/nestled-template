@@ -1,0 +1,16 @@
+{
+  "name": "api-core-models",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/api/core/models/src",
+  "projectType": "library",
+  "tags": ["scope:api", "type:models"],
+  "targets": {
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/{projectRoot}"],
+      "options": {
+        "jestConfig": "libs/api/core/models/jest.config.ts"
+      }
+    }
+  }
+}

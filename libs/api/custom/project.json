@@ -1,0 +1,16 @@
+{
+  "name": "api-custom",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/api/custom/src",
+  "projectType": "library",
+  "tags": ["scope:api"],
+  "targets": {
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/{projectRoot}"],
+      "options": {
+        "jestConfig": "libs/api/custom/jest.config.ts"
+      }
+    }
+  }
+}

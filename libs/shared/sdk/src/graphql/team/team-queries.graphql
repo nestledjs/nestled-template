@@ -1,0 +1,20 @@
+query Team($teamId: String!) {
+  team(teamId: $teamId) {
+    ...TeamDetails
+  }
+}
+
+query Teams($input: ListTeamInput) {
+  teams(input: $input) {
+    ...TeamList
+  }
+  counters: teamsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query TeamPagination($input: ListTeamInput) {
+  counters: teamsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

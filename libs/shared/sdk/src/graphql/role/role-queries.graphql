@@ -1,0 +1,20 @@
+query Role($roleId: String!) {
+  role(roleId: $roleId) {
+    ...RoleDetails
+  }
+}
+
+query Roles($input: ListRoleInput) {
+  roles(input: $input) {
+    ...RoleList
+  }
+  counters: rolesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query RolePagination($input: ListRoleInput) {
+  counters: rolesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

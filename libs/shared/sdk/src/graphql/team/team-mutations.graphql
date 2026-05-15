@@ -1,0 +1,17 @@
+mutation createTeam($input: CreateTeamInput!) {
+  createTeam(input: $input) {
+    ...TeamDetails
+  }
+}
+
+mutation deleteTeam($teamId: String!) {
+  deleteTeam(teamId: $teamId) {
+    id
+  }
+}
+
+mutation updateTeam($teamId: String!, $input: UpdateTeamInput!) {
+  updateTeam(teamId: $teamId, input: $input) {
+    ...TeamDetails
+  }
+}

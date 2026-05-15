@@ -1,0 +1,13 @@
+fragment __AdminRoleSummary on Role {
+  id
+  name
+  description
+  organizationId
+  organization {
+    id
+  }
+}
+
+fragment __AdminRoleDetails on Role {
+  ...__AdminRoleSummary
+}

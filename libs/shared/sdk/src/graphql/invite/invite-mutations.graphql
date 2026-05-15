@@ -1,0 +1,17 @@
+mutation createInvite($input: CreateInviteInput!) {
+  createInvite(input: $input) {
+    ...InviteDetails
+  }
+}
+
+mutation deleteInvite($inviteId: String!) {
+  deleteInvite(inviteId: $inviteId) {
+    id
+  }
+}
+
+mutation updateInvite($inviteId: String!, $input: UpdateInviteInput!) {
+  updateInvite(inviteId: $inviteId, input: $input) {
+    ...InviteDetails
+  }
+}

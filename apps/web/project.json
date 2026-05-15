@@ -1,0 +1,111 @@
+{
+  "name": "web",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/web/src",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "lint": {
+      "executor": "@nx/eslint:lint"
+    },
+    "typegen": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "react-router typegen",
+        "cwd": "apps/web"
+      }
+    },
+    "clean": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "rm -rf .react-router/types",
+        "cwd": "apps/web"
+      }
+    },
+    "react-router:build": {
+      "executor": "nx:run-commands",
+      "outputs": [
+        "{workspaceRoot}/dist/apps/web"
+      ],
+      "options": {
+        "command": "cd apps/web && npx react-router build",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "build": {
+      "executor": "@nx/vite:build",
+      "dependsOn": [
+        "typegen"
+      ],
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "defaultConfiguration": "production",
+      "options": {
+        "outputPath": "dist/apps/web"
+      },
+      "configurations": {
+        "development": {
+          "mode": "development"
+        },
+        "production": {
+          "mode": "production"
+        }
+      }
+    },
+    "serve": {
+      "executor": "@nx/vite:dev-server",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "web:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "web:build:development",
+          "hmr": true
+        },
+        "production": {
+          "buildTarget": "web:build:production",
+          "hmr": false
+        }
+      }
+    },
+    "preview": {
+      "dependsOn": [
+        "build"
+      ],
+      "executor": "@nx/vite:preview-server",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "web:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "web:build:development"
+        },
+        "production": {
+          "buildTarget": "web:build:production"
+        }
+      }
+    },
+    "test": {
+      "executor": "@nx/vitest:test",
+      "outputs": [
+        "{options.reportsDirectory}"
+      ],
+      "options": {
+        "reportsDirectory": "{projectRoot}/../../coverage/apps/web"
+      }
+    },
+    "serve-static": {
+      "executor": "@nx/web:file-server",
+      "dependsOn": [
+        "build"
+      ],
+      "options": {
+        "buildTarget": "web:build",
+        "spa": true
+      }
+    }
+  }
+}

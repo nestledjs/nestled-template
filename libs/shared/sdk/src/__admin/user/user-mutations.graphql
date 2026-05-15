@@ -1,0 +1,17 @@
+mutation __AdminCreateUser($input: CreateUserInput!) {
+  createUser(input: $input) {
+    ...__AdminUserDetails
+  }
+}
+
+mutation __AdminDeleteUser($userId: String!) {
+  deleteUser(userId: $userId) {
+    id
+  }
+}
+
+mutation __AdminUpdateUser($userId: String!, $input: UpdateUserInput!) {
+  updateUser(userId: $userId, input: $input) {
+    ...__AdminUserDetails
+  }
+}
