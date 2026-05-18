@@ -6,7 +6,7 @@ This repository produces two kinds of downstream changes:
 - Published library changes that downstream projects should consume by updating npm
   package versions.
 
-The upgrader must read each file in `.nestled-template/upgrade-notes/*.yaml`.
+The upgrader must read each file in `.nestled-updates/upgrade-notes/*.yaml`.
 
 If a note has `priority: ignore`, the upgrader must treat it as a historical or decision record,
 not as an actionable downstream update. It may display the note for context, but it must not apply a
