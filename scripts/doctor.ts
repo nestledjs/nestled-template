@@ -531,7 +531,7 @@ const getGuardNames = (source: string): string[] => {
       guards.add(guard[0])
     }
   }
-  return [...guards].sort()
+  return [...guards].sort((left, right) => left.localeCompare(right))
 }
 
 const getClassGuardNames = (source: string): string[] => {
@@ -946,8 +946,8 @@ const checkUnsafeTypeScriptCasts = () => {
 
 const isSensitiveUpgradePath = (path: string): boolean =>
   /^libs\/api\/(core|custom|utils|integrations)\//.test(path) ||
-  /^apps\/api\//.test(path) ||
-  /^apps\/web\/app\/routes\//.test(path) ||
+  path.startsWith('apps/api/') ||
+  path.startsWith('apps/web/app/routes/') ||
   path === 'apps/web/app/routes.tsx' ||
   path === schemaPath ||
   path.includes('/guards/') ||
@@ -1096,9 +1096,13 @@ const printFindings = (label: string, items: Finding[]) => {
 
   console.log(`\n${label}`)
   for (const item of items) {
-    const location = item.file
-      ? `${relative(process.cwd(), item.file)}${item.line ? `:${item.line}` : ''}`
-      : ''
+    let location = ''
+    if (item.file) {
+      location = relative(process.cwd(), item.file)
+      if (item.line) {
+        location = `${location}:${item.line}`
+      }
+    }
     const suffix = location ? ` (${location})` : ''
     console.log(`- [${item.check}] ${item.message}${suffix}`)
   }
