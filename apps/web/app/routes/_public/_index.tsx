@@ -41,18 +41,12 @@ export default function PublicIndex() {
               When you’re ready, wire this to your auth flow and send folks on their merry way.
             </li>
           </ul>
-          <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <div className="mt-6 flex justify-center">
             <Link
               to="/login"
               className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
             >
               Go to Login
-            </Link>
-            <Link
-              to="/public/about"
-              className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-5 py-2.5 font-semibold text-zinc-900 transition hover:bg-zinc-50 dark:border-white/15 dark:bg-white/5 dark:text-white dark:hover:bg-white/10"
-            >
-              About this Template
             </Link>
           </div>
         </div>
