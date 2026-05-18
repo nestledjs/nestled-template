@@ -8,3 +8,8 @@ upgrades:
     reviewedAt: "2026-05-18T01:02:27.361Z"
     branch: nestled-upgrade/2026-05-17-public-landing-cleanup
     notes: Patch applied cleanly.
+  2026-05-17-ci-toolchain-lock:
+    status: adapted
+    reviewedAt: "2026-05-18T01:14:34.750Z"
+    branch: nestled-upgrade/2026-05-17-ci-toolchain-lock
+    notes: Patch applied cleanly. Verification skipped — CI-only check not runnable locally; real validation is CI passing after PR merge.
