@@ -68,25 +68,13 @@ describe('Landing Page (_public/_index)', () => {
       expect(loginButton).toHaveAttribute('href', '/login')
     })
 
-    it('should render "About this Template" button', () => {
-      renderLandingPage()
-
-      const aboutButton = screen.getByRole('link', { name: /About this Template/i })
-      expect(aboutButton).toBeInTheDocument()
-      expect(aboutButton).toHaveAttribute('href', '/public/about')
-    })
-
     it('should apply correct styling classes to CTA buttons', () => {
       renderLandingPage()
 
       const loginButton = screen.getByRole('link', { name: /Go to Login/i })
-      const aboutButton = screen.getByRole('link', { name: /About this Template/i })
 
       // Login button should have primary styling (emerald)
       expect(loginButton.className).toContain('bg-emerald-500')
-
-      // About button should have secondary styling (border)
-      expect(aboutButton.className).toContain('border')
     })
   })
 
@@ -132,7 +120,7 @@ describe('Landing Page (_public/_index)', () => {
       renderLandingPage()
 
       const links = screen.getAllByRole('link')
-      expect(links.length).toBeGreaterThanOrEqual(2)
+      expect(links.length).toBeGreaterThanOrEqual(1)
 
       links.forEach(link => {
         expect(link).toHaveAccessibleName()
@@ -156,10 +144,10 @@ describe('Landing Page (_public/_index)', () => {
       expect(mainContainer).toBeInTheDocument()
     })
 
-    it('should stack CTA buttons on mobile', () => {
+    it('should center the CTA button', () => {
       const { container } = renderLandingPage()
 
-      const buttonContainer = container.querySelector(String.raw`.flex-col.sm\:flex-row`)
+      const buttonContainer = container.querySelector('.flex.justify-center')
       expect(buttonContainer).toBeInTheDocument()
     })
   })

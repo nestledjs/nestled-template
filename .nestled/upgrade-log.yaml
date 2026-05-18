@@ -1,5 +1,10 @@
 template:
   repo: nestled-template
   originCommit: e784a19
-  lastReviewedCommit: e784a19
+  lastReviewedCommit: 804b49e
 upgrades:
+  2026-05-17-public-landing-cleanup:
+    status: applied
+    reviewedAt: "2026-05-18T01:02:27.361Z"
+    branch: nestled-upgrade/2026-05-17-public-landing-cleanup
+    notes: Patch applied cleanly.
