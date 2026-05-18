@@ -1,7 +1,7 @@
 # Trust Boundary Map
 
 This map explains how to classify authorization expectations. The committed guard baseline in
-`.nestled-template/security/guard-baseline.json` is the machine-readable snapshot for hand-written
+`.nestled-updates/security/guard-baseline.json` is the machine-readable snapshot for hand-written
 GraphQL resolvers.
 
 ## Resolver Classes
@@ -32,6 +32,6 @@ GraphQL resolvers.
 
 ## Updating The Baseline
 
-Update `.nestled-template/security/guard-baseline.json` only when the intended guard contract
+Update `.nestled-updates/security/guard-baseline.json` only when the intended guard contract
 changes. Stricter guards can usually be accepted with normal review. Less restrictive guards require
 an explicit security rationale in the PR and, for template-impacting changes, an upgrade note.

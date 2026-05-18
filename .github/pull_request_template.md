@@ -16,7 +16,7 @@
 ## Downstream Upgrade
 
 - Propagate downstream: yes/no
-- Upgrade note: `.nestled-template/upgrade-notes/<upgrade-id>.yaml` or `n/a`
+- Upgrade note: `.nestled-updates/upgrade-notes/<upgrade-id>.yaml` or `n/a`
 - Area:
 - Priority:
 - Verification:

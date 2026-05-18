@@ -24,7 +24,7 @@ or framework commands such as `pnpm doctor` or `expo doctor`.
 - Sensitive auth, billing, admin, API, or route changes include a new upgrade note or an explicit
   `priority: ignore` note when Doctor is running in the source template repository.
 - Custom resolver guard levels do not regress below the committed guard baseline in
-  `.nestled-template/security/guard-baseline.json`.
+  `.nestled-updates/security/guard-baseline.json`.
 - Non-generated TypeScript source avoids `as any`, double-casting through `unknown`, and
   `@ts-ignore`. Existing findings are warning-only; findings on changed lines fail.
 - Emulation or impersonation code requires `GqlAuthAdminGuard` and an explicit privilege ceiling.
@@ -44,7 +44,7 @@ The guard baseline captures the effective guard list for each hand-written Graph
 operation under `libs/api/custom/src/lib`. Doctor blocks changes that downgrade an existing
 operation's guard level, such as changing `GqlAuthAdminGuard` to `GqlAuthGuard`.
 
-When a guard change is intentionally stricter, update `.nestled-template/security/guard-baseline.json`
+When a guard change is intentionally stricter, update `.nestled-updates/security/guard-baseline.json`
 in the same PR. When a guard change is intentionally less restrictive, treat it as a security review
 item and document the reason in the PR.
 
@@ -66,7 +66,7 @@ Upgrade notes are a source-template responsibility. Doctor only enforces the upg
 it can identify the repository as `github.com/nestledjs/nestled-dev-template` or
 `github.com/nestledjs/nestled-template`, or when `NESTLED_TEMPLATE_SOURCE=true` is set.
 
-Downstream projects can still keep `.nestled-template/upgrade-notes` so the updater can read
+Downstream projects can still keep `.nestled-updates/upgrade-notes` so the updater can read
 inbound notes, but they should not be required to create new notes for local application changes.
 Set `NESTLED_TEMPLATE_SOURCE=false` in unusual clone setups where the remote still points at the
 source repository during local downstream work.

@@ -11,7 +11,7 @@ miss. Semantic security checks should graduate through three stages:
 
 - Route registration completeness for React Router route files.
 - Generated CRUD resolver name collision detection.
-- Guard regression detection against `.nestled-template/security/guard-baseline.json`.
+- Guard regression detection against `.nestled-updates/security/guard-baseline.json`.
 - Emulation resolver guard enforcement and service privilege-ceiling enforcement.
 - TypeScript unsafe cast audit as warning-only existing debt, with changed-line failures.
 - Resolver input scope anchoring as warning-only existing debt, with changed-line failures.

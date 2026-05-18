@@ -25,7 +25,7 @@ type PackageRelease = {
   versionRange?: unknown
 }
 
-const notesDir = '.nestled-template/upgrade-notes'
+const notesDir = '.nestled-updates/upgrade-notes'
 const idPattern = /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/
 const priorities = new Set(['critical', 'high', 'normal', 'low', 'ignore'])
 const areas = new Set(['auth', 'billing', 'admin', 'ui', 'api', 'web', 'database', 'infra', 'docs'])

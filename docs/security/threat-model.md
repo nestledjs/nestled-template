@@ -58,6 +58,6 @@ system, organization tenancy, billing integration, file upload/delivery, and adm
 - `pnpm run nestled-doctor` checks repository invariants and warning-class review signals.
 - Auth invariants are tracked in [Auth Invariants](./auth-invariants.md).
 - Resolver guard expectations are tracked in
-  `.nestled-template/security/guard-baseline.json` and summarized in
+  `.nestled-updates/security/guard-baseline.json` and summarized in
   [Trust Boundary Map](./trust-boundary-map.md).
-- Downstream propagation decisions are tracked with `.nestled-template/upgrade-notes/*.yaml`.
+- Downstream propagation decisions are tracked with `.nestled-updates/upgrade-notes/*.yaml`.

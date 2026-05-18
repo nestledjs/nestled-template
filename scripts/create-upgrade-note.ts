@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const notesDir = '.nestled-template/upgrade-notes'
+const notesDir = '.nestled-updates/upgrade-notes'
 const idPattern = /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 const getArgValue = (name: string): string | undefined => {

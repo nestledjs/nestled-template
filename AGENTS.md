@@ -135,7 +135,7 @@ Every meaningful template or published library change must explicitly decide whe
 Upgrade-note creation is a source-template responsibility for this repository and the public
 template repository (`github.com/nestledjs/nestled-dev-template` and
 `github.com/nestledjs/nestled-template`). Downstream projects may keep the
-`.nestled-template/upgrade-notes` directory so the updater can read inbound notes, but local
+`.nestled-updates/upgrade-notes` directory so the updater can read inbound notes, but local
 downstream application changes should not be forced to create new template upgrade notes. Doctor
 enforces this gate only when it identifies one of those source repositories, or when
 `NESTLED_TEMPLATE_SOURCE=true` is set.
@@ -148,7 +148,7 @@ Create one upgrade note:
 pnpm template:create-upgrade-note --id YYYY-MM-DD-short-description
 ```
 
-Then edit `.nestled-template/upgrade-notes/<upgrade-id>.yaml`.
+Then edit `.nestled-updates/upgrade-notes/<upgrade-id>.yaml`.
 
 The note should describe the downstream behavior or invariant, not just the files to copy. Downstream projects may have diverged, so agents need the concept, expected behavior, propagation method, affected path or package hints, skip conditions, and verification path.
 
@@ -201,7 +201,7 @@ For PR descriptions, include the `Downstream Upgrade` block and mention the upgr
 ## Downstream Upgrade
 
 - Propagate downstream: yes
-- Upgrade note: `.nestled-template/upgrade-notes/<upgrade-id>.yaml`
+- Upgrade note: `.nestled-updates/upgrade-notes/<upgrade-id>.yaml`
 - Area: auth
 - Priority: high
 - Verification: `pnpm lint`, `pnpm test`
