@@ -33,6 +33,7 @@ import {
   validatePassword,
 } from './auth.helper'
 import { ConfigService } from '@nestjs/config'
+import { randomInt } from 'node:crypto'
 import { defaultPermissions, defaultRoles } from '@nestled-template/api/prisma'
 import { SecurityEventsService } from '../security'
 import { SessionService, SessionInfo } from './session.service'
@@ -69,7 +70,7 @@ export class AuthService {
    * Random delay between 100-200ms makes timing attacks harder
    */
   private async addBruteForceDelay(): Promise<void> {
-    const delay = 100 + Math.random() * 100 // 100-200ms random delay
+    const delay = randomInt(100, 201)
     await new Promise(resolve => setTimeout(resolve, delay))
   }
 
