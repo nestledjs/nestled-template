@@ -289,7 +289,8 @@
   "pnpm": {
     "overrides": {
       "stylus": "github:stylus/stylus#0.64.0",
-      "sha.js": "^2.4.12"
+      "sha.js": "^2.4.12",
+      "baseline-browser-mapping": "2.10.30"
     },
     "onlyBuiltDependencies": [
       "@apollo/protobufjs",
