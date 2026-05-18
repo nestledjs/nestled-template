@@ -6,21 +6,19 @@ export default {
   extensionsToTreatAsEsm: ['.ts'],
   globals: {
     'ts-jest': {
-      useESM: true
-    }
+      useESM: true,
+    },
   },
   transform: {
     '^.+\\.[tj]s$': [
       'ts-jest',
       {
         tsconfig: '<rootDir>/tsconfig.spec.json',
-        useESM: true
+        useESM: true,
       },
     ],
   },
-  transformIgnorePatterns: [
-    'node_modules/(?!(@faker-js/faker)/)'
-  ],
+  transformIgnorePatterns: ['node_modules/(?!(@faker-js/faker)/)'],
   moduleFileExtensions: ['ts', 'js', 'html'],
   coverageDirectory: '../../coverage/api-e2e-simple',
   testMatch: ['<rootDir>/src/basic-validation.spec.ts'],

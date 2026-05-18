@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config'
 import ImageKit from 'imagekit'
 import { IStorageService, UploadOptions, UploadResult } from '../interfaces'
 import { v4 as uuidv4 } from 'uuid'
-import * as path from 'path'
+import * as path from 'node:path'
 
 /**
  * ImageKit Storage Provider
@@ -37,7 +37,9 @@ export class ImageKitStorageService implements IStorageService, OnModuleInit {
 
     // Only validate credentials if ImageKit is the active storage provider
     if (storageProvider === 'imagekit' && (!publicKey || !privateKey || !urlEndpoint)) {
-      throw new Error('ImageKit credentials not configured. Required: IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY, IMAGEKIT_URL_ENDPOINT')
+      throw new Error(
+        'ImageKit credentials not configured. Required: IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY, IMAGEKIT_URL_ENDPOINT',
+      )
     }
 
     // Skip initialization if not the active provider
@@ -45,12 +47,18 @@ export class ImageKitStorageService implements IStorageService, OnModuleInit {
       return
     }
 
+    if (!publicKey || !privateKey || !urlEndpoint) {
+      throw new Error(
+        'ImageKit credentials not configured. Required: IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY, IMAGEKIT_URL_ENDPOINT',
+      )
+    }
+
     // After validation, we know these values are defined
-    this.urlEndpoint = urlEndpoint!
+    this.urlEndpoint = urlEndpoint
     this.imagekit = new ImageKit({
-      publicKey: publicKey!,
-      privateKey: privateKey!,
-      urlEndpoint: urlEndpoint!,
+      publicKey,
+      privateKey,
+      urlEndpoint,
     })
   }
 
@@ -144,7 +152,10 @@ export class ImageKitStorageService implements IStorageService, OnModuleInit {
       return true
     } catch (error) {
       // Check if error indicates file not found
-      if (error instanceof Error && (error.message.includes('404') || error.message.includes('not found'))) {
+      if (
+        error instanceof Error &&
+        (error.message.includes('404') || error.message.includes('not found'))
+      ) {
         return false
       }
       throw error

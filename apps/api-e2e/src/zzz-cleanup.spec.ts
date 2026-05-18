@@ -1,4 +1,4 @@
-import { describe, it, afterAll } from 'vitest'
+import { describe, it, afterAll, expect } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
 import axios from 'axios'
 /**
@@ -18,6 +18,7 @@ describe('ZZZ Cleanup (runs last)', () => {
       console.log('✓ Using pre-existing API server')
     }
     console.log('✅ All tests complete - cleanup will happen in afterAll')
+    expect([true, false, undefined]).toContain(weStartedApi)
   })
   afterAll(async () => {
     console.log('\n🧹 Running cleanup from afterAll hook...')

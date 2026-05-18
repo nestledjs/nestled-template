@@ -3,13 +3,11 @@ import { ReactNode } from 'react'
 import { cn } from '@nestled-template/shared/utils'
 
 export interface WebUiSimpleListItemProps {
-  type?: 'li' | 'div'
-  onClick?: () => void
-  lineOne?: string
-  lineTwo?: string
-  avatar?: ReactNode
-  avatar2?: ReactNode
-  selected?: boolean
+  readonly onClick?: () => void
+  readonly lineOne?: string
+  readonly lineTwo?: string
+  readonly avatar?: ReactNode
+  readonly avatar2?: ReactNode
 }
 
 function InnerList(props: WebUiSimpleListItemProps): ReactNode {
@@ -43,20 +41,13 @@ function InnerList(props: WebUiSimpleListItemProps): ReactNode {
 }
 export function WebUiSimpleListItem(props: WebUiSimpleListItemProps) {
   const globalClasses = 'flex items-center justify-between gap-x-6 py-5 rounded-lg px-6 max-w-full'
-  const selectedClasses = props?.selected ? 'bg-sky-100' : 'bg-white'
-  return props?.type === 'div' ? (
-    <div
-      className={cn(globalClasses, selectedClasses, 'border-2 border-zinc-100')}
+  return (
+    <button
+      type="button"
+      className={cn(globalClasses, 'bg-white', 'border-2 border-zinc-100')}
       onClick={props?.onClick}
     >
       <InnerList {...props} />
-    </div>
-  ) : (
-    <li
-      className={cn(globalClasses, selectedClasses, 'border-2 border-zinc-100')}
-      onClick={props?.onClick}
-    >
-      <InnerList {...props} />
-    </li>
+    </button>
   )
 }

@@ -7,6 +7,7 @@ set -e
 
 DOCKER_COMPOSE_FILE=".dev/docker-compose.yml"
 TEST_DB_URL="postgresql://postgres:postgres@localhost:5433/nestled_template_test"
+TEST_DB_CONTAINER="nestled-template_postgres_test"
 
 case "$1" in
   "start")
@@ -15,10 +16,10 @@ case "$1" in
     
     echo "⏳ Waiting for test database to be ready..."
     timeout=30
-    while ! docker exec nestled_postgres_test pg_isready -U postgres > /dev/null 2>&1; do
+    while ! docker exec "$TEST_DB_CONTAINER" pg_isready -U postgres > /dev/null 2>&1; do
       sleep 1
       timeout=$((timeout - 1))
-      if [ $timeout -eq 0 ]; then
+      if [[ $timeout -eq 0 ]]; then
         echo "❌ Test database failed to start within 30 seconds"
         exit 1
       fi
@@ -41,10 +42,10 @@ case "$1" in
     
     echo "⏳ Waiting for test database to be ready..."
     timeout=30
-    while ! docker exec nestled_postgres_test pg_isready -U postgres > /dev/null 2>&1; do
+    while ! docker exec "$TEST_DB_CONTAINER" pg_isready -U postgres > /dev/null 2>&1; do
       sleep 1
       timeout=$((timeout - 1))
-      if [ $timeout -eq 0 ]; then
+      if [[ $timeout -eq 0 ]]; then
         echo "❌ Test database failed to start within 30 seconds"
         exit 1
       fi

@@ -8,6 +8,30 @@ import { hashSync } from 'bcryptjs'
 
 const adapter = new PrismaPg({ connectionString: process.env['DATABASE_URL']! })
 const prisma = new PrismaClient({ adapter })
+async function reconnectOrgRolePermissions(prisma: PrismaClient): Promise<number> {
+  const allPermissions = await prisma.permission.findMany()
+  const existingOrgRoles = await prisma.role.findMany({
+    where: { organizationId: { not: null } },
+    include: { permissions: true },
+  })
+  let fixedCount = 0
+  for (const role of existingOrgRoles) {
+    const template = defaultRoles.find(t => t.name === role.name)
+    if (!template) continue
+    if (role.permissions.length > 0) continue
+    const toConnect = allPermissions.filter(p =>
+      template.permissions.includes(`${p.subject}:${p.action}`),
+    )
+    if (toConnect.length === 0) continue
+    await prisma.role.update({
+      where: { id: role.id },
+      data: { permissions: { connect: toConnect.map(p => ({ id: p.id })) } },
+    })
+    fixedCount++
+  }
+  return fixedCount
+}
+
 async function main() {
   // Seed countries
   console.log('Seeding countries...')
@@ -45,26 +69,7 @@ async function main() {
 
   // Fix any existing org roles that were created before permissions were seeded
   console.log('Reconnecting permissions to existing org roles...')
-  const allPermissions = await prisma.permission.findMany()
-  const existingOrgRoles = await prisma.role.findMany({
-    where: { organizationId: { not: null } },
-    include: { permissions: true },
-  })
-  let fixedCount = 0
-  for (const role of existingOrgRoles) {
-    const template = defaultRoles.find(t => t.name === role.name)
-    if (!template) continue
-    if (role.permissions.length > 0) continue // already has permissions, skip
-    const toConnect = allPermissions.filter(p =>
-      template.permissions.includes(`${p.subject}:${p.action}`)
-    )
-    if (toConnect.length === 0) continue
-    await prisma.role.update({
-      where: { id: role.id },
-      data: { permissions: { connect: toConnect.map(p => ({ id: p.id })) } },
-    })
-    fixedCount++
-  }
+  const fixedCount = await reconnectOrgRolePermissions(prisma)
   console.log(`✓ Fixed ${fixedCount} org role(s) with missing permissions`)
 
   // Note: Roles are organization-specific and will be created when organizations are created
@@ -102,7 +107,7 @@ async function main() {
         String((e as any).meta?.driverAdapterError).includes('UniqueConstraintViolation')
 
       if (isPrismaError && isDisplayNameViolation) {
-        console.log(`  User with displayName \"${user.displayName}\" already exists. Skipping.`)
+        console.log(`  User with displayName "${user.displayName}" already exists. Skipping.`)
       } else {
         throw e
       }

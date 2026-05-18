@@ -38,12 +38,17 @@ export class SimpleTemplateManager implements TemplateManager {
   async getTemplate(templateId: string): Promise<TemplateDefinition> {
     const template = EMAIL_TEMPLATES.get(templateId)
     if (!template) {
-      throw new Error(`Template ${templateId} not found. Available templates: ${AVAILABLE_TEMPLATES.join(', ')}`)
+      throw new Error(
+        `Template ${templateId} not found. Available templates: ${AVAILABLE_TEMPLATES.join(', ')}`,
+      )
     }
     return template
   }
 
-  async renderTemplate(templateId: string, variables: Record<string, any>): Promise<{
+  async renderTemplate(
+    templateId: string,
+    variables: Record<string, any>,
+  ): Promise<{
     subject: string
     html: string
     text?: string
@@ -51,12 +56,15 @@ export class SimpleTemplateManager implements TemplateManager {
     const template = await this.getTemplate(templateId)
 
     // Validate required variables
-    const missingVars = template.requiredVariables.filter(varName =>
-      !(varName in variables) || variables[varName] === null || variables[varName] === undefined
+    const missingVars = template.requiredVariables.filter(
+      varName =>
+        !(varName in variables) || variables[varName] === null || variables[varName] === undefined,
     )
 
     if (missingVars.length > 0) {
-      throw new Error(`Missing required template variables for ${templateId}: ${missingVars.join(', ')}`)
+      throw new Error(
+        `Missing required template variables for ${templateId}: ${missingVars.join(', ')}`,
+      )
     }
 
     try {

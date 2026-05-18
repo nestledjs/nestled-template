@@ -13,12 +13,12 @@ axios.defaults.baseURL = `http://${host}:${port}`
 const httpAgent = new HttpAgent({
   keepAlive: false,
   maxSockets: 10,
-  timeout: 10000
+  timeout: 10000,
 })
 const httpsAgent = new HttpsAgent({
   keepAlive: false,
   maxSockets: 10,
-  timeout: 10000
+  timeout: 10000,
 })
 
 axios.defaults.httpAgent = httpAgent
@@ -38,7 +38,9 @@ process.env.NODE_ENV = 'test'
 
 // Use TEST_DATABASE_URL - do NOT override to dev database!
 // The API server will be started with this database URL by global-setup
-const testDatabaseUrl = process.env.TEST_DATABASE_URL || 'postgresql://justinhandley@localhost:5432/nestled_template_test'
+const testDatabaseUrl =
+  process.env.TEST_DATABASE_URL ||
+  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
 console.log(`Test setup: axios base URL set to ${axios.defaults.baseURL}`)
 console.log(`Test setup: Using TEST database - ${testDatabaseUrl}`)
 
@@ -48,7 +50,7 @@ if (shouldSkipE2E) {
   console.log('⚠️  E2E tests will be skipped (API not available)')
 
   // Skip all tests in this suite
-  beforeEach((ctx) => {
+  beforeEach(ctx => {
     ctx.skip()
   })
 }

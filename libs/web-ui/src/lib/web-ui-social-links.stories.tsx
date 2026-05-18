@@ -1,7 +1,6 @@
-import type { Meta, StoryObj } from '@storybook/react-vite';
-import { within, expect } from 'storybook/test';
-import { WebUiSocialLinks } from './web-ui-social-links';
-import type { StoryContext } from '@storybook/react-vite';
+import type { Meta, StoryObj, StoryContext } from '@storybook/react-vite'
+import { within, expect } from 'storybook/test'
+import { WebUiSocialLinks } from './web-ui-social-links'
 
 const mockUser = {
   facebook: 'https://facebook.com/testuser',
@@ -9,7 +8,7 @@ const mockUser = {
   instagram: 'https://instagram.com/testuser',
   linkedin: 'https://linkedin.com/in/testuser',
   youtube: 'https://youtube.com/testuser',
-};
+}
 
 const meta = {
   component: WebUiSocialLinks,
@@ -19,20 +18,20 @@ const meta = {
     member: mockUser,
     color: 'red',
   },
-} satisfies Meta<typeof WebUiSocialLinks>;
-export default meta;
+} satisfies Meta<typeof WebUiSocialLinks>
+export default meta
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<typeof meta>
 
 export const Default: Story = {
   play: async ({ canvasElement }: StoryContext) => {
-    const canvas = within(canvasElement);
+    const canvas = within(canvasElement)
     // Check for the presence of social icons/links with accessible names
-    await expect(canvas.getAllByRole('link')).toHaveLength(5);
-    await expect(canvas.getByRole('link', { name: 'Facebook' })).toBeInTheDocument();
-    await expect(canvas.getByRole('link', { name: 'Twitter' })).toBeInTheDocument();
-    await expect(canvas.getByRole('link', { name: 'YouTube' })).toBeInTheDocument();
-    await expect(canvas.getByRole('link', { name: 'LinkedIn' })).toBeInTheDocument();
-    await expect(canvas.getByRole('link', { name: 'Instagram' })).toBeInTheDocument();
+    await expect(canvas.getAllByRole('link')).toHaveLength(5)
+    await expect(canvas.getByRole('link', { name: 'Facebook' })).toBeInTheDocument()
+    await expect(canvas.getByRole('link', { name: 'Twitter' })).toBeInTheDocument()
+    await expect(canvas.getByRole('link', { name: 'YouTube' })).toBeInTheDocument()
+    await expect(canvas.getByRole('link', { name: 'LinkedIn' })).toBeInTheDocument()
+    await expect(canvas.getByRole('link', { name: 'Instagram' })).toBeInTheDocument()
   },
-}; 
+}

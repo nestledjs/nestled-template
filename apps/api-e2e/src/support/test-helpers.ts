@@ -15,18 +15,25 @@ export interface TestUser {
 }
 
 export class TestHelpers {
-  private static baseURL = axios.defaults.baseURL || 'http://localhost:3000'
+  private static readonly baseURL = axios.defaults.baseURL || 'http://localhost:3000'
 
   // GraphQL helper
-  static async graphql<T = any>(query: string, variables?: any): Promise<AxiosResponse<{ data: T; errors?: any[] }>> {
-    return axios.post('/graphql', {
-      query,
-      variables,
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
+  static async graphql<T = any>(
+    query: string,
+    variables?: any,
+  ): Promise<AxiosResponse<{ data: T; errors?: any[] }>> {
+    return axios.post(
+      '/graphql',
+      {
+        query,
+        variables,
       },
-    })
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    )
   }
 
   // Auth helpers
@@ -180,19 +187,23 @@ export class TestHelpers {
 
   // Authenticated requests helper
   static async authenticatedGraphql<T = any>(
-    query: string, 
-    user: TestUser, 
-    variables?: any
+    query: string,
+    user: TestUser,
+    variables?: any,
   ): Promise<AxiosResponse<{ data: T; errors?: any[] }>> {
-    return axios.post('/graphql', {
-      query,
-      variables,
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${user.tokens?.accessToken}`,
+    return axios.post(
+      '/graphql',
+      {
+        query,
+        variables,
       },
-    })
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.tokens?.accessToken}`,
+        },
+      },
+    )
   }
 
   static async getCurrentUser(user: TestUser): Promise<any> {

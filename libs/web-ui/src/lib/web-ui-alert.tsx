@@ -58,36 +58,35 @@ export function WebUiAlert(props: Readonly<WebUiAlertProps>) {
             <h4 className={`text-sm font-medium ${headingColor}`}>{props?.title}</h4>
           </div>
         ) : null}
-        {props?.message ? (
-          props?.title ? (
-            <div className="ml-3">
-              <h4 className={`text-sm font-medium ${headingColor}`}>{props?.title}</h4>
-              <div className={`mt-2 text-sm ${textColor}`}>
-                <p>
-                  {props.message}{' '}
-                  {props?.messageLink ? (
-                    <Link to={props.messageLink}>
-                      <span className={`font-medium underline ${textColor} ${hoverColor}`}>
-                        {props?.messageLinkText ?? props.messageLink}
-                      </span>
-                    </Link>
-                  ) : null}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className={`ml-3`}>
-              <p className={`text-sm ${textColor}`}>
+        {props?.message && props?.title ? (
+          <div className="ml-3">
+            <h4 className={`text-sm font-medium ${headingColor}`}>{props?.title}</h4>
+            <div className={`mt-2 text-sm ${textColor}`}>
+              <p>
                 {props.message}{' '}
-                <a
-                  href={props?.messageLink}
-                  className={`font-medium underline ${textColor} ${hoverColor}`}
-                >
-                  {props?.messageLinkText}
-                </a>
+                {props?.messageLink ? (
+                  <Link to={props.messageLink}>
+                    <span className={`font-medium underline ${textColor} ${hoverColor}`}>
+                      {props?.messageLinkText ?? props.messageLink}
+                    </span>
+                  </Link>
+                ) : null}
               </p>
             </div>
-          )
+          </div>
+        ) : null}
+        {props?.message && !props?.title ? (
+          <div className={`ml-3`}>
+            <p className={`text-sm ${textColor}`}>
+              {props.message}{' '}
+              <a
+                href={props?.messageLink}
+                className={`font-medium underline ${textColor} ${hoverColor}`}
+              >
+                {props?.messageLinkText}
+              </a>
+            </p>
+          </div>
         ) : null}
       </div>
     </div>

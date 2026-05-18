@@ -27,6 +27,7 @@ export class AppModule {}
 ## ⚡ Quick Usage Examples
 
 ### Basic Email Sending
+
 ```typescript
 import { EmailService } from '@nestled-template/api/integrations'
 
@@ -40,13 +41,14 @@ export class AuthService {
       to: 'user@example.com',
       subject: 'Welcome!',
       html: '<h1>Welcome to our app!</h1>',
-      text: 'Welcome to our app!'
+      text: 'Welcome to our app!',
     })
   }
 }
 ```
 
 ### Template-Based Emails
+
 ```typescript
 // Send using pre-built templates
 await this.emailService.sendTemplate('user@example.com', {
@@ -55,29 +57,34 @@ await this.emailService.sendTemplate('user@example.com', {
     userName: 'John Doe',
     verificationUrl: 'https://app.com/verify?token=abc123',
     appName: 'MyApp',
-    expirationHours: 24
-  }
+    expirationHours: 24,
+  },
 })
 
 // With optional email options override
-await this.emailService.sendTemplate('user@example.com', {
-  templateId: 'welcome',
-  variables: { userName: 'Jane', appName: 'MyApp' }
-}, {
-  from: 'custom@myapp.com',
-  replyTo: 'support@myapp.com'
-})
+await this.emailService.sendTemplate(
+  'user@example.com',
+  {
+    templateId: 'welcome',
+    variables: { userName: 'Jane', appName: 'MyApp' },
+  },
+  {
+    from: 'custom@myapp.com',
+    replyTo: 'support@myapp.com',
+  },
+)
 ```
 
 ### Authentication Flow Examples
+
 ```typescript
-@Injectable() 
+@Injectable()
 export class AuthService {
   constructor(private readonly emailService: EmailService) {}
 
   async sendEmailVerification(email: string, verificationToken: string, userName: string) {
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`
-    
+
     await this.emailService.sendTemplate(email, {
       templateId: 'email-verification',
       variables: {
@@ -85,14 +92,14 @@ export class AuthService {
         verificationUrl,
         appName: process.env.APP_NAME,
         supportEmail: process.env.SUPPORT_EMAIL,
-        expirationHours: 24
-      }
+        expirationHours: 24,
+      },
     })
   }
 
   async sendPasswordReset(email: string, resetToken: string, userName: string) {
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`
-    
+
     await this.emailService.sendTemplate(email, {
       templateId: 'password-reset',
       variables: {
@@ -100,8 +107,8 @@ export class AuthService {
         resetUrl,
         appName: process.env.APP_NAME,
         supportEmail: process.env.SUPPORT_EMAIL,
-        expirationMinutes: 30
-      }
+        expirationMinutes: 30,
+      },
     })
   }
 
@@ -112,8 +119,8 @@ export class AuthService {
         userName,
         appName: process.env.APP_NAME,
         dashboardUrl: `${process.env.FRONTEND_URL}/dashboard`,
-        supportEmail: process.env.SUPPORT_EMAIL
-      }
+        supportEmail: process.env.SUPPORT_EMAIL,
+      },
     })
   }
 
@@ -126,8 +133,8 @@ export class AuthService {
         changeTime: new Date(),
         ipAddress: changeDetails.ip,
         userAgent: changeDetails.userAgent,
-        supportEmail: process.env.SUPPORT_EMAIL
-      }
+        supportEmail: process.env.SUPPORT_EMAIL,
+      },
     })
   }
 }
@@ -136,6 +143,7 @@ export class AuthService {
 ## 🔧 Configuration
 
 ### Environment Variables
+
 ```bash
 # Email Provider (currently supports: smtp)
 EMAIL_PROVIDER=smtp
@@ -155,7 +163,9 @@ EMAIL_FROM=noreply@yourapp.com
 ```
 
 ### NestJS Configuration Service
+
 Ensure your `ConfigService` includes:
+
 ```typescript
 export class ConfigService {
   mailerConfig = {
@@ -173,14 +183,16 @@ export class ConfigService {
 ## 📧 Available Templates
 
 ### Authentication Templates
-| Template ID | Purpose | Required Variables | Optional Variables |
-|-------------|---------|-------------------|-------------------|
-| `email-verification` | New account email verification | `userName`, `verificationUrl`, `appName` | `companyName`, `supportEmail`, `expirationHours` |
-| `password-reset` | Password reset requests | `userName`, `resetUrl`, `appName` | `companyName`, `supportEmail`, `expirationMinutes` |
-| `password-changed` | Security notification | `userName`, `appName`, `changeTime` | `companyName`, `supportEmail`, `loginUrl`, `ipAddress`, `userAgent` |
-| `welcome` | Post-verification welcome | `userName`, `appName` | `companyName`, `supportEmail`, `dashboardUrl`, `gettingStartedUrl`, `documentationUrl` |
+
+| Template ID          | Purpose                        | Required Variables                       | Optional Variables                                                                     |
+| -------------------- | ------------------------------ | ---------------------------------------- | -------------------------------------------------------------------------------------- |
+| `email-verification` | New account email verification | `userName`, `verificationUrl`, `appName` | `companyName`, `supportEmail`, `expirationHours`                                       |
+| `password-reset`     | Password reset requests        | `userName`, `resetUrl`, `appName`        | `companyName`, `supportEmail`, `expirationMinutes`                                     |
+| `password-changed`   | Security notification          | `userName`, `appName`, `changeTime`      | `companyName`, `supportEmail`, `loginUrl`, `ipAddress`, `userAgent`                    |
+| `welcome`            | Post-verification welcome      | `userName`, `appName`                    | `companyName`, `supportEmail`, `dashboardUrl`, `gettingStartedUrl`, `documentationUrl` |
 
 ### Template Features
+
 - ✅ Professional responsive HTML design
 - ✅ Plain text fallbacks
 - ✅ Security-focused messaging
@@ -190,19 +202,28 @@ export class ConfigService {
 ## 🎨 Handlebars Helpers
 
 Built-in helpers available in all templates:
+
 ```handlebars
-{{formatDate someDate}} <!-- Formats date/time -->
-{{formatDate someDate "short"}} <!-- Short date format -->
-{{uppercase text}} <!-- UPPERCASE TEXT -->
-{{lowercase text}} <!-- lowercase text -->
-{{#if (eq value1 value2)}}Equal{{/if}} <!-- Equality check -->
-{{#if (ne value1 value2)}}Not equal{{/if}} <!-- Not equal check -->
-{{#if (or condition1 condition2)}}True{{/if}} <!-- Logical OR -->
+{{formatDate someDate}}
+<!-- Formats date/time -->
+{{formatDate someDate 'short'}}
+<!-- Short date format -->
+{{uppercase text}}
+<!-- UPPERCASE TEXT -->
+{{lowercase text}}
+<!-- lowercase text -->
+{{#if (eq value1 value2)}}Equal{{/if}}
+<!-- Equality check -->
+{{#if (ne value1 value2)}}Not equal{{/if}}
+<!-- Not equal check -->
+{{#if (or condition1 condition2)}}True{{/if}}
+<!-- Logical OR -->
 ```
 
 ## 🔨 Advanced Usage
 
 ### Direct Template Manager Usage
+
 ```typescript
 import { HandlebarsTemplateManager } from '@nestled-template/api/integrations'
 
@@ -230,11 +251,12 @@ export class CustomEmailService {
 ```
 
 ### Error Handling
+
 ```typescript
 try {
   await this.emailService.sendTemplate(email, {
     templateId: 'email-verification',
-    variables: { userName: 'John' } // Missing required variables
+    variables: { userName: 'John' }, // Missing required variables
   })
 } catch (error) {
   if (error.message.includes('Missing required template variables')) {
@@ -253,11 +275,13 @@ try {
 ## 🏗️ Extending the System
 
 ### Adding New Templates
+
 1. Create template definition: `templates/{template-id}.json`
 2. Create HTML template: `templates/{template-id}.html`
 3. Create text template: `templates/{template-id}.txt` (optional)
 
 Example template definition:
+
 ```json
 {
   "id": "new-template",
@@ -270,6 +294,7 @@ Example template definition:
 ```
 
 ### Adding New Providers
+
 ```typescript
 import { EmailProvider } from '@nestled-template/api/integrations'
 
@@ -277,11 +302,15 @@ export class NewEmailProvider implements EmailProvider {
   async send(options: EmailOptions): Promise<EmailResult> {
     // Implement email sending
   }
-  
-  async sendTemplate(to: string | string[], template: EmailTemplate, options?: Partial<EmailOptions>): Promise<EmailResult> {
+
+  async sendTemplate(
+    to: string | string[],
+    template: EmailTemplate,
+    options?: Partial<EmailOptions>,
+  ): Promise<EmailResult> {
     // Implement template sending (use HandlebarsTemplateManager)
   }
-  
+
   async validateConnection(): Promise<boolean> {
     // Implement connection validation
   }
@@ -291,6 +320,7 @@ export class NewEmailProvider implements EmailProvider {
 ## 🔍 Testing Templates
 
 You can test templates in development:
+
 ```typescript
 // Clear template cache during development
 templateManager.clearCache('template-id')
@@ -302,6 +332,7 @@ templateManager.clearCache()
 ## 📝 AI Assistant Notes
 
 When working with this email system:
+
 - Always check template variable requirements in the `.json` files
 - Use the authentication flow examples above as patterns for new implementations
 - Template IDs correspond to filenames in the `templates/` directory

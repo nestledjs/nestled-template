@@ -1,7 +1,6 @@
-import type { Meta, StoryObj } from '@storybook/react-vite';
-import { within, expect, userEvent } from 'storybook/test';
-import { WebUiEditableText } from './web-ui-editable-text';
-import type { StoryContext } from '@storybook/react-vite';
+import type { Meta, StoryObj, StoryContext } from '@storybook/react-vite'
+import { within, expect, userEvent } from 'storybook/test'
+import { WebUiEditableText } from './web-ui-editable-text'
 
 const meta = {
   component: WebUiEditableText,
@@ -10,21 +9,21 @@ const meta = {
   args: {
     text: 'Click to edit me',
   },
-} satisfies Meta<typeof WebUiEditableText>;
-export default meta;
+} satisfies Meta<typeof WebUiEditableText>
+export default meta
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<typeof meta>
 
 export const Default: Story = {
   play: async ({ canvasElement }: StoryContext) => {
-    const canvas = within(canvasElement);
-    const text = canvas.getByText('Click to edit me');
-    expect(text).toBeInTheDocument();
-    await userEvent.click(text);
-    const input = canvas.getByDisplayValue('Click to edit me');
-    expect(input).toBeInTheDocument();
+    const canvas = within(canvasElement)
+    const text = canvas.getByText('Click to edit me')
+    expect(text).toBeInTheDocument()
+    await userEvent.click(text)
+    const input = canvas.getByDisplayValue('Click to edit me')
+    expect(input).toBeInTheDocument()
   },
-};
+}
 
 export const Multiline: Story = {
   args: {
@@ -32,30 +31,32 @@ export const Multiline: Story = {
     multiline: true,
   },
   play: async ({ canvasElement }: StoryContext) => {
-    const canvas = within(canvasElement);
+    const canvas = within(canvasElement)
     // Use a function matcher since the text contains a literal newline
-    const text = canvas.getByText((content) => content.includes('Multiline') && content.includes('Text'));
-    expect(text).toBeInTheDocument();
-    await userEvent.click(text);
-    const textarea = canvas.getByRole('textbox');
-    expect(textarea).toBeInTheDocument();
+    const text = canvas.getByText(
+      content => content.includes('Multiline') && content.includes('Text'),
+    )
+    expect(text).toBeInTheDocument()
+    await userEvent.click(text)
+    const textarea = canvas.getByRole('textbox')
+    expect(textarea).toBeInTheDocument()
   },
-};
+}
 
 export const Empty: Story = {
   args: {
     text: '',
   },
   play: async ({ canvasElement }: StoryContext) => {
-    const canvas = within(canvasElement);
-    const text = canvas.getByText('Click to edit');
-    expect(text).toBeInTheDocument();
+    const canvas = within(canvasElement)
+    const text = canvas.getByText('Click to edit')
+    expect(text).toBeInTheDocument()
   },
-};
+}
 
 export const Highlighted: Story = {
   args: {
     text: '',
     highlight: true,
   },
-}; 
+}

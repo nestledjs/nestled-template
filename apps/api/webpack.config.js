@@ -1,6 +1,6 @@
-const path = require('path');
-const TsconfigPathsPlugin = require('tsconfig-paths-webpack-plugin');
-const nodeExternals = require('webpack-node-externals');
+const path = require('node:path')
+const TsconfigPathsPlugin = require('tsconfig-paths-webpack-plugin')
+const nodeExternals = require('webpack-node-externals')
 
 module.exports = {
   target: 'node',
@@ -44,12 +44,13 @@ module.exports = {
     function ({ request }, callback) {
       // Externalize actual Prisma npm packages (required for native binaries)
       // But NOT @nestled-template/api/prisma which is a local workspace module
-      if (request && (
-        request.includes('@prisma/client') ||
-        request.includes('.prisma/client') ||
-        request.includes('@prisma/adapter-pg') ||
-        request.includes('@prisma/internals')
-      )) {
+      if (
+        request &&
+        (request.includes('@prisma/client') ||
+          request.includes('.prisma/client') ||
+          request.includes('@prisma/adapter-pg') ||
+          request.includes('@prisma/internals'))
+      ) {
         return callback(null, `commonjs ${request}`)
       }
       callback()
@@ -59,6 +60,6 @@ module.exports = {
         // Allow all @nestled-template/api libs to be bundled
         /^@nestled-template\/api/,
       ],
-    })
-  ]
-};
+    }),
+  ],
+}

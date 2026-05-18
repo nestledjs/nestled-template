@@ -26,10 +26,7 @@ export class ApiTokensResolver {
 
   @Mutation(() => ApiToken)
   @UseGuards(GqlAuthGuard)
-  async revokeApiToken(
-    @CtxUser() user: User,
-    @Args('tokenId') tokenId: string,
-  ): Promise<ApiToken> {
+  async revokeApiToken(@CtxUser() user: User, @Args('tokenId') tokenId: string): Promise<ApiToken> {
     return this.service.revokeApiToken(user.id, tokenId)
   }
 

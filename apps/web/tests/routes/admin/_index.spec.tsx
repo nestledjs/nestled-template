@@ -1,6 +1,6 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminDashboard from '../../../app/routes/admin/_index'
 
@@ -11,7 +11,7 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
@@ -56,7 +56,9 @@ describe('Admin Dashboard', () => {
       renderAdminDashboard()
 
       expect(screen.getByText('Admin Dashboard')).toBeInTheDocument()
-      expect(screen.getByText('Platform administration and management overview')).toBeInTheDocument()
+      expect(
+        screen.getByText('Platform administration and management overview'),
+      ).toBeInTheDocument()
     })
   })
 
@@ -291,10 +293,22 @@ describe('Admin Dashboard', () => {
       renderAdminDashboard()
 
       expect(screen.getByRole('link', { name: /Users/ })).toHaveAttribute('href', '/admin/users')
-      expect(screen.getByRole('link', { name: /Organizations/ })).toHaveAttribute('href', '/admin/organizations')
-      expect(screen.getByRole('link', { name: /Security Events/ })).toHaveAttribute('href', '/admin/security-events')
-      expect(screen.getByRole('link', { name: /Data Browser/ })).toHaveAttribute('href', '/admin/data')
-      expect(screen.getByRole('link', { name: /Analytics/ })).toHaveAttribute('href', '/admin/analytics')
+      expect(screen.getByRole('link', { name: /Organizations/ })).toHaveAttribute(
+        'href',
+        '/admin/organizations',
+      )
+      expect(screen.getByRole('link', { name: /Security Events/ })).toHaveAttribute(
+        'href',
+        '/admin/security-events',
+      )
+      expect(screen.getByRole('link', { name: /Data Browser/ })).toHaveAttribute(
+        'href',
+        '/admin/data',
+      )
+      expect(screen.getByRole('link', { name: /Analytics/ })).toHaveAttribute(
+        'href',
+        '/admin/analytics',
+      )
     })
 
     it('should display link descriptions', () => {
@@ -322,11 +336,11 @@ describe('Admin Dashboard', () => {
 
       renderAdminDashboard()
 
-      const quickLinks = screen.getAllByRole('link').filter((link) =>
-        link.getAttribute('href')?.includes('/admin/')
-      )
+      const quickLinks = screen
+        .getAllByRole('link')
+        .filter(link => link.getAttribute('href')?.includes('/admin/'))
 
-      quickLinks.forEach((link) => {
+      quickLinks.forEach(link => {
         const svg = link.querySelector('svg')
         expect(svg).toBeInTheDocument()
       })
@@ -347,7 +361,7 @@ describe('Admin Dashboard', () => {
         expect.anything(),
         expect.objectContaining({
           fetchPolicy: 'cache-and-network',
-        })
+        }),
       )
     })
   })

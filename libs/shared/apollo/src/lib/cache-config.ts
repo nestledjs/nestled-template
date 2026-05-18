@@ -11,44 +11,44 @@ const cacheOptions = {
       fields: {
         userTransactions: {
           keyArgs: false,
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         userMyReferrals: {
           keyArgs: false,
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         userReferralsTo: {
           keyArgs: false,
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         userUsers: {
           keyArgs: ['input', ['search']],
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         userNotifications: {
           keyArgs: ['input', ['search', 'read']],
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         userChapterMembers: {
           keyArgs: ['input', ['chapterId']],
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         activeUsers: {
           keyArgs: ['input', ['search', 'filters', 'orderBy', 'orderDirection']],
-          merge(existing = [], incoming: any, { args }: any) {
-            const merged = args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            const merged = args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
             const seen = new Set<string>()
             return merged.filter((item: any) => {
               const id = item?.id
@@ -61,14 +61,14 @@ const cacheOptions = {
         },
         chapters: {
           keyArgs: ['input', ['search', 'filters']],
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         activeChapters: {
           keyArgs: ['input', ['search', 'filters']],
-          merge(existing = [], incoming: any, { args }: any) {
-            const merged = args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            const merged = args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
             const seen = new Set<string>()
             return merged.filter((item: any) => {
               const id = item?.id
@@ -81,14 +81,14 @@ const cacheOptions = {
         },
         userMeetingPresences: {
           // keyArgs: ['input', ['chapterId']],
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         leaderMeetings: {
           // keyArgs: ['input', ['chapterId']],
-          merge(existing = [], incoming: any, { args }: any) {
-            return args?.input?.skip ? [...existing, ...incoming] : [...incoming]
+          merge(existing: any[] | undefined, incoming: any, { args }: any) {
+            return args?.input?.skip ? [...(existing ?? []), ...incoming] : [...incoming]
           },
         },
         testimonials: {

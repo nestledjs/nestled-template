@@ -1,2 +1,2 @@
 export * from './contact-mailer.module'
-export * from './contact-mailer.service' 
+export * from './contact-mailer.service'

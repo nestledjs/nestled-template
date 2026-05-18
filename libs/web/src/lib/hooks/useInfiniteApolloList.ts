@@ -54,5 +54,3 @@ export function useInfiniteApolloList(options: UseInfiniteApolloListOptions) {
 
   return { loaderRef, isLoading, allLoaded, reset, setAllLoaded, setIsLoading }
 }
-
-

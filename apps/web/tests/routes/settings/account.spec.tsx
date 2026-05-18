@@ -28,7 +28,7 @@ vi.mock('react-router', async () => {
 })
 
 // Mock SDK (for DocumentNode exports)
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
@@ -129,6 +129,7 @@ describe('AccountSettings', () => {
       location: { href: '' },
     })
     URL.createObjectURL = vi.fn(() => 'mock-url')
+    URL.revokeObjectURL = vi.fn()
   })
 
   const renderWithRouter = () => {
@@ -148,7 +149,7 @@ describe('AccountSettings', () => {
 
       expect(screen.getByText('Account Settings')).toBeInTheDocument()
       expect(
-        screen.getByText('Manage your personal account information and preferences')
+        screen.getByText('Manage your personal account information and preferences'),
       ).toBeInTheDocument()
     })
 
@@ -214,6 +215,36 @@ describe('AccountSettings', () => {
 
       expect(mockExportUserData).toHaveBeenCalled()
     })
+
+    it('should show an error when export returns an Apollo error', async () => {
+      const user = userEvent.setup()
+      mockExportUserData.mockResolvedValue({
+        error: { message: 'Export unavailable' },
+      })
+
+      renderWithRouter()
+
+      await user.click(screen.getByRole('button', { name: /export personal data/i }))
+
+      expect(
+        await screen.findByText(/failed to export data: export unavailable/i),
+      ).toBeInTheDocument()
+    })
+
+    it('should show an error when export data is missing', async () => {
+      const user = userEvent.setup()
+      mockExportUserData.mockResolvedValue({
+        data: { exportUserData: null },
+      })
+
+      renderWithRouter()
+
+      await user.click(screen.getByRole('button', { name: /export personal data/i }))
+
+      expect(
+        await screen.findByText(/failed to export data: no export data returned/i),
+      ).toBeInTheDocument()
+    })
   })
 
   describe('Transfer Ownership', () => {
@@ -271,6 +302,51 @@ describe('AccountSettings', () => {
       await user.type(input, 'DELETE')
 
       expect(confirmButton).not.toBeDisabled()
+    })
+
+    it('should cancel delete confirmation and clear the typed value', async () => {
+      const user = userEvent.setup()
+
+      renderWithRouter()
+
+      await user.click(screen.getByRole('button', { name: /delete my account/i }))
+      await user.type(screen.getByPlaceholderText(/type delete to confirm/i), 'DELETE')
+      await user.click(screen.getByRole('button', { name: /cancel/i }))
+
+      expect(screen.queryByPlaceholderText(/type delete to confirm/i)).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /delete my account/i }))
+      expect(screen.getByPlaceholderText(/type delete to confirm/i)).toHaveValue('')
+    })
+
+    it('should delete the account and redirect to login', async () => {
+      const user = userEvent.setup()
+      mockDeleteAccount.mockResolvedValue({ data: { deleteUserAccount: true } })
+
+      renderWithRouter()
+
+      await user.click(screen.getByRole('button', { name: /delete my account/i }))
+      await user.type(screen.getByPlaceholderText(/type delete to confirm/i), 'DELETE')
+      await user.click(screen.getByRole('button', { name: /i understand, delete my account/i }))
+
+      expect(mockDeleteAccount).toHaveBeenCalled()
+      expect(global.alert).toHaveBeenCalledWith(
+        'Your account has been deleted. You will be logged out now.',
+      )
+      expect(window.location.href).toBe('/login')
+    })
+
+    it('should reset the confirmation state when deleting fails', async () => {
+      const user = userEvent.setup()
+      mockDeleteAccount.mockRejectedValue(new Error('Delete failed'))
+
+      renderWithRouter()
+
+      await user.click(screen.getByRole('button', { name: /delete my account/i }))
+      await user.type(screen.getByPlaceholderText(/type delete to confirm/i), 'DELETE')
+      await user.click(screen.getByRole('button', { name: /i understand, delete my account/i }))
+
+      expect(global.alert).toHaveBeenCalledWith('Failed to delete account: Delete failed')
+      expect(screen.queryByPlaceholderText(/type delete to confirm/i)).not.toBeInTheDocument()
     })
   })
 })

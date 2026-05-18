@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 describe('Basic Test Infrastructure', () => {
   it('should run basic tests without external dependencies', () => {
-    expect(true).toBe(true)
+    const now = Date.now()
+    expect(now).toBeGreaterThan(0)
   })
   it('should have access to test environment', () => {
     // Test environment setup

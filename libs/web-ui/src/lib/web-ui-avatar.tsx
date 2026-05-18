@@ -67,10 +67,10 @@ export function WebUiAvatar({
     .map((n: string) => n[0])
     .join('')
 
+  const notificationPositionClass =
+    notificationPosition === 'top' ? 'top-0 right-0' : 'bottom-0 right-0'
   const notificationClasses = notification
-    ? `${notificationColor} absolute ${
-        notificationPosition === 'top' ? 'top-0 right-0' : 'bottom-0 right-0'
-      } translate-x-1/2 translate-y-1/2 transform rounded-full`
+    ? `${notificationColor} absolute ${notificationPositionClass} translate-x-1/2 translate-y-1/2 transform rounded-full`
     : ''
 
   const onLoad = () => {

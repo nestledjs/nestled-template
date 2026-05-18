@@ -51,5 +51,3 @@ export const usaStates = [
   { label: 'Wisconsin', value: 'WI' },
   { label: 'Wyoming', value: 'WY' },
 ]
-
-

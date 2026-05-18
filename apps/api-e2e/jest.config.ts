@@ -16,5 +16,5 @@ export default {
   moduleFileExtensions: ['ts', 'js', 'html', 'json'],
   coverageDirectory: '../../coverage/api-e2e',
   testTimeout: 30000,
-  maxWorkers: 1
+  maxWorkers: 1,
 }

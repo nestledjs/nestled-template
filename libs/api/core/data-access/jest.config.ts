@@ -7,4 +7,5 @@ export default {
   },
   moduleFileExtensions: ['ts', 'js', 'html'],
   coverageDirectory: '../../../../coverage/libs/api/core/data-access',
+  coverageReporters: ['html', 'lcov', 'text-summary'],
 }

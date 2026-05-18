@@ -6,7 +6,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   const { routes } = await import('virtual:react-router/server-build')
   const { origin } = new URL(request.url)
 
-  // TODO: Re-enable dynamic sitemap generation when PublicUsers and ActiveChapters queries are available
+  // FUTURE: Re-enable dynamic sitemap generation when PublicUsers and ActiveChapters queries are available
   const dynamicUrls: string[] = []
 
   const sitemap = await generateRemixSitemap({

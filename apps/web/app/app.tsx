@@ -4,12 +4,9 @@ import { useReadQuery, type QueryRef } from '@apollo/client/react'
 import type { MeQuery } from '@nestled-template/shared/sdk'
 import { Component, type ReactNode, useEffect, useState } from 'react'
 import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils'
-import { WebUiServiceUnavailable, WebUiViteCacheError } from '@nestled-template/web-ui'
+import { ServiceUnavailable, ViteCacheError } from '@nestledjs/shared-components'
 
-class MeQueryErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
+class MeQueryErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
     super(props)
     this.state = { hasError: false }
@@ -92,29 +89,29 @@ export function App() {
     // noisy during normal usage
 
     // Listen for Apollo service unavailable events
-    window.addEventListener('apollo-service-unavailable', handleServiceUnavailable)
+    globalThis.addEventListener('apollo-service-unavailable', handleServiceUnavailable)
 
     // Fallback: Listen for global errors
-    window.addEventListener('error', handleGlobalError)
-    window.addEventListener('unhandledrejection', handleUnhandledRejection)
+    globalThis.addEventListener('error', handleGlobalError)
+    globalThis.addEventListener('unhandledrejection', handleUnhandledRejection)
 
     return () => {
       // noisy during normal usage
-      window.removeEventListener('apollo-service-unavailable', handleServiceUnavailable)
-      window.removeEventListener('error', handleGlobalError)
-      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+      globalThis.removeEventListener('apollo-service-unavailable', handleServiceUnavailable)
+      globalThis.removeEventListener('error', handleGlobalError)
+      globalThis.removeEventListener('unhandledrejection', handleUnhandledRejection)
     }
   }, [])
 
   // Show Vite cache error UI if detected
   if (viteCacheError) {
-    return <WebUiViteCacheError autoRefresh={true} autoRefreshDelay={3000} />
+    return <ViteCacheError autoRefresh={true} autoRefreshDelay={3000} />
   }
 
   // Show service unavailable UI if Apollo detected network issues
   if (serviceUnavailable) {
     return (
-      <WebUiServiceUnavailable
+      <ServiceUnavailable
         title="API Unavailable"
         message="Our servers are currently unreachable. Please check your internet connection or refresh the page to try again."
       />

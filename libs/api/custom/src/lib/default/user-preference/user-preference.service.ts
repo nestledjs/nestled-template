@@ -86,7 +86,7 @@ export class UserPreferenceService {
     })
 
     // Return null if not found or doesn't belong to user
-    if (!preference || preference.userId !== userId) {
+    if (preference?.userId !== userId) {
       return null
     }
 

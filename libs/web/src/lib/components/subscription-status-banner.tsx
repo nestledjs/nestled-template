@@ -17,17 +17,14 @@ import { useSubscription } from '../hooks/use-subscription'
  * - Subscription canceled
  * - No active subscription (optional)
  */
-export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: { showNoSubscriptionWarning?: boolean }) {
+export function SubscriptionStatusBanner({
+  showNoSubscriptionWarning = false,
+}: {
+  readonly showNoSubscriptionWarning?: boolean
+}) {
   const [dismissed, setDismissed] = useState(false)
-  const {
-    subscription,
-    hasActiveSubscription,
-    isTrialing,
-    isCanceled,
-    isPastDue,
-    trialEndsAt,
-    periodEndsAt,
-  } = useSubscription()
+  const { hasActiveSubscription, isTrialing, isCanceled, isPastDue, trialEndsAt, periodEndsAt } =
+    useSubscription()
 
   // Don't show if dismissed
   if (dismissed) return null
@@ -38,7 +35,7 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
     const now = new Date()
     const diff = trialEndsAt.getTime() - now.getTime()
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
-    return days > 0 ? days : 0
+    return Math.max(days, 0)
   }
 
   // Calculate days until access ends (for canceled subscriptions)
@@ -47,7 +44,7 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
     const now = new Date()
     const diff = periodEndsAt.getTime() - now.getTime()
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
-    return days > 0 ? days : 0
+    return Math.max(days, 0)
   }
 
   const daysUntilTrialEnd = getDaysUntilTrialEnd()
@@ -65,15 +62,12 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
     icon = <XCircleIcon className="h-5 w-5" />
     message = (
       <>
-        <strong>Payment Failed:</strong> Your last payment was unsuccessful. Please update your payment method to
-        avoid service interruption.
+        <strong>Payment Failed:</strong> Your last payment was unsuccessful. Please update your
+        payment method to avoid service interruption.
       </>
     )
     action = (
-      <Link
-        to="/settings/billing"
-        className="whitespace-nowrap font-semibold hover:underline"
-      >
+      <Link to="/settings/billing" className="whitespace-nowrap font-semibold hover:underline">
         Update Payment →
       </Link>
     )
@@ -84,15 +78,12 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
     icon = <ExclamationTriangleIcon className="h-5 w-5" />
     message = (
       <>
-        <strong>Subscription Canceled:</strong> Your access will end in {daysUntilAccessEnd} {daysUntilAccessEnd === 1 ? 'day' : 'days'} on{' '}
-        {periodEndsAt?.toLocaleDateString()}.
+        <strong>Subscription Canceled:</strong> Your access will end in {daysUntilAccessEnd}{' '}
+        {daysUntilAccessEnd === 1 ? 'day' : 'days'} on {periodEndsAt?.toLocaleDateString()}.
       </>
     )
     action = (
-      <Link
-        to="/settings/billing"
-        className="whitespace-nowrap font-semibold hover:underline"
-      >
+      <Link to="/settings/billing" className="whitespace-nowrap font-semibold hover:underline">
         Reactivate →
       </Link>
     )
@@ -103,15 +94,13 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
     icon = <InformationCircleIcon className="h-5 w-5" />
     message = (
       <>
-        <strong>Trial Ending Soon:</strong> Your trial ends in {daysUntilTrialEnd} {daysUntilTrialEnd === 1 ? 'day' : 'days'}.{' '}
+        <strong>Trial Ending Soon:</strong> Your trial ends in {daysUntilTrialEnd}{' '}
+        {daysUntilTrialEnd === 1 ? 'day' : 'days'}.{' '}
         {daysUntilTrialEnd === 0 ? 'Subscribe today' : 'Subscribe now'} to keep your access.
       </>
     )
     action = (
-      <Link
-        to="/settings/billing"
-        className="whitespace-nowrap font-semibold hover:underline"
-      >
+      <Link to="/settings/billing" className="whitespace-nowrap font-semibold hover:underline">
         Subscribe Now →
       </Link>
     )
@@ -122,15 +111,12 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
     icon = <InformationCircleIcon className="h-5 w-5" />
     message = (
       <>
-        <strong>Free Plan:</strong> You're currently on the free plan. Upgrade to unlock premium features and remove
-        limitations.
+        <strong>Free Plan:</strong> You're currently on the free plan. Upgrade to unlock premium
+        features and remove limitations.
       </>
     )
     action = (
-      <Link
-        to="/pricing"
-        className="whitespace-nowrap font-semibold hover:underline"
-      >
+      <Link to="/pricing" className="whitespace-nowrap font-semibold hover:underline">
         View Plans →
       </Link>
     )
@@ -167,16 +153,10 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-4 py-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className={`flex-shrink-0 ${style.icon}`}>
-              {icon}
-            </div>
-            <p className={`text-sm ${style.text} flex-1 min-w-0`}>
-              {message}
-            </p>
+            <div className={`flex-shrink-0 ${style.icon}`}>{icon}</div>
+            <p className={`text-sm ${style.text} flex-1 min-w-0`}>{message}</p>
             {action && (
-              <div className={`flex-shrink-0 hidden sm:block ${style.text}`}>
-                {action}
-              </div>
+              <div className={`flex-shrink-0 hidden sm:block ${style.text}`}>{action}</div>
             )}
           </div>
           <button
@@ -188,11 +168,7 @@ export function SubscriptionStatusBanner({ showNoSubscriptionWarning = false }: 
           </button>
         </div>
         {/* Mobile action button */}
-        {action && (
-          <div className={`sm:hidden pb-3 ${style.text}`}>
-            {action}
-          </div>
-        )}
+        {action && <div className={`sm:hidden pb-3 ${style.text}`}>{action}</div>}
       </div>
     </div>
   )

@@ -1,6 +1,6 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import CheckoutSuccess from '../../../app/routes/checkout/success'
 import { useSubscription } from '@nestled-template/web'
@@ -44,9 +44,7 @@ describe('Checkout Success Page', () => {
       },
     ])
 
-    const url = sessionId
-      ? `/checkout/success?session_id=${sessionId}`
-      : '/checkout/success'
+    const url = sessionId ? `/checkout/success?session_id=${sessionId}` : '/checkout/success'
 
     return render(<ReactRouterStub initialEntries={[url]} />)
   }
@@ -61,7 +59,9 @@ describe('Checkout Success Page', () => {
     it('should display confirmation message', () => {
       renderCheckoutSuccess()
 
-      expect(screen.getByText(/Your subscription has been successfully activated/i)).toBeInTheDocument()
+      expect(
+        screen.getByText(/Your subscription has been successfully activated/i),
+      ).toBeInTheDocument()
     })
 
     it('should show success icon', () => {
@@ -135,7 +135,9 @@ describe('Checkout Success Page', () => {
 
       renderCheckoutSuccess()
 
-      expect(screen.queryByRole('heading', { name: /Subscription Details/i })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('heading', { name: /Subscription Details/i }),
+      ).not.toBeInTheDocument()
     })
   })
 
@@ -278,7 +280,7 @@ describe('Checkout Success Page', () => {
           'purchase',
           expect.objectContaining({
             value: '99.99',
-          })
+          }),
         )
       })
     })
@@ -300,7 +302,7 @@ describe('Checkout Success Page', () => {
           'purchase',
           expect.objectContaining({
             value: 0,
-          })
+          }),
         )
       })
     })
@@ -334,14 +336,14 @@ describe('Checkout Success Page', () => {
     it('should have responsive padding', () => {
       const { container } = renderCheckoutSuccess()
 
-      const card = container.querySelector('.p-8.md\\:p-12')
+      const card = container.querySelector(String.raw`.p-8.md\:p-12`)
       expect(card).toBeInTheDocument()
     })
 
     it('should stack buttons on mobile', () => {
       const { container } = renderCheckoutSuccess()
 
-      const buttonContainer = container.querySelector('.flex-col.sm\\:flex-row')
+      const buttonContainer = container.querySelector(String.raw`.flex-col.sm\:flex-row`)
       expect(buttonContainer).toBeInTheDocument()
     })
   })

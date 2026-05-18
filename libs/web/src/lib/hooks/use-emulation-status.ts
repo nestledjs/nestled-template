@@ -22,9 +22,9 @@ function getSessionCookieName(): string {
 function getCookieValue(name: string): string | null {
   if (typeof document === 'undefined') return null
 
-  const matches = document.cookie.match(new RegExp(
-    '(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)'
-  ))
+  const escaped = name.replaceAll(/([.$?*|{}()[\]\\/+^])/g, String.raw`\$1`)
+  const cookieRegex = new RegExp(String.raw`(?:^|; )` + escaped + String.raw`=([^;]*)`)
+  const matches = cookieRegex.exec(document.cookie)
   return matches ? decodeURIComponent(matches[1]) : null
 }
 
@@ -55,7 +55,10 @@ export function useEmulationStatus(): EmulationStatus {
       }
 
       // Log the raw token for debugging
-      console.log('[useEmulationStatus] Raw token (first 50 chars):', token.substring(0, 50) + '...')
+      console.log(
+        '[useEmulationStatus] Raw token (first 50 chars):',
+        token.substring(0, 50) + '...',
+      )
       console.log('[useEmulationStatus] Token payload (base64):', parts[1])
 
       const payload = JSON.parse(atob(parts[1]))
@@ -63,7 +66,7 @@ export function useEmulationStatus(): EmulationStatus {
         isEmulating: payload.isEmulating,
         originalAdminId: payload.originalAdminId,
         userId: payload.userId,
-        fullPayload: payload
+        fullPayload: payload,
       })
 
       const result = {

@@ -1,7 +1,13 @@
 import { Logger } from '@nestjs/common'
 import { createTransport, Transporter } from 'nodemailer'
 import { ConfigService } from '@nestled-template/api/config'
-import { EmailOptions, EmailProvider, EmailResult, EmailTemplate, TemplateManager } from '../email.interface'
+import {
+  EmailOptions,
+  EmailProvider,
+  EmailResult,
+  EmailTemplate,
+  TemplateManager,
+} from '../email.interface'
 import { SimpleTemplateManager } from '../template-manager-simple'
 
 export class SmtpEmailProvider implements EmailProvider {
@@ -13,7 +19,7 @@ export class SmtpEmailProvider implements EmailProvider {
     this.templateManager = new SimpleTemplateManager()
     this.transporter = createTransport({
       host: this.config.mailerConfig.host,
-      port: parseInt(this.config.mailerConfig.port.toString()),
+      port: Number.parseInt(this.config.mailerConfig.port.toString()),
       secure: this.config.mailerConfig.secure,
       auth: {
         user: this.config.mailerConfig.auth.user,
@@ -63,13 +69,13 @@ export class SmtpEmailProvider implements EmailProvider {
   async sendTemplate(
     to: string | string[],
     template: EmailTemplate,
-    options?: Partial<EmailOptions>
+    options?: Partial<EmailOptions>,
   ): Promise<EmailResult> {
     try {
       // Render the template
       const rendered = await this.templateManager.renderTemplate(
         template.templateId,
-        template.variables || {}
+        template.variables || {},
       )
 
       // Merge with provided options
@@ -84,7 +90,10 @@ export class SmtpEmailProvider implements EmailProvider {
       // Send using the regular send method
       return this.send(emailOptions)
     } catch (error) {
-      this.logger.error(`Template send failed for ${template.templateId}:`, (error as Error).message)
+      this.logger.error(
+        `Template send failed for ${template.templateId}:`,
+        (error as Error).message,
+      )
       throw new Error(`Template email send failed: ${(error as Error).message}`)
     }
   }

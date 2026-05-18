@@ -121,11 +121,12 @@ export class ApiCrudDataAccessService {
   }
 
   async createApiToken(info: GraphQLResolveInfo, input: dto.CreateApiTokenInput) {
-    const { userId, ...regularFields } = input
+    const { userId, organizationId, ...regularFields } = input
     const data: any = regularFields
 
     const relationMappings = {
       user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
+      organization: { ids: organizationId, isVirtual: false, isList: false, isRequired: false },
     }
 
     for (const [relationName, config] of Object.entries(relationMappings)) {
@@ -188,11 +189,12 @@ export class ApiCrudDataAccessService {
   }
 
   async updateApiToken(info: GraphQLResolveInfo, id: string, input: dto.UpdateApiTokenInput) {
-    const { userId, ...regularFields } = input
+    const { userId, organizationId, ...regularFields } = input
     const data: any = regularFields
 
     const relationMappings = {
       user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
+      organization: { ids: organizationId, isVirtual: false, isList: false, isRequired: false },
     }
 
     for (const [relationName, config] of Object.entries(relationMappings)) {
@@ -1015,6 +1017,7 @@ export class ApiCrudDataAccessService {
       TeamIds,
       subscriptionId,
       rolesIds,
+      apiTokensIds,
       logoId,
       ...regularFields
     } = input
@@ -1032,6 +1035,7 @@ export class ApiCrudDataAccessService {
       Team: { ids: TeamIds, isVirtual: true, isList: true, isRequired: false },
       subscription: { ids: subscriptionId, isVirtual: true, isList: false, isRequired: false },
       roles: { ids: rolesIds, isVirtual: true, isList: true, isRequired: false },
+      apiTokens: { ids: apiTokensIds, isVirtual: true, isList: true, isRequired: false },
       logo: { ids: logoId, isVirtual: false, isList: false, isRequired: false },
     }
 
@@ -1111,6 +1115,7 @@ export class ApiCrudDataAccessService {
       TeamIds,
       subscriptionId,
       rolesIds,
+      apiTokensIds,
       logoId,
       ...regularFields
     } = input
@@ -1128,6 +1133,7 @@ export class ApiCrudDataAccessService {
       Team: { ids: TeamIds, isVirtual: true, isList: true, isRequired: false },
       subscription: { ids: subscriptionId, isVirtual: true, isList: false, isRequired: false },
       roles: { ids: rolesIds, isVirtual: true, isList: true, isRequired: false },
+      apiTokens: { ids: apiTokensIds, isVirtual: true, isList: true, isRequired: false },
       logo: { ids: logoId, isVirtual: false, isList: false, isRequired: false },
     }
 

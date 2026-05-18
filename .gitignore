@@ -28,6 +28,7 @@ node_modules
 /.sass-cache
 /connect.lock
 /coverage
+/.scannerwork
 /libpeerconnection.log
 npm-debug.log
 yarn-error.log
@@ -61,3 +62,5 @@ uploads
 
 .claude/worktrees
 .claude/settings.local.json
+.nx/polygraph
+.nx/self-healing

@@ -5,16 +5,14 @@ FROM node:22-slim
 
 WORKDIR /workspace
 
-RUN npm install -g pnpm
+RUN corepack enable && corepack prepare pnpm@9.8.0 --activate
 
 COPY package.json pnpm-lock.yaml ./
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY . .
 
 RUN pnpm build
 
 CMD ["pnpm", "start"]
-
-

@@ -5,7 +5,7 @@ import { reactRouter } from '@react-router/dev/vite'
 import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin'
 import { nxCopyAssetsPlugin } from '@nx/vite/plugins/nx-copy-assets.plugin'
 import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
+import path from 'node:path'
 import remarkFrontmatter from 'remark-frontmatter'
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter'
 
@@ -18,9 +18,7 @@ export default defineConfig(() => ({
     'import.meta.env.VITE_API_URL': JSON.stringify(
       process.env.VITE_API_URL || 'http://localhost:3000',
     ),
-    'process.env.VITE_COOKIE_NAME': JSON.stringify(
-      process.env.VITE_COOKIE_NAME || '__session',
-    ),
+    'process.env.VITE_COOKIE_NAME': JSON.stringify(process.env.VITE_COOKIE_NAME || '__session'),
   },
   resolve: {
     alias: {
@@ -53,10 +51,7 @@ export default defineConfig(() => ({
     include: ['@apollo/client', '@apollo/client/react'],
   },
   ssr: {
-    noExternal: [
-      '@nestledjs/forms',
-      /^@apollo\/client/,
-    ],
+    noExternal: ['@nestledjs/forms', /^@apollo\/client/],
     // Keep data-browser external
     external: ['@nestledjs/data-browser'],
   },
@@ -94,6 +89,7 @@ export default defineConfig(() => ({
     coverage: {
       reportsDirectory: '../../coverage/apps/web',
       provider: 'v8' as const,
+      reporter: ['text', 'json', 'html', 'lcov'],
     },
   },
 }))

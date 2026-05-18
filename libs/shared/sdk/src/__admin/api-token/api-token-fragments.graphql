@@ -8,7 +8,11 @@ fragment __AdminApiTokenSummary on ApiToken {
   expiresAt
   lastUsedAt
   revoked
+  organizationId
   user {
+    id
+  }
+  organization {
     id
   }
 }

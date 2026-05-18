@@ -1,6 +1,6 @@
 import React from 'react'
 import { render, screen, within } from '@testing-library/react'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import SettingsLayout from '../../../app/routes/settings/_layout'
 
@@ -13,7 +13,6 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK
-
 
 // Mock web components
 vi.mock('@nestled-template/web', () => ({
@@ -106,7 +105,9 @@ describe('SettingsLayout Component', () => {
           },
           {
             path: 'organization/edit',
-            Component: () => <div data-testid="organization-edit-content">Organization Edit Content</div>,
+            Component: () => (
+              <div data-testid="organization-edit-content">Organization Edit Content</div>
+            ),
           },
           {
             path: 'members',
@@ -329,6 +330,37 @@ describe('SettingsLayout Component', () => {
       expect(screen.queryByText('Billing')).not.toBeInTheDocument()
     })
 
+    it('should show billing to members with explicit billing read permission', () => {
+      vi.mocked(useQuery).mockReturnValue({
+        data: {
+          myOrganizations: [
+            {
+              ...mockOrganization,
+              members: [
+                {
+                  id: 'member-1',
+                  userId: 'user-123',
+                  role: {
+                    id: 'role-member',
+                    name: 'Member',
+                    permissions: [
+                      { subject: 'organization', action: 'read' },
+                      { subject: 'member', action: 'read' },
+                      { subject: 'billing', action: 'read' },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      } as any)
+
+      renderWithRouter()
+
+      expect(screen.getByText('Billing')).toBeInTheDocument()
+    })
+
     it('should allow super admins to access all settings', () => {
       vi.mocked(useGlobalCtx).mockReturnValue({
         user: { ...mockUser, isSuperAdmin: true } as any,
@@ -340,6 +372,24 @@ describe('SettingsLayout Component', () => {
       renderWithRouter()
 
       expect(screen.getByText('Billing')).toBeInTheDocument()
+    })
+
+    it('should show the admin console entry only to super admins', () => {
+      renderWithRouter()
+      expect(screen.queryByText('Admin Console')).not.toBeInTheDocument()
+
+      vi.mocked(useGlobalCtx).mockReturnValue({
+        user: { ...mockUser, isSuperAdmin: true } as any,
+        organizations: [],
+        activeOrganization: null,
+        activeOrganizationMember: null,
+      })
+
+      renderWithRouter()
+
+      const adminLink = screen.getByRole('link', { name: /Admin Console/ })
+      expect(adminLink).toHaveAttribute('href', '/admin')
+      expect(screen.getByText('Platform setup and operations')).toBeInTheDocument()
     })
 
     it('should hide organization settings when no organization', () => {
@@ -381,7 +431,7 @@ describe('SettingsLayout Component', () => {
       const avatar = screen.getAllByTestId('avatar')[0]
       expect(within(avatar).getByRole('img')).toHaveAttribute(
         'src',
-        'https://example.com/avatar.png'
+        'https://example.com/avatar.png',
       )
     })
 
@@ -407,7 +457,7 @@ describe('SettingsLayout Component', () => {
       const orgAvatar = avatars[1]
       expect(within(orgAvatar).getByRole('img')).toHaveAttribute(
         'src',
-        'https://example.com/logo.png'
+        'https://example.com/logo.png',
       )
     })
 

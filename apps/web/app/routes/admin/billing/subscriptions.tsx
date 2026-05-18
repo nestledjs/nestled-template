@@ -128,7 +128,7 @@ export default function AdminBillingSubscriptions() {
 
   // Client-side filter by status
   if (statusFilter) {
-    subscriptions = subscriptions.filter((sub) => sub.status === statusFilter)
+    subscriptions = subscriptions.filter(sub => sub.status === statusFilter)
   }
 
   return (
@@ -234,8 +234,8 @@ export default function AdminBillingSubscriptions() {
                   </td>
                 </tr>
               ) : (
-                subscriptions.map((sub) => {
-                  const primaryEmail = sub.organization?.emails?.find((e) => e.primary)
+                subscriptions.map(sub => {
+                  const primaryEmail = sub.organization?.emails?.find(e => e.primary)
                   const periodEnd = sub.stripeCurrentPeriodEnd
                     ? new Date(sub.stripeCurrentPeriodEnd).toLocaleDateString()
                     : 'N/A'
@@ -266,7 +266,7 @@ export default function AdminBillingSubscriptions() {
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        ${parseFloat(sub.plan?.price || '0').toFixed(2)}
+                        ${Number.parseFloat(sub.plan?.price || '0').toFixed(2)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {periodEnd}
@@ -307,25 +307,25 @@ export default function AdminBillingSubscriptions() {
           <div>
             <div className="text-blue-600 font-medium">Active</div>
             <div className="text-2xl font-bold text-blue-900">
-              {subscriptions.filter((s) => s.status === 'ACTIVE').length}
+              {subscriptions.filter(s => s.status === 'ACTIVE').length}
             </div>
           </div>
           <div>
             <div className="text-blue-600 font-medium">Trialing</div>
             <div className="text-2xl font-bold text-blue-900">
-              {subscriptions.filter((s) => s.status === 'TRIALING').length}
+              {subscriptions.filter(s => s.status === 'TRIALING').length}
             </div>
           </div>
           <div>
             <div className="text-blue-600 font-medium">Past Due</div>
             <div className="text-2xl font-bold text-blue-900">
-              {subscriptions.filter((s) => s.status === 'PAST_DUE').length}
+              {subscriptions.filter(s => s.status === 'PAST_DUE').length}
             </div>
           </div>
           <div>
             <div className="text-blue-600 font-medium">Canceled</div>
             <div className="text-2xl font-bold text-blue-900">
-              {subscriptions.filter((s) => s.status === 'CANCELED').length}
+              {subscriptions.filter(s => s.status === 'CANCELED').length}
             </div>
           </div>
         </div>

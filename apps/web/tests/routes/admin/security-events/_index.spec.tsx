@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../../helpers/createTestRouter"
+import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminSecurityEventsPage from '../../../../app/routes/admin/security-events/_index'
 
@@ -12,27 +12,27 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
-    
-  AdminPlatformSecurityEventsDocument: { kind: 'Document', definitions: [] },
-  SecurityEventType: {
-    PasswordChanged: 'PasswordChanged',
-    EmailChanged: 'EmailChanged',
-    TwoFactorEnabled: 'TwoFactorEnabled',
-    TwoFactorDisabled: 'TwoFactorDisabled',
-    RecoveryCodesGenerated: 'RecoveryCodesGenerated',
-    AccountLocked: 'AccountLocked',
-    AccountUnlocked: 'AccountUnlocked',
-    SuspiciousLoginAttempt: 'SuspiciousLoginAttempt',
-    PasswordResetRequested: 'PasswordResetRequested',
-    LoginLocationChange: 'LoginLocationChange',
-    ApiTokenCreated: 'ApiTokenCreated',
-    ApiTokenRevoked: 'ApiTokenRevoked',
-    ApiTokenRotated: 'ApiTokenRotated',
-  },
+
+    AdminPlatformSecurityEventsDocument: { kind: 'Document', definitions: [] },
+    SecurityEventType: {
+      PasswordChanged: 'PasswordChanged',
+      EmailChanged: 'EmailChanged',
+      TwoFactorEnabled: 'TwoFactorEnabled',
+      TwoFactorDisabled: 'TwoFactorDisabled',
+      RecoveryCodesGenerated: 'RecoveryCodesGenerated',
+      AccountLocked: 'AccountLocked',
+      AccountUnlocked: 'AccountUnlocked',
+      SuspiciousLoginAttempt: 'SuspiciousLoginAttempt',
+      PasswordResetRequested: 'PasswordResetRequested',
+      LoginLocationChange: 'LoginLocationChange',
+      ApiTokenCreated: 'ApiTokenCreated',
+      ApiTokenRevoked: 'ApiTokenRevoked',
+      ApiTokenRotated: 'ApiTokenRotated',
+    },
   }
 })
 
@@ -223,7 +223,7 @@ describe('Admin Security Events Page', () => {
       renderSecurityEventsPage()
 
       const select = screen.getByLabelText('Event Type') as HTMLSelectElement
-      const options = Array.from(select.options).map((opt) => opt.text)
+      const options = Array.from(select.options).map(opt => opt.text)
 
       expect(options).toContain('All Event Types')
       expect(options).toContain('Password Changed')
@@ -575,11 +575,12 @@ describe('Admin Security Events Page', () => {
 
       expect(screen.getByText('Security Events')).toBeInTheDocument()
       expect(
-        screen.getByText('Monitor login attempts, 2FA events, and security incidents across the platform')
+        screen.getByText(
+          'Monitor login attempts, 2FA events, and security incidents across the platform',
+        ),
       ).toBeInTheDocument()
     })
   })
-
 
   describe('Query Configuration', () => {
     it('should use network-only fetch policy', () => {
@@ -595,7 +596,7 @@ describe('Admin Security Events Page', () => {
         expect.anything(),
         expect.objectContaining({
           fetchPolicy: 'network-only',
-        })
+        }),
       )
     })
 
@@ -617,9 +618,8 @@ describe('Admin Security Events Page', () => {
               take: 50,
             }),
           }),
-        })
+        }),
       )
     })
   })
-
 })

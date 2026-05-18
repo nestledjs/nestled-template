@@ -20,11 +20,14 @@ describe('AdminService', () => {
       },
       userSession: {
         count: jest.fn(),
+        findMany: jest.fn(),
+        groupBy: jest.fn(),
         updateMany: jest.fn(),
       },
       auditLog: {
         findMany: jest.fn(),
         count: jest.fn(),
+        groupBy: jest.fn(),
       },
       organizationMember: {
         count: jest.fn(),
@@ -155,6 +158,32 @@ describe('AdminService', () => {
         }),
       )
     })
+    it('should filter by unlocked account status', async () => {
+      mockData.user.findMany.mockResolvedValue([])
+      mockData.user.count.mockResolvedValue(0)
+      const filters: AdminUserFiltersInput = { accountLocked: false }
+      await service.getUsers(filters)
+      expect(mockData.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: [{ lockedUntil: null }, { lockedUntil: { lte: expect.any(Date) } }],
+          },
+        }),
+      )
+    })
+    it('should filter by primary email verification status', async () => {
+      mockData.user.findMany.mockResolvedValue([])
+      mockData.user.count.mockResolvedValue(0)
+      const filters: AdminUserFiltersInput = { emailVerified: false }
+      await service.getUsers(filters)
+      expect(mockData.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            emails: { some: { verified: false, primary: true } },
+          },
+        }),
+      )
+    })
     it('should filter by registration date range', async () => {
       mockData.user.findMany.mockResolvedValue([])
       mockData.user.count.mockResolvedValue(0)
@@ -168,6 +197,23 @@ describe('AdminService', () => {
             createdAt: {
               gte: registeredAfter,
               lte: registeredBefore,
+            },
+          },
+        }),
+      )
+    })
+    it('should filter by last login date range', async () => {
+      mockData.user.findMany.mockResolvedValue([])
+      mockData.user.count.mockResolvedValue(0)
+      const lastLoginAfter = new Date('2024-01-01')
+      const lastLoginBefore = new Date('2024-12-31')
+      await service.getUsers({ lastLoginAfter, lastLoginBefore })
+      expect(mockData.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            lastSuccessfulLogin: {
+              gte: lastLoginAfter,
+              lte: lastLoginBefore,
             },
           },
         }),
@@ -358,6 +404,23 @@ describe('AdminService', () => {
         }),
       )
     })
+    it('should filter by date range', async () => {
+      mockData.auditLog.findMany.mockResolvedValue([])
+      mockData.auditLog.count.mockResolvedValue(0)
+      const startDate = new Date('2024-01-01')
+      const endDate = new Date('2024-12-31')
+      await service.getAuditLogs({ startDate, endDate })
+      expect(mockData.auditLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            createdAt: {
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+        }),
+      )
+    })
   })
   describe('getDashboardStats', () => {
     it('should return platform-wide dashboard statistics', async () => {
@@ -488,6 +551,14 @@ describe('AdminService', () => {
       await service.verifyEmail('user-123', 'email-123')
       expect(mockData.user.update).not.toHaveBeenCalled()
     })
+    it('should throw if updated user cannot be loaded after verification', async () => {
+      mockData.email.update.mockResolvedValue({} as any)
+      mockData.email.findUnique.mockResolvedValue({ id: 'email-123', primary: false } as any)
+      mockData.user.findUnique.mockResolvedValue(null)
+      await expect(service.verifyEmail('user-123', 'email-123')).rejects.toThrow(
+        'User user-123 not found after email verification',
+      )
+    })
   })
   describe('forcePasswordReset', () => {
     it('should force password reset for a user', async () => {
@@ -534,19 +605,63 @@ describe('AdminService', () => {
       let secondToken: string
       mockData.user.update.mockImplementation((args: any) => {
         const token = args.data.passwordResetToken
-        if (!firstToken) {
-          firstToken = token
-        } else {
+        if (firstToken) {
           secondToken = token
+        } else {
+          firstToken = token
         }
-        return Promise.resolve({ id: 'user-123', passwordResetToken: token, emails: [] } as any)
+        return Promise.resolve({ id: 'user-123', passwordResetToken: token, emails: [] })
       })
-      mockData.userSession.updateMany.mockResolvedValue({ count: 0 } as any)
+      mockData.userSession.updateMany.mockResolvedValue({ count: 0 })
       await service.forcePasswordReset('user-1')
       await service.forcePasswordReset('user-2')
       expect(firstToken!).toBeDefined()
       expect(secondToken!).toBeDefined()
       expect(firstToken!).not.toEqual(secondToken!)
+    })
+  })
+  describe('getAnalytics', () => {
+    it('should aggregate admin analytics data', async () => {
+      const createdAt = new Date('2024-01-01T00:00:00.000Z')
+      const lastActiveAt = new Date('2024-01-01T00:30:00.000Z')
+
+      mockData.userSession.groupBy
+        .mockResolvedValueOnce([{ userId: 'user-1' }, { userId: 'user-2' }])
+        .mockResolvedValueOnce([{ userId: 'user-1' }])
+        .mockResolvedValueOnce([{ userId: 'user-1' }, { userId: 'user-2' }, { userId: 'user-3' }])
+        .mockResolvedValueOnce([{ userId: 'user-1' }])
+      mockData.user.count.mockResolvedValueOnce(4).mockResolvedValueOnce(20)
+      mockData.userSession.findMany.mockResolvedValue([{ createdAt, lastActiveAt }])
+      mockData.auditLog.count.mockResolvedValue(12)
+      mockData.auditLog.groupBy
+        .mockResolvedValueOnce([
+          { action: 'LOGIN', _count: { action: 7 } },
+          { action: 'UPDATE_PROFILE', _count: { action: 3 } },
+        ])
+        .mockResolvedValueOnce([{ action: 'LOGIN', _count: { action: 7 } }])
+        .mockResolvedValueOnce([{ userId: 'user-1' }, { userId: 'user-2' }])
+
+      const result = await service.getAnalytics()
+
+      expect(result.dailyActiveUsers).toBe(2)
+      expect(result.dauChange).toBe(100)
+      expect(result.monthlyActiveUsers).toBe(3)
+      expect(result.mauChange).toBe(200)
+      expect(result.newUsersToday).toBe(4)
+      expect(result.avgSessionDuration).toBe(30 * 60 * 1000)
+      expect(result.totalGraphQLOperations).toBe(12)
+      expect(result.topEndpoints).toEqual([
+        expect.objectContaining({ name: 'LOGIN', requests: 7 }),
+        expect.objectContaining({ name: 'UPDATE_PROFILE', requests: 3 }),
+      ])
+      expect(result.featureUsage).toEqual([
+        {
+          featureName: 'LOGIN',
+          uniqueUsers: 2,
+          totalUses: 7,
+          adoptionRate: 10,
+        },
+      ])
     })
   })
 })

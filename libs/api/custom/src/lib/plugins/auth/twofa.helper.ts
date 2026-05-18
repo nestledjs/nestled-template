@@ -1,6 +1,6 @@
 import * as speakeasy from 'speakeasy'
 import * as QRCode from 'qrcode'
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 
 /**
  * Generate a new TOTP secret for 2FA
@@ -37,7 +37,7 @@ export async function generateQRCode(otpauthUrl: string): Promise<string> {
   try {
     return await QRCode.toDataURL(otpauthUrl)
   } catch (error) {
-    throw new Error('Failed to generate QR code')
+    throw new Error(`Failed to generate QR code: ${(error as Error).message}`)
   }
 }
 
@@ -55,42 +55,46 @@ export function generateBackupCodes(count = 10): string[] {
 }
 
 /**
- * Encrypt a 2FA secret for storage
+ * Encrypt a 2FA secret for storage using AES-256-GCM (authenticated encryption).
+ * Output format: <12-byte iv hex>:<16-byte auth tag hex>:<ciphertext hex>
  */
 export function encryptSecret(secret: string, encryptionKey: string): string {
-  // Ensure encryption key is 32 bytes
   const key = Buffer.from(encryptionKey.slice(0, 32).padEnd(32, '0'))
-  const iv = randomBytes(16)
-
-  const cipher = createCipheriv('aes-256-cbc', key, iv)
-  let encrypted = cipher.update(secret, 'utf8', 'hex')
-  encrypted += cipher.final('hex')
-
-  // Return IV + encrypted data
-  return iv.toString('hex') + ':' + encrypted
+  const iv = randomBytes(12) // GCM standard: 96-bit IV
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const encrypted = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()])
+  const authTag = cipher.getAuthTag()
+  return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`
 }
 
 /**
- * Decrypt a 2FA secret from storage
+ * Decrypt a 2FA secret from storage.
+ * Supports GCM format (iv:authTag:ciphertext) and legacy CBC format (iv:ciphertext).
  */
 export function decryptSecret(encryptedSecret: string, encryptionKey: string): string {
-  // Ensure encryption key is 32 bytes
   const key = Buffer.from(encryptionKey.slice(0, 32).padEnd(32, '0'))
+  const parts = encryptedSecret.split(':')
 
-  const [ivHex, encrypted] = encryptedSecret.split(':')
-  const iv = Buffer.from(ivHex, 'hex')
+  if (parts.length === 3) {
+    // GCM format: iv(24 hex):authTag(32 hex):ciphertext
+    const [ivHex, authTagHex, ciphertextHex] = parts
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'))
+    decipher.setAuthTag(Buffer.from(authTagHex, 'hex'))
+    return Buffer.concat([
+      decipher.update(Buffer.from(ciphertextHex, 'hex')),
+      decipher.final(),
+    ]).toString('utf8')
+  }
 
-  const decipher = createDecipheriv('aes-256-cbc', key, iv)
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8')
-  decrypted += decipher.final('utf8')
-
-  return decrypted
+  // Legacy CBC format: iv(32 hex):ciphertext — decrypts existing secrets before migration
+  const [ivHex, ciphertextHex] = parts
+  const decipher = createDecipheriv('aes-256-cbc', key, Buffer.from(ivHex, 'hex'))
+  return decipher.update(ciphertextHex, 'hex', 'utf8') + decipher.final('utf8')
 }
 
 /**
  * Hash a backup code for storage (one-way hash)
  */
 export function hashBackupCode(code: string): string {
-  const crypto = require('crypto')
-  return crypto.createHash('sha256').update(code).digest('hex')
+  return createHash('sha256').update(code).digest('hex')
 }

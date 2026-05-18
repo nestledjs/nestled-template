@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process'
 
-module.exports = async function () {
+module.exports = async function globalTeardown() {
   // Put clean up logic here (e.g. stopping services, docker-compose, etc.).
   // Hint: `globalThis` is shared between setup and teardown.
   console.log(globalThis.__TEARDOWN_MESSAGE__ || '\n✨ Tearing down E2E tests...\n')
@@ -26,7 +26,7 @@ module.exports = async function () {
       try {
         apiProcess.kill('SIGKILL')
         console.log(`   Killed API server process ${apiProcess.pid}`)
-      } catch (err) {
+      } catch {
         console.log(`   Process ${apiProcess.pid} may already be dead`)
       }
 

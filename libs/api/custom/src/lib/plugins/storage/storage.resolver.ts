@@ -1,6 +1,11 @@
 import { Resolver, Mutation, Query, Args, Int } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { GqlAuthGuard, CtxUser } from '@nestled-template/api/utils'
+import {
+  CtxOrganizationId,
+  CtxUser,
+  GqlAuthGuard,
+  GqlOrganizationScopedGuard,
+} from '@nestled-template/api/utils'
 import { User, StoredFile } from '@nestled-template/api/core/models'
 import { StorageService } from './storage.service'
 import { UploadedFile } from './models/upload.model'
@@ -42,9 +47,10 @@ export class StorageResolver {
    * Upload organization logo
    */
   @Mutation(() => UploadedFile)
+  @UseGuards(GqlOrganizationScopedGuard)
   async uploadOrganizationLogo(
     @Args({ name: 'file', type: () => GraphQLUpload }) file: FileUpload,
-    @Args('organizationId', { type: () => String }) organizationId: string,
+    @CtxOrganizationId() organizationId: string,
     @CtxUser() user: User,
   ): Promise<StoredFile> {
     return this.storageService.uploadOrganizationLogo(file, user.id, organizationId)
@@ -75,8 +81,9 @@ export class StorageResolver {
    * Remove an organization's logo (requires org membership)
    */
   @Mutation(() => Boolean)
+  @UseGuards(GqlOrganizationScopedGuard)
   async removeOrganizationLogo(
-    @Args('organizationId', { type: () => String }) organizationId: string,
+    @CtxOrganizationId() organizationId: string,
     @CtxUser() user: User,
   ): Promise<boolean> {
     await this.storageService.removeOrganizationLogo(organizationId, user.id)

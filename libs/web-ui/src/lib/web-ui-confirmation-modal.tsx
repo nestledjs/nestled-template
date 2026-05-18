@@ -2,7 +2,7 @@ import { Fragment, useRef } from 'react'
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from '@headlessui/react'
 import { ExclamationCircleIcon } from '@heroicons/react/24/outline'
 
-/* eslint-disable-next-line */
+/* eslint-disable-next-line @typescript-eslint/no-empty-object-type */
 export interface WebUiConfirmationModalFeatureProps {
   open: boolean
   setOpen: (open: boolean) => void

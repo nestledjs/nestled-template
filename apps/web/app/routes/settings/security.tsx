@@ -132,7 +132,7 @@ export default function SecuritySettings() {
   }
 
   async function handleInvalidateSession(sessionId: string) {
-    if (!window.confirm('Are you sure you want to log out of this session?')) {
+    if (!globalThis.confirm('Are you sure you want to log out of this session?')) {
       return
     }
 
@@ -148,7 +148,7 @@ export default function SecuritySettings() {
 
   async function handleInvalidateAllSessions() {
     if (
-      !window.confirm(
+      !globalThis.confirm(
         'Are you sure you want to log out of all other sessions? This will not affect your current session.',
       )
     ) {
@@ -181,7 +181,7 @@ export default function SecuritySettings() {
   }
 
   async function handleVerifyAndEnable2FA() {
-    if (!verificationCode || verificationCode.length !== 6) {
+    if (verificationCode?.length !== 6) {
       showError('Please enter a valid 6-digit code')
       return
     }
@@ -412,7 +412,7 @@ export default function SecuritySettings() {
           )}
         </div>
 
-        {userSessions.filter(s => !s.isCurrent).length > 0 && (
+        {userSessions.some(s => !s.isCurrent) && (
           <button
             type="button"
             className="mt-4 text-sm text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 font-medium"
@@ -453,9 +453,9 @@ export default function SecuritySettings() {
                 <div className="flex-1">
                   <p className="font-medium text-zinc-900 dark:text-white">
                     {event.eventType
-                      ?.replace(/_/g, ' ')
+                      ?.replaceAll('_', ' ')
                       .toLowerCase()
-                      .replace(/\b\w/g, l => l.toUpperCase()) || 'Security event'}
+                      .replaceAll(/\b\w/g, l => l.toUpperCase()) || 'Security event'}
                   </p>
                   <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">
                     {new Date(event.createdAt).toLocaleString()}
@@ -516,13 +516,19 @@ export default function SecuritySettings() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                <label
+                  htmlFor="totp-code"
+                  className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2"
+                >
                   2. Enter the 6-digit code from your app
                 </label>
                 <input
+                  id="totp-code"
                   type="text"
                   value={verificationCode}
-                  onChange={e => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={e =>
+                    setVerificationCode(e.target.value.replaceAll(/\D/g, '').slice(0, 6))
+                  }
                   placeholder="000000"
                   className="w-full px-4 py-2 rounded-lg border border-zinc-300 dark:border-white/10 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white text-center text-2xl font-mono tracking-widest focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   maxLength={6}
@@ -581,10 +587,14 @@ export default function SecuritySettings() {
               </p>
 
               <div>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                <label
+                  htmlFor="disable-2fa-password"
+                  className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2"
+                >
                   Enter your password to confirm
                 </label>
                 <input
+                  id="disable-2fa-password"
                   type="password"
                   value={disablePassword}
                   onChange={e => setDisablePassword(e.target.value)}
@@ -627,9 +637,8 @@ export default function SecuritySettings() {
               </h3>
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
                 These backup codes can be used to access your account if you lose your authenticator
-                device.
+                device.{' '}
                 <strong className="text-amber-600 dark:text-amber-400">
-                  {' '}
                   Save them in a safe place!
                 </strong>
               </p>
@@ -637,9 +646,9 @@ export default function SecuritySettings() {
 
             <div className="bg-zinc-100 dark:bg-zinc-800 rounded-lg p-4 mb-4">
               <div className="grid grid-cols-2 gap-2 font-mono text-sm text-zinc-900 dark:text-white">
-                {backupCodes.map((code, index) => (
+                {backupCodes.map(code => (
                   <div
-                    key={index}
+                    key={code}
                     className="bg-white dark:bg-zinc-900 px-3 py-2 rounded border border-zinc-200 dark:border-white/10 text-center"
                   >
                     {code}
@@ -675,7 +684,10 @@ export default function SecuritySettings() {
               </button>
 
               <p className="text-xs text-center text-amber-600 dark:text-amber-400">
-                ⚠️ You won't be able to see these codes again!
+                <span role="img" aria-label="warning">
+                  ⚠️
+                </span>{' '}
+                You won't be able to see these codes again!
               </p>
             </div>
           </div>

@@ -10,6 +10,7 @@ import {
   ShieldCheckIcon,
   UserMinusIcon,
   UsersIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline'
 import { RequirePermission } from '@nestled-template/web'
 import { Form } from '@nestledjs/forms'
@@ -22,6 +23,7 @@ import {
   MyOrganizationsWithMembers,
   type MyOrganizationsWithMembersQuery,
   CreateOrganizationInvitation,
+  CancelOrganizationInvitation,
   ResendOrganizationInvitation,
   RemoveOrganizationMember,
   UpdateOrganizationMemberRole,
@@ -29,6 +31,7 @@ import {
   OrganizationRoles,
   OrganizationInvitations,
   type CreateOrganizationInvitationMutation,
+  type CancelOrganizationInvitationMutation,
   type ResendOrganizationInvitationMutation,
   type RemoveOrganizationMemberMutation,
   type UpdateOrganizationMemberRoleMutation,
@@ -74,9 +77,12 @@ function groupPermissionsBySubject(permissions: Array<{ subject: string; action:
 
 // Role badge colors
 const roleBadgeColors: Record<string, string> = {
-  Owner: 'bg-violet-100 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-500/20',
-  Admin: 'bg-sky-100 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-500/20',
-  Member: 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
+  Owner:
+    'bg-violet-100 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-500/20',
+  Admin:
+    'bg-sky-100 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-500/20',
+  Member:
+    'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
 }
 
 // Subject display names
@@ -88,6 +94,12 @@ const subjectDisplayNames: Record<string, string> = {
   team: 'Teams',
   audit: 'Audit Logs',
 }
+
+type OrganizationMemberRow = UserOrganizationMembersQuery['userOrganizationMembers'][number]
+type OrganizationRole = OrganizationRolesQuery['organizationRoles'][number]
+type ActiveOrganizationMember = NonNullable<
+  NonNullable<MyOrganizationsWithMembersQuery['myOrganizations'][number]['members']>[number]
+>
 
 interface RolePermissionsCardProps {
   role: {
@@ -102,7 +114,9 @@ function RolePermissionsCard({ role }: Readonly<RolePermissionsCardProps>) {
   const [isExpanded, setIsExpanded] = useState(false)
   const permissions = role.permissions || []
   const groupedPermissions = groupPermissionsBySubject(permissions)
-  const badgeColor = roleBadgeColors[role.name] || 'bg-zinc-100 dark:bg-zinc-500/10 text-zinc-700 dark:text-zinc-400 border-zinc-200 dark:border-zinc-500/20'
+  const badgeColor =
+    roleBadgeColors[role.name] ||
+    'bg-zinc-100 dark:bg-zinc-500/10 text-zinc-700 dark:text-zinc-400 border-zinc-200 dark:border-zinc-500/20'
 
   return (
     <div className="border border-zinc-200 dark:border-white/10 rounded-lg overflow-hidden">
@@ -148,7 +162,7 @@ function RolePermissionsCard({ role }: Readonly<RolePermissionsCardProps>) {
                     </h4>
                   </div>
                   <ul className="space-y-1 pl-6">
-                    {actions.map((action) => {
+                    {actions.map(action => {
                       const permKey = `${subject}:${action}`
                       return (
                         <li key={action} className="text-xs text-zinc-600 dark:text-zinc-400">
@@ -165,6 +179,18 @@ function RolePermissionsCard({ role }: Readonly<RolePermissionsCardProps>) {
       )}
     </div>
   )
+}
+
+function isOwnerRole(roleName: string | null | undefined): boolean {
+  return roleName === 'Owner'
+}
+
+function getAssignableRoles(
+  roles: readonly OrganizationRole[],
+  activeOrganizationMember: ActiveOrganizationMember | null | undefined,
+) {
+  if (isOwnerRole(activeOrganizationMember?.role?.name)) return roles
+  return roles.filter(role => !isOwnerRole(role.name))
 }
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
@@ -186,11 +212,11 @@ export default function MembersSettings() {
   const activeOrganization = organizations[0] || null
   const user = meData?.me
   const activeOrganizationMember =
-    activeOrganization?.members?.find((member) => member.userId === user?.id) || null
+    activeOrganization?.members?.find(member => member.userId === user?.id) || null
   const [showInviteForm, setShowInviteForm] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [formSuccess, setFormSuccess] = useState<string | null>(null)
-  const [editingMember, setEditingMember] = useState<any | null>(null)
+  const [editingMember, setEditingMember] = useState<OrganizationMemberRow | null>(null)
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean
     title: string
@@ -203,6 +229,9 @@ export default function MembersSettings() {
   )
   const [resendInvitation] = useMutation<ResendOrganizationInvitationMutation>(
     ResendOrganizationInvitation,
+  )
+  const [cancelInvitation] = useMutation<CancelOrganizationInvitationMutation>(
+    CancelOrganizationInvitation,
   )
   const [removeMember] = useMutation<RemoveOrganizationMemberMutation>(RemoveOrganizationMember)
   const [updateMemberRole] = useMutation<UpdateOrganizationMemberRoleMutation>(
@@ -239,18 +268,24 @@ export default function MembersSettings() {
 
   const members = data?.userOrganizationMembers || []
   const roles = rolesData?.organizationRoles || []
+  const assignableRoles = getAssignableRoles(roles, activeOrganizationMember)
   const invitations =
-    invitationsData?.organizationInvitations?.filter((inv) => inv.status === 'PENDING') || []
+    invitationsData?.organizationInvitations?.filter(inv => inv.status === 'PENDING') || []
 
   async function handleInviteMember(input: { email: string; roleId: string }) {
     setFormError(null)
     setFormSuccess(null)
 
+    if (!activeOrganization) {
+      setFormError('No active organization selected')
+      return
+    }
+
     try {
       await inviteMember({
         variables: {
           input: {
-            organizationId: activeOrganization!.id,
+            organizationId: activeOrganization.id,
             email: input.email,
             roleId: input.roleId,
           },
@@ -276,6 +311,11 @@ export default function MembersSettings() {
         setFormError(null)
         setFormSuccess(null)
 
+        if (!activeOrganization) {
+          setFormError('No active organization selected')
+          return
+        }
+
         try {
           await resendInvitation({
             variables: {
@@ -289,6 +329,34 @@ export default function MembersSettings() {
           refetchInvitations()
         } catch (error) {
           setFormError((error as Error)?.message ?? 'Failed to resend invitation')
+        }
+      },
+    })
+  }
+
+  async function handleCancelInvitation(invitationId: string, email: string) {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Cancel Invitation',
+      message: `Are you sure you want to cancel the pending invitation to ${email}? Their invitation link will stop working.`,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        setFormError(null)
+        setFormSuccess(null)
+
+        try {
+          await cancelInvitation({
+            variables: {
+              input: {
+                invitationId,
+              },
+            },
+          })
+
+          setFormSuccess(`Invitation cancelled for ${email}`)
+          refetchInvitations()
+        } catch (error) {
+          setFormError((error as Error)?.message ?? 'Failed to cancel invitation')
         }
       },
     })
@@ -308,7 +376,7 @@ export default function MembersSettings() {
           await removeMember({
             variables: {
               input: {
-                organizationId: activeOrganization!.id,
+                organizationId: activeOrganization.id,
                 userId: userId,
               },
             },
@@ -329,20 +397,31 @@ export default function MembersSettings() {
     setFormError(null)
     setFormSuccess(null)
 
+    if (!activeOrganization) {
+      setFormError('No active organization selected')
+      return
+    }
+
+    const editingUser = editingMember.user
+    if (!editingUser) {
+      setFormError('Selected member is missing user details')
+      return
+    }
+
     try {
       await updateMemberRole({
         variables: {
           input: {
-            organizationId: activeOrganization!.id,
-            userId: editingMember.user.id,
+            organizationId: activeOrganization.id,
+            userId: editingUser.id,
             roleId: newRoleId,
           },
         },
       })
 
-      setFormSuccess(
-        `Role updated successfully for ${editingMember.user.firstName} ${editingMember.user.lastName}`,
-      )
+      const editingUserName =
+        [editingUser.firstName, editingUser.lastName].filter(Boolean).join(' ') || 'member'
+      setFormSuccess(`Role updated successfully for ${editingUserName}`)
       setEditingMember(null)
       refetch()
     } catch (error) {
@@ -361,7 +440,7 @@ export default function MembersSettings() {
       required: true,
       options: [
         { value: '', label: 'Select a role...' },
-        ...roles.map((role) => ({
+        ...assignableRoles.map(role => ({
           value: role.id,
           label: role.name,
         })),
@@ -484,16 +563,20 @@ export default function MembersSettings() {
                   </strong>
                 </p>
                 <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                  {editingMember.user?.emails?.find((e: any) => e.primary)?.email ||
+                  {editingMember.user?.emails?.find(e => e.primary)?.email ||
                     editingMember.user?.emails?.[0]?.email}
                 </p>
               </div>
 
               <div className="mb-4">
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                <label
+                  htmlFor="select-new-role"
+                  className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2"
+                >
                   Select New Role
                 </label>
                 <select
+                  id="select-new-role"
                   defaultValue={editingMember.role?.id}
                   onChange={e => {
                     if (e.target.value) {
@@ -503,7 +586,7 @@ export default function MembersSettings() {
                   className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
                 >
                   <option value="">Select a role...</option>
-                  {roles.map((role) => (
+                  {assignableRoles.map(role => (
                     <option key={role.id} value={role.id}>
                       {role.name}
                     </option>
@@ -581,7 +664,7 @@ export default function MembersSettings() {
 
           {!loading && !error && members.length > 0 && (
             <div className="space-y-3">
-              {members.map((member) => (
+              {members.map(member => (
                 <div
                   key={member.id}
                   className="flex items-center justify-between p-4 rounded-lg bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10"
@@ -601,7 +684,7 @@ export default function MembersSettings() {
                         )}
                       </h4>
                       <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                        {member.user?.emails?.find((e) => e.primary)?.email ||
+                        {member.user?.emails?.find(e => e.primary)?.email ||
                           member.user?.emails?.[0]?.email}
                       </p>
                     </div>
@@ -671,7 +754,7 @@ export default function MembersSettings() {
 
           {!invitationsLoading && invitations.length > 0 && (
             <div className="space-y-3">
-              {invitations.map((invitation) => (
+              {invitations.map(invitation => (
                 <div
                   key={invitation.id}
                   className="flex items-center justify-between p-4 rounded-lg bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10"
@@ -697,13 +780,22 @@ export default function MembersSettings() {
                     </span>
 
                     <RequirePermission permission="member:invite" fallback={null}>
-                      <button
-                        onClick={() => handleResendInvitation(invitation.id, invitation.email)}
-                        className="p-1.5 rounded text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-500/10"
-                        title="Resend invitation"
-                      >
-                        <ArrowPathIcon className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleResendInvitation(invitation.id, invitation.email)}
+                          className="p-1.5 rounded text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-500/10"
+                          title="Resend invitation"
+                        >
+                          <ArrowPathIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleCancelInvitation(invitation.id, invitation.email)}
+                          className="p-1.5 rounded text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-500/10"
+                          title="Cancel invitation"
+                        >
+                          <XMarkIcon className="h-4 w-4" />
+                        </button>
+                      </div>
                     </RequirePermission>
                   </div>
                 </div>
@@ -718,17 +810,16 @@ export default function MembersSettings() {
             Role Permissions
           </h3>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-6">
-            Each role grants specific permissions within the organization. Click to expand and see detailed permissions.
+            Each role grants specific permissions within the organization. Click to expand and see
+            detailed permissions.
           </p>
 
           <div className="space-y-4">
-            {roles.map((role) => (
+            {roles.map(role => (
               <RolePermissionsCard key={role.id} role={role} />
             ))}
             {roles.length === 0 && (
-              <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">
-                Loading roles...
-              </p>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">Loading roles...</p>
             )}
           </div>
         </div>

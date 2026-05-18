@@ -16,6 +16,9 @@ export default function PublicLayout() {
   const loaderData = useLoaderData<typeof loader>()
   const { user } = useGlobalCtx()
   const isAuthenticated = !!user || !!loaderData?.isAuthenticated
+  const primaryEmail = user?.emails?.find(email => email.primary)?.email ?? user?.emails?.[0]?.email
+  const userName =
+    `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.displayName || primaryEmail
   return (
     <div className="flex flex-col min-h-screen">
       <WebUiHeader
@@ -29,6 +32,11 @@ export default function PublicLayout() {
           { name: 'Sign Up', href: '/register' },
         ]}
         isAuthenticated={isAuthenticated}
+        userName={userName}
+        userEmail={primaryEmail}
+        userAvatarUrl={user?.avatar?.publicUrl ?? user?.avatar?.url ?? null}
+        isSuperAdmin={user?.isSuperAdmin}
+        canViewBilling={!!user?.isSuperAdmin}
       />
       <main className="flex-1 flex flex-col">
         <Outlet />

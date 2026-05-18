@@ -2,8 +2,13 @@ import { ApolloHydrationHelper } from '@apollo/client-integration-react-router'
 import '@nestled-template/shared/styles'
 import { apolloLoader } from '@nestled-template/shared/apollo'
 import { Me, type MeQuery } from '@nestled-template/shared/sdk'
-import { getCookie, getSessionCookieName, isJwtExpired, isNetworkError } from '@nestled-template/shared/utils'
-import { WebUiErrorBoundary } from '@nestled-template/web-ui'
+import {
+  getCookie,
+  getSessionCookieName,
+  isJwtExpired,
+  isNetworkError,
+} from '@nestled-template/shared/utils'
+import { ErrorBoundary as AppErrorBoundary } from '@nestledjs/shared-components'
 import { ReactNode } from 'react'
 import {
   Links,
@@ -44,76 +49,82 @@ function clearSessionCookieHeaders(cookieName: string): Headers {
   return headers
 }
 
+function buildLoginRedirect(pathname: string) {
+  if (pathname && pathname !== '/') {
+    return '/login?return_url=' + encodeURIComponent(pathname)
+  }
+  return '/login'
+}
+
+function buildAuthRedirectResponse(cookieName: string, loginRedirect: string) {
+  const headers = clearSessionCookieHeaders(cookieName)
+  headers.set('Location', loginRedirect)
+  return new Response(null, { status: 302, headers })
+}
+
+function handlePrivateRoutePreloadError(
+  error: unknown,
+  cookieName: string,
+  loginRedirect: string,
+  theme: string,
+) {
+  console.error('[Root Loader] Error during Me query preload:', error)
+  const errorMessage = (error as Error)?.message || ''
+
+  if (isNetworkError(error)) {
+    console.log('[Root Loader] Network error detected, returning serviceUnavailable')
+    return { serviceUnavailable: true, theme }
+  }
+
+  if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
+    console.log('[Root Loader] Auth error detected, redirecting to login')
+    return buildAuthRedirectResponse(cookieName, loginRedirect)
+  }
+
+  console.log('[Root Loader] Unknown error, returning serviceUnavailable as fallback')
+  return { serviceUnavailable: true, theme }
+}
+
 export const loader = apolloLoader()(({ preloadQuery, request }) => {
   const url = new URL(request.url)
   const cookieName = getSessionCookieName()
   const token = getCookie(request.headers, cookieName)
   const isAuthenticated = token && !isJwtExpired(token)
-
-  // Get theme preference from cookie, default to 'dark' if not set
   const theme = getCookie(request.headers, 'theme') || 'dark'
 
-  // Define private routes that require authentication
   const isPrivateRoute =
     url.pathname.startsWith('/members') ||
     url.pathname.startsWith('/admin') ||
     url.pathname.startsWith('/leaders')
 
-  // If accessing a private route without authentication, redirect to login
   if (isPrivateRoute && !isAuthenticated) {
-    let loginRedirect = '/login'
-    if (url.pathname && url.pathname !== '/') {
-      loginRedirect += '?return_url=' + encodeURIComponent(url.pathname)
-    }
-    const headers = clearSessionCookieHeaders(cookieName)
-    headers.set('Location', loginRedirect)
-    return new Response(null, { status: 302, headers })
+    return buildAuthRedirectResponse(cookieName, buildLoginRedirect(url.pathname))
   }
 
-  // If accessing a private route with authentication, preload the Me query
   if (isPrivateRoute && isAuthenticated) {
     try {
       const meQueryRef = preloadQuery<MeQuery>(Me)
       return { meQueryRef, theme }
     } catch (error) {
-      console.error('[Root Loader] Error during Me query preload:', error)
-      const errorMessage = (error as Error)?.message || ''
-
-      let loginRedirect = '/login'
-      if (url.pathname && url.pathname !== '/') {
-        loginRedirect += '?return_url=' + encodeURIComponent(url.pathname)
-      }
-
-      if (isNetworkError(error)) {
-        console.log('[Root Loader] Network error detected, returning serviceUnavailable')
-        return { serviceUnavailable: true, theme }
-      }
-
-      if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
-        console.log('[Root Loader] Auth error detected, redirecting to login')
-        const headers = clearSessionCookieHeaders(cookieName)
-        headers.set('Location', loginRedirect)
-        return new Response(null, { status: 302, headers })
-      }
-
-      console.log('[Root Loader] Unknown error, returning serviceUnavailable as fallback')
-      return { serviceUnavailable: true, theme }
+      return handlePrivateRoutePreloadError(
+        error,
+        cookieName,
+        buildLoginRedirect(url.pathname),
+        theme,
+      )
     }
   }
 
-  // For public routes, if authenticated preload Me so user is globally available
-  // Skip on /logout — the session will be invalidated mid-flight, causing useReadQuery to throw
   if (isAuthenticated && !url.pathname.startsWith('/logout')) {
     try {
       const meQueryRef = preloadQuery<MeQuery>(Me)
       return { meQueryRef, theme }
     } catch (error) {
-      // On error for public pages, just continue without user
       console.warn('[Root Loader] Failed to preload Me on public route:', error)
       return { theme }
     }
   }
-  // Not authenticated and not private
+
   return { theme }
 })
 
@@ -168,21 +179,36 @@ export function Layout({ children }: Readonly<{ children: ReactNode }>) {
 
 export default App
 
+type GraphQLErrorLike = {
+  message?: string
+  extensions?: {
+    code?: string
+  }
+}
+
+type ErrorWithGraphQLErrors = Error & {
+  graphQLErrors?: GraphQLErrorLike[]
+}
+
 export function ErrorBoundary({ error }: Readonly<{ error: Error }>) {
   // Auth errors should send the user through logout to clear their session
+  const graphQLError = error as ErrorWithGraphQLErrors
   const isUnauthorized =
     error.message?.includes('Unauthorized') ||
-    (error as any)?.graphQLErrors?.some(
-      (e: any) =>
-        (e?.message || '').includes('Unauthorized') || e?.extensions?.code === 'UNAUTHENTICATED',
+    error.message?.includes('Session has been invalidated') ||
+    graphQLError.graphQLErrors?.some(
+      e =>
+        (e.message || '').includes('Unauthorized') ||
+        (e.message || '').includes('Session has been invalidated') ||
+        e.extensions?.code === 'UNAUTHENTICATED',
     )
 
-  if (isUnauthorized && typeof window !== 'undefined') {
-    window.location.href = '/force-logout'
+  if (isUnauthorized && globalThis.window !== undefined) {
+    globalThis.location.href = '/force-logout'
     return null
   }
 
   // Layout always wraps this component and provides <html>/<head>/<body> —
   // do not render document-level tags here.
-  return <WebUiErrorBoundary error={error} autoRefresh={true} autoRefreshDelay={3000} />
+  return <AppErrorBoundary error={error} autoRefresh={true} autoRefreshDelay={3000} />
 }

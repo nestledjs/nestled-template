@@ -11,7 +11,12 @@ import 'dotenv/config'
 import { PrismaClient } from '@nestled-template/api/prisma'
 import { PrismaPg } from '@prisma/adapter-pg'
 
-const adapter = new PrismaPg({ connectionString: process.env['DATABASE_URL']! })
+const databaseUrl = process.env['DATABASE_URL']
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL is required')
+}
+
+const adapter = new PrismaPg({ connectionString: databaseUrl })
 const prisma = new PrismaClient({ adapter })
 
 async function deleteUser(email: string) {
@@ -123,7 +128,7 @@ async function main() {
 }
 
 main()
-  .catch((e) => {
+  .catch(e => {
     console.error('💥 Script failed:', e)
     process.exit(1)
   })

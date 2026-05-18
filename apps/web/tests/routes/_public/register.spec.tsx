@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Register from '../../../app/routes/_public/register'
 import { useMutation } from '@apollo/client/react'
@@ -12,7 +12,6 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock the SDK mutation
-
 
 // Mock form theme
 vi.mock('@nestled-template/shared/styles', () => ({
@@ -33,7 +32,7 @@ vi.mock('@nestled-template/web', () => ({
 // Mock the Form component from @nestledjs/forms
 vi.mock('@nestledjs/forms', () => ({
   Form: ({ id, fields, submit }: any) => {
-    const handleSubmit = (e) => {
+    const handleSubmit = e => {
       e.preventDefault()
       const formData = new FormData(e.target)
       const values: Record<string, any> = {}
@@ -49,7 +48,8 @@ vi.mock('@nestledjs/forms', () => ({
           if (!field) return null
 
           const { key, type, options } = field
-          const { label, required, minLength, placeholder, helpText, text, disabled, fullWidth } = options || {}
+          const { label, required, minLength, placeholder, helpText, text, disabled, fullWidth } =
+            options || {}
 
           if (type === 'button') {
             return (
@@ -297,7 +297,7 @@ describe('Register Component', () => {
 
     it('should display generic error when error has no message', async () => {
       const user = userEvent.setup()
-      mockRegisterMutation.mockRejectedValue(new Error())
+      mockRegisterMutation.mockRejectedValue({})
 
       await renderRegister()
 
@@ -315,11 +315,9 @@ describe('Register Component', () => {
 
     it('should clear error message on new submission', async () => {
       const user = userEvent.setup()
-      mockRegisterMutation
-        .mockRejectedValueOnce(new Error('First error'))
-        .mockResolvedValueOnce({
-          data: { register: { token: 'token-123' } },
-        })
+      mockRegisterMutation.mockRejectedValueOnce(new Error('First error')).mockResolvedValueOnce({
+        data: { register: { token: 'token-123' } },
+      })
 
       await renderRegister()
 

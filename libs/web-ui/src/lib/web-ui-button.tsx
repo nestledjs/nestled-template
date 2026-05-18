@@ -2,6 +2,37 @@ import { cloneElement, ReactElement, ReactNode } from 'react'
 import { Link } from 'react-router'
 import { cn } from '@nestled-template/shared/utils'
 
+function getButtonStyles(
+  buttonType:
+    | 'Primary'
+    | 'Secondary'
+    | 'SecondaryDark'
+    | 'Soft'
+    | 'Transparent'
+    | 'TransparentLight',
+  disabled: boolean,
+): string {
+  const disabledClass = 'opacity-50 cursor-not-allowed'
+  const styles: Record<string, string> = {
+    Primary: cn(
+      'bg-orange-500 text-white',
+      disabled ? disabledClass : 'hover:bg-orange-400 focus-visible:outline-orange-500',
+    ),
+    Secondary: cn(
+      'ring-1 ring-inset ring-zinc-300 bg-white text-zinc-900',
+      disabled ? disabledClass : 'hover:bg-zinc-50',
+    ),
+    SecondaryDark: cn('bg-white/10 text-white', disabled ? disabledClass : 'hover:bg-white/20'),
+    Soft: cn('bg-sky-50 text-sky-600', disabled ? disabledClass : 'hover:bg-sky-100'),
+    Transparent: cn('bg-transparent text-zinc-900', disabled ? disabledClass : 'hover:bg-gray-100'),
+    TransparentLight: cn(
+      'bg-transparent text-white',
+      disabled ? disabledClass : 'hover:bg-gray-100',
+    ),
+  }
+  return styles[buttonType]
+}
+
 interface WebUiButtonProps {
   buttonType?:
     | 'Primary'
@@ -42,42 +73,12 @@ export const WebUiButton = ({
     xl: 'px-4 py-6 text-lg',
   }[size]
 
-  const buttonStyles = {
-    Primary: cn(
-      'bg-orange-500 text-white',
-      disabled
-        ? 'opacity-50 cursor-not-allowed'
-        : 'hover:bg-orange-400 focus-visible:outline-orange-500',
-    ),
-    Secondary: cn(
-      'ring-1 ring-inset ring-zinc-300 bg-white text-zinc-900',
-      disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-zinc-50',
-    ),
-    SecondaryDark: cn(
-      'bg-white/10 text-white',
-      disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white/20',
-    ),
-    Soft: cn(
-      'bg-sky-50 text-sky-600',
-      disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-sky-100',
-    ),
-    Transparent: cn(
-      'bg-transparent text-zinc-900',
-      disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100',
-    ),
-    TransparentLight: cn(
-      'bg-transparent text-white',
-      disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100',
-    ),
-  }[buttonType]
+  const buttonStyles = getButtonStyles(buttonType, disabled)
 
   const roundedStyles = rounded ? 'rounded-full' : 'rounded-md'
 
-  const iconComponent =
-    icon &&
-    cloneElement(icon, {
-      className: `${iconLocation === 'left' ? '-ml-2' : '-mr-0.5'} h-6 w-6`,
-    })
+  const iconClass = iconLocation === 'left' ? '-ml-2 h-6 w-6' : '-mr-0.5 h-6 w-6'
+  const iconComponent = icon && cloneElement(icon, { className: iconClass })
 
   return linkTo ? (
     <Link

@@ -1,7 +1,7 @@
 import { cn } from '@nestled-template/shared/utils'
 
 interface WebUiComingSoonProps {
-  fullScreen?: boolean
+  readonly fullScreen?: boolean
 }
 export function WebUiComingSoon({ fullScreen = true }: WebUiComingSoonProps) {
   return (

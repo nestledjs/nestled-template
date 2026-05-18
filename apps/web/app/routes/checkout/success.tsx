@@ -3,6 +3,10 @@ import { Link, useSearchParams } from 'react-router'
 import { CheckCircleIcon } from '@heroicons/react/24/outline'
 import { useSubscription } from '@nestled-template/web'
 
+type WindowWithGtag = typeof globalThis & {
+  gtag?: (...args: unknown[]) => void
+}
+
 export default function CheckoutSuccess() {
   const [searchParams] = useSearchParams()
   const sessionId = searchParams.get('session_id')
@@ -11,8 +15,9 @@ export default function CheckoutSuccess() {
   // Optional: You could fetch the session details from Stripe here if needed
   useEffect(() => {
     // Track conversion event for analytics
-    if (typeof window !== 'undefined' && (window as any).gtag) {
-      ;(window as any).gtag('event', 'purchase', {
+    const trackingWindow = globalThis as WindowWithGtag
+    if (trackingWindow.gtag) {
+      trackingWindow.gtag('event', 'purchase', {
         transaction_id: sessionId,
         value: plan?.price || 0,
         currency: 'USD',
@@ -59,7 +64,7 @@ export default function CheckoutSuccess() {
                 <div className="flex justify-between">
                   <span className="text-gray-600 dark:text-gray-400">Price:</span>
                   <span className="font-semibold text-gray-900 dark:text-white">
-                    ${parseFloat(plan.price || '0').toFixed(2)}/{plan.interval}
+                    ${Number.parseFloat(plan.price || '0').toFixed(2)}/{plan.interval}
                   </span>
                 </div>
                 {subscription?.trialEnd && new Date(subscription.trialEnd) > new Date() && (

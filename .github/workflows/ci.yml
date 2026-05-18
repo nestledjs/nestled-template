@@ -11,12 +11,14 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 jobs:
   main:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      NX_DAEMON: false
 
     services:
       postgres:
@@ -34,12 +36,11 @@ jobs:
           - 5432:5432
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          filter: tree:0
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         name: Install pnpm
         with:
           version: 9.8.0
@@ -52,28 +53,41 @@ jobs:
       # - run: pnpm dlx nx-cloud start-ci-run --distribute-on="3 linux-medium-js" --stop-agents-after="build"
 
       # Cache node_modules
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: 'pnpm'
 
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Install Playwright browsers for web-ui tests
       - name: Install Playwright Browsers
-        run: pnpm exec playwright install --with-deps chromium
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
-      - uses: nrwl/nx-set-shas@v4
+      - uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4
+
+      - run: pnpm template:validate-upgrade-notes
+
+      - run: pnpm run nestled-doctor
 
       # Prepend any command with "nx-cloud record --" to record its logs to Nx Cloud
       # - run: pnpm exec nx-cloud record -- echo Hello World
       # Nx Affected runs only tasks affected by the changes in this PR/commit. Learn more: https://nx.dev/ci/features/affected
-      - run: pnpm exec nx affected -t lint test build
+      - run: pnpm exec nx affected -t lint build
+
+      - name: Run tests with coverage
+        run: pnpm test:coverage
         env:
-          # E2E tests will run against the PostgreSQL service
           TEST_DATABASE_URL: postgresql://prisma:prisma@localhost:5432/nestled_template_test
           NODE_ENV: test
-          # JWT secret for test environment (not a real secret, just for CI)
           JWT_SECRET: test-jwt-secret-for-ci-only-not-production
-          # Use mock email provider to avoid SMTP errors in CI
           EMAIL_PROVIDER: mock
+
+      - name: Normalize coverage paths
+        run: pnpm coverage:normalize-lcov
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@383f7e52eae3ab0510c3cb0e7d9d150bbaeab838 # v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

@@ -2,7 +2,7 @@ export const configuration = () => ({
   prefix: 'api',
   environment: process.env['NODE_ENV'],
   host: process.env['HOST'] ?? '0.0.0.0',
-  port: parseInt(process.env['PORT'] ?? '3000', 10),
+  port: Number.parseInt(process.env['PORT'] ?? '3000', 10),
   apiUrl: process.env['API_URL'],
   api: {
     cookie: {
@@ -24,7 +24,10 @@ export const configuration = () => ({
       },
     },
     cors: {
-      origin: (process.env['ALLOWED_ORIGINS'] ?? '').split(',').map(o => o.trim()).filter(o => o.length > 0),
+      origin: (process.env['ALLOWED_ORIGINS'] ?? '')
+        .split(',')
+        .map(o => o.trim())
+        .filter(o => o.length > 0),
     },
   },
   siteUrl: process.env['SITE_URL'] ?? process.env['API_URL']?.replace('/api', ''),
@@ -47,7 +50,7 @@ export const configuration = () => ({
     // Issuer name shown in authenticator apps
     issuer: process.env['TWO_FACTOR_ISSUER'] ?? process.env['APP_NAME'] ?? 'MyApp',
     // Window for time drift (in 30-second increments, 2 = 60 seconds tolerance)
-    window: parseInt(process.env['TWO_FACTOR_WINDOW'] ?? '2', 10),
+    window: Number.parseInt(process.env['TWO_FACTOR_WINDOW'] ?? '2', 10),
     // Encryption key for storing secrets (should be 32 characters)
     encryptionKey: process.env['TWO_FACTOR_ENCRYPTION_KEY'] ?? process.env['JWT_SECRET'],
   },
@@ -55,12 +58,16 @@ export const configuration = () => ({
     google: {
       clientId: process.env['GOOGLE_OAUTH_CLIENT_ID'],
       clientSecret: process.env['GOOGLE_OAUTH_CLIENT_SECRET'],
-      enabled: !!(process.env['GOOGLE_OAUTH_CLIENT_ID'] && process.env['GOOGLE_OAUTH_CLIENT_SECRET']),
+      enabled: !!(
+        process.env['GOOGLE_OAUTH_CLIENT_ID'] && process.env['GOOGLE_OAUTH_CLIENT_SECRET']
+      ),
     },
     github: {
       clientId: process.env['GITHUB_OAUTH_CLIENT_ID'],
       clientSecret: process.env['GITHUB_OAUTH_CLIENT_SECRET'],
-      enabled: !!(process.env['GITHUB_OAUTH_CLIENT_ID'] && process.env['GITHUB_OAUTH_CLIENT_SECRET']),
+      enabled: !!(
+        process.env['GITHUB_OAUTH_CLIENT_ID'] && process.env['GITHUB_OAUTH_CLIENT_SECRET']
+      ),
     },
   },
 })

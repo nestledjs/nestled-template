@@ -1,9 +1,20 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { v2 as cloudinary, UploadApiResponse } from 'cloudinary'
+import { v2 as cloudinary } from 'cloudinary'
 import { IStorageService, UploadOptions, UploadResult } from '../interfaces'
 import { v4 as uuidv4 } from 'uuid'
-import * as path from 'path'
+import * as path from 'node:path'
+
+function toError(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) return value
+  if (typeof value === 'string') return new Error(value)
+
+  try {
+    return new Error(JSON.stringify(value))
+  } catch {
+    return new Error(fallbackMessage)
+  }
+}
 
 /**
  * Cloudinary Storage Provider
@@ -35,7 +46,9 @@ export class CloudinaryStorageService implements IStorageService, OnModuleInit {
 
     // Only validate credentials if Cloudinary is the active storage provider
     if (storageProvider === 'cloudinary' && (!cloudName || !apiKey || !apiSecret)) {
-      throw new Error('Cloudinary credentials not configured. Required: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET')
+      throw new Error(
+        'Cloudinary credentials not configured. Required: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET',
+      )
     }
 
     // Skip initialization if not the active provider
@@ -43,12 +56,18 @@ export class CloudinaryStorageService implements IStorageService, OnModuleInit {
       return
     }
 
+    if (!cloudName || !apiKey || !apiSecret) {
+      throw new Error(
+        'Cloudinary credentials not configured. Required: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET',
+      )
+    }
+
     // After validation, we know these values are defined
-    this.cloudName = cloudName!
+    this.cloudName = cloudName
     cloudinary.config({
-      cloud_name: cloudName!,
-      api_key: apiKey!,
-      api_secret: apiSecret!,
+      cloud_name: cloudName,
+      api_key: apiKey,
+      api_secret: apiSecret,
     })
   }
 
@@ -63,9 +82,7 @@ export class CloudinaryStorageService implements IStorageService, OnModuleInit {
     const uniqueFilename = `${name}-${uuidv4().split('-')[0]}`
 
     // Build public_id (path in Cloudinary)
-    const publicId = options.folder
-      ? `${options.folder}/${uniqueFilename}`
-      : uniqueFilename
+    const publicId = options.folder ? `${options.folder}/${uniqueFilename}` : uniqueFilename
 
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
@@ -77,7 +94,7 @@ export class CloudinaryStorageService implements IStorageService, OnModuleInit {
           context: {
             ...(options.userId && { userId: options.userId }),
             ...(options.organizationId && { organizationId: options.organizationId }),
-            ...(options.metadata && options.metadata),
+            ...options.metadata,
           },
           // Apply transformation options if provided
           ...(options.width && { width: options.width }),
@@ -87,8 +104,9 @@ export class CloudinaryStorageService implements IStorageService, OnModuleInit {
         },
         (error, result) => {
           if (error) {
-            this.logger.error('Cloudinary upload failed', error)
-            return reject(error)
+            const uploadError = toError(error, 'Cloudinary upload failed with an unknown error')
+            this.logger.error('Cloudinary upload failed', uploadError.stack ?? uploadError.message)
+            return reject(uploadError)
           }
 
           if (!result) {
@@ -115,7 +133,7 @@ export class CloudinaryStorageService implements IStorageService, OnModuleInit {
           }
 
           resolve(uploadResult)
-        }
+        },
       )
 
       uploadStream.end(buffer)

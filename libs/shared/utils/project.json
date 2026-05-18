@@ -5,5 +5,14 @@
   "projectType": "library",
   "tags": [],
   "// targets": "to see all targets run: nx show project utils --web",
-  "targets": {}
+  "targets": {
+    "test": {
+      "executor": "@nx/vitest:test",
+      "outputs": ["{workspaceRoot}/coverage/libs/shared/utils"],
+      "options": {
+        "configFile": "libs/shared/utils/vitest.config.ts",
+        "reportsDirectory": "libs/shared/utils/../../../coverage/libs/shared/utils"
+      }
+    }
+  }
 }

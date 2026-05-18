@@ -1,5 +1,5 @@
 import React, { useState, Fragment } from 'react'
-import { Menu, Transition } from '@headlessui/react'
+import { Menu, MenuButton, MenuItem, MenuItems, Transition } from '@headlessui/react'
 import {
   BuildingOfficeIcon,
   CheckIcon,
@@ -14,11 +14,11 @@ interface Organization {
 }
 
 interface OrganizationSwitcherProps {
-  organizations: Organization[]
-  activeOrganization: Organization | null
-  onSwitchOrganization: (organizationId: string) => Promise<void>
-  onCreateOrganization?: () => void
-  className?: string
+  readonly organizations: Organization[]
+  readonly activeOrganization: Organization | null
+  readonly onSwitchOrganization: (organizationId: string) => Promise<void>
+  readonly onCreateOrganization?: () => void
+  readonly className?: string
 }
 
 export function OrganizationSwitcher({
@@ -37,7 +37,7 @@ export function OrganizationSwitcher({
     try {
       await onSwitchOrganization(organizationId)
       // Page will refresh due to organization context change
-      window.location.reload()
+      globalThis.location.reload()
     } catch (error) {
       console.error('Failed to switch organization:', error)
       setIsSwitching(false)
@@ -51,16 +51,16 @@ export function OrganizationSwitcher({
   return (
     <Menu as="div" className={`relative inline-block text-left ${className}`}>
       <div>
-        <Menu.Button className="inline-flex w-full justify-between items-center gap-x-1.5 rounded-md bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-100 shadow-sm ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700">
+        <MenuButton className="inline-flex w-full justify-between items-center gap-x-1.5 rounded-md bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-100 shadow-sm ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700">
           <div className="flex items-center gap-2 min-w-0">
-            <BuildingOfficeIcon className="h-5 w-5 text-zinc-400 flex-shrink-0" aria-hidden="true" />
+            <BuildingOfficeIcon
+              className="h-5 w-5 text-zinc-400 flex-shrink-0"
+              aria-hidden="true"
+            />
             <span className="truncate">{activeOrganization?.name || 'Select Organization'}</span>
           </div>
-          <ChevronUpDownIcon
-            className="h-5 w-5 text-zinc-400 flex-shrink-0"
-            aria-hidden="true"
-          />
-        </Menu.Button>
+          <ChevronUpDownIcon className="h-5 w-5 text-zinc-400 flex-shrink-0" aria-hidden="true" />
+        </MenuButton>
       </div>
 
       <Transition
@@ -72,22 +72,20 @@ export function OrganizationSwitcher({
         leaveFrom="transform opacity-100 scale-100"
         leaveTo="transform opacity-0 scale-95"
       >
-        <Menu.Items className="absolute left-0 z-10 mt-2 w-72 origin-top-left rounded-md bg-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+        <MenuItems className="absolute left-0 z-10 mt-2 w-72 origin-top-left rounded-md bg-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
           <div className="py-1">
             {/* Current organization section */}
             <div className="px-3 py-2 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
               Your Organizations
             </div>
 
-            {organizations.map((org) => (
-              <Menu.Item key={org.id}>
-                {({ active }) => (
+            {organizations.map(org => (
+              <MenuItem key={org.id}>
+                {({ focus }) => (
                   <button
                     onClick={() => handleSwitch(org.id)}
                     disabled={isSwitching}
-                    className={`${
-                      active ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-200'
-                    } ${
+                    className={`${focus ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-200'} ${
                       isSwitching ? 'opacity-50 cursor-not-allowed' : ''
                     } group flex items-center justify-between w-full px-4 py-2 text-sm`}
                   >
@@ -103,23 +101,26 @@ export function OrganizationSwitcher({
                       </div>
                     </div>
                     {org.id === activeOrganization?.id && (
-                      <CheckIcon className="h-5 w-5 text-emerald-400 flex-shrink-0" aria-hidden="true" />
+                      <CheckIcon
+                        className="h-5 w-5 text-emerald-400 flex-shrink-0"
+                        aria-hidden="true"
+                      />
                     )}
                   </button>
                 )}
-              </Menu.Item>
+              </MenuItem>
             ))}
 
             {/* Create organization option */}
             {onCreateOrganization && (
               <>
                 <div className="border-t border-zinc-700 my-1" />
-                <Menu.Item>
-                  {({ active }) => (
+                <MenuItem>
+                  {({ focus }) => (
                     <button
                       onClick={onCreateOrganization}
                       className={`${
-                        active ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-200'
+                        focus ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-200'
                       } group flex items-center gap-3 w-full px-4 py-2 text-sm`}
                     >
                       <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-md bg-zinc-700 text-zinc-400">
@@ -128,11 +129,11 @@ export function OrganizationSwitcher({
                       <span className="font-medium">Create Organization</span>
                     </button>
                   )}
-                </Menu.Item>
+                </MenuItem>
               </>
             )}
           </div>
-        </Menu.Items>
+        </MenuItems>
       </Transition>
     </Menu>
   )

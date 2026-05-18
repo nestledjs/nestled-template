@@ -126,14 +126,13 @@ describe('2FA Helper Functions', () => {
       expect(decrypted1).toBe(secret)
       expect(decrypted2).toBe(secret)
     })
-    it('should include IV in encrypted output', () => {
+    it('should include IV and auth tag in encrypted output', () => {
       const secret = 'JBSWY3DPEHPK3PXP'
       const encryptionKey = 'my-super-secret-encryption-key'
       const encrypted = encryptSecret(secret, encryptionKey)
-      // Encrypted format is "IV:ciphertext"
-      expect(encrypted).toContain(':')
-      const [iv, ciphertext] = encrypted.split(':')
-      expect(iv).toHaveLength(32) // 16 bytes = 32 hex chars
+      const [iv, authTag, ciphertext] = encrypted.split(':')
+      expect(iv).toHaveLength(24) // 12 bytes = 24 hex chars for AES-GCM
+      expect(authTag).toHaveLength(32) // 16 bytes = 32 hex chars
       expect(ciphertext).toBeDefined()
     })
     it('should fail to decrypt with wrong key', () => {

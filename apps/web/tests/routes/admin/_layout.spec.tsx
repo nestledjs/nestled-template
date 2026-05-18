@@ -2,7 +2,7 @@ import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminLayout from '../../../app/routes/admin/_layout'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 
 // Mock the GlobalContext
 const mockUseGlobalCtx = vi.fn()
@@ -62,12 +62,12 @@ describe('Admin Layout', () => {
     it('should redirect non-super-admin users to members dashboard', () => {
       renderAdminLayout(mockRegularUser)
       expect(screen.getByText('Members Dashboard')).toBeInTheDocument()
-      expect(screen.queryByText('Admin Panel')).not.toBeInTheDocument()
+      expect(screen.queryByText('Admin Console')).not.toBeInTheDocument()
     })
 
     it('should allow super admin users to access admin panel', () => {
       renderAdminLayout(mockSuperAdmin)
-      expect(screen.getByText('Admin Panel')).toBeInTheDocument()
+      expect(screen.getByText('Admin Console')).toBeInTheDocument()
       expect(screen.queryByText('Members Dashboard')).not.toBeInTheDocument()
     })
 
@@ -130,6 +130,10 @@ describe('Admin Layout', () => {
       expect(dashboardLink).toHaveAttribute('href', '/admin')
       expect(usersLink).toHaveAttribute('href', '/admin/users')
       expect(orgsLink).toHaveAttribute('href', '/admin/organizations')
+      expect(screen.getByRole('link', { name: /Back to app/ })).toHaveAttribute(
+        'href',
+        '/members/dashboard',
+      )
     })
 
     it('should highlight active navigation item on dashboard', () => {
@@ -151,8 +155,8 @@ describe('Admin Layout', () => {
     it('should render header with title and description', () => {
       renderAdminLayout(mockSuperAdmin)
 
-      expect(screen.getByText('Admin Panel')).toBeInTheDocument()
-      expect(screen.getByText('Platform administration and management')).toBeInTheDocument()
+      expect(screen.getByText('Admin Console')).toBeInTheDocument()
+      expect(screen.getByText('Platform administration and setup')).toBeInTheDocument()
     })
 
     it('should render sidebar navigation', () => {
@@ -178,7 +182,7 @@ describe('Admin Layout', () => {
       expect(navItems.length).toBeGreaterThan(0)
 
       // Check that each link contains an SVG
-      navItems.forEach((link) => {
+      navItems.forEach(link => {
         const svg = link.querySelector('svg')
         expect(svg).toBeInTheDocument()
       })
@@ -190,9 +194,8 @@ describe('Admin Layout', () => {
       renderAdminLayout(mockSuperAdmin)
 
       const nav = screen.getByRole('navigation')
-      // The navigation itself has the lg:w-64 class
-      expect(nav).toHaveClass('lg:w-64')
-      expect(nav).toHaveClass('flex-shrink-0')
+      expect(nav).toHaveClass('lg:w-80')
+      expect(nav).toHaveClass('lg:flex-shrink-0')
     })
   })
 })

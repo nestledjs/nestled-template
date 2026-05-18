@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../../helpers/createTestRouter"
+import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminAuditLogsPage from '../../../../app/routes/admin/audit-logs/_index'
 
@@ -12,12 +12,12 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
-    
-  AdminPlatformAuditLogsDocument: { kind: 'Document', definitions: [] },
+
+    AdminPlatformAuditLogsDocument: { kind: 'Document', definitions: [] },
   }
 })
 
@@ -565,7 +565,7 @@ describe('Admin Audit Logs Page', () => {
 
       expect(screen.getByText('Audit Logs')).toBeInTheDocument()
       expect(
-        screen.getByText('Track all platform activities and changes for compliance and security')
+        screen.getByText('Track all platform activities and changes for compliance and security'),
       ).toBeInTheDocument()
     })
   })
@@ -627,7 +627,7 @@ describe('Admin Audit Logs Page', () => {
         expect.anything(),
         expect.objectContaining({
           fetchPolicy: 'network-only',
-        })
+        }),
       )
     })
 
@@ -649,7 +649,7 @@ describe('Admin Audit Logs Page', () => {
               take: 50,
             }),
           }),
-        })
+        }),
       )
     })
   })

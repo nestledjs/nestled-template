@@ -1,14 +1,16 @@
 import * as React from 'react'
 import { ReactNode } from 'react'
 
-import { MeQuery, Organization, OrganizationMember } from '@nestled-template/shared/sdk'
+import { MeQuery, MyOrganizationsWithMembersQuery } from '@nestled-template/shared/sdk'
 
+type OrganizationContextItem = MyOrganizationsWithMembersQuery['myOrganizations'][number]
+type OrganizationMemberContextItem = NonNullable<OrganizationContextItem['members']>[number]
 
 interface GlobalProviderContextValue {
   user?: MeQuery['me'] | null
-  organizations?: Organization[]
-  activeOrganization?: Organization | null
-  activeOrganizationMember?: OrganizationMember | null
+  organizations?: OrganizationContextItem[]
+  activeOrganization?: OrganizationContextItem | null
+  activeOrganizationMember?: OrganizationMemberContextItem | null
 }
 
 const GlobalContext = React.createContext<GlobalProviderContextValue | undefined>(undefined)
@@ -24,9 +26,9 @@ export function useGlobalCtx() {
 interface GlobalContextProviderProps {
   children: ReactNode
   user?: MeQuery['me'] | null
-  organizations?: Organization[]
-  activeOrganization?: Organization | null
-  activeOrganizationMember?: OrganizationMember | null
+  organizations?: OrganizationContextItem[]
+  activeOrganization?: OrganizationContextItem | null
+  activeOrganizationMember?: OrganizationMemberContextItem | null
 }
 
 export function GlobalContextProvider({
@@ -38,7 +40,7 @@ export function GlobalContextProvider({
 }: Readonly<GlobalContextProviderProps>) {
   const value = React.useMemo(
     () => ({ user, organizations, activeOrganization, activeOrganizationMember }),
-    [user, organizations, activeOrganization, activeOrganizationMember]
+    [user, organizations, activeOrganization, activeOrganizationMember],
   )
   return <GlobalContext.Provider value={value}>{children}</GlobalContext.Provider>
 }

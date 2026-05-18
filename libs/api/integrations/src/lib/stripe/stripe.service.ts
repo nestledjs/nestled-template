@@ -26,14 +26,20 @@ export class StripeService implements OnModuleInit {
   onModuleInit() {
     const { secretKey } = this.configService.stripe
 
-    const isPlaceholder = !secretKey || secretKey.includes('your_key') || secretKey === 'sk_test_...' || secretKey === 'sk_live_...'
+    const isPlaceholder =
+      !secretKey ||
+      secretKey.includes('your_key') ||
+      secretKey === 'sk_test_...' ||
+      secretKey === 'sk_live_...'
     if (isPlaceholder) {
       this.logger.warn('STRIPE_SECRET_KEY is not configured. Billing features will not work.')
       return // Gracefully handle missing or placeholder configuration
     }
 
     if (!secretKey.startsWith('sk_')) {
-      this.logger.warn('STRIPE_SECRET_KEY does not start with "sk_" - is this a valid Stripe secret key?')
+      this.logger.warn(
+        'STRIPE_SECRET_KEY does not start with "sk_" - is this a valid Stripe secret key?',
+      )
     }
 
     const isTestMode = secretKey.includes('_test_')
@@ -57,7 +63,9 @@ export class StripeService implements OnModuleInit {
    */
   private ensureStripeConfigured(): void {
     if (!this.stripe) {
-      throw new Error('Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.')
+      throw new Error(
+        'Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.',
+      )
     }
   }
 
@@ -338,7 +346,9 @@ export class StripeService implements OnModuleInit {
 
       return await this.stripe.subscriptions.update(subscriptionId, updateParams)
     } catch (error) {
-      this.logger.error(`Failed to update subscription ${subscriptionId}: ${this.getErrorMessage(error)}`)
+      this.logger.error(
+        `Failed to update subscription ${subscriptionId}: ${this.getErrorMessage(error)}`,
+      )
       throw error
     }
   }
@@ -357,7 +367,9 @@ export class StripeService implements OnModuleInit {
         })
       }
     } catch (error) {
-      this.logger.error(`Failed to cancel subscription ${subscriptionId}: ${this.getErrorMessage(error)}`)
+      this.logger.error(
+        `Failed to cancel subscription ${subscriptionId}: ${this.getErrorMessage(error)}`,
+      )
       throw error
     }
   }
@@ -368,7 +380,9 @@ export class StripeService implements OnModuleInit {
         expand: ['latest_invoice', 'customer', 'default_payment_method'],
       })
     } catch (error) {
-      this.logger.error(`Failed to get subscription ${subscriptionId}: ${this.getErrorMessage(error)}`)
+      this.logger.error(
+        `Failed to get subscription ${subscriptionId}: ${this.getErrorMessage(error)}`,
+      )
       throw error
     }
   }
@@ -441,7 +455,9 @@ export class StripeService implements OnModuleInit {
         expand: ['subscription', 'customer'],
       })
     } catch (error) {
-      this.logger.error(`Failed to get checkout session ${sessionId}: ${this.getErrorMessage(error)}`)
+      this.logger.error(
+        `Failed to get checkout session ${sessionId}: ${this.getErrorMessage(error)}`,
+      )
       throw error
     }
   }
@@ -500,7 +516,9 @@ export class StripeService implements OnModuleInit {
     try {
       return await this.stripe.paymentIntents.confirm(paymentIntentId)
     } catch (error) {
-      this.logger.error(`Failed to confirm payment intent ${paymentIntentId}: ${this.getErrorMessage(error)}`)
+      this.logger.error(
+        `Failed to confirm payment intent ${paymentIntentId}: ${this.getErrorMessage(error)}`,
+      )
       throw error
     }
   }
@@ -510,7 +528,9 @@ export class StripeService implements OnModuleInit {
     try {
       return await this.stripe.paymentIntents.cancel(paymentIntentId)
     } catch (error) {
-      this.logger.error(`Failed to cancel payment intent ${paymentIntentId}: ${this.getErrorMessage(error)}`)
+      this.logger.error(
+        `Failed to cancel payment intent ${paymentIntentId}: ${this.getErrorMessage(error)}`,
+      )
       throw error
     }
   }
@@ -523,10 +543,7 @@ export class StripeService implements OnModuleInit {
    * Construct and verify a Stripe webhook event
    * This is used in the webhook controller to verify the signature
    */
-  constructWebhookEvent(
-    payload: string | Buffer,
-    signature: string,
-  ): Stripe.Event {
+  constructWebhookEvent(payload: string | Buffer, signature: string): Stripe.Event {
     this.ensureStripeConfigured()
     const { webhookSecret } = this.configService.stripe
 

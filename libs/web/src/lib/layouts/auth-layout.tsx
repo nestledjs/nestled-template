@@ -1,9 +1,9 @@
 import React from 'react'
 
 interface AuthLayoutProps {
-  title: string
-  subtitle?: string
-  children: React.ReactNode
+  readonly title: string
+  readonly subtitle?: string
+  readonly children: React.ReactNode
 }
 
 export function AuthLayout({ title, subtitle, children }: AuthLayoutProps) {

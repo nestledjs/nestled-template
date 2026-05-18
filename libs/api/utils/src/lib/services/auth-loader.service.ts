@@ -46,15 +46,15 @@ export class AuthLoaderService {
     // We need the data service to be injected via factory, not constructor
     // to avoid circular dependencies. The caller should provide it.
     private readonly queryMemberships?: (
-      keys: readonly MembershipKey[]
-    ) => Promise<MembershipResult[]>
+      keys: readonly MembershipKey[],
+    ) => Promise<MembershipResult[]>,
   ) {
     this.membershipLoader = new DataLoader<MembershipKey, OrganizationContext | null, string>(
       keys => this.batchLoadMemberships(keys),
       {
         // Use a custom cache key since the key is an object
         cacheKeyFn: key => `${key.userId}:${key.organizationId}`,
-      }
+      },
     )
   }
 
@@ -68,7 +68,7 @@ export class AuthLoaderService {
    */
   async loadMembership(
     userId: string,
-    organizationId?: string
+    organizationId?: string,
   ): Promise<OrganizationContext | null> {
     if (!organizationId) {
       // Try to get from Redis cache
@@ -97,7 +97,7 @@ export class AuthLoaderService {
    * Batches multiple membership lookups into a single database query.
    */
   private async batchLoadMemberships(
-    keys: readonly MembershipKey[]
+    keys: readonly MembershipKey[],
   ): Promise<(OrganizationContext | null)[]> {
     if (!this.queryMemberships) {
       this.logger.warn('No queryMemberships function provided, returning nulls')
@@ -205,7 +205,7 @@ export class AuthLoaderService {
  */
 export function createAuthLoaderService(
   authCache: AuthCacheService,
-  queryMemberships: (keys: readonly MembershipKey[]) => Promise<MembershipResult[]>
+  queryMemberships: (keys: readonly MembershipKey[]) => Promise<MembershipResult[]>,
 ): AuthLoaderService {
   return new AuthLoaderService(authCache, queryMemberships)
 }

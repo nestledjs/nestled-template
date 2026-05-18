@@ -7,5 +7,3 @@ export class VerifyEmailInput {
   @IsNotEmpty()
   token!: string
 }
-
-

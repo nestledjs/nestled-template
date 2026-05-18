@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ForgotPassword from '../../../app/routes/_public/forgot-password'
 import { useMutation } from '@apollo/client/react'
@@ -12,7 +12,6 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock the SDK mutation
-
 
 // Mock the AuthLayout component
 vi.mock('@nestled-template/web', () => ({
@@ -33,7 +32,7 @@ vi.mock('@nestled-template/shared/styles', () => ({
 // Mock the Form component from @nestledjs/forms
 vi.mock('@nestledjs/forms', () => ({
   Form: ({ id, fields, submit }: any) => {
-    const handleSubmit = (e) => {
+    const handleSubmit = e => {
       e.preventDefault()
       const formData = new FormData(e.target)
       const values: Record<string, any> = {}
@@ -53,11 +52,7 @@ vi.mock('@nestledjs/forms', () => ({
 
           if (type === 'button') {
             return (
-              <button
-                key={key}
-                type={options?.type || 'button'}
-                disabled={disabled || loading}
-              >
+              <button key={key} type={options?.type || 'button'} disabled={disabled || loading}>
                 {text}
               </button>
             )
@@ -197,13 +192,11 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/password reset email sent/i)
-        ).toBeInTheDocument()
+        expect(screen.getByText(/password reset email sent/i)).toBeInTheDocument()
       })
 
       expect(
-        screen.getByText(/please check your email and follow the instructions/i)
+        screen.getByText(/please check your email and follow the instructions/i),
       ).toBeInTheDocument()
     })
 
@@ -221,9 +214,7 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/there was an error finding your account/i)
-        ).toBeInTheDocument()
+        expect(screen.getByText(/there was an error finding your account/i)).toBeInTheDocument()
       })
     })
 
@@ -243,7 +234,7 @@ describe('ForgotPassword Component', () => {
 
     it('should display generic error when error has no message', async () => {
       const user = userEvent.setup()
-      mockForgotPasswordMutation.mockRejectedValue(new Error())
+      mockForgotPasswordMutation.mockRejectedValue({})
 
       renderForgotPassword()
 
@@ -281,7 +272,9 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(screen.queryByText(/there was an error finding your account/i)).not.toBeInTheDocument()
+        expect(
+          screen.queryByText(/there was an error finding your account/i),
+        ).not.toBeInTheDocument()
         expect(screen.getByText(/password reset email sent/i)).toBeInTheDocument()
       })
     })
@@ -300,7 +293,10 @@ describe('ForgotPassword Component', () => {
     })
 
     it('should show normal button text when not loading', () => {
-      vi.mocked(useMutation).mockReturnValue([mockForgotPasswordMutation, { loading: false }] as any)
+      vi.mocked(useMutation).mockReturnValue([
+        mockForgotPasswordMutation,
+        { loading: false },
+      ] as any)
 
       renderForgotPassword()
 
@@ -309,7 +305,6 @@ describe('ForgotPassword Component', () => {
       expect(submitButton).not.toBeDisabled()
     })
   })
-
 
   describe('Common Scenarios', () => {
     it('should handle email not found scenario gracefully', async () => {

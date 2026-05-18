@@ -1,13 +1,12 @@
-import type { Meta, StoryObj } from '@storybook/react-vite';
-import { within, expect } from 'storybook/test';
-import { WebUiHeader } from './web-ui-header';
-import type { StoryContext } from '@storybook/react-vite';
+import type { Meta, StoryObj, StoryContext } from '@storybook/react-vite'
+import { within, expect } from 'storybook/test'
+import { WebUiHeader } from './web-ui-header'
 
 const navigation = [
   { name: 'Home', href: '/' },
   { name: 'About', href: '/about' },
   { name: 'Contact', href: '/contact' },
-];
+]
 
 const meta = {
   component: WebUiHeader,
@@ -20,27 +19,29 @@ const meta = {
     siteName: 'Your Site',
     isAuthenticated: false,
   },
-} satisfies Meta<typeof WebUiHeader>;
-export default meta;
+} satisfies Meta<typeof WebUiHeader>
+export default meta
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<typeof meta>
 
 export const Default: Story = {
   play: async ({ canvasElement }: StoryContext) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByText('Home')).toBeInTheDocument();
-    await expect(canvas.getByText('About')).toBeInTheDocument();
-    await expect(canvas.getByText('Contact')).toBeInTheDocument();
-    await expect(canvas.getByText('Login')).toBeInTheDocument();
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Home')).toBeInTheDocument()
+    await expect(canvas.getByText('About')).toBeInTheDocument()
+    await expect(canvas.getByText('Contact')).toBeInTheDocument()
+    await expect(canvas.getByText('Login')).toBeInTheDocument()
   },
-};
+}
 
 export const Authenticated: Story = {
   args: {
     isAuthenticated: true,
+    userName: 'Ada Lovelace',
+    userEmail: 'ada@example.com',
   },
   play: async ({ canvasElement }: StoryContext) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByText('Dashboard')).toBeInTheDocument();
+    const canvas = within(canvasElement)
+    await expect(canvas.getByLabelText('Open account menu')).toBeInTheDocument()
   },
-};
+}

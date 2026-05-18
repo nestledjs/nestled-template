@@ -1,3 +1,1 @@
-import { AdminDataIndexPage } from '@nestledjs/data-browser'
-
-export default AdminDataIndexPage
+export { AdminDataIndexPage as default } from '@nestledjs/data-browser'

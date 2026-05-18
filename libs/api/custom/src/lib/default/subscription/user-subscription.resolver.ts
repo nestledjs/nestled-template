@@ -81,14 +81,14 @@ export class UserSubscriptionResolver {
       where: { stripePriceId: priceId },
     })
 
-    const frontendUrl = this.config.frontendUrl
+    const siteUrl = this.config.siteUrl
 
     // Create checkout session
     const session = await this.stripe.createCheckoutSession({
       priceId,
       customerId,
-      successUrl: `${frontendUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${frontendUrl}/checkout/cancel`,
+      successUrl: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${siteUrl}/checkout/cancel`,
       trialPeriodDays: plan?.trialPeriodDays || undefined,
       metadata: {
         organizationId: organization.id,
@@ -116,11 +116,11 @@ export class UserSubscriptionResolver {
       throw new Error('No active subscription found')
     }
 
-    const frontendUrl = this.config.frontendUrl
+    const siteUrl = this.config.siteUrl
 
     const session = await this.stripe.createPortalSession({
       customerId: subscription.stripeCustomerId,
-      returnUrl: `${frontendUrl}/settings/billing`,
+      returnUrl: `${siteUrl}/settings/billing`,
     })
 
     return session.url

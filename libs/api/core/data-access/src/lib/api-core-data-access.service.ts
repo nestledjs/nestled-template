@@ -56,13 +56,15 @@ export class ApiCoreDataAccessService
     await this.$connect()
 
     if (process.env['LOG_PRISMA_QUERIES'] == 'true') {
-      this.$on('query' as never, async (e: Prisma.QueryEvent) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(this as any).$on('query', async (e: Prisma.QueryEvent) => {
         console.log(`QUERY: ${e.query} \n\nPARAMS: ${e.params}\n\n\n`)
       })
     }
 
     if (process.env['COUNT_PRISMA_QUERIES'] == 'true') {
-      this.$on('query' as never, async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(this as any).$on('query', async () => {
         this.queryCount++
       })
     }

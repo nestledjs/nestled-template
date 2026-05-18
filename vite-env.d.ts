@@ -14,7 +14,7 @@ interface ImportMeta {
 // TypeScript declarations for importing markdown files
 declare module '*.md' {
   import type { ComponentType } from 'react'
-  
+
   interface MarkdownModule {
     default: ComponentType
     filename: string
@@ -26,14 +26,14 @@ declare module '*.md' {
       categories: string[]
     }
   }
-  
+
   const module: MarkdownModule
   export = module
 }
 
 declare module '*.mdx' {
   import type { ComponentType } from 'react'
-  
+
   interface MDXModule {
     default: ComponentType
     filename: string
@@ -45,7 +45,7 @@ declare module '*.mdx' {
       categories: string[]
     }
   }
-  
+
   const module: MDXModule
   export = module
-} 
+}

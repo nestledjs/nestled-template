@@ -9,10 +9,30 @@ export class AdminService {
 
   constructor(private readonly prisma: ApiCoreDataAccessService) {}
 
-  /**
-   * Get filtered and paginated list of users for admin panel
-   */
-  async getUsers(filters: AdminUserFiltersInput): Promise<AdminUsersResponse> {
+  private buildSearchClause(search: string) {
+    return [
+      { id: { contains: search, mode: 'insensitive' } },
+      { firstName: { contains: search, mode: 'insensitive' } },
+      { lastName: { contains: search, mode: 'insensitive' } },
+      { emails: { some: { email: { contains: search, mode: 'insensitive' } } } },
+    ]
+  }
+
+  private buildAccountLockedClause(accountLocked: boolean) {
+    if (accountLocked) {
+      return { lockedUntil: { gt: new Date() } }
+    }
+    return { OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }] }
+  }
+
+  private buildDateRangeClause(after?: Date, before?: Date) {
+    const range: any = {}
+    if (after) range.gte = after
+    if (before) range.lte = before
+    return range
+  }
+
+  private buildUserWhereClause(filters: AdminUserFiltersInput): any {
     const {
       search,
       organizationId,
@@ -24,74 +44,52 @@ export class AdminService {
       registeredBefore,
       lastLoginAfter,
       lastLoginBefore,
-      skip = 0,
-      take = 50,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
     } = filters
 
-    // Build where clause
     const where: any = {}
 
-    // Text search across email and name
     if (search) {
-      where.OR = [
-        { id: { contains: search, mode: 'insensitive' } },
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { emails: { some: { email: { contains: search, mode: 'insensitive' } } } },
-      ]
+      where.OR = this.buildSearchClause(search)
     }
 
-    // Organization filter
     if (organizationId) {
-      where.organizations = {
-        some: { organizationId },
-      }
+      where.organizations = { some: { organizationId } }
     }
 
-    // Super admin filter
     if (isSuperAdmin !== undefined) {
       where.isSuperAdmin = isSuperAdmin
     }
 
-    // Email verified filter
     if (emailVerified !== undefined) {
-      where.emails = {
-        some: { verified: emailVerified, primary: true },
-      }
+      where.emails = { some: { verified: emailVerified, primary: true } }
     }
 
-    // 2FA filter
     if (twoFactorEnabled !== undefined) {
       where.twoFactorEnabled = twoFactorEnabled
     }
 
-    // Account locked filter
     if (accountLocked !== undefined) {
-      if (accountLocked) {
-        where.lockedUntil = { gt: new Date() }
-      } else {
-        where.OR = [
-          { lockedUntil: null },
-          { lockedUntil: { lte: new Date() } },
-        ]
-      }
+      Object.assign(where, this.buildAccountLockedClause(accountLocked))
     }
 
-    // Registration date filters
     if (registeredAfter || registeredBefore) {
-      where.createdAt = {}
-      if (registeredAfter) where.createdAt.gte = registeredAfter
-      if (registeredBefore) where.createdAt.lte = registeredBefore
+      where.createdAt = this.buildDateRangeClause(registeredAfter, registeredBefore)
     }
 
-    // Last login filters
     if (lastLoginAfter || lastLoginBefore) {
-      where.lastSuccessfulLogin = {}
-      if (lastLoginAfter) where.lastSuccessfulLogin.gte = lastLoginAfter
-      if (lastLoginBefore) where.lastSuccessfulLogin.lte = lastLoginBefore
+      where.lastSuccessfulLogin = this.buildDateRangeClause(lastLoginAfter, lastLoginBefore)
     }
+
+    return where
+  }
+
+  /**
+   * Get filtered and paginated list of users for admin panel
+   */
+  async getUsers(filters: AdminUserFiltersInput): Promise<AdminUsersResponse> {
+    const { skip = 0, take = 50, sortBy = 'createdAt', sortOrder = 'desc' } = filters
+
+    const where = this.buildUserWhereClause(filters)
 
     // Build orderBy
     const orderBy: any = {}
@@ -229,12 +227,7 @@ export class AdminService {
    * Get user activity statistics
    */
   async getUserStats(userId: string) {
-    const [
-      sessionCount,
-      auditLogCount,
-      organizationCount,
-      teamCount,
-    ] = await Promise.all([
+    const [sessionCount, auditLogCount, organizationCount, teamCount] = await Promise.all([
       this.prisma.userSession.count({
         where: { userId },
       }),
@@ -486,9 +479,12 @@ export class AdminService {
         emails: true,
       },
     })
+    if (!user) {
+      throw new Error(`User ${userId} not found after email verification`)
+    }
 
     this.logger.log(`Admin verified email ${emailId} for user ${userId}`)
-    return user!
+    return user
   }
 
   /**
@@ -497,7 +493,7 @@ export class AdminService {
    */
   async forcePasswordReset(userId: string) {
     // Generate a reset token
-    const crypto = await import('crypto')
+    const crypto = await import('node:crypto')
     const resetToken = crypto.randomBytes(32).toString('hex')
     const resetExpires = new Date(Date.now() + 3600000) // 1 hour
 
@@ -550,36 +546,44 @@ export class AdminService {
       totalUsers,
     ] = await Promise.all([
       // DAU - users with sessions in last 24h
-      this.prisma.userSession.groupBy({
-        by: ['userId'],
-        where: {
-          lastActiveAt: { gte: yesterday },
-        },
-      }).then(sessions => sessions.length),
+      this.prisma.userSession
+        .groupBy({
+          by: ['userId'],
+          where: {
+            lastActiveAt: { gte: yesterday },
+          },
+        })
+        .then(sessions => sessions.length),
 
       // Yesterday's DAU for comparison
-      this.prisma.userSession.groupBy({
-        by: ['userId'],
-        where: {
-          lastActiveAt: { gte: twoDaysAgo, lt: yesterday },
-        },
-      }).then(sessions => sessions.length),
+      this.prisma.userSession
+        .groupBy({
+          by: ['userId'],
+          where: {
+            lastActiveAt: { gte: twoDaysAgo, lt: yesterday },
+          },
+        })
+        .then(sessions => sessions.length),
 
       // MAU - users with sessions in last 30 days
-      this.prisma.userSession.groupBy({
-        by: ['userId'],
-        where: {
-          lastActiveAt: { gte: lastMonth },
-        },
-      }).then(sessions => sessions.length),
+      this.prisma.userSession
+        .groupBy({
+          by: ['userId'],
+          where: {
+            lastActiveAt: { gte: lastMonth },
+          },
+        })
+        .then(sessions => sessions.length),
 
       // Last month's MAU for comparison
-      this.prisma.userSession.groupBy({
-        by: ['userId'],
-        where: {
-          lastActiveAt: { gte: twoMonthsAgo, lt: lastMonth },
-        },
-      }).then(sessions => sessions.length),
+      this.prisma.userSession
+        .groupBy({
+          by: ['userId'],
+          where: {
+            lastActiveAt: { gte: twoMonthsAgo, lt: lastMonth },
+          },
+        })
+        .then(sessions => sessions.length),
 
       // New users registered today
       this.prisma.user.count({
@@ -593,12 +597,14 @@ export class AdminService {
     ])
 
     // Calculate percentage changes
-    const dauChange = yesterdayActiveUsers > 0
-      ? ((dailyActiveUsers - yesterdayActiveUsers) / yesterdayActiveUsers) * 100
-      : 0
-    const mauChange = lastMonthActiveUsers > 0
-      ? ((monthlyActiveUsers - lastMonthActiveUsers) / lastMonthActiveUsers) * 100
-      : 0
+    const dauChange =
+      yesterdayActiveUsers > 0
+        ? ((dailyActiveUsers - yesterdayActiveUsers) / yesterdayActiveUsers) * 100
+        : 0
+    const mauChange =
+      lastMonthActiveUsers > 0
+        ? ((monthlyActiveUsers - lastMonthActiveUsers) / lastMonthActiveUsers) * 100
+        : 0
 
     // Average session duration (in milliseconds)
     const sessions = await this.prisma.userSession.findMany({
@@ -612,12 +618,13 @@ export class AdminService {
       },
     })
 
-    const avgSessionDuration = sessions.length > 0
-      ? sessions.reduce((sum, session) => {
-          const duration = session.lastActiveAt.getTime() - session.createdAt.getTime()
-          return sum + duration
-        }, 0) / sessions.length
-      : 0
+    const avgSessionDuration =
+      sessions.length > 0
+        ? sessions.reduce((sum, session) => {
+            const duration = session.lastActiveAt.getTime() - session.createdAt.getTime()
+            return sum + duration
+          }, 0) / sessions.length
+        : 0
 
     // System Performance Metrics
     const totalAuditLogs = await this.prisma.auditLog.count({
@@ -675,13 +682,15 @@ export class AdminService {
 
     const featureUsage = await Promise.all(
       featureData.map(async feature => {
-        const uniqueUsers = await this.prisma.auditLog.groupBy({
-          by: ['userId'],
-          where: {
-            action: feature.action,
-            createdAt: { gte: sevenDaysAgo },
-          },
-        }).then(users => users.length)
+        const uniqueUsers = await this.prisma.auditLog
+          .groupBy({
+            by: ['userId'],
+            where: {
+              action: feature.action,
+              createdAt: { gte: sevenDaysAgo },
+            },
+          })
+          .then(users => users.length)
 
         return {
           featureName: feature.action,

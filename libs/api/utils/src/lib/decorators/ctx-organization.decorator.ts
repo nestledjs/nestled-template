@@ -13,12 +13,12 @@ export const CtxOrganization = createParamDecorator(
 
     if (!organizationContext) {
       throw new UnauthorizedException(
-        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.'
+        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.',
       )
     }
 
     return organizationContext
-  }
+  },
 )
 
 /**
@@ -32,10 +32,10 @@ export const CtxOrganizationId = createParamDecorator(
 
     if (!organizationContext) {
       throw new UnauthorizedException(
-        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.'
+        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.',
       )
     }
 
     return organizationContext.organizationId
-  }
+  },
 )

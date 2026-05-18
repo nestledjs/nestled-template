@@ -41,6 +41,12 @@ type AdminPlansQuery = {
   plans: Plan[]
 }
 
+function getSubscriptionStatusClass(status: string): string {
+  if (status === 'ACTIVE') return 'bg-green-100 text-green-800'
+  if (status === 'TRIALING') return 'bg-blue-100 text-blue-800'
+  return 'bg-red-100 text-red-800'
+}
+
 type AdminSubscriptionsQuery = {
   subscriptions: Subscription[]
   subscriptionsCount: {
@@ -139,15 +145,17 @@ export default function AdminBillingOverview() {
   const subscriptions = subsData?.subscriptions || []
   const totalSubscriptions = subsData?.subscriptionsCount?.total || 0
 
-  const activeSubscriptions = subscriptions.filter((s) => s.status === 'ACTIVE').length
-  const activePlans = plans.filter((p) => p.active).length
+  const activeSubscriptions = subscriptions.filter(s => s.status === 'ACTIVE').length
+  const activePlans = plans.filter(p => p.active).length
 
-  const monthlyRecurringRevenue = subscriptions
-    .filter((s) => s.status === 'ACTIVE' && s.plan?.price)
-    .reduce((sum: number, s: any) => {
-      const price = parseFloat(s.plan.price)
-      return sum + price
-    }, 0)
+  const monthlyRecurringRevenue = subscriptions.reduce((sum: number, s: Subscription) => {
+    if (s.status !== 'ACTIVE' || !s.plan?.price) {
+      return sum
+    }
+
+    const price = Number.parseFloat(s.plan.price)
+    return sum + price
+  }, 0)
 
   return (
     <div className="space-y-6">
@@ -281,7 +289,7 @@ export default function AdminBillingOverview() {
             <p className="text-sm text-gray-500">No subscriptions yet</p>
           ) : (
             <div className="space-y-4">
-              {subscriptions.map((sub) => (
+              {subscriptions.map(sub => (
                 <div key={sub.id} className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-900">{sub.organization?.name}</p>
@@ -289,17 +297,11 @@ export default function AdminBillingOverview() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-medium text-gray-900">
-                      ${parseFloat(sub.plan?.price || '0').toFixed(2)}
+                      ${Number.parseFloat(sub.plan?.price || '0').toFixed(2)}
                     </p>
                     <p className="text-sm text-gray-500">
                       <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          sub.status === 'ACTIVE'
-                            ? 'bg-green-100 text-green-800'
-                            : sub.status === 'TRIALING'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-red-100 text-red-800'
-                        }`}
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getSubscriptionStatusClass(sub.status)}`}
                       >
                         {sub.status}
                       </span>

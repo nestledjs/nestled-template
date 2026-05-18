@@ -113,5 +113,5 @@ Need help? Contact us at {{supportEmail}}
 {{#if securityUrl}}
 Manage your security settings: {{securityUrl}}
 {{/if}}
-  `.trim()
+  `.trim(),
 }

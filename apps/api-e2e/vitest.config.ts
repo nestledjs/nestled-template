@@ -1,11 +1,14 @@
 import { defineConfig } from 'vitest/config'
-import { resolve } from 'path'
+import { resolve } from 'node:path'
 
 export default defineConfig({
   resolve: {
     alias: {
       '@nestled-template/api/prisma': resolve(__dirname, '../../libs/api/prisma/src/index.ts'),
-      '@nestled-template/api/core/data-access': resolve(__dirname, '../../libs/api/core/data-access/src/index.ts'),
+      '@nestled-template/api/core/data-access': resolve(
+        __dirname,
+        '../../libs/api/core/data-access/src/index.ts',
+      ),
       '@nestled-template/api/utils': resolve(__dirname, '../../libs/api/utils/src/index.ts'),
       '@nestled-template/api/custom': resolve(__dirname, '../../libs/api/custom/src/index.ts'),
     },
@@ -43,7 +46,8 @@ export default defineConfig({
     },
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      reportsDirectory: '../../coverage/apps/api-e2e',
+      reporter: ['text', 'json', 'html', 'lcov'],
       exclude: [
         'coverage/**',
         'dist/**',
@@ -61,8 +65,8 @@ export default defineConfig({
         '**/__tests__/**',
         '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*',
         '**/vitest.{workspace,projects}.[jt]s?(on)',
-        '**/.{eslint,mocha,prettier}rc.{js,cjs,yml}'
-      ]
-    }
-  }
+        '**/.{eslint,mocha,prettier}rc.{js,cjs,yml}',
+      ],
+    },
+  },
 })

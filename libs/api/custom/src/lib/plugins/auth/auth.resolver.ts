@@ -17,9 +17,29 @@ import { CtxUser, GqlAuthGuard, GqlAuthAdminGuard } from '@nestled-template/api/
 import type { NestContextType } from '@nestled-template/api/utils'
 import { UserToken } from './models'
 import { User } from '@nestled-template/api/core/models'
-import { ChangeEmailInput, ChangePasswordInput, Disable2FAInput, EmulateUserInput, Enable2FAOutput, ForgotPasswordInput, LoginInput, RegisterInput, RegisterWithInvitationInput, ResetPasswordInput, Setup2FAOutput, VerifyEmailInput, Verify2FAInput, OAuthProviderInfo, LinkOAuthInput, UnlinkOAuthInput, OAuthProvider, UserSessionOutput, ExportUserDataOutput, TransferOwnershipInput } from './dto'
+import {
+  ChangeEmailInput,
+  ChangePasswordInput,
+  Disable2FAInput,
+  EmulateUserInput,
+  Enable2FAOutput,
+  ForgotPasswordInput,
+  LoginInput,
+  RegisterInput,
+  RegisterWithInvitationInput,
+  ResetPasswordInput,
+  Setup2FAOutput,
+  VerifyEmailInput,
+  Verify2FAInput,
+  OAuthProviderInfo,
+  LinkOAuthInput,
+  UnlinkOAuthInput,
+  OAuthProvider,
+  UserSessionOutput,
+  ExportUserDataOutput,
+  TransferOwnershipInput,
+} from './dto'
 import { ConfigService } from '@nestjs/config'
-
 
 @Resolver(() => UserToken)
 export class AuthResolver {
@@ -39,7 +59,9 @@ export class AuthResolver {
     // Preserve them in the validated user
     const userWithEmulation = user as any
     if (userWithEmulation.isEmulating && userWithEmulation.originalAdminId) {
-      Logger.log(`[ME Query] 🎭 Emulation detected: admin ${userWithEmulation.originalAdminId} emulating user ${user.id}`)
+      Logger.log(
+        `[ME Query] 🎭 Emulation detected: admin ${userWithEmulation.originalAdminId} emulating user ${user.id}`,
+      )
       return {
         ...validatedUser,
         isEmulating: true,
@@ -78,7 +100,7 @@ export class AuthResolver {
     console.log('[Login] Set JWT cookie for user:', {
       userId: userToken.user?.id,
       isSuperAdmin: userToken.user?.isSuperAdmin,
-      tokenLength: userToken.token?.length
+      tokenLength: userToken.token?.length,
     })
 
     return userToken
@@ -104,7 +126,7 @@ export class AuthResolver {
 
     console.log('[2FA Login] Set JWT cookie for user:', {
       userId: userToken.user?.id,
-      tokenLength: userToken.token?.length
+      tokenLength: userToken.token?.length,
     })
 
     return userToken
@@ -127,7 +149,7 @@ export class AuthResolver {
     }
 
     if (token) {
-      const decoded = (this.service as any).jwtService.decode(token) as any
+      const decoded = (this.service as any).jwtService.decode(token)
       const sessionId = decoded?.sessionId
       if (sessionId) {
         await this.sessionService.invalidateSession(sessionId)
@@ -153,7 +175,10 @@ export class AuthResolver {
   }
 
   @Mutation(() => UserToken, { nullable: true })
-  async registerWithInvitation(@Context() context: NestContextType, @Args('input') input: RegisterWithInvitationInput) {
+  async registerWithInvitation(
+    @Context() context: NestContextType,
+    @Args('input') input: RegisterWithInvitationInput,
+  ) {
     // Extract session info from request
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
 
@@ -168,7 +193,7 @@ export class AuthResolver {
   @Mutation(() => Boolean, { nullable: true })
   forgotPassword(
     @Context() context: NestContextType,
-    @Args('input') input: ForgotPasswordInput
+    @Args('input') input: ForgotPasswordInput,
   ): Promise<boolean> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
     return this.service.forgotPassword(input?.email?.trim()?.toLowerCase(), sessionInfo)
@@ -177,7 +202,7 @@ export class AuthResolver {
   @Mutation(() => User, { nullable: true })
   resetPassword(
     @Context() context: NestContextType,
-    @Args('input') input: ResetPasswordInput
+    @Args('input') input: ResetPasswordInput,
   ): Promise<User> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
     return this.service.resetPassword(input.password, input.token, sessionInfo)
@@ -213,7 +238,7 @@ export class AuthResolver {
   async changeEmail(
     @Context() context: NestContextType,
     @CtxUser() user: User,
-    @Args('input') input: ChangeEmailInput
+    @Args('input') input: ChangeEmailInput,
   ): Promise<boolean> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
     return this.service.changeEmail(user.id, input.newEmail, sessionInfo)
@@ -229,22 +254,31 @@ export class AuthResolver {
   async changePassword(
     @Context() context: NestContextType,
     @CtxUser() user: User,
-    @Args('input') input: ChangePasswordInput
+    @Args('input') input: ChangePasswordInput,
   ): Promise<boolean> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
-    return this.service.changePassword(user.id, input, sessionInfo)
+    const token = context.req.cookies?.[this.service.getCookieName()]
+    const decoded = token ? (this.service as any).jwtService.decode(token) : null
+    const currentSessionId = decoded?.sessionId
+
+    return this.service.changePassword(user.id, input, sessionInfo, currentSessionId)
   }
 
   @Mutation(() => UserToken, { nullable: true })
-  @UseGuards(GqlAuthGuard)  // Changed from GqlAuthAdminGuard - we need to check JWT payload instead
-  async endEmulation(@CtxUser() user: User, @Context() context: NestContextType): Promise<UserToken> {
+  @UseGuards(GqlAuthGuard) // Changed from GqlAuthAdminGuard - we need to check JWT payload instead
+  async endEmulation(
+    @CtxUser() user: User,
+    @Context() context: NestContextType,
+  ): Promise<UserToken> {
     // Check if current session is actually an emulation
     const userWithEmulation = user as any
     if (!userWithEmulation.isEmulating || !userWithEmulation.originalAdminId) {
       throw new Error('Not currently emulating a user')
     }
 
-    Logger.log(`[EndEmulation] Admin ${userWithEmulation.originalAdminId} ending emulation of user ${user.id}`)
+    Logger.log(
+      `[EndEmulation] Admin ${userWithEmulation.originalAdminId} ending emulation of user ${user.id}`,
+    )
 
     // Get token from cookie
     const token = context.req.cookies?.[this.service.getCookieName()]
@@ -267,7 +301,7 @@ export class AuthResolver {
   async unlockAccount(
     @Context() context: NestContextType,
     @CtxUser() user: User,
-    @Args('userId') userId: string
+    @Args('userId') userId: string,
   ): Promise<User> {
     // Only super admins can unlock accounts
     if (!user.isSuperAdmin) {
@@ -288,7 +322,7 @@ export class AuthResolver {
   async enable2FA(
     @Context() context: NestContextType,
     @CtxUser() user: User,
-    @Args('input') input: Verify2FAInput
+    @Args('input') input: Verify2FAInput,
   ): Promise<Enable2FAOutput> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
     return this.service.enable2FA(user.id, input.code, sessionInfo)
@@ -299,7 +333,7 @@ export class AuthResolver {
   async disable2FA(
     @Context() context: NestContextType,
     @CtxUser() user: User,
-    @Args('input') input: Disable2FAInput
+    @Args('input') input: Disable2FAInput,
   ): Promise<boolean> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
     return this.service.disable2FA(user.id, input, sessionInfo)
@@ -307,7 +341,10 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
-  async verify2FACode(@CtxUser() user: User, @Args('input') input: Verify2FAInput): Promise<boolean> {
+  async verify2FACode(
+    @CtxUser() user: User,
+    @Args('input') input: Verify2FAInput,
+  ): Promise<boolean> {
     return this.service.verify2FALogin(user.id, input.code)
   }
 
@@ -336,21 +373,30 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
-  async linkOAuthAccount(@CtxUser() user: User, @Args('input') input: LinkOAuthInput): Promise<boolean> {
+  async linkOAuthAccount(
+    @CtxUser() user: User,
+    @Args('input') input: LinkOAuthInput,
+  ): Promise<boolean> {
     await this.oauthService.linkOAuthAccount(user.id, input.provider, input.token)
     return true
   }
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
-  async unlinkOAuthAccount(@CtxUser() user: User, @Args('input') input: UnlinkOAuthInput): Promise<boolean> {
+  async unlinkOAuthAccount(
+    @CtxUser() user: User,
+    @Args('input') input: UnlinkOAuthInput,
+  ): Promise<boolean> {
     await this.oauthService.unlinkOAuthAccount(user.id, input.provider)
     return true
   }
 
   @Query(() => [UserSessionOutput])
   @UseGuards(GqlAuthGuard)
-  async getUserSessions(@Context() context: NestContextType, @CtxUser() user: User): Promise<UserSessionOutput[]> {
+  async getUserSessions(
+    @Context() context: NestContextType,
+    @CtxUser() user: User,
+  ): Promise<UserSessionOutput[]> {
     // Get current session ID from JWT
     const token = context.req.cookies?.[this.service.getCookieName()]
     const decoded = token ? (this.service as any).jwtService.decode(token) : null
@@ -361,13 +407,19 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
-  async invalidateSession(@CtxUser() user: User, @Args('sessionId') sessionId: string): Promise<boolean> {
+  async invalidateSession(
+    @CtxUser() user: User,
+    @Args('sessionId') sessionId: string,
+  ): Promise<boolean> {
     return this.service.invalidateSession(user.id, sessionId)
   }
 
   @Mutation(() => Number)
   @UseGuards(GqlAuthGuard)
-  async invalidateAllSessions(@Context() context: NestContextType, @CtxUser() user: User): Promise<number> {
+  async invalidateAllSessions(
+    @Context() context: NestContextType,
+    @CtxUser() user: User,
+  ): Promise<number> {
     // Get current session ID from JWT to exclude it
     const token = context.req.cookies?.[this.service.getCookieName()]
     const decoded = token ? (this.service as any).jwtService.decode(token) : null
@@ -382,7 +434,7 @@ export class AuthResolver {
     if (auth?.requires2FA && !auth?.token) {
       return null
     }
-    
+
     if (!auth?.token) {
       throw new Error('No AuthToken for resolved user')
     }
@@ -405,12 +457,12 @@ export class AuthResolver {
   @UseGuards(GqlAuthGuard)
   async transferOrganizationOwnership(
     @CtxUser() user: User,
-    @Args('input') input: TransferOwnershipInput
+    @Args('input') input: TransferOwnershipInput,
   ): Promise<boolean> {
     return this.service.transferOrganizationOwnership(
       user.id,
       input.organizationId,
-      input.newOwnerUserId
+      input.newOwnerUserId,
     )
   }
 }

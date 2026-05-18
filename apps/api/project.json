@@ -6,6 +6,7 @@
   "targets": {
     "build": {
       "executor": "nx:run-commands",
+      "dependsOn": ["api-prisma:generate", "^build"],
       "options": {
         "command": "NODE_ENV=production webpack-cli --config apps/api/webpack.config.js"
       },
@@ -19,9 +20,7 @@
       "continuous": true,
       "executor": "@nx/js:node",
       "defaultConfiguration": "development",
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "options": {
         "buildTarget": "api:build",
         "runBuildTargetDependencies": false

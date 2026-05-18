@@ -25,7 +25,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reportsDirectory: '../../coverage/libs/web-ui',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json', 'html', 'lcov'],
       all: true,
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['**/*.stories.{ts,tsx}', '**/*.d.ts', '**/index.ts', '**/types.ts'],

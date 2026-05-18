@@ -4,7 +4,7 @@ export const organizationInvitationTemplate: TemplateDefinition = {
   id: 'organization-invitation',
   name: 'Organization Invitation',
   description: 'Email sent to invite users to join an organization',
-  subject: 'You\'ve been invited to join {{organizationName}} on {{appName}}',
+  subject: "You've been invited to join {{organizationName}} on {{appName}}",
   requiredVariables: ['organizationName', 'inviterName', 'invitationUrl', 'appName'],
   optionalVariables: ['companyName', 'supportEmail', 'expirationDays'],
 
@@ -90,5 +90,5 @@ The {{appName}} Team
 {{#if supportEmail}}
 Need help? Contact us at {{supportEmail}}
 {{/if}}
-  `.trim()
+  `.trim(),
 }

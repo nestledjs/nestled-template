@@ -1,7 +1,13 @@
 import { Args, Field, InputType, Int, ObjectType, Query, Resolver, Mutation } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
 import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
-import { SecurityEvent, AuditLog, User, Organization, SecurityEventType } from '@nestled-template/api/core/models'
+import {
+  SecurityEvent,
+  AuditLog,
+  User,
+  Organization,
+  SecurityEventType,
+} from '@nestled-template/api/core/models'
 import { AdminService } from './admin.service'
 import { AdminUserFiltersInput, AdminUsersResponse } from './dto'
 
@@ -227,9 +233,7 @@ export class AdminResolver {
    */
   @Query(() => User)
   @UseGuards(GqlAuthAdminGuard)
-  async adminUserDetails(
-    @Args('userId', { type: () => String }) userId: string,
-  ): Promise<any> {
+  async adminUserDetails(@Args('userId', { type: () => String }) userId: string): Promise<any> {
     return this.service.getUserDetails(userId)
   }
 
@@ -298,9 +302,7 @@ export class AdminResolver {
    */
   @Mutation(() => User)
   @UseGuards(GqlAuthAdminGuard)
-  async adminDeactivateUser(
-    @Args('userId', { type: () => String }) userId: string,
-  ): Promise<User> {
+  async adminDeactivateUser(@Args('userId', { type: () => String }) userId: string): Promise<User> {
     return this.service.deactivateUser(userId)
   }
 
@@ -310,9 +312,7 @@ export class AdminResolver {
    */
   @Mutation(() => User)
   @UseGuards(GqlAuthAdminGuard)
-  async adminActivateUser(
-    @Args('userId', { type: () => String }) userId: string,
-  ): Promise<User> {
+  async adminActivateUser(@Args('userId', { type: () => String }) userId: string): Promise<User> {
     return this.service.activateUser(userId)
   }
 

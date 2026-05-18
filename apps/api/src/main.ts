@@ -1,11 +1,11 @@
 import 'dotenv/config' // Load environment variables before anything else
-import { Logger, ValidationPipe } from '@nestjs/common'
+import { BadRequestException, Logger, ValidationError, ValidationPipe } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { ConfigService } from '@nestled-template/api/config'
 import cookieParser from 'cookie-parser'
 import { graphqlUploadExpress } from 'graphql-upload-minimal'
 import * as express from 'express'
-import * as path from 'path'
+import * as path from 'node:path'
 import helmet from 'helmet'
 import { NextFunction, Request, Response } from 'express'
 
@@ -13,12 +13,21 @@ import { AppModule } from './app.module'
 
 const GLOBAL_PREFIX = 'api'
 
+function getValidationMessages(errors: ValidationError[]): string[] {
+  return errors.flatMap(error => {
+    const ownMessages = Object.values(error.constraints ?? {})
+    const childMessages = getValidationMessages(error.children ?? [])
+    return [...ownMessages, ...childMessages]
+  })
+}
+
 // Known valid API prefixes - only actual REST endpoints
 const VALID_API_PREFIXES = [
   '/graphql', // GraphQL endpoint
   '/api/uptime', // Core feature controller
   '/api/webhooks/stripe', // Stripe webhook
   '/api/auth', // OAuth controller (google/github)
+  '/api/mcp', // MCP OAuth and tool endpoints
   '/uploads', // Static file uploads
 ]
 
@@ -75,7 +84,13 @@ async function bootstrap() {
       transform: true,
       skipMissingProperties: false, // Validate even if properties are present but empty
       forbidUnknownValues: false,
-    })
+      exceptionFactory: errors => {
+        const messages = getValidationMessages(errors)
+        const message = messages[0] ?? 'Request validation failed'
+        Logger.warn(`[ValidationPipe] ${messages.join('; ') || message}`)
+        return new BadRequestException(message)
+      },
+    }),
   )
 
   const configService = app.get(ConfigService)
@@ -94,15 +109,22 @@ async function bootstrap() {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
-          imgSrc: ["'self'", 'data:', "https://cdn.jsdelivr.net"],
-          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://cdn.jsdelivr.net'],
+          styleSrc: [
+            "'self'",
+            "'unsafe-inline'",
+            'https://fonts.googleapis.com',
+            'https://cdn.jsdelivr.net',
+          ],
+          imgSrc: ["'self'", 'data:', 'https://cdn.jsdelivr.net'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
           connectSrc: ["'self'"],
         },
       },
       // Ensure compatibility with GraphQL subscriptions (WebSockets)
       crossOriginEmbedderPolicy: false,
+      // Public uploads are served by the API and embedded by the web app on a different origin.
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   )
 
@@ -114,18 +136,10 @@ async function bootstrap() {
     ? configService.apiCorsOrigins
     : ['http://localhost:4200']
 
-  // Add this logging
-  console.log('CORS Debug Info:')
-  console.log('- ALLOWED_ORIGINS env var:', process.env['ALLOWED_ORIGINS'])
-  console.log('- configService.apiCorsOrigins:', configService.apiCorsOrigins)
-  console.log('- Final origins array:', origins)
-  console.log('- Origins length:', origins.length)
-
-  console.log('Cookie Debug Info:')
-  console.log('- VITE_COOKIE_NAME:', process.env['VITE_COOKIE_NAME'])
-  console.log('- API_COOKIE_DOMAIN:', process.env['API_COOKIE_DOMAIN'])
-  console.log('- NODE_ENV:', process.env['NODE_ENV'])
-  console.log('- Cookie config:', configService.cookie)
+  if (process.env['DEBUG_CONFIG'] === 'true') {
+    Logger.debug(`CORS origins: ${JSON.stringify(origins)}`)
+    Logger.debug(`Cookie config: ${JSON.stringify(configService.cookie)}`)
+  }
 
   app.enableCors({
     credentials: true,
@@ -198,14 +212,14 @@ bootstrap().catch(error => {
 // Graceful shutdown for local dev restarts
 process.once('SIGINT', async () => {
   try {
-    await (global as any).prisma?.$disconnect?.()
+    await (globalThis as any).prisma?.$disconnect?.()
   } finally {
     process.exit(0)
   }
 })
 process.once('SIGTERM', async () => {
   try {
-    await (global as any).prisma?.$disconnect?.()
+    await (globalThis as any).prisma?.$disconnect?.()
   } finally {
     process.exit(0)
   }

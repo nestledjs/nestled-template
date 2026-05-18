@@ -9,46 +9,50 @@ import { fileURLToPath } from 'node:url'
 
 // Handle __dirname in ESM
 const dirname =
-  typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url))
+  typeof __dirname === 'undefined' ? path.dirname(fileURLToPath(import.meta.url)) : __dirname
 
-export default mergeConfig(
-  viteConfig,
-  defineConfig({
-    test: {
-      // Vitest project mode
-      projects: [
-        // ✅ Regular unit/component tests
-        {
-          ...viteConfig,
-          test: {
-            ...viteConfig.test,
-            name: 'unit',
-          },
-        },
+export default defineConfig(async () => {
+  const baseConfig = await viteConfig
 
-        // ✅ Storybook interaction tests
-        {
-          ...viteConfig,
-          plugins: [
-            ...(viteConfig.plugins ?? []),
-            storybookTest({
-              configDir: path.join(dirname, '.storybook'),
-              storybookScript: 'nx run web-ui:storybook --ci',
-            }),
-          ],
-          test: {
-            ...viteConfig.test,
-            name: 'storybook',
-            setupFiles: ['./.storybook/vitest.setup.ts'],
-            browser: {
-              enabled: true,
-              provider: playwright(),
-              headless: true,
-              instances: [{ browser: 'chromium' }],
+  return mergeConfig(
+    baseConfig,
+    defineConfig({
+      test: {
+        // Vitest project mode
+        projects: [
+          // ✅ Regular unit/component tests
+          {
+            ...baseConfig,
+            test: {
+              ...baseConfig.test,
+              name: 'unit',
             },
           },
-        },
-      ],
-    },
-  }),
-)
+
+          // ✅ Storybook interaction tests
+          {
+            ...baseConfig,
+            plugins: [
+              ...(baseConfig.plugins ?? []),
+              storybookTest({
+                configDir: path.join(dirname, '.storybook'),
+                storybookScript: 'nx run web-ui:storybook --ci',
+              }),
+            ],
+            test: {
+              ...baseConfig.test,
+              name: 'storybook',
+              setupFiles: ['./.storybook/vitest.setup.ts'],
+              browser: {
+                enabled: true,
+                provider: playwright(),
+                headless: true,
+                instances: [{ browser: 'chromium' }],
+              },
+            },
+          },
+        ],
+      },
+    }),
+  )
+})

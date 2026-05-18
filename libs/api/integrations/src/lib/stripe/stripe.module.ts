@@ -1,5 +1,4 @@
 import { Module, Global } from '@nestjs/common'
-import { ConfigModule } from '@nestled-template/api/config'
 import { StripeService } from './stripe.service'
 
 /**
@@ -10,7 +9,6 @@ import { StripeService } from './stripe.service'
  */
 @Global()
 @Module({
-  imports: [ConfigModule],
   providers: [StripeService],
   exports: [StripeService],
 })

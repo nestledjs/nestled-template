@@ -1,5 +1,9 @@
 import React, { useState } from 'react'
-import { XMarkIcon, ExclamationTriangleIcon, ArrowsRightLeftIcon } from '@heroicons/react/24/outline'
+import {
+  XMarkIcon,
+  ExclamationTriangleIcon,
+  ArrowsRightLeftIcon,
+} from '@heroicons/react/24/outline'
 import { useQuery, useMutation } from '@apollo/client/react'
 import {
   MyOrganizationsWithMembers,
@@ -7,7 +11,7 @@ import {
   Me,
   type MyOrganizationsWithMembersQuery,
   type TransferOrganizationOwnershipMutation,
-  type MeQuery
+  type MeQuery,
 } from '@nestled-template/shared/sdk'
 
 interface TransferOwnershipModalProps {
@@ -27,8 +31,12 @@ export default function TransferOwnershipModal({
   const [isTransferring, setIsTransferring] = useState(false)
 
   const { data: meData } = useQuery<MeQuery>(Me)
-  const { data: organizationsData, loading } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers)
-  const [transferOwnershipMutation] = useMutation<TransferOrganizationOwnershipMutation>(TransferOrganizationOwnership)
+  const { data: organizationsData, loading } = useQuery<MyOrganizationsWithMembersQuery>(
+    MyOrganizationsWithMembers,
+  )
+  const [transferOwnershipMutation] = useMutation<TransferOrganizationOwnershipMutation>(
+    TransferOrganizationOwnership,
+  )
 
   const currentUserId = meData?.me?.id
 
@@ -90,9 +98,11 @@ export default function TransferOwnershipModal({
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex min-h-screen items-center justify-center px-4 py-6">
         {/* Backdrop */}
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
+        <button
+          type="button"
+          className="fixed inset-0 w-full h-full bg-black/50 backdrop-blur-sm transition-opacity cursor-default"
           onClick={handleClose}
+          aria-label="Close dialog"
         />
 
         {/* Modal */}
@@ -115,26 +125,32 @@ export default function TransferOwnershipModal({
             </button>
           </div>
 
-          {loading ? (
+          {loading && (
             <div className="text-center py-8">
               <div className="text-sm text-zinc-600 dark:text-zinc-400">
                 Loading organizations...
               </div>
             </div>
-          ) : ownedOrganizations.length === 0 ? (
+          )}
+          {!loading && ownedOrganizations.length === 0 && (
             <div className="text-center py-8">
               <div className="text-sm text-zinc-600 dark:text-zinc-400">
                 You don't own any organizations to transfer.
               </div>
             </div>
-          ) : (
+          )}
+          {!loading && ownedOrganizations.length > 0 && (
             <div className="space-y-4">
               {/* Organization Selection */}
               <div>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                <label
+                  htmlFor="transfer-organization"
+                  className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2"
+                >
                   Select Organization to Transfer
                 </label>
                 <select
+                  id="transfer-organization"
                   value={selectedOrganization}
                   onChange={e => {
                     setSelectedOrganization(e.target.value)
@@ -154,7 +170,10 @@ export default function TransferOwnershipModal({
               {/* New Owner Selection */}
               {selectedOrganization && (
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                  <label
+                    htmlFor="transfer-new-owner"
+                    className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2"
+                  >
                     Select New Owner
                   </label>
                   {selectedOrgMembers.length === 0 ? (
@@ -163,6 +182,7 @@ export default function TransferOwnershipModal({
                     </div>
                   ) : (
                     <select
+                      id="transfer-new-owner"
                       value={selectedNewOwner}
                       onChange={e => setSelectedNewOwner(e.target.value)}
                       className="w-full rounded-lg border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -199,10 +219,14 @@ export default function TransferOwnershipModal({
               {/* Confirmation */}
               {selectedOrganization && selectedNewOwner && (
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                  <label
+                    htmlFor="transfer-confirm"
+                    className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2"
+                  >
                     Type <strong>TRANSFER</strong> to confirm
                   </label>
                   <input
+                    id="transfer-confirm"
                     type="text"
                     value={confirmText}
                     onChange={e => setConfirmText(e.target.value)}

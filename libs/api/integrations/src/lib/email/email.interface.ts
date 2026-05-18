@@ -37,7 +37,10 @@ export interface TemplateDefinition {
 
 export interface TemplateManager {
   getTemplate(templateId: string): Promise<TemplateDefinition>
-  renderTemplate(templateId: string, variables: Record<string, any>): Promise<{
+  renderTemplate(
+    templateId: string,
+    variables: Record<string, any>,
+  ): Promise<{
     subject: string
     html: string
     text?: string
@@ -53,6 +56,10 @@ export interface EmailResult {
 
 export interface EmailProvider {
   send(options: EmailOptions): Promise<EmailResult>
-  sendTemplate(to: string | string[], template: EmailTemplate, options?: Partial<EmailOptions>): Promise<EmailResult>
+  sendTemplate(
+    to: string | string[],
+    template: EmailTemplate,
+    options?: Partial<EmailOptions>,
+  ): Promise<EmailResult>
   validateConnection(): Promise<boolean>
 }

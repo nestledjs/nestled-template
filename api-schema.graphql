@@ -154,6 +154,8 @@ type ApiToken {
   id: String!
   lastUsedAt: DateTime
   name: String!
+  organization: Organization
+  organizationId: String
   revoked: Boolean!
   tokenHash: String!
   updatedAt: DateTime!
@@ -173,6 +175,10 @@ type AuditLog {
   updatedAt: DateTime!
   user: User
   userId: String!
+}
+
+input CancelInvitationInput {
+  invitationId: String!
 }
 
 input ChangeEmailInput {
@@ -236,6 +242,7 @@ input CreateApiTokenInput {
   id: String
   lastUsedAt: DateTime
   name: String!
+  organizationId: String
   revoked: Boolean
   tokenHash: String!
   updatedAt: DateTime
@@ -342,6 +349,7 @@ input CreateOrganizationInput {
   AuditLogIds: [String!]
   TeamIds: [String!]
   addressesIds: [String!]
+  apiTokensIds: [String!]
   createdAt: DateTime
   emailsIds: [String!]
   id: String
@@ -625,6 +633,7 @@ input ForgotPasswordInput {
 input GenerateApiTokenInput {
   expiresAt: DateTime
   name: String!
+  organizationId: String
 }
 
 type GenerateApiTokenOutput {
@@ -725,6 +734,7 @@ input ListApiTokenInput {
   name: String
   orderBy: String
   orderDirection: String
+  organizationId: String
   revoked: Boolean
   search: String
   searchFields: [String!]
@@ -878,6 +888,7 @@ input ListOrganizationInput {
   AuditLogIds: [String!]
   TeamIds: [String!]
   addressesIds: [String!]
+  apiTokensIds: [String!]
   createdAt: DateTime
   emailsIds: [String!]
   filters: JSONObject
@@ -1226,6 +1237,7 @@ type Mutation {
   adminDeactivateUser(userId: String!): User!
   adminForcePasswordReset(userId: String!): User!
   adminVerifyEmail(emailId: String!, userId: String!): User!
+  cancelOrganizationInvitation(input: CancelInvitationInput!): Boolean!
   cancelSubscription: Subscription!
   changeEmail(input: ChangeEmailInput!): Boolean!
   changePassword(input: ChangePasswordInput!): Boolean!
@@ -1297,7 +1309,7 @@ type Mutation {
   register(input: RegisterInput!): UserToken
   registerWithInvitation(input: RegisterWithInvitationInput!): UserToken
   rejectOrganizationInvitation(input: RejectInvitationInput!): Boolean!
-  removeOrganizationLogo(organizationId: String!): Boolean!
+  removeOrganizationLogo: Boolean!
   removeOrganizationMember(input: RemoveOrganizationMemberInput!): Boolean!
   removeUserAvatar: Boolean!
   resendOrganizationInvitation(input: ResendInvitationInput!): Boolean!
@@ -1306,6 +1318,8 @@ type Mutation {
   revokeApiToken(tokenId: String!): ApiToken!
   rotateApiToken(input: RotateApiTokenInput!): GenerateApiTokenOutput!
   setup2FA: Setup2FAOutput!
+  staffDeleteEmail(emailId: String!): Email
+  staffUpdateEmail(emailId: String!, input: UpdateEmailInput!): Email
   switchActiveOrganization(input: SwitchOrganizationInput!): User!
   syncStripePrice(priceId: String!): Boolean!
   syncStripePrices: Boolean!
@@ -1341,13 +1355,13 @@ type Mutation {
   updateUserPreference(input: UpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
   updateUserSession(input: UpdateUserSessionInput!, userSessionId: String!): UserSession
   uploadFile(file: Upload!, folder: String): UploadedFile!
-  uploadOrganizationLogo(file: Upload!, organizationId: String!): UploadedFile!
+  uploadOrganizationLogo(file: Upload!): UploadedFile!
   uploadUserAvatar(file: Upload!): UploadedFile!
   userCreateOrganization(input: CreateOrganizationInput!): Organization!
   userCreateUserPreference(input: SecureCreateUserPreferenceInput!): UserPreference
   userDeleteOrganization(organizationId: String!): Boolean!
   userDeleteUserPreference(userPreferenceId: String!): UserPreference
-  userUpdateOrganization(input: UpdateOrganizationInput!, organizationId: String!): Organization!
+  userUpdateOrganization(input: UpdateOrganizationInput!): Organization!
   userUpdateUserPreference(input: SecureUpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
   verify2FACode(input: Verify2FAInput!): Boolean!
   verifyEmail(input: VerifyEmailInput!): User!
@@ -1380,6 +1394,7 @@ type Organization {
   AuditLog: [AuditLog!]
   Team: [Team!]
   addresses: [Address!]
+  apiTokens: [ApiToken!]
   createdAt: DateTime!
   emails: [Email!]
   id: String!
@@ -1800,6 +1815,7 @@ input UpdateApiTokenInput {
   id: String
   lastUsedAt: DateTime
   name: String
+  organizationId: String
   revoked: Boolean
   tokenHash: String
   updatedAt: DateTime
@@ -1906,6 +1922,7 @@ input UpdateOrganizationInput {
   AuditLogIds: [String!]
   TeamIds: [String!]
   addressesIds: [String!]
+  apiTokensIds: [String!]
   createdAt: DateTime
   emailsIds: [String!]
   id: String

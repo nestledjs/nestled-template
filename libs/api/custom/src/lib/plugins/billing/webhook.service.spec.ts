@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing'
 import { WebhookService } from './webhook.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { SubscriptionStatus } from '@nestled-template/api/prisma'
-import Stripe from 'stripe'
 describe('WebhookService', () => {
   let service: WebhookService
   let mockPrisma: any
@@ -232,17 +231,15 @@ describe('WebhookService', () => {
           id: `evt_test_${i}`,
           type: 'some.unknown.event',
           data: { object: {} },
-        } as any)
+        })
       }
       // Process all events
       for (const event of events) {
         await service.handleWebhookEvent(event)
       }
       // Process a duplicate of the first event
-      // Should NOT skip because it was cleaned up
-      await service.handleWebhookEvent(events[0])
-      // If memory cleanup works, the first event should be reprocessed
-      // This is indicated by not throwing an error for duplicate
+      // Should NOT skip because it was cleaned up from memory
+      await expect(service.handleWebhookEvent(events[0])).resolves.toBeUndefined()
     })
   })
   describe('Edge Cases', () => {

@@ -83,5 +83,5 @@ Need help? Contact us at {{supportEmail}}
 {{#if securityUrl}}
 Review your account security settings: {{securityUrl}}
 {{/if}}
-  `.trim()
+  `.trim(),
 }

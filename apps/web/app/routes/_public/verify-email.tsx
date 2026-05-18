@@ -9,6 +9,8 @@ import {
 } from '@nestled-template/shared/sdk'
 import { AuthLayout } from '@nestled-template/web'
 
+type VerificationType = 'initial' | 'change'
+
 export default function VerifyEmailPage() {
   const [params] = useSearchParams()
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
@@ -18,15 +20,26 @@ export default function VerifyEmailPage() {
 
   useEffect(() => {
     const token = params.get('token') || ''
+    const verificationType = params.get('type') as VerificationType | null
     if (!token) {
       setStatus('error')
       setMessage('Missing verification token.')
       return
     }
 
-    // Try email change verification first (Email.verifyToken)
-    verifyEmailChangeMutation({ variables: { token } })
-      .then(({ data }) => {
+    const verifyInitialEmail = () =>
+      verifyEmailMutation({ variables: { input: { token } } }).then(({ data }) => {
+        if (data?.verifyEmail?.id) {
+          setStatus('success')
+          setMessage('Your email has been verified. You can now log in.')
+        } else {
+          setStatus('error')
+          setMessage('Invalid or expired verification token.')
+        }
+      })
+
+    const verifyEmailChange = () =>
+      verifyEmailChangeMutation({ variables: { token } }).then(({ data }) => {
         if (data?.verifyEmailChange?.id) {
           setStatus('success')
           setMessage(
@@ -34,23 +47,30 @@ export default function VerifyEmailPage() {
           )
         }
       })
-      .catch(() => {
-        // If that fails, try initial email verification (User.validateEmailToken)
-        verifyEmailMutation({ variables: { input: { token } } })
-          .then(({ data }) => {
-            if (data?.verifyEmail?.id) {
-              setStatus('success')
-              setMessage('Your email has been verified. You can now log in.')
-            } else {
-              setStatus('error')
-              setMessage('Invalid or expired verification token.')
-            }
-          })
-          .catch(err => {
-            setStatus('error')
-            setMessage(err?.message || 'Invalid or expired verification token.')
-          })
+
+    if (verificationType === 'change') {
+      verifyEmailChange().catch(err => {
+        setStatus('error')
+        setMessage(err?.message || 'Invalid or expired verification token.')
       })
+      return
+    }
+
+    verifyInitialEmail().catch(initialError => {
+      if (verificationType === 'initial') {
+        setStatus('error')
+        setMessage(initialError?.message || 'Invalid or expired verification token.')
+        return
+      }
+
+      // Older email-change links did not include a type marker.
+      verifyEmailChange().catch(changeError => {
+        setStatus('error')
+        setMessage(
+          changeError?.message || initialError?.message || 'Invalid or expired verification token.',
+        )
+      })
+    })
   }, [params, verifyEmailMutation, verifyEmailChangeMutation])
 
   return (

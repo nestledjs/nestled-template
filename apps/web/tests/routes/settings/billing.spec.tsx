@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import BillingSettings from '../../../app/routes/settings/billing'
 
@@ -14,7 +14,7 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK (for DocumentNode exports)
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
@@ -112,7 +112,7 @@ describe('BillingSettings Component', () => {
 
       expect(screen.getByText('Billing & Subscription')).toBeInTheDocument()
       expect(
-        screen.getByText('Manage your subscription, payment methods, and invoices')
+        screen.getByText('Manage your subscription, payment methods, and invoices'),
       ).toBeInTheDocument()
     })
 
@@ -355,7 +355,7 @@ describe('BillingSettings Component', () => {
       await user.click(cancelButton)
 
       expect(confirmSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Are you sure you want to cancel your subscription')
+        expect.stringContaining('Are you sure you want to cancel your subscription'),
       )
 
       confirmSpy.mockRestore()
@@ -393,9 +393,7 @@ describe('BillingSettings Component', () => {
       })
 
       await waitFor(() => {
-        expect(alertSpy).toHaveBeenCalledWith(
-          expect.stringContaining('Subscription canceled')
-        )
+        expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('Subscription canceled'))
       })
 
       confirmSpy.mockRestore()
@@ -454,7 +452,7 @@ describe('BillingSettings Component', () => {
 
       await waitFor(() => {
         expect(alertSpy).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to cancel subscription')
+          expect.stringContaining('Failed to cancel subscription'),
         )
       })
 
@@ -562,9 +560,7 @@ describe('BillingSettings Component', () => {
 
       renderWithRouter()
 
-      expect(
-        screen.getByText(/You are approaching your member limit/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/You are approaching your member limit/i)).toBeInTheDocument()
     })
 
     it('should show error when at limit', () => {
@@ -589,9 +585,7 @@ describe('BillingSettings Component', () => {
 
       renderWithRouter()
 
-      expect(
-        screen.getByText(/You have reached your member limit/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/You have reached your member limit/i)).toBeInTheDocument()
     })
 
     it('should display storage usage', () => {
@@ -708,7 +702,7 @@ describe('BillingSettings Component', () => {
 
       await waitFor(() => {
         expect(alertSpy).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to open billing portal')
+          expect.stringContaining('Failed to open billing portal'),
         )
       })
 
@@ -730,7 +724,7 @@ describe('BillingSettings Component', () => {
       } as any)
 
       mockCreatePortalSession.mockImplementation(
-        () => new Promise(resolve => setTimeout(resolve, 1000))
+        () => new Promise(resolve => setTimeout(resolve, 1000)),
       )
 
       renderWithRouter()
@@ -748,7 +742,7 @@ describe('BillingSettings Component', () => {
 
       expect(screen.getByText('No Active Subscription')).toBeInTheDocument()
       expect(
-        screen.getByText(/Subscribe to a plan to unlock premium features/i)
+        screen.getByText(/Subscribe to a plan to unlock premium features/i),
       ).toBeInTheDocument()
     })
 

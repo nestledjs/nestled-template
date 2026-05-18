@@ -168,6 +168,9 @@ export class CreateApiTokenInput {
 
   @Field({ nullable: true })
   revoked?: boolean
+
+  @Field({ nullable: true })
+  organizationId?: string
 }
 
 @InputType()
@@ -198,6 +201,9 @@ export class UpdateApiTokenInput {
 
   @Field({ nullable: true })
   revoked?: boolean
+
+  @Field({ nullable: true })
+  organizationId?: string
 }
 
 @InputType()
@@ -228,6 +234,9 @@ export class ListApiTokenInput extends CorePagingInput {
 
   @Field({ nullable: true })
   revoked?: boolean
+
+  @Field({ nullable: true })
+  organizationId?: string
 }
 
 @InputType()
@@ -963,6 +972,9 @@ export class CreateOrganizationInput {
 
   @Field(() => [String], { nullable: true })
   rolesIds?: string[]
+
+  @Field(() => [String], { nullable: true })
+  apiTokensIds?: string[]
 }
 
 @InputType()
@@ -1014,6 +1026,9 @@ export class UpdateOrganizationInput {
 
   @Field(() => [String], { nullable: true })
   rolesIds?: string[]
+
+  @Field(() => [String], { nullable: true })
+  apiTokensIds?: string[]
 }
 
 @InputType()
@@ -1065,6 +1080,9 @@ export class ListOrganizationInput extends CorePagingInput {
 
   @Field(() => [String], { nullable: true })
   rolesIds?: string[]
+
+  @Field(() => [String], { nullable: true })
+  apiTokensIds?: string[]
 }
 
 @InputType()

@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../../helpers/createTestRouter"
+import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminOrganizationsPage from '../../../../app/routes/admin/organizations/_index'
 
@@ -12,12 +12,12 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
-    
-  AdminPlatformOrganizationsDocument: { kind: 'Document', definitions: [] },
+
+    AdminPlatformOrganizationsDocument: { kind: 'Document', definitions: [] },
   }
 })
 
@@ -367,7 +367,9 @@ describe('Admin Organizations Page', () => {
 
       renderOrganizationsPage()
 
-      expect(screen.getByText('Error loading organizations: Failed to fetch organizations')).toBeInTheDocument()
+      expect(
+        screen.getByText('Error loading organizations: Failed to fetch organizations'),
+      ).toBeInTheDocument()
     })
 
     it('should show empty state when no organizations found', () => {
@@ -399,7 +401,9 @@ describe('Admin Organizations Page', () => {
       renderOrganizationsPage()
 
       expect(screen.getByText('Organization Management')).toBeInTheDocument()
-      expect(screen.getByText('View and manage all organizations on the platform')).toBeInTheDocument()
+      expect(
+        screen.getByText('View and manage all organizations on the platform'),
+      ).toBeInTheDocument()
     })
   })
 
@@ -430,7 +434,7 @@ describe('Admin Organizations Page', () => {
       const { container } = renderOrganizationsPage()
 
       const rows = container.querySelectorAll('tbody tr')
-      rows.forEach((row) => {
+      rows.forEach(row => {
         expect(row).toHaveClass('hover:bg-zinc-50')
       })
     })
@@ -450,7 +454,7 @@ describe('Admin Organizations Page', () => {
         expect.anything(),
         expect.objectContaining({
           fetchPolicy: 'network-only',
-        })
+        }),
       )
     })
 
@@ -472,7 +476,7 @@ describe('Admin Organizations Page', () => {
               skip: 0,
             }),
           }),
-        })
+        }),
       )
     })
   })

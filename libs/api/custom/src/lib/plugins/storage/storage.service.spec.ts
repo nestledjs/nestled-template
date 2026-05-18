@@ -4,7 +4,7 @@ import { StorageService } from './storage.service'
 import { StorageProvider } from '@nestled-template/api/prisma'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { StorageFactory } from './storage.factory'
-import { Readable } from 'stream'
+import { Readable } from 'node:stream'
 describe('StorageService', () => {
   let service: StorageService
   let mockPrisma: any

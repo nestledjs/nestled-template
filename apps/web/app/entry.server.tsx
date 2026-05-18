@@ -25,7 +25,7 @@ export default function handleRequest(
   responseStatusCode: number,
   responseHeaders: Headers,
   routerContext: EntryContext,
-  loadContext: AppLoadContext,
+  _loadContext: AppLoadContext,
 ) {
   const userAgent = request.headers.get('user-agent')
 
@@ -35,7 +35,7 @@ export default function handleRequest(
     (userAgent && isbot(userAgent)) || routerContext.isSpaMode ? 'onAllReady' : 'onShellReady'
 
   const client = makeClient(request, {
-    apiUrl: `${process.env.VITE_API_URL || 'http://localhost:3000'}/graphql`
+    apiUrl: `${process.env.VITE_API_URL || 'http://localhost:3000'}/graphql`,
   })
 
   return new Promise((resolve, reject) => {
@@ -74,11 +74,15 @@ export default function handleRequest(
             const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
             const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
             const url = new URL(request.url)
-            const returnParam = url.pathname !== '/' ? `?return_url=${encodeURIComponent(url.pathname)}` : ''
+            const returnParam =
+              url.pathname === '/' ? '' : `?return_url=${encodeURIComponent(url.pathname)}`
             const headers = new Headers({ Location: `/force-logout${returnParam}` })
-            headers.append('Set-Cookie', cookieDomain && cookieDomain !== 'localhost'
-              ? `${base}; Domain=${cookieDomain}`
-              : base)
+            headers.append(
+              'Set-Cookie',
+              cookieDomain && cookieDomain !== 'localhost'
+                ? `${base}; Domain=${cookieDomain}`
+                : base,
+            )
             resolve(new Response(null, { status: 302, headers }))
           } else {
             reject(error)

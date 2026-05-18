@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../../helpers/createTestRouter"
+import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminBillingOverview from '../../../../app/routes/admin/billing/_index'
 
@@ -22,7 +22,7 @@ vi.mock('@apollo/client', () => ({
     return {
       kind: 'Document',
       definitions: [],
-      loc: { source: { body: queryString } }
+      loc: { source: { body: queryString } },
     }
   }),
 }))
@@ -40,7 +40,7 @@ describe('Admin Billing Overview Page', () => {
 
     // Default mock for useMutation that calls onCompleted/onError callbacks
     mockUseMutation.mockImplementation((_document, options) => {
-      const mutationFn = vi.fn().mockImplementation(async (args) => {
+      const mutationFn = vi.fn().mockImplementation(async args => {
         try {
           const result = { data: {} }
           if (options?.onCompleted) {
@@ -177,7 +177,7 @@ describe('Admin Billing Overview Page', () => {
 
     const mockSyncProducts = vi.fn().mockResolvedValue({})
     const mockSyncPrices = vi.fn().mockResolvedValue({})
-    mockUseMutation.mockImplementation((mutation) => {
+    mockUseMutation.mockImplementation(mutation => {
       const mutationString = mutation?.loc?.source?.body || ''
       if (mutationString.includes('syncStripeProducts')) {
         return [mockSyncProducts, { loading: false }]
@@ -214,7 +214,9 @@ describe('Admin Billing Overview Page', () => {
       renderBillingPage()
 
       expect(screen.getByText('Billing Management')).toBeInTheDocument()
-      expect(screen.getByText('Manage Stripe products, prices, and subscriptions')).toBeInTheDocument()
+      expect(
+        screen.getByText('Manage Stripe products, prices, and subscriptions'),
+      ).toBeInTheDocument()
     })
 
     it('should render sync button', () => {
@@ -365,7 +367,7 @@ describe('Admin Billing Overview Page', () => {
     })
 
     it('should show empty state when no subscriptions', () => {
-      mockUseQuery.mockImplementation((query) => {
+      mockUseQuery.mockImplementation(query => {
         const queryString = query?.loc?.source?.body || ''
         if (queryString.includes('plans')) {
           return {
@@ -402,7 +404,7 @@ describe('Admin Billing Overview Page', () => {
       const mockSyncProducts = vi.fn().mockResolvedValue({})
       const mockSyncPrices = vi.fn().mockResolvedValue({})
 
-      mockUseMutation.mockImplementation((mutation) => {
+      mockUseMutation.mockImplementation(mutation => {
         const mutationString = mutation?.loc?.source?.body || ''
         if (mutationString.includes('syncStripeProducts')) {
           return [mockSyncProducts, { loading: false }]
@@ -427,7 +429,7 @@ describe('Admin Billing Overview Page', () => {
       const mockSyncProducts = vi.fn().mockResolvedValue({})
       const mockSyncPrices = vi.fn().mockResolvedValue({})
 
-      mockUseQuery.mockImplementation((query) => {
+      mockUseQuery.mockImplementation(query => {
         const queryString = query?.loc?.source?.body || ''
         if (queryString.includes('plans')) {
           return {
@@ -446,7 +448,7 @@ describe('Admin Billing Overview Page', () => {
         return { data: null, loading: false, error: null }
       })
 
-      mockUseMutation.mockImplementation((mutation) => {
+      mockUseMutation.mockImplementation(mutation => {
         const mutationString = mutation?.loc?.source?.body || ''
         if (mutationString.includes('syncStripeProducts')) {
           return [mockSyncProducts, { loading: false }]
@@ -483,7 +485,7 @@ describe('Admin Billing Overview Page', () => {
     })
 
     it('should show 0.00 MRR when no active subscriptions', () => {
-      mockUseQuery.mockImplementation((query) => {
+      mockUseQuery.mockImplementation(query => {
         const queryString = query?.loc?.source?.body || ''
         if (queryString.includes('plans')) {
           return {

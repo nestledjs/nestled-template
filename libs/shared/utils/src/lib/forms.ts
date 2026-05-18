@@ -2,12 +2,25 @@ import { Maybe } from 'graphql/jsutils/Maybe'
 import { FormField } from '@nestledjs/forms-core'
 
 function isValidDate(d: any) {
-  return d instanceof Date && !isNaN(d as any)
+  return d instanceof Date && !Number.isNaN(d.getTime())
+}
+
+function normalizeDateValue(v: unknown): string {
+  if (v instanceof Date) return v.toISOString().split('T')[0]
+  if (typeof v === 'number') return new Date(v).toISOString().split('T')[0]
+  if (typeof v === 'string') {
+    return v.includes('T') ? v.split('T')[0] : v
+  }
+  try {
+    const d = new Date(v as any)
+    if (!Number.isNaN(d.getTime())) return d.toISOString().split('T')[0]
+  } catch {}
+  return ''
 }
 
 function formatDate(value: unknown): string {
-  if (typeof value === 'object' && value instanceof Date) {
-    return (value as Date).toISOString().split('T')[0]
+  if (value instanceof Date) {
+    return value.toISOString().split('T')[0]
   } else if (typeof value === 'string') {
     return value.split('T')[0]
   }
@@ -27,10 +40,10 @@ export function cleanFormInput(
     ?.filter(field => field.type === 'SearchSelectApollo')
     .map(field => field.key)
   const multiSelectFields = fields
-    ?.filter(field => field.type === 'SearchSelectMultiApollo' || field.type === 'SearchSelectMulti')
+    ?.filter(
+      field => field.type === 'SearchSelectMultiApollo' || field.type === 'SearchSelectMulti',
+    )
     .map(field => field.key)
-  const checkboxFields = fields?.filter(field => field.type === 'Checkbox').map(field => field.key)
-
   return Object.fromEntries(
     Object.entries(obj)
       // Remove id, __typename, updatedAt, createdAt, and empty fields
@@ -38,44 +51,19 @@ export function cleanFormInput(
         return (
           validKeys.includes(k) &&
           !(
-            // (!checkboxFields?.includes(k) && v === undefined) ||
-            // (!checkboxFields?.includes(k) && !v) ||
-            // (!checkboxFields?.includes(k) && v === '') ||
-            (
-              (v instanceof Array && !v.length) ||
-              k === 'createdAt' ||
-              k === 'updatedAt' ||
-              k === '__typename' ||
-              (!keepId && k === 'id') ||
-              (v instanceof Date && !isValidDate(v))
-            )
+            (Array.isArray(v) && !v.length) ||
+            k === 'createdAt' ||
+            k === 'updatedAt' ||
+            k === '__typename' ||
+            (!keepId && k === 'id') ||
+            (v instanceof Date && !isValidDate(v))
           )
         )
       })
       .map(([k, v]) => {
         // Reformat date strings for storage in database
         if (k.toLowerCase().includes('date') || k.toLowerCase().includes('datetime')) {
-          // Normalize various date input types to YYYY-MM-DD
-          if (v instanceof Date) {
-            return [k, (v as Date).toISOString().split('T')[0]]
-          }
-          if (typeof v === 'number') {
-            return [k, new Date(v).toISOString().split('T')[0]]
-          }
-          if (typeof v === 'string') {
-            // Accept 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD'
-            const s = v as string
-            const parts = s.includes('T') ? s.split('T')[0] : s
-            return [k, parts]
-          }
-          // Fallback: try to construct a Date from unknown object
-          try {
-            const d = new Date(v as any)
-            if (!isNaN(d.getTime())) {
-              return [k, d.toISOString().split('T')[0]]
-            }
-          } catch {}
-          return [k, '']
+          return [k, normalizeDateValue(v)]
         }
         // Return array of values for multiselect fields
         if (multiSelectFields?.includes(k)) {
@@ -114,7 +102,7 @@ export function cleanDatabaseOutput(
           v === undefined ||
           !v ||
           v === '' ||
-          (v instanceof Array && !v.length) ||
+          (Array.isArray(v) && !v.length) ||
           k === 'createdAt' ||
           k === 'updatedAt' ||
           k === '__typename' ||

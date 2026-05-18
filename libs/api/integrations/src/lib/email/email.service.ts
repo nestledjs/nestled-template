@@ -62,7 +62,7 @@ export class EmailService {
       }
 
       const result = await this.provider.send(emailOptions)
-      
+
       this.logger.log(`Email sent successfully to ${options.to}: ${result.messageId}`)
       return result
     } catch (error) {
@@ -78,7 +78,7 @@ export class EmailService {
   async sendTemplate(
     to: string | string[],
     template: EmailTemplate,
-    options?: Partial<EmailOptions>
+    options?: Partial<EmailOptions>,
   ): Promise<EmailResult> {
     return this.sendTemplatedEmail(to, template, options)
   }
@@ -89,7 +89,7 @@ export class EmailService {
   async sendTemplatedEmail(
     to: string | string[],
     template: EmailTemplate,
-    options?: Partial<EmailOptions>
+    options?: Partial<EmailOptions>,
   ): Promise<EmailResult> {
     try {
       const result = await this.provider.sendTemplate(to, template, {
@@ -113,13 +113,17 @@ export class EmailService {
   async sendWelcomeEmail(to: string, userName: string): Promise<EmailResult> {
     return this.sendTemplatedEmail(to, {
       templateId: 'welcome',
-      variables: { userName, appName: this.appName }
+      variables: { userName, appName: this.appName },
     })
   }
 
-  async sendPasswordResetEmail(to: string, resetToken: string, userName: string): Promise<EmailResult> {
-    const resetUrl = `${this.config.frontendUrl}/reset-password?token=${resetToken}`
-    
+  async sendPasswordResetEmail(
+    to: string,
+    resetToken: string,
+    userName: string,
+  ): Promise<EmailResult> {
+    const resetUrl = `${this.config.siteUrl}/reset-password?token=${resetToken}`
+
     return this.sendEmail({
       to,
       subject: `Reset your ${this.appName} password`,
@@ -128,9 +132,13 @@ export class EmailService {
     })
   }
 
-  async sendEmailVerification(to: string, verificationToken: string, userName: string): Promise<EmailResult> {
-    const verificationUrl = `${this.config.frontendUrl}/verify-email?token=${verificationToken}`
-    
+  async sendEmailVerification(
+    to: string,
+    verificationToken: string,
+    userName: string,
+  ): Promise<EmailResult> {
+    const verificationUrl = `${this.config.siteUrl}/verify-email?token=${verificationToken}`
+
     return this.sendEmail({
       to,
       subject: `Verify your ${this.appName} email address`,
@@ -143,10 +151,10 @@ export class EmailService {
     to: string,
     inviterName: string,
     organizationName: string,
-    invitationToken: string
+    invitationToken: string,
   ): Promise<EmailResult> {
-    const invitationUrl = `${this.config.frontendUrl}/accept-invitation?token=${invitationToken}`
-    
+    const invitationUrl = `${this.config.siteUrl}/accept-invitation?token=${invitationToken}`
+
     return this.sendEmail({
       to,
       subject: `You're invited to join ${organizationName} on ${this.appName}`,
@@ -239,7 +247,11 @@ The ${this.appName} Team
     `.trim()
   }
 
-  private getInvitationHtml(inviterName: string, organizationName: string, invitationUrl: string): string {
+  private getInvitationHtml(
+    inviterName: string,
+    organizationName: string,
+    invitationUrl: string,
+  ): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h1>You're Invited!</h1>
@@ -256,7 +268,11 @@ The ${this.appName} Team
     `
   }
 
-  private getInvitationText(inviterName: string, organizationName: string, invitationUrl: string): string {
+  private getInvitationText(
+    inviterName: string,
+    organizationName: string,
+    invitationUrl: string,
+  ): string {
     return `
 ${inviterName} has invited you to join ${organizationName} on ${this.appName}.
 

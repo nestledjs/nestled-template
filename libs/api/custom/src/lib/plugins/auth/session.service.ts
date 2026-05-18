@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { ConfigService } from '@nestjs/config'
 
@@ -17,9 +17,9 @@ export class SessionService {
     private readonly config: ConfigService,
   ) {
     // Default to 5 concurrent sessions, configurable via env
-    this.maxConcurrentSessions = parseInt(
+    this.maxConcurrentSessions = Number.parseInt(
       this.config.get('session.maxConcurrent') ?? '5',
-      10
+      10,
     )
   }
 
@@ -30,7 +30,7 @@ export class SessionService {
   async createSession(
     userId: string,
     sessionInfo: SessionInfo,
-    twoFactorVerified: boolean = false
+    twoFactorVerified: boolean = false,
   ): Promise<string> {
     // Check concurrent session limit
     await this.enforceSessionLimit(userId)
@@ -61,7 +61,7 @@ export class SessionService {
       })
     } catch (error) {
       // Session might not exist or be invalid, log but don't throw
-      Logger.warn(`Failed to update session activity: ${sessionId}`)
+      Logger.warn(`Failed to update session activity: ${sessionId} - ${(error as Error).message}`)
     }
   }
 
@@ -73,7 +73,7 @@ export class SessionService {
       where: { id: sessionId },
     })
 
-    return session !== null && session.isValid
+    return session?.isValid === true
   }
 
   /**
@@ -90,10 +90,7 @@ export class SessionService {
   /**
    * Invalidate all sessions for a user except the current one
    */
-  async invalidateAllUserSessions(
-    userId: string,
-    exceptSessionId?: string
-  ): Promise<number> {
+  async invalidateAllUserSessions(userId: string, exceptSessionId?: string): Promise<number> {
     const result = await this.data.userSession.updateMany({
       where: {
         userId,
@@ -105,7 +102,7 @@ export class SessionService {
 
     Logger.log(
       `Invalidated ${result.count} sessions for user ${userId}` +
-      (exceptSessionId ? ` (except ${exceptSessionId})` : '')
+        (exceptSessionId ? ` (except ${exceptSessionId})` : ''),
     )
 
     return result.count
@@ -135,9 +132,12 @@ export class SessionService {
 
     if (activeSessions.length >= this.maxConcurrentSessions) {
       // Sort by lastActiveAt and invalidate oldest sessions
-      const sessionsToInvalidate = activeSessions
-        .sort((a, b) => a.lastActiveAt.getTime() - b.lastActiveAt.getTime())
-        .slice(0, activeSessions.length - this.maxConcurrentSessions + 1)
+      const sessionsByLastActive = [...activeSessions]
+      sessionsByLastActive.sort((a, b) => a.lastActiveAt.getTime() - b.lastActiveAt.getTime())
+      const sessionsToInvalidate = sessionsByLastActive.slice(
+        0,
+        activeSessions.length - this.maxConcurrentSessions + 1,
+      )
 
       for (const session of sessionsToInvalidate) {
         await this.invalidateSession(session.id)
@@ -145,7 +145,7 @@ export class SessionService {
 
       Logger.log(
         `Enforced session limit for user ${userId}: ` +
-        `invalidated ${sessionsToInvalidate.length} oldest sessions`
+          `invalidated ${sessionsToInvalidate.length} oldest sessions`,
       )
     }
   }
@@ -174,10 +174,7 @@ export class SessionService {
    * Detect if login is from a new location/device
    * Returns true if this appears to be a new device/location
    */
-  async detectNewLocationOrDevice(
-    userId: string,
-    sessionInfo: SessionInfo
-  ): Promise<boolean> {
+  async detectNewLocationOrDevice(userId: string, sessionInfo: SessionInfo): Promise<boolean> {
     const recentSessions = await this.data.userSession.findMany({
       where: {
         userId,
@@ -199,10 +196,10 @@ export class SessionService {
 
     // Check if IP or device info matches any recent session
     const hasMatchingSession = recentSessions.some(
-      (session) =>
+      session =>
         session.ipAddress === sessionInfo.ipAddress ||
         session.deviceInfo === sessionInfo.deviceInfo ||
-        session.deviceInfo === sessionInfo.userAgent
+        session.deviceInfo === sessionInfo.userAgent,
     )
 
     return !hasMatchingSession
@@ -246,8 +243,7 @@ export class SessionService {
     if (ua.includes('iphone') || ua.includes('ipad')) os = 'iOS'
     else if (ua.includes('mac') || ua.includes('macintosh')) os = 'macOS'
     else if (ua.includes('android')) os = 'Android'
-    else if (ua.includes('windows') || ua.includes('win32') || ua.includes('win64'))
-      os = 'Windows'
+    else if (ua.includes('windows') || ua.includes('win32') || ua.includes('win64')) os = 'Windows'
     else if (ua.includes('linux')) os = 'Linux'
 
     // Detect Browser - order matters! Check more specific patterns first

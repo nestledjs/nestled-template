@@ -16,43 +16,7 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline'
 import { cn } from '@nestled-template/shared/utils'
-
-// Color class mappings to reduce cognitive complexity
-const getColorClasses = (color: string) => {
-  const colorMap = {
-    emerald: {
-      iconBg: 'bg-emerald-100 dark:bg-emerald-500/20',
-      iconText: 'text-emerald-600 dark:text-emerald-400',
-      badgeBg: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
-    },
-    amber: {
-      iconBg: 'bg-amber-100 dark:bg-amber-500/20',
-      iconText: 'text-amber-600 dark:text-amber-400',
-      badgeBg: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300',
-    },
-    red: {
-      iconBg: 'bg-red-100 dark:bg-red-500/20',
-      iconText: 'text-red-600 dark:text-red-400',
-      badgeBg: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300',
-    },
-    purple: {
-      iconBg: 'bg-purple-100 dark:bg-purple-500/20',
-      iconText: 'text-purple-600 dark:text-purple-400',
-      badgeBg: 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300',
-    },
-    blue: {
-      iconBg: 'bg-blue-100 dark:bg-blue-500/20',
-      iconText: 'text-blue-600 dark:text-blue-400',
-      badgeBg: 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300',
-    },
-    zinc: {
-      iconBg: 'bg-zinc-200 dark:bg-zinc-700',
-      iconText: 'text-zinc-600 dark:text-zinc-400',
-      badgeBg: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
-    },
-  }
-  return colorMap[color as keyof typeof colorMap] || colorMap.zinc
-}
+import { getColorClasses } from '../_color-utils'
 
 const EVENT_TYPE_CONFIG: Record<
   SecurityEventType,
@@ -144,7 +108,9 @@ const EVENT_TYPE_CONFIG: Record<
 }
 
 // Extract SecurityEventItem component to reduce cognitive complexity
-type SecurityEvent = NonNullable<AdminPlatformSecurityEventsQuery['adminSecurityEvents']['events'][number]>
+type SecurityEvent = NonNullable<
+  AdminPlatformSecurityEventsQuery['adminSecurityEvents']['events'][number]
+>
 
 interface SecurityEventItemProps {
   readonly event: SecurityEvent
@@ -160,7 +126,12 @@ function SecurityEventItem({ event, formatDate }: SecurityEventItemProps) {
   return (
     <div className="flex gap-4 p-4 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-white/5 hover:bg-zinc-100 dark:hover:bg-white/10 transition">
       {/* Icon */}
-      <div className={cn('flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center', colorClasses.iconBg)}>
+      <div
+        className={cn(
+          'flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center',
+          colorClasses.iconBg,
+        )}
+      >
         <Icon className={cn('h-5 w-5', colorClasses.iconText)} />
       </div>
 
@@ -169,7 +140,12 @@ function SecurityEventItem({ event, formatDate }: SecurityEventItemProps) {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium', colorClasses.badgeBg)}>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+                  colorClasses.badgeBg,
+                )}
+              >
                 {config.label}
               </span>
             </div>
@@ -223,20 +199,23 @@ export default function AdminSecurityEventsPage() {
   const [page, setPage] = useState(0)
   const pageSize = 50
 
-  const { data, loading, error } = useQuery<AdminPlatformSecurityEventsQuery>(AdminPlatformSecurityEvents, {
-    variables: {
-      filters: {
-        eventType: filters.eventType,
-        userId: filters.userId || undefined,
-        ipAddress: filters.ipAddress || undefined,
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-        skip: page * pageSize,
-        take: pageSize,
+  const { data, loading, error } = useQuery<AdminPlatformSecurityEventsQuery>(
+    AdminPlatformSecurityEvents,
+    {
+      variables: {
+        filters: {
+          eventType: filters.eventType,
+          userId: filters.userId || undefined,
+          ipAddress: filters.ipAddress || undefined,
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+          skip: page * pageSize,
+          take: pageSize,
+        },
       },
+      fetchPolicy: 'network-only',
     },
-    fetchPolicy: 'network-only',
-  })
+  )
 
   const events = data?.adminSecurityEvents?.events || []
   const total = data?.adminSecurityEvents?.total || 0
@@ -425,26 +404,29 @@ export default function AdminSecurityEventsPage() {
 
       {/* Events Timeline */}
       <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 shadow-sm overflow-hidden backdrop-blur">
-        {loading ? (
+        {loading && (
           <div className="p-12 text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-emerald-600 dark:border-emerald-400 border-r-transparent"></div>
             <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
               Loading security events...
             </p>
           </div>
-        ) : error ? (
+        )}
+        {!loading && error && (
           <div className="p-12 text-center">
             <p className="text-red-600 dark:text-red-400">Error loading events: {error.message}</p>
           </div>
-        ) : events.length === 0 ? (
+        )}
+        {!loading && !error && events.length === 0 && (
           <div className="p-12 text-center text-zinc-500 dark:text-zinc-400">
             {hasActiveFilters
               ? 'No events found matching your filters'
               : 'No security events recorded yet'}
           </div>
-        ) : (
+        )}
+        {!loading && !error && events.length > 0 && (
           <div className="p-6 space-y-4">
-            {events.map((event) => (
+            {events.map(event => (
               <SecurityEventItem key={event.id} event={event} formatDate={formatDate} />
             ))}
           </div>

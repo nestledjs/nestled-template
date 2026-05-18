@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common'
-import { ConfigModule } from '@nestjs/config'
 import {
   LocalStorageService,
   S3StorageService,
@@ -13,7 +12,6 @@ import {
  * Provides all storage provider services
  */
 @Module({
-  imports: [ConfigModule],
   providers: [
     LocalStorageService,
     S3StorageService,

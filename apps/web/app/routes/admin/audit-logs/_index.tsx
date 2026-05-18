@@ -11,38 +11,7 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline'
 import { cn } from '@nestled-template/shared/utils'
-
-// Color class mappings to reduce cognitive complexity
-const getColorClasses = (color: string) => {
-  const colorMap = {
-    emerald: {
-      iconBg: 'bg-emerald-100 dark:bg-emerald-500/20',
-      iconText: 'text-emerald-600 dark:text-emerald-400',
-      badgeBg: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
-    },
-    blue: {
-      iconBg: 'bg-blue-100 dark:bg-blue-500/20',
-      iconText: 'text-blue-600 dark:text-blue-400',
-      badgeBg: 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300',
-    },
-    red: {
-      iconBg: 'bg-red-100 dark:bg-red-500/20',
-      iconText: 'text-red-600 dark:text-red-400',
-      badgeBg: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300',
-    },
-    purple: {
-      iconBg: 'bg-purple-100 dark:bg-purple-500/20',
-      iconText: 'text-purple-600 dark:text-purple-400',
-      badgeBg: 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300',
-    },
-    zinc: {
-      iconBg: 'bg-zinc-200 dark:bg-zinc-700',
-      iconText: 'text-zinc-600 dark:text-zinc-400',
-      badgeBg: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
-    },
-  }
-  return colorMap[color as keyof typeof colorMap] || colorMap.zinc
-}
+import { getColorClasses } from '../_color-utils'
 
 // Action type configurations for badge styling
 const getActionConfig = (action: string) => {
@@ -113,7 +82,12 @@ function AuditLogItem({ log, formatDate }: AuditLogItemProps) {
   return (
     <div className="flex gap-4 p-4 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-white/5 hover:bg-zinc-100 dark:hover:bg-white/10 transition">
       {/* Icon */}
-      <div className={cn('flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center', colorClasses.iconBg)}>
+      <div
+        className={cn(
+          'flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center',
+          colorClasses.iconBg,
+        )}
+      >
         <Icon className={cn('h-5 w-5', colorClasses.iconText)} />
       </div>
 
@@ -122,12 +96,15 @@ function AuditLogItem({ log, formatDate }: AuditLogItemProps) {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium', colorClasses.badgeBg)}>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+                  colorClasses.badgeBg,
+                )}
+              >
                 {config.label}
               </span>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                {log.entityType}
-              </span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">{log.entityType}</span>
             </div>
             <p className="text-sm text-zinc-900 dark:text-white font-medium mb-2">
               Entity ID: {log.entityId}
@@ -236,6 +213,19 @@ export default function AdminAuditLogsPage() {
         <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">Audit Logs</h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
           Track all platform activities and changes for compliance and security
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+        <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+          Default audit coverage
+        </h3>
+        <p className="mt-2 text-sm text-emerald-800 dark:text-emerald-100">
+          Out of the box, this page records admin user emulation, organization profile updates,
+          organization invitations, member removals, and member role changes. Add more audit
+          coverage by creating AuditLog records in the service methods that perform sensitive
+          business actions such as billing changes, data exports, destructive deletes, or permission
+          changes.
         </p>
       </div>
 
@@ -402,26 +392,29 @@ export default function AdminAuditLogsPage() {
 
       {/* Audit Logs Timeline */}
       <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 shadow-sm overflow-hidden backdrop-blur">
-        {loading ? (
+        {loading && (
           <div className="p-12 text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-emerald-600 dark:border-emerald-400 border-r-transparent"></div>
             <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">Loading audit logs...</p>
           </div>
-        ) : error ? (
+        )}
+        {!loading && error && (
           <div className="p-12 text-center">
             <p className="text-red-600 dark:text-red-400">
               Error loading audit logs: {error.message}
             </p>
           </div>
-        ) : logs.length === 0 ? (
+        )}
+        {!loading && !error && logs.length === 0 && (
           <div className="p-12 text-center text-zinc-500 dark:text-zinc-400">
             {hasActiveFilters
               ? 'No audit logs found matching your filters'
               : 'No audit logs recorded yet'}
           </div>
-        ) : (
+        )}
+        {!loading && !error && logs.length > 0 && (
           <div className="p-6 space-y-4">
-            {logs.map((log) => (
+            {logs.map(log => (
               <AuditLogItem key={log.id} log={log} formatDate={formatDate} />
             ))}
           </div>

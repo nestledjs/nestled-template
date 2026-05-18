@@ -1,12 +1,13 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../helpers/createTestRouter"
+import { createTestRouter } from '../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import AcceptInvitation from '../../app/routes/accept-invitation'
-import { GlobalContextProvider } from '@nestled-template/web'
-
-import { useGlobalCtx } from '@nestled-template/web'
+import AcceptInvitation, {
+  buildRegisterWithInvitationInput,
+  getInvitationErrorMessage,
+} from '../../app/routes/accept-invitation'
+import { GlobalContextProvider, useGlobalCtx } from '@nestled-template/web'
 
 // Mock Apollo Client
 const mockUseQuery = vi.fn()
@@ -17,7 +18,7 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK (for DocumentNode exports)
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
@@ -111,12 +112,13 @@ describe('AcceptInvitation Component', () => {
 
       expect(screen.getByText('Invalid Invitation')).toBeInTheDocument()
       expect(
-        screen.getByText('No invitation token provided. Please check your invitation link.')
+        screen.getByText('No invitation token provided. Please check your invitation link.'),
       ).toBeInTheDocument()
     })
 
     it('should show loading state while fetching invitation', () => {
-      mockUseQuery.mockReset(); mockUseQuery.mockImplementation(() => ({
+      mockUseQuery.mockReset()
+      mockUseQuery.mockImplementation(() => ({
         data: undefined,
         loading: true,
         error: undefined,
@@ -126,12 +128,13 @@ describe('AcceptInvitation Component', () => {
 
       expect(screen.getByText('Loading Invitation')).toBeInTheDocument()
       expect(
-        screen.getByText('Please wait while we fetch your invitation details...')
+        screen.getByText('Please wait while we fetch your invitation details...'),
       ).toBeInTheDocument()
     })
 
     it('should show error for invalid/expired invitation', () => {
-      mockUseQuery.mockReset(); mockUseQuery.mockImplementation(() => ({
+      mockUseQuery.mockReset()
+      mockUseQuery.mockImplementation(() => ({
         data: null,
         loading: false,
         error: { message: 'Invitation expired' } as any,
@@ -144,7 +147,8 @@ describe('AcceptInvitation Component', () => {
     })
 
     it('should show error when invitation details are null', () => {
-      mockUseQuery.mockReset(); mockUseQuery.mockImplementation(() => ({
+      mockUseQuery.mockReset()
+      mockUseQuery.mockImplementation(() => ({
         data: { getInvitationDetails: null },
         loading: false,
         error: undefined,
@@ -210,9 +214,7 @@ describe('AcceptInvitation Component', () => {
     it('should show signup form content', () => {
       renderWithRouter()
 
-      expect(
-        screen.getByText(/Create a new account to join Acme Corp/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/Create a new account to join Acme Corp/i)).toBeInTheDocument()
     })
 
     it('should show login form content after switching tabs', async () => {
@@ -223,7 +225,7 @@ describe('AcceptInvitation Component', () => {
       await user.click(loginButton)
 
       expect(
-        screen.getByText(/Sign in with your existing account to accept this invitation/i)
+        screen.getByText(/Sign in with your existing account to accept this invitation/i),
       ).toBeInTheDocument()
     })
   })
@@ -314,6 +316,56 @@ describe('AcceptInvitation Component', () => {
   })
 
   describe('Signup Flow', () => {
+    it('builds invitation registration input from the invitation email', () => {
+      expect(
+        buildRegisterWithInvitationInput('test-token', ' Invitee@Example.COM ', {
+          firstName: ' Invited ',
+          lastName: ' User ',
+          password: 'password123',
+        }),
+      ).toEqual({
+        invitationToken: 'test-token',
+        email: 'invitee@example.com',
+        firstName: 'Invited',
+        lastName: 'User',
+        password: 'password123',
+      })
+    })
+
+    it('extracts backend validation messages from GraphQL errors', () => {
+      expect(
+        getInvitationErrorMessage(
+          {
+            graphQLErrors: [
+              {
+                extensions: {
+                  originalError: {
+                    message: ['Password must be at least 8 characters'],
+                  },
+                },
+              },
+            ],
+          },
+          'Fallback message',
+        ),
+      ).toBe('Password must be at least 8 characters')
+    })
+
+    it('extracts backend validation messages from direct GraphQL errors', () => {
+      expect(
+        getInvitationErrorMessage(
+          {
+            extensions: {
+              originalError: {
+                message: 'password must be longer than or equal to 8 characters',
+              },
+            },
+          },
+          'Fallback message',
+        ),
+      ).toBe('Password must be longer than or equal to 8 characters')
+    })
+
     it('should pre-fill email field from invitation', () => {
       renderWithRouter()
 
@@ -356,9 +408,7 @@ describe('AcceptInvitation Component', () => {
       const loginButton = screen.getByRole('button', { name: 'Login' })
       await user.click(loginButton)
 
-      expect(
-        screen.getByText(/Sign in with your existing account/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/Sign in with your existing account/i)).toBeInTheDocument()
     })
 
     it('should handle successful login and auto-accept', async () => {
@@ -438,7 +488,8 @@ describe('AcceptInvitation Component', () => {
     })
 
     it('should show go to home link on error', () => {
-      mockUseQuery.mockReset(); mockUseQuery.mockImplementation(() => ({
+      mockUseQuery.mockReset()
+      mockUseQuery.mockImplementation(() => ({
         data: null,
         loading: false,
         error: { message: 'Not found' } as any,
@@ -461,7 +512,8 @@ describe('AcceptInvitation Component', () => {
     })
 
     it('should show loading spinner during invitation fetch', () => {
-      mockUseQuery.mockReset(); mockUseQuery.mockImplementation(() => ({
+      mockUseQuery.mockReset()
+      mockUseQuery.mockImplementation(() => ({
         data: undefined,
         loading: true,
         error: undefined,
@@ -473,7 +525,8 @@ describe('AcceptInvitation Component', () => {
     })
 
     it('should display error icon on error state', () => {
-      mockUseQuery.mockReset(); mockUseQuery.mockImplementation(() => ({
+      mockUseQuery.mockReset()
+      mockUseQuery.mockImplementation(() => ({
         data: null,
         loading: false,
         error: { message: 'Error' } as any,

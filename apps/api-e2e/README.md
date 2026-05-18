@@ -20,6 +20,7 @@ pnpm nx test api-e2e
 ```
 
 The test setup will:
+
 1. Check if PostgreSQL test database is accessible
 2. Sync the database schema
 3. Seed required data
@@ -48,7 +49,7 @@ The test setup will:
 
 ### Environment Variables
 
-- `TEST_DATABASE_URL` - Database URL for tests (default: `postgresql://justinhandley@localhost:5432/nestled_template_test`)
+- `TEST_DATABASE_URL` - Database URL for tests (default: `postgresql://postgres:postgres@localhost:5433/nestled_template_test`)
 - `HOST` - API host (default: `localhost`)
 - `PORT` - API port (default: `3000`)
 - `SKIP_API_CHECK` - Skip E2E tests entirely (set to `'true'` to skip)
@@ -56,12 +57,14 @@ The test setup will:
 ## CI/CD
 
 E2E tests run automatically in CI with:
+
 - PostgreSQL 15 service container
 - Test database pre-configured with credentials `prisma:prisma`
 - API server automatically started by the test setup
 - Database schema synced and seeded before tests
 
 The CI workflow:
+
 1. Starts PostgreSQL service on port 5432
 2. Sets `TEST_DATABASE_URL` environment variable
 3. Runs affected tests (including E2E)
@@ -108,6 +111,7 @@ describe('My Feature', () => {
 ### Tests hang after completion
 
 This should be fixed by the global teardown which forces process exit. If tests still hang:
+
 1. Check if any database connections are not being closed
 2. Check if any timers/intervals are not being cleared
 3. Increase the timeout in `global-teardown.ts`
@@ -115,6 +119,7 @@ This should be fixed by the global teardown which forces process exit. If tests 
 ### Database connection errors
 
 Make sure PostgreSQL is running:
+
 ```bash
 # Check if PostgreSQL is running
 pg_isready
@@ -126,6 +131,7 @@ brew services start postgresql
 ### API not found errors
 
 The tests will automatically start the API server if it's not running. If you see connection errors:
+
 1. Check that port 3000 is not in use by another process
 2. Check API server logs in test output for startup errors
 3. Verify `TEST_DATABASE_URL` is correct

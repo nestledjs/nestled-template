@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { SecurityEventsService } from '../security/security-events.service'
-import { randomBytes, createHash } from 'crypto'
+import { randomBytes, createHash } from 'node:crypto'
 import { GenerateApiTokenInput, RotateApiTokenInput, GenerateApiTokenOutput } from './dto'
 import { ApiToken } from '@nestled-template/api/core/models'
 
@@ -34,6 +34,7 @@ export class ApiTokensService {
         tokenHash,
         userId,
         expiresAt: input.expiresAt,
+        organizationId: input.organizationId,
         lastUsedAt: null,
         revoked: false,
       },
@@ -72,7 +73,7 @@ export class ApiTokensService {
       where: { id: tokenId },
     })
 
-    if (!token || token.userId !== userId) {
+    if (token?.userId !== userId) {
       throw new BadRequestException('API token not found')
     }
 
@@ -108,7 +109,7 @@ export class ApiTokensService {
       where: { id: input.tokenId },
     })
 
-    if (!oldToken || oldToken.userId !== userId) {
+    if (oldToken?.userId !== userId) {
       throw new BadRequestException('API token not found')
     }
 
@@ -157,7 +158,9 @@ export class ApiTokensService {
   /**
    * Validate an API token and return the associated user
    */
-  async validateApiToken(token: string): Promise<{ userId: string; tokenId: string } | null> {
+  async validateApiToken(
+    token: string,
+  ): Promise<{ userId: string; tokenId: string; organizationId: string | null } | null> {
     const tokenHash = this.hashToken(token)
 
     // Find token by hash
@@ -193,6 +196,7 @@ export class ApiTokensService {
     return {
       userId: apiToken.userId,
       tokenId: apiToken.id,
+      organizationId: apiToken.organizationId ?? null,
     }
   }
 

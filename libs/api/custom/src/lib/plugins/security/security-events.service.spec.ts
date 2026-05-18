@@ -299,9 +299,7 @@ describe('SecurityEventsService', () => {
     it('should calculate 30-day window correctly', async () => {
       mockData.securityEvent.count.mockResolvedValue(0)
       mockData.securityEvent.findFirst.mockResolvedValue(null)
-      const before = Date.now()
       await service.getSecuritySummary('user-123')
-      const after = Date.now()
       // Get the date passed to the first count call
       const firstCountCall = mockData.securityEvent.count.mock.calls[0][0]
       const cutoffDate = firstCountCall.where.createdAt.gte

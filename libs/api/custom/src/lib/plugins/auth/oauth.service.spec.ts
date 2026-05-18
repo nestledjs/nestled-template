@@ -472,7 +472,7 @@ describe('OAuthService', () => {
         .mockResolvedValueOnce(null) // 'TestUser1' is unique
       mockData.user.create.mockResolvedValue(newUser as any)
       mockData.oAuthAccount.create.mockResolvedValue({} as any)
-      const result = await service.findOrCreateUserFromOAuth(profile)
+      await service.findOrCreateUserFromOAuth(profile)
       expect(mockData.user.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           displayName: 'TestUser1',
@@ -631,7 +631,7 @@ describe('OAuthService', () => {
   describe('verifyGitHubCode Edge Cases', () => {
     beforeEach(() => {
       // Mock global fetch
-      global.fetch = jest.fn()
+      globalThis.fetch = jest.fn()
     })
     it('should throw UnauthorizedException when GitHub API returns error', async () => {
       const mockGitHubApp = {
@@ -640,7 +640,7 @@ describe('OAuthService', () => {
         }),
       }
       ;(service as any).githubApp = mockGitHubApp
-      ;(global.fetch as jest.Mock).mockResolvedValue({
+      ;(globalThis.fetch as jest.Mock).mockResolvedValue({
         ok: false,
         status: 401,
       })
@@ -653,7 +653,7 @@ describe('OAuthService', () => {
         }),
       }
       ;(service as any).githubApp = mockGitHubApp
-      ;(global.fetch as jest.Mock)
+      ;(globalThis.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
@@ -687,7 +687,7 @@ describe('OAuthService', () => {
         }),
       }
       ;(service as any).githubApp = mockGitHubApp
-      ;(global.fetch as jest.Mock)
+      ;(globalThis.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
@@ -713,7 +713,7 @@ describe('OAuthService', () => {
         }),
       }
       ;(service as any).githubApp = mockGitHubApp
-      ;(global.fetch as jest.Mock)
+      ;(globalThis.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
@@ -737,7 +737,7 @@ describe('OAuthService', () => {
         }),
       }
       ;(service as any).githubApp = mockGitHubApp
-      ;(global.fetch as jest.Mock).mockResolvedValueOnce({
+      ;(globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           id: 12345,
@@ -748,7 +748,7 @@ describe('OAuthService', () => {
       })
       const result = await service.verifyGitHubCode('valid-code')
       expect(result.email).toBe('main@example.com')
-      expect(global.fetch).toHaveBeenCalledTimes(1) // Should not fetch emails endpoint
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1) // Should not fetch emails endpoint
     })
   })
 })

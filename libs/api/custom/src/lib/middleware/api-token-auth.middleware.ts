@@ -16,7 +16,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
     // Check for Authorization header with Bearer token
     const authHeader = req.headers['authorization'] as string | undefined
 
-    if (authHeader && authHeader.startsWith('Bearer ')) {
+    if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.substring(7) // Remove 'Bearer ' prefix
 
       try {
@@ -28,7 +28,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
           const user = await this.data.user.findUnique({
             where: { id: result.userId },
             include: {
-              memberships: {
+              organizations: {
                 include: {
                   role: {
                     include: {
@@ -45,6 +45,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
             // Attach user to request object for downstream guards/resolvers
             ;(req as any).user = user
             ;(req as any).apiTokenId = result.tokenId
+            ;(req as any).apiTokenOrganizationId = result.organizationId
 
             this.logger.log(`API token authentication successful for user ${user.id}`)
           } else {

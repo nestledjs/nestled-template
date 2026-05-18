@@ -23,7 +23,7 @@ describe('Auth Helper Functions', () => {
       expect(url).toContain('?s=460&d=mp')
     })
     it('should handle undefined email', () => {
-      const url = getGravatarUrl(undefined)
+      const url = getGravatarUrl()
       expect(url).toContain('https://www.gravatar.com/avatar/')
       expect(url).toContain('?s=460&d=mp')
     })
@@ -172,7 +172,7 @@ describe('Auth Helper Functions', () => {
       expect(slug.split('.')[1]).toMatch(/^\d+$/)
     })
     it('should handle undefined names', () => {
-      const slug = generateUsernameSlug(undefined, undefined)
+      const slug = generateUsernameSlug()
       expect(slug).toContain('user.')
       expect(slug.split('.')[1]).toMatch(/^\d+$/)
     })
@@ -201,7 +201,7 @@ describe('Auth Helper Functions', () => {
     it('should generate suffix between 1 and 10000', () => {
       const base = 'test'
       const username = generateUsernameWithSuffix(base)
-      const suffix = parseInt(username.replace(base, ''))
+      const suffix = Number.parseInt(username.replace(base, ''))
       expect(suffix).toBeGreaterThanOrEqual(1)
       expect(suffix).toBeLessThanOrEqual(10000)
     })

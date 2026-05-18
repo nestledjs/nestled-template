@@ -86,7 +86,10 @@ export class StorageService {
    */
   async uploadUserAvatar(fileUpload: FileUpload, userId: string): Promise<StoredFile> {
     // Read the current avatar FK before uploading
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { avatarId: true } })
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { avatarId: true },
+    })
 
     // Upload new avatar first to prevent data loss if upload fails
     const newAvatar = await this.uploadFile(fileUpload, userId, {
@@ -102,7 +105,9 @@ export class StorageService {
       const oldFile = await this.prisma.storedFile.findUnique({ where: { id: user.avatarId } })
       if (oldFile) {
         try {
-          const storageProvider = this.storageFactory.getProviderByName(oldFile.provider.toLowerCase())
+          const storageProvider = this.storageFactory.getProviderByName(
+            oldFile.provider.toLowerCase(),
+          )
           await storageProvider.delete(oldFile.providerFileId)
         } catch (error) {
           this.logger.warn(`Failed to delete old user avatar from provider: ${error}`)
@@ -128,7 +133,10 @@ export class StorageService {
     await this.assertOrgAdminOrOwner(userId, organizationId)
 
     // Read the current logo FK before uploading
-    const org = await this.prisma.organization.findUnique({ where: { id: organizationId }, select: { logoId: true } })
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { logoId: true },
+    })
 
     // Upload new logo first to prevent data loss if upload fails
     const newLogo = await this.uploadFile(fileUpload, userId, {
@@ -138,14 +146,19 @@ export class StorageService {
     })
 
     // Point the FK to the new file
-    await this.prisma.organization.update({ where: { id: organizationId }, data: { logoId: newLogo.id } })
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { logoId: newLogo.id },
+    })
 
     // Delete the old logo file after the FK is updated
     if (org?.logoId) {
       const oldFile = await this.prisma.storedFile.findUnique({ where: { id: org.logoId } })
       if (oldFile) {
         try {
-          const storageProvider = this.storageFactory.getProviderByName(oldFile.provider.toLowerCase())
+          const storageProvider = this.storageFactory.getProviderByName(
+            oldFile.provider.toLowerCase(),
+          )
           await storageProvider.delete(oldFile.providerFileId)
         } catch (error) {
           this.logger.warn(`Failed to delete old organization logo from provider: ${error}`)
@@ -229,7 +242,10 @@ export class StorageService {
    * Remove the user's avatar — nulls avatarId and deletes the file
    */
   async removeUserAvatar(userId: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { avatarId: true } })
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { avatarId: true },
+    })
     if (!user?.avatarId) return
 
     const file = await this.prisma.storedFile.findUnique({ where: { id: user.avatarId } })
@@ -255,7 +271,10 @@ export class StorageService {
   async removeOrganizationLogo(organizationId: string, userId: string): Promise<void> {
     await this.assertOrgAdminOrOwner(userId, organizationId)
 
-    const org = await this.prisma.organization.findUnique({ where: { id: organizationId }, select: { logoId: true } })
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { logoId: true },
+    })
     if (!org?.logoId) return
 
     const file = await this.prisma.storedFile.findUnique({ where: { id: org.logoId } })
@@ -317,7 +336,7 @@ export class StorageService {
   private async streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = []
-      stream.on('data', (chunk) => chunks.push(chunk))
+      stream.on('data', chunk => chunks.push(chunk))
       stream.on('error', reject)
       stream.on('end', () => resolve(Buffer.concat(chunks)))
     })

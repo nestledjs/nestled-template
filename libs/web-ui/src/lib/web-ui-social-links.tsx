@@ -2,8 +2,8 @@ import { Profile, SocialLinks, TYPE_DESKTOP, TYPE_MOBILE } from 'social-links'
 import { User } from '@nestled-template/shared/sdk'
 
 interface SocialLinksProps {
-  member?: Partial<User> | null
-  color?: string
+  readonly member?: Partial<User> | null
+  readonly color?: string
 }
 
 const linkedinCompanyProfile: Profile = {
@@ -49,6 +49,7 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
       const id = socialLinks.getProfileId(network, value)
       return socialLinks.getLink(network, id)
     } catch (e) {
+      console.error('Unexpected error:', e)
       return null
     }
   }
@@ -58,12 +59,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
   const facebookLink = member?.facebook ? generateLink(member.facebook, 'facebook') : null
   const twitterLink = member?.twitter ? generateLink(member.twitter, 'twitter') : null
   const instagramLink = member?.instagram ? generateLink(member.instagram, 'instagram') : null
-  const linkedinLink = member?.linkedin
-    ? generateLink?.(
-        member.linkedin,
-        member.linkedin.includes('company') ? 'linkedin-company' : 'linkedin',
-      )
-    : null
+  const linkedinNetwork = member?.linkedin?.includes('company') ? 'linkedin-company' : 'linkedin'
+  const linkedinLink = member?.linkedin ? generateLink(member.linkedin, linkedinNetwork) : null
   const youtubeLink = member?.youtube ? generateLink(member.youtube, 'youtube') : null
 
   const fill = props?.color ?? 'white'

@@ -33,7 +33,7 @@ describe('CRITICAL: Authentication Security', () => {
       for (let i = 0; i < 5; i++) {
         try {
           await TestHelpers.loginUser(testEmail, 'WrongPassword123!')
-        } catch (error) {
+        } catch {
           // Expected to fail
         }
       }
@@ -61,7 +61,7 @@ describe('CRITICAL: Authentication Security', () => {
       for (let i = 0; i < 3; i++) {
         try {
           await TestHelpers.loginUser(email, 'WrongPassword!')
-        } catch (error) {
+        } catch {
           // Expected to fail
         }
       }
@@ -71,7 +71,7 @@ describe('CRITICAL: Authentication Security', () => {
       for (let i = 0; i < 5; i++) {
         try {
           await TestHelpers.loginUser(email, 'WrongPassword!')
-        } catch (error) {
+        } catch {
           // Expected to fail, but not due to lock
         }
       }
@@ -98,7 +98,7 @@ describe('CRITICAL: Authentication Security', () => {
       for (let i = 0; i < 5; i++) {
         try {
           await TestHelpers.loginUser(email, 'WrongPassword!')
-        } catch (error) {
+        } catch {
           // Expected
         }
       }

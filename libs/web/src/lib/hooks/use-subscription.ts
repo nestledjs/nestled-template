@@ -1,5 +1,5 @@
 import { useContext } from 'react'
-import { useSubscriptionContext } from '../contexts/subscription.context'
+import { SubscriptionContext } from '../contexts/subscription.context'
 
 /**
  * Hook to check subscription status and enforce access control
@@ -17,14 +17,7 @@ import { useSubscriptionContext } from '../contexts/subscription.context'
  * ```
  */
 export function useSubscription() {
-  // Try to get context, but don't throw if not available
-  let context
-  try {
-    context = useSubscriptionContext()
-  } catch {
-    // Not in a SubscriptionProvider - return default values
-    context = null
-  }
+  const context = useContext(SubscriptionContext)
 
   // If no context, return empty state
   if (!context) {
@@ -88,12 +81,7 @@ export function useSubscription() {
  * ```
  */
 export function useHasFeature(feature: string): boolean {
-  let context
-  try {
-    context = useSubscriptionContext()
-  } catch {
-    return false
-  }
+  const context = useContext(SubscriptionContext)
   return context?.hasFeature(feature) ?? false
 }
 
@@ -109,12 +97,7 @@ export function useHasFeature(feature: string): boolean {
  * ```
  */
 export function useHasFeatures(features: string[]): boolean {
-  let context
-  try {
-    context = useSubscriptionContext()
-  } catch {
-    return false
-  }
+  const context = useContext(SubscriptionContext)
   if (!context) return false
   return features.every(feature => context.hasFeature(feature))
 }
@@ -131,12 +114,7 @@ export function useHasFeatures(features: string[]): boolean {
  * ```
  */
 export function useHasAnyFeature(features: string[]): boolean {
-  let context
-  try {
-    context = useSubscriptionContext()
-  } catch {
-    return false
-  }
+  const context = useContext(SubscriptionContext)
   if (!context) return false
   return features.some(feature => context.hasFeature(feature))
 }

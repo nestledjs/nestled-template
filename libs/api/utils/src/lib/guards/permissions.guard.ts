@@ -1,4 +1,10 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException, SetMetadata } from '@nestjs/common'
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  SetMetadata,
+} from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { GqlExecutionContext } from '@nestjs/graphql'
 import { OrganizationContext } from '../types/nest-context-type'
@@ -22,12 +28,12 @@ export const RequirePermissions = (...permissions: PermissionRequirement[]) =>
  */
 @Injectable()
 export class PermissionsGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
     const requiredPermissions = this.reflector.getAllAndOverride<PermissionRequirement[]>(
       PERMISSIONS_KEY,
-      [context.getHandler(), context.getClass()]
+      [context.getHandler(), context.getClass()],
     )
 
     if (!requiredPermissions || requiredPermissions.length === 0) {
@@ -45,8 +51,8 @@ export class PermissionsGuard implements CanActivate {
     // Check if user has ALL required permissions
     const hasAllPermissions = requiredPermissions.every(required =>
       organizationContext.permissions.some(
-        p => p.subject === required.subject && p.action === required.action
-      )
+        p => p.subject === required.subject && p.action === required.action,
+      ),
     )
 
     if (!hasAllPermissions) {
@@ -54,13 +60,13 @@ export class PermissionsGuard implements CanActivate {
         .filter(
           required =>
             !organizationContext.permissions.some(
-              p => p.subject === required.subject && p.action === required.action
-            )
+              p => p.subject === required.subject && p.action === required.action,
+            ),
         )
         .map(p => `${p.subject}:${p.action}`)
 
       throw new ForbiddenException(
-        `Missing required permissions: ${missingPermissions.join(', ')}. Current role: ${organizationContext.roleName}`
+        `Missing required permissions: ${missingPermissions.join(', ')}. Current role: ${organizationContext.roleName}`,
       )
     }
 
@@ -74,15 +80,13 @@ export class PermissionsGuard implements CanActivate {
 export function hasPermission(
   organizationContext: OrganizationContext | undefined,
   subject: string,
-  action: string
+  action: string,
 ): boolean {
   if (!organizationContext) {
     return false
   }
 
-  return organizationContext.permissions.some(
-    p => p.subject === subject && p.action === action
-  )
+  return organizationContext.permissions.some(p => p.subject === subject && p.action === action)
 }
 
 /**
@@ -91,13 +95,13 @@ export function hasPermission(
 export function requirePermission(
   organizationContext: OrganizationContext | undefined,
   subject: string,
-  action: string
+  action: string,
 ): void {
   if (!hasPermission(organizationContext, subject, action)) {
     throw new ForbiddenException(
       `Missing required permission: ${subject}:${action}${
         organizationContext ? `. Current role: ${organizationContext.roleName}` : ''
-      }`
+      }`,
     )
   }
 }

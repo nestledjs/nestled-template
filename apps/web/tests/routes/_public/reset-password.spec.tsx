@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ResetPassword from '../../../app/routes/_public/reset-password'
 import { useMutation } from '@apollo/client/react'
@@ -12,7 +12,6 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock the SDK mutation
-
 
 // Mock the AuthLayout component
 vi.mock('@nestled-template/web', () => ({
@@ -33,7 +32,7 @@ vi.mock('@nestled-template/shared/styles', () => ({
 // Mock the Form component from @nestledjs/forms
 vi.mock('@nestledjs/forms', () => ({
   Form: ({ id, fields, submit }: any) => {
-    const handleSubmit = (e) => {
+    const handleSubmit = e => {
       e.preventDefault()
       const formData = new FormData(e.target)
       const values: Record<string, any> = {}
@@ -49,7 +48,17 @@ vi.mock('@nestledjs/forms', () => ({
           if (!field) return null
 
           const { key, type, options } = field
-          const { label, required, minLength, placeholder, helpText, text, disabled, fullWidth, loading } = options || {}
+          const {
+            label,
+            required,
+            minLength,
+            placeholder,
+            helpText,
+            text,
+            disabled,
+            fullWidth,
+            loading,
+          } = options || {}
 
           if (type === 'button') {
             return (
@@ -157,9 +166,7 @@ describe('ResetPassword Component', () => {
     it('should display error when token is missing', () => {
       renderResetPassword('')
 
-      expect(
-        screen.getByText(/invalid or missing reset token/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/invalid or missing reset token/i)).toBeInTheDocument()
     })
 
     it('should disable submit button when token is missing', () => {
@@ -236,14 +243,10 @@ describe('ResetPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /reset password/i }))
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/your password has been reset/i)
-        ).toBeInTheDocument()
+        expect(screen.getByText(/your password has been reset/i)).toBeInTheDocument()
       })
 
-      expect(
-        screen.getByText(/redirecting to login/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/redirecting to login/i)).toBeInTheDocument()
     })
 
     it('should display error when reset returns no user id', async () => {
@@ -260,14 +263,10 @@ describe('ResetPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /reset password/i }))
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/unable to reset password/i)
-        ).toBeInTheDocument()
+        expect(screen.getByText(/unable to reset password/i)).toBeInTheDocument()
       })
 
-      expect(
-        screen.getByText(/the token may have expired/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/the token may have expired/i)).toBeInTheDocument()
     })
 
     it('should display error on mutation failure', async () => {
@@ -285,7 +284,7 @@ describe('ResetPassword Component', () => {
     })
 
     it('should display generic error when error has no message', async () => {
-      mockResetPasswordMutation.mockRejectedValue(new Error())
+      mockResetPasswordMutation.mockRejectedValue({})
 
       renderResetPassword()
       const user = userEvent.setup({ delay: null })
@@ -416,7 +415,9 @@ describe('ResetPassword Component', () => {
     })
 
     it('should handle password too weak error', async () => {
-      mockResetPasswordMutation.mockRejectedValue(new Error('Password must be at least 8 characters'))
+      mockResetPasswordMutation.mockRejectedValue(
+        new Error('Password must be at least 8 characters'),
+      )
 
       renderResetPassword()
       const user = userEvent.setup({ delay: null })

@@ -1,6 +1,6 @@
 import React from 'react'
 import { render } from '@testing-library/react'
-import { createTestRouter } from "../helpers/createTestRouter"
+import { createTestRouter } from '../helpers/createTestRouter'
 import App from '../../app/app'
 
 describe('App Component', () => {
@@ -9,7 +9,7 @@ describe('App Component', () => {
       {
         path: '/',
         Component: App,
-        loader: () => ({ meQueryRef: null })
+        loader: () => ({ meQueryRef: null }),
       },
     ])
 
@@ -21,7 +21,7 @@ describe('App Component', () => {
       {
         path: '/',
         Component: App,
-        loader: () => ({})
+        loader: () => ({}),
       },
     ])
 

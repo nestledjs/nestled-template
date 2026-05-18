@@ -2,7 +2,7 @@ import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { describe, it, expect, beforeEach } from 'vitest'
 import CheckoutCancel from '../../../app/routes/checkout/cancel'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 
 describe('Checkout Cancel Page', () => {
   beforeEach(() => {
@@ -48,7 +48,9 @@ describe('Checkout Cancel Page', () => {
       renderCheckoutCancel()
 
       expect(screen.getByText('What happened?')).toBeInTheDocument()
-      expect(screen.getByText(/You closed the checkout page before completing your purchase/i)).toBeInTheDocument()
+      expect(
+        screen.getByText(/You closed the checkout page before completing your purchase/i),
+      ).toBeInTheDocument()
     })
 
     it('should list possible reasons for cancellation', () => {
@@ -79,7 +81,9 @@ describe('Checkout Cancel Page', () => {
       renderCheckoutCancel()
 
       expect(screen.getByRole('heading', { level: 4, name: 'Need Help?' })).toBeInTheDocument()
-      expect(screen.getByText(/Have questions about our plans or payment options?/i)).toBeInTheDocument()
+      expect(
+        screen.getByText(/Have questions about our plans or payment options?/i),
+      ).toBeInTheDocument()
     })
 
     it('should have link to view plans', () => {
@@ -144,7 +148,7 @@ describe('Checkout Cancel Page', () => {
     it('should style reassurance message distinctly', () => {
       const { container } = renderCheckoutCancel()
 
-      const reassuranceBox = container.querySelector('.bg-gray-50.dark\\:bg-gray-900\\/50')
+      const reassuranceBox = container.querySelector(String.raw`.bg-gray-50.dark\:bg-gray-900\/50`)
       expect(reassuranceBox).toBeInTheDocument()
     })
   })
@@ -153,7 +157,9 @@ describe('Checkout Cancel Page', () => {
     it('should have orange/red gradient background', () => {
       const { container } = renderCheckoutCancel()
 
-      const background = container.querySelector('.bg-gradient-to-br.from-gray-50.via-orange-50.to-red-50')
+      const background = container.querySelector(
+        '.bg-gradient-to-br.from-gray-50.via-orange-50.to-red-50',
+      )
       expect(background).toBeInTheDocument()
     })
 
@@ -167,7 +173,7 @@ describe('Checkout Cancel Page', () => {
     it('should use two-column grid for action cards', () => {
       const { container } = renderCheckoutCancel()
 
-      const gridContainer = container.querySelector('.grid.sm\\:grid-cols-2')
+      const gridContainer = container.querySelector(String.raw`.grid.sm\:grid-cols-2`)
       expect(gridContainer).toBeInTheDocument()
     })
   })
@@ -192,21 +198,21 @@ describe('Checkout Cancel Page', () => {
     it('should have responsive padding', () => {
       const { container } = renderCheckoutCancel()
 
-      const card = container.querySelector('.p-8.md\\:p-12')
+      const card = container.querySelector(String.raw`.p-8.md\:p-12`)
       expect(card).toBeInTheDocument()
     })
 
     it('should stack buttons on mobile', () => {
       const { container } = renderCheckoutCancel()
 
-      const buttonContainer = container.querySelector('.flex-col.sm\\:flex-row')
+      const buttonContainer = container.querySelector(String.raw`.flex-col.sm\:flex-row`)
       expect(buttonContainer).toBeInTheDocument()
     })
 
     it('should stack action cards on mobile', () => {
       const { container } = renderCheckoutCancel()
 
-      const actionGrid = container.querySelector('.grid-cols-1.sm\\:grid-cols-2')
+      const actionGrid = container.querySelector(String.raw`.grid-cols-1.sm\:grid-cols-2`)
       expect(actionGrid).toBeInTheDocument()
     })
   })

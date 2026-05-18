@@ -1,6 +1,7 @@
 import React from 'react'
 import { Link, Navigate, Outlet, useLocation } from 'react-router'
 import {
+  ArrowLeftIcon,
   BuildingOfficeIcon,
   ChartBarSquareIcon,
   Cog6ToothIcon,
@@ -119,21 +120,28 @@ export default function AdminLayout() {
   }
 
   return (
-    <div className="flex-1 bg-gradient-to-b from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-white">
-            Admin Panel
-          </h1>
-          <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-            Platform administration and management
-          </p>
-        </div>
+    <div className="min-h-screen bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-white">
+      <div className="flex min-h-screen flex-col lg:flex-row">
+        {/* Sidebar Navigation */}
+        <nav className="border-b border-zinc-200 bg-white/95 p-4 shadow-sm dark:border-white/10 dark:bg-zinc-950/95 lg:sticky lg:top-0 lg:h-screen lg:w-80 lg:flex-shrink-0 lg:border-b-0 lg:border-r">
+          <div className="flex h-full flex-col gap-6">
+            <div>
+              <Link
+                to="/members/dashboard"
+                className="mb-5 inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-white"
+              >
+                <ArrowLeftIcon className="h-4 w-4" />
+                Back to app
+              </Link>
+              <h1 className="text-2xl font-extrabold tracking-tight text-zinc-900 dark:text-white">
+                Admin Console
+              </h1>
+              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                Platform administration and setup
+              </p>
+            </div>
 
-        <div className="flex flex-col lg:flex-row gap-8">
-          {/* Sidebar Navigation */}
-          <nav className="lg:w-64 flex-shrink-0">
-            <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-4 backdrop-blur space-y-6">
+            <div className="space-y-6">
               {/* Navigation Sections */}
               {navigationSections.map((section, sectionIdx) => (
                 <div key={section.name}>
@@ -178,10 +186,12 @@ export default function AdminLayout() {
                 </div>
               ))}
             </div>
-          </nav>
+          </div>
+        </nav>
 
-          {/* Main Content Area */}
-          <div className="flex-1 overflow-x-auto">
+        {/* Main Content Area */}
+        <div className="min-w-0 flex-1 overflow-x-auto">
+          <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
             <Outlet />
           </div>
         </div>

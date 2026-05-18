@@ -31,28 +31,24 @@ function parseCookies(header: string | null): Record<string, string[]> {
   return result
 }
 
-// Returns cookie as string or undefined
-export function getCookie<T extends string = string>(
-  headers: Headers | Record<string, string>,
-  name: string,
-): T | undefined {
-  let normalizedHeaders: Headers
-  if (headers instanceof Headers) {
-    normalizedHeaders = headers
-  } else {
-    normalizedHeaders = new Headers(headers)
-  }
-  const values = parseCookies(normalizedHeaders.get('cookie'))[name]
-  if (!values || values.length === 0) return undefined
-  if (values.length === 1) return values[0] as T
-  // Prefer the newest JWT by iat/exp if multiple values exist
+function pickNewestJwt(values: string[]): string {
   let best: { token: string; iat: number } | null = null
   for (const token of values) {
     try {
       const parts = token.split('.')
       if (parts.length !== 3) continue
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8')) as { iat?: number; exp?: number }
-      const iat = typeof payload.iat === 'number' ? payload.iat : typeof payload.exp === 'number' ? payload.exp : 0
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8')) as {
+        iat?: number
+        exp?: number
+      }
+      let iat: number
+      if (typeof payload.iat === 'number') {
+        iat = payload.iat
+      } else if (typeof payload.exp === 'number') {
+        iat = payload.exp
+      } else {
+        iat = 0
+      }
       if (!best || iat > best.iat) {
         best = { token, iat }
       }
@@ -60,18 +56,30 @@ export function getCookie<T extends string = string>(
       // ignore
     }
   }
-  return (best?.token ?? values[values.length - 1]) as T
+  return best?.token ?? values[values.length - 1]
+}
+
+function normalizeHeaders(headers: Headers | Record<string, string>): Headers {
+  return headers instanceof Headers ? headers : new Headers(headers)
+}
+
+// Returns cookie as string or undefined
+export function getCookie<T extends string = string>(
+  headers: Headers | Record<string, string>,
+  name: string,
+): T | undefined {
+  const values = parseCookies(normalizeHeaders(headers).get('cookie'))[name]
+  if (!values || values.length === 0) return undefined
+  if (values.length === 1) return values[0] as T
+  return pickNewestJwt(values) as T
 }
 
 // Returns cookie parsed as object or null
-export function getJsonCookie<T extends object>(headers: Headers | Record<string, string>, name: string): T | null {
-  let normalizedHeaders: Headers
-  if (headers instanceof Headers) {
-    normalizedHeaders = headers
-  } else {
-    normalizedHeaders = new Headers(headers)
-  }
-  const values = parseCookies(normalizedHeaders.get('cookie'))[name]
+export function getJsonCookie<T extends object>(
+  headers: Headers | Record<string, string>,
+  name: string,
+): T | null {
+  const values = parseCookies(normalizeHeaders(headers).get('cookie'))[name]
   if (!values || values.length === 0) return null
   const raw = values[values.length - 1]
 

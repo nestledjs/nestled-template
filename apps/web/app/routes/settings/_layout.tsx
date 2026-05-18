@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from 'react-router'
 import {
   BellIcon,
   BuildingOfficeIcon,
+  Cog6ToothIcon,
   CreditCardIcon,
   ShieldCheckIcon,
   UserCircleIcon,
@@ -11,8 +12,8 @@ import {
 import { useGlobalCtx } from '@nestled-template/web'
 import {
   MyOrganizationsWithMembers,
-  type MyOrganizationsWithMembersQuery,
   type MeQuery,
+  type MyOrganizationsWithMembersQuery,
 } from '@nestled-template/shared/sdk'
 import { Avatar } from '@nestled-template/web-ui'
 import { cn } from '@nestled-template/shared/utils'
@@ -27,6 +28,46 @@ interface NavItem {
   description: string
 }
 
+type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
+  activeOrganizationId?: string | null
+}
+
+type ActiveOrganizationMember = NonNullable<
+  NonNullable<MyOrganizationsWithMembersQuery['myOrganizations'][number]['members']>[number]
+>
+
+function hasBillingAccess(
+  user: MeQuery['me'] | null | undefined,
+  member: ActiveOrganizationMember | null,
+) {
+  if (user?.isSuperAdmin) return true
+  if (!member) return false
+
+  const roleName = member.role?.name
+  if (roleName === 'Owner' || roleName === 'Admin') return true
+
+  return !!member.role?.permissions?.some(p => p.subject === 'billing' && p.action === 'read')
+}
+
+function hasRolePermission(member: ActiveOrganizationMember | null, permission: string) {
+  const [subject, action] = permission.split(':')
+  return !!member?.role?.permissions?.some(p => p.subject === subject && p.action === action)
+}
+
+function canViewSetting(
+  permission: string | undefined,
+  user: MeQuery['me'] | null | undefined,
+  hasActiveOrganization: boolean,
+  activeOrganizationMember: ActiveOrganizationMember | null,
+) {
+  if (!permission) return true
+  if (!hasActiveOrganization) return false
+  if (permission === 'organization:read' || permission === 'member:read') return true
+  if (permission === 'billing:read') return hasBillingAccess(user, activeOrganizationMember)
+
+  return hasRolePermission(activeOrganizationMember, permission)
+}
+
 export default function SettingsLayout() {
   const location = useLocation()
   const { user } = useGlobalCtx()
@@ -34,10 +75,13 @@ export default function SettingsLayout() {
   // Fetch user's organizations with member data
   const { data: orgsData } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers)
   const organizations = orgsData?.myOrganizations || []
+  const userWithActiveOrganization: UserWithActiveOrganization | null | undefined = user
   const activeOrganization =
-    organizations.find(org => org.id === (user as any)?.activeOrganizationId) || organizations[0] || null
+    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
+    organizations[0] ||
+    null
   const activeOrganizationMember =
-    activeOrganization?.members?.find((member) => member.userId === user?.id) || null
+    activeOrganization?.members?.find(member => member.userId === user?.id) || null
 
   const personalSettings: NavItem[] = [
     {
@@ -79,7 +123,7 @@ export default function SettingsLayout() {
       name: 'Billing',
       href: '/settings/billing',
       icon: CreditCardIcon,
-      permission: 'organization:update',
+      permission: 'billing:read',
       description: 'Subscription and payment settings',
     },
   ]
@@ -88,46 +132,19 @@ export default function SettingsLayout() {
     return location.pathname === href || location.pathname.startsWith(`${href}/`)
   }
 
-  type AuthUser = NonNullable<MeQuery['me']>
-  type OrgListItem = MyOrganizationsWithMembersQuery['myOrganizations'][number]
-
-  // Simple permission check - make it very permissive for now
   const hasPermission = (permission?: string) => {
-    if (!permission) return true
-
-    // If user has an active organization, they can see basic settings
-    if (!activeOrganization) return false
-
-    // Very permissive - if they have an organization, they can see these
-    if (permission === 'organization:read') return true
-    if (permission === 'member:read') return true
-
-    // Only restrict update permissions if we have member data
-    if (permission === 'organization:update') {
-      // Super admins can always update (bypass role check)
-      if (user?.isSuperAdmin) return true
-
-      if (!activeOrganizationMember) return false // Need member data for update permissions
-      return (
-        activeOrganizationMember?.role?.name === 'Owner' ||
-        activeOrganizationMember?.role?.name === 'Admin'
-      )
-    }
-
-    // Fallback to the original permission check if role permissions exist
-    if (activeOrganizationMember?.role?.permissions) {
-      const [subject, action] = permission.split(':')
-      return activeOrganizationMember.role.permissions.some(
-        (p) => p.subject === subject && p.action === action,
-      )
-    }
-
-    // Default to true for basic organization access
-    return true
+    return canViewSetting(permission, user, !!activeOrganization, activeOrganizationMember)
   }
 
-  const userAvatar = (user as AuthUser | null | undefined)?.avatar
-  const organizationLogo = (activeOrganization as OrgListItem | null | undefined)?.logo
+  const userAvatar = user?.avatar
+  const organizationLogo = activeOrganization?.logo
+  const adminConsoleItem: NavItem = {
+    name: 'Admin Console',
+    href: '/admin',
+    icon: Cog6ToothIcon,
+    superAdminOnly: true,
+    description: 'Platform setup and operations',
+  }
 
   return (
     <div className="flex-1 bg-gradient-to-b from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950">
@@ -211,7 +228,7 @@ export default function SettingsLayout() {
               <div>
                 <button
                   onClick={() => {
-                    /* TODO: Organization switcher */
+                    /* FUTURE: Organization switcher */
                   }}
                   className="flex items-center gap-3 mb-4 p-2 rounded-lg bg-zinc-50 dark:bg-white/5 w-full hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
                 >
@@ -267,6 +284,35 @@ export default function SettingsLayout() {
                   })}
                 </ul>
               </div>
+
+              {user?.isSuperAdmin && (
+                <div className="mt-6 border-t border-zinc-200 pt-4 dark:border-white/10">
+                  <Link
+                    to={adminConsoleItem.href}
+                    className={cn(
+                      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                      isActive(adminConsoleItem.href)
+                        ? 'bg-emerald-500 text-white'
+                        : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/10',
+                    )}
+                  >
+                    <adminConsoleItem.icon className="h-5 w-5 flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">{adminConsoleItem.name}</div>
+                      <div
+                        className={cn(
+                          'truncate text-xs',
+                          isActive(adminConsoleItem.href)
+                            ? 'text-emerald-100'
+                            : 'text-zinc-500 dark:text-zinc-400',
+                        )}
+                      >
+                        {adminConsoleItem.description}
+                      </div>
+                    </div>
+                  </Link>
+                </div>
+              )}
             </div>
           </nav>
 

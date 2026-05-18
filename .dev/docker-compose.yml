@@ -11,7 +11,7 @@ services:
     volumes:
       - ./tmp/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,7 +21,7 @@ services:
     image: postgres:15
     container_name: nestled-template_postgres_test
     ports:
-      - 5433:5432  # Different port for test DB
+      - 5433:5432 # Different port for test DB
     environment:
       POSTGRES_DB: nestled_template_test
       POSTGRES_USER: postgres
@@ -29,13 +29,13 @@ services:
     volumes:
       - ./tmp/postgres-test:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
     profiles:
-      - testing  # Only start when testing profile is used
+      - testing # Only start when testing profile is used
 
   redis:
     image: redis:alpine

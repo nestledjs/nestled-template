@@ -68,13 +68,13 @@ export default function AdminDashboard() {
         <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-6 backdrop-blur">
           <div className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Total Users</div>
           <div className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">
-            {loading ? (
+            {loading && (
               <div className="h-9 w-16 bg-zinc-200 dark:bg-zinc-700 animate-pulse rounded" />
-            ) : error ? (
-              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
-            ) : (
-              (stats?.totalUsers?.toLocaleString() ?? '0')
             )}
+            {!loading && error && (
+              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
+            )}
+            {!loading && !error && (stats?.totalUsers?.toLocaleString() ?? '0')}
           </div>
           {!loading && !error && (
             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Registered accounts</div>
@@ -83,13 +83,13 @@ export default function AdminDashboard() {
         <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-6 backdrop-blur">
           <div className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Organizations</div>
           <div className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">
-            {loading ? (
+            {loading && (
               <div className="h-9 w-16 bg-zinc-200 dark:bg-zinc-700 animate-pulse rounded" />
-            ) : error ? (
-              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
-            ) : (
-              (stats?.totalOrganizations?.toLocaleString() ?? '0')
             )}
+            {!loading && error && (
+              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
+            )}
+            {!loading && !error && (stats?.totalOrganizations?.toLocaleString() ?? '0')}
           </div>
           {!loading && !error && (
             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -102,13 +102,13 @@ export default function AdminDashboard() {
             Active Sessions
           </div>
           <div className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">
-            {loading ? (
+            {loading && (
               <div className="h-9 w-16 bg-zinc-200 dark:bg-zinc-700 animate-pulse rounded" />
-            ) : error ? (
-              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
-            ) : (
-              (stats?.activeSessions?.toLocaleString() ?? '0')
             )}
+            {!loading && error && (
+              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
+            )}
+            {!loading && !error && (stats?.activeSessions?.toLocaleString() ?? '0')}
           </div>
           {!loading && !error && (
             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Currently logged in</div>
@@ -119,13 +119,13 @@ export default function AdminDashboard() {
             Security Events (24h)
           </div>
           <div className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">
-            {loading ? (
+            {loading && (
               <div className="h-9 w-16 bg-zinc-200 dark:bg-zinc-700 animate-pulse rounded" />
-            ) : error ? (
-              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
-            ) : (
-              (stats?.recentSecurityEvents?.toLocaleString() ?? '0')
             )}
+            {!loading && error && (
+              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
+            )}
+            {!loading && !error && (stats?.recentSecurityEvents?.toLocaleString() ?? '0')}
           </div>
           {!loading && !error && (
             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Last 24 hours</div>
@@ -136,13 +136,13 @@ export default function AdminDashboard() {
             Active Subscriptions
           </div>
           <div className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">
-            {loading ? (
+            {loading && (
               <div className="h-9 w-16 bg-zinc-200 dark:bg-zinc-700 animate-pulse rounded" />
-            ) : error ? (
-              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
-            ) : (
-              (stats?.activeSubscriptions?.toLocaleString() ?? '0')
             )}
+            {!loading && error && (
+              <span className="text-red-600 dark:text-red-400 text-base">Error</span>
+            )}
+            {!loading && !error && (stats?.activeSubscriptions?.toLocaleString() ?? '0')}
           </div>
           {!loading && !error && (
             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Paying customers</div>

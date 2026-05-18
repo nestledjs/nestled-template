@@ -13,7 +13,7 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK (for DocumentNode exports)
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
@@ -22,6 +22,29 @@ vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
     TransferOrganizationOwnership: { kind: 'Document', definitions: [] },
   }
 })
+
+function closestSelect(element: HTMLElement): HTMLSelectElement {
+  const select = element.closest('select')
+  if (!(select instanceof HTMLSelectElement)) {
+    throw new TypeError('Expected element to be inside a select')
+  }
+  return select
+}
+
+function closestButton(element: Element): HTMLButtonElement {
+  const button = element.closest('button')
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new TypeError('Expected element to be inside a button')
+  }
+  return button
+}
+
+function requiredElement(element: Element | null, message: string): Element {
+  if (!element) {
+    throw new Error(message)
+  }
+  return element
+}
 
 describe('TransferOwnershipModal Component', () => {
   let mockTransferOwnership: ReturnType<typeof vi.fn>
@@ -97,10 +120,7 @@ describe('TransferOwnershipModal Component', () => {
     })
 
     // Mock useMutation
-    mockUseMutation.mockReturnValue([
-      mockTransferOwnership,
-      { loading: false, error: null },
-    ])
+    mockUseMutation.mockReturnValue([mockTransferOwnership, { loading: false, error: null }])
 
     vi.stubGlobal('alert', vi.fn())
   })
@@ -127,7 +147,7 @@ describe('TransferOwnershipModal Component', () => {
     it('should render modal backdrop', () => {
       const { container } = renderModal(true)
 
-      const backdrop = container.querySelector('.fixed.inset-0.bg-black\\/50')
+      const backdrop = container.querySelector(String.raw`.fixed.inset-0.bg-black\/50`)
       expect(backdrop).toBeInTheDocument()
     })
 
@@ -226,7 +246,7 @@ describe('TransferOwnershipModal Component', () => {
       renderModal(true)
 
       // Select an organization
-      const orgSelect = screen.getByText('Choose an organization...').closest('select')!
+      const orgSelect = closestSelect(screen.getByText('Choose an organization...'))
       await user.selectOptions(orgSelect, 'org-1')
 
       // Should show new owner selection
@@ -240,12 +260,12 @@ describe('TransferOwnershipModal Component', () => {
       renderModal(true)
 
       // Select organization
-      const orgSelect = screen.getByText('Choose an organization...').closest('select')!
+      const orgSelect = closestSelect(screen.getByText('Choose an organization...'))
       await user.selectOptions(orgSelect, 'org-1')
 
       // Select new owner
       const ownerSelect = await screen.findByText('Choose new owner...')
-      await user.selectOptions(ownerSelect.closest('select')!, 'user-2')
+      await user.selectOptions(closestSelect(ownerSelect), 'user-2')
 
       // Should show warning
       await waitFor(() => {
@@ -258,11 +278,11 @@ describe('TransferOwnershipModal Component', () => {
       renderModal(true)
 
       // Select organization and owner
-      const orgSelect = screen.getByText('Choose an organization...').closest('select')!
+      const orgSelect = closestSelect(screen.getByText('Choose an organization...'))
       await user.selectOptions(orgSelect, 'org-1')
 
       const ownerSelect = await screen.findByText('Choose new owner...')
-      await user.selectOptions(ownerSelect.closest('select')!, 'user-2')
+      await user.selectOptions(closestSelect(ownerSelect), 'user-2')
 
       // Should show confirmation input
       await waitFor(() => {
@@ -278,13 +298,13 @@ describe('TransferOwnershipModal Component', () => {
       expect(transferButton).toBeDisabled()
 
       // Select organization
-      const orgSelect = screen.getByText('Choose an organization...').closest('select')!
+      const orgSelect = closestSelect(screen.getByText('Choose an organization...'))
       await user.selectOptions(orgSelect, 'org-1')
       expect(transferButton).toBeDisabled()
 
       // Select new owner
       const ownerSelect = await screen.findByText('Choose new owner...')
-      await user.selectOptions(ownerSelect.closest('select')!, 'user-2')
+      await user.selectOptions(closestSelect(ownerSelect), 'user-2')
       expect(transferButton).toBeDisabled()
 
       // Type confirmation
@@ -301,7 +321,7 @@ describe('TransferOwnershipModal Component', () => {
       renderModal(true)
 
       // Select org with no other members (org-2 only has current user)
-      const orgSelect = screen.getByText('Choose an organization...').closest('select')!
+      const orgSelect = closestSelect(screen.getByText('Choose an organization...'))
       await user.selectOptions(orgSelect, 'org-2')
 
       await waitFor(() => {
@@ -328,8 +348,7 @@ describe('TransferOwnershipModal Component', () => {
       const { container } = renderModal(true)
 
       const closeIcon = container.querySelector('button .h-5.w-5.text-zinc-500')
-      expect(closeIcon).toBeTruthy()
-      const closeButton = closeIcon!.closest('button')!
+      const closeButton = closestButton(requiredElement(closeIcon, 'Expected close icon'))
       await user.click(closeButton)
 
       expect(mockOnClose).toHaveBeenCalled()
@@ -339,7 +358,10 @@ describe('TransferOwnershipModal Component', () => {
       const user = userEvent.setup()
       const { container } = renderModal(true)
 
-      const backdrop = container.querySelector('.fixed.inset-0.bg-black\\/50')!
+      const backdrop = requiredElement(
+        container.querySelector(String.raw`.fixed.inset-0.bg-black\/50`),
+        'Expected backdrop',
+      )
       await user.click(backdrop)
 
       expect(mockOnClose).toHaveBeenCalled()
@@ -366,11 +388,11 @@ describe('TransferOwnershipModal Component', () => {
       renderModal(true)
 
       // Select org and owner to reveal confirmation input
-      const orgSelect = screen.getByText('Choose an organization...').closest('select')!
+      const orgSelect = closestSelect(screen.getByText('Choose an organization...'))
       await user.selectOptions(orgSelect, 'org-1')
 
       const ownerSelect = await screen.findByText('Choose new owner...')
-      await user.selectOptions(ownerSelect.closest('select')!, 'user-2')
+      await user.selectOptions(closestSelect(ownerSelect), 'user-2')
 
       await waitFor(() => {
         expect(screen.getByPlaceholderText('Type TRANSFER to confirm')).toBeInTheDocument()

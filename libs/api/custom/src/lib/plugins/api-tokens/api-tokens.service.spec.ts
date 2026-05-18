@@ -4,7 +4,7 @@ import { ApiTokensService } from './api-tokens.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { SecurityEventsService } from '../security/security-events.service'
 import { GenerateApiTokenInput, RotateApiTokenInput } from './dto'
-import { createHash } from 'crypto'
+import { createHash } from 'node:crypto'
 describe('ApiTokensService', () => {
   let service: ApiTokensService
   let mockData: any
@@ -298,6 +298,7 @@ describe('ApiTokensService', () => {
       expect(result).toEqual({
         userId: 'user-123',
         tokenId: 'token-123',
+        organizationId: null,
       })
       expect(mockData.apiToken.findFirst).toHaveBeenCalledWith({
         where: {
@@ -348,6 +349,7 @@ describe('ApiTokensService', () => {
       expect(result).toEqual({
         userId: 'user-123',
         tokenId: 'token-123',
+        organizationId: null,
       })
     })
     it('should handle lastUsedAt update failure gracefully', async () => {
@@ -367,6 +369,7 @@ describe('ApiTokensService', () => {
       expect(result).toEqual({
         userId: 'user-123',
         tokenId: 'token-123',
+        organizationId: null,
       })
     })
   })
@@ -379,13 +382,13 @@ describe('ApiTokensService', () => {
       let firstHash: string
       mockData.apiToken.create.mockImplementation((args: any) => {
         firstHash = args.data.tokenHash
-        return Promise.resolve({ id: 'token-1', tokenHash: firstHash } as any)
+        return Promise.resolve({ id: 'token-1', tokenHash: firstHash })
       })
       await service.generateApiToken(userId, input)
       let secondHash: string
       mockData.apiToken.create.mockImplementation((args: any) => {
         secondHash = args.data.tokenHash
-        return Promise.resolve({ id: 'token-2', tokenHash: secondHash } as any)
+        return Promise.resolve({ id: 'token-2', tokenHash: secondHash })
       })
       await service.generateApiToken(userId, input)
       // Different tokens should produce different hashes
@@ -399,8 +402,8 @@ describe('ApiTokensService', () => {
         userId: 'user-123',
         tokenHash: expectedHash,
         revoked: false,
-      } as any)
-      mockData.apiToken.update.mockResolvedValue({} as any)
+      })
+      mockData.apiToken.update.mockResolvedValue({})
       const result = await service.validateApiToken(testToken)
       expect(result).toBeDefined()
       expect(result!.tokenId).toBe('token-123')

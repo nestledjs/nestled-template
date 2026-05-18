@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createTestRouter } from "../../../helpers/createTestRouter"
+import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminUsersPage from '../../../../app/routes/admin/users/_index'
 
@@ -15,14 +15,14 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 // Mock SDK
-vi.mock('@nestled-template/shared/sdk', async (importOriginal) => {
+vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
-    
-  AdminUserManagementDocument: { kind: 'Document', definitions: [] },
-  EmulateUserDocument: { kind: 'Document', definitions: [] },
-  AdminUserManagementDetailsDocument: { kind: 'Document', definitions: [] },
+
+    AdminUserManagementDocument: { kind: 'Document', definitions: [] },
+    EmulateUserDocument: { kind: 'Document', definitions: [] },
+    AdminUserManagementDetailsDocument: { kind: 'Document', definitions: [] },
   }
 })
 
@@ -47,7 +47,7 @@ describe('Admin Users Management Page', () => {
 
     // Default mock for useMutation that calls onCompleted/onError callbacks
     mockUseMutation.mockImplementation((_document, options) => {
-      const mutationFn = vi.fn().mockImplementation(async (args) => {
+      const mutationFn = vi.fn().mockImplementation(async args => {
         try {
           const result = { data: {} }
           if (options?.onCompleted) {
@@ -160,7 +160,7 @@ describe('Admin Users Management Page', () => {
 
   describe('Users List Display', () => {
     it('should display all users in table', () => {
-      mockUseQuery.mockImplementation((doc) => {
+      mockUseQuery.mockImplementation(doc => {
         if (doc === 'AdminUserManagementDocument' || doc.kind) {
           return {
             data: mockUsersData,
@@ -266,8 +266,16 @@ describe('Admin Users Management Page', () => {
               ...mockUsersData.adminUsers.users[0],
               organizations: [
                 { id: 'org-1', organization: { id: 'o1', name: 'Org 1' }, role: { name: 'Owner' } },
-                { id: 'org-2', organization: { id: 'o2', name: 'Org 2' }, role: { name: 'Member' } },
-                { id: 'org-3', organization: { id: 'o3', name: 'Org 3' }, role: { name: 'Member' } },
+                {
+                  id: 'org-2',
+                  organization: { id: 'o2', name: 'Org 2' },
+                  role: { name: 'Member' },
+                },
+                {
+                  id: 'org-3',
+                  organization: { id: 'o3', name: 'Org 3' },
+                  role: { name: 'Member' },
+                },
               ],
             },
           ],
@@ -554,9 +562,7 @@ describe('Admin Users Management Page', () => {
       await user.click(emulateButton)
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/This will log you in as this user/)
-        ).toBeInTheDocument()
+        expect(screen.getByText(/This will log you in as this user/)).toBeInTheDocument()
       })
     })
 
@@ -673,9 +679,12 @@ describe('Admin Users Management Page', () => {
     })
 
     it('should disable emulate button while emulation is in progress', async () => {
-      const mockEmulate = vi.fn().mockImplementation(() => new Promise(() => {
-        // Never resolves
-      }))
+      const mockEmulate = vi.fn().mockImplementation(
+        () =>
+          new Promise(() => {
+            // Never resolves
+          }),
+      )
       mockUseQuery.mockImplementation(() => ({
         data: mockUsersData,
         loading: false,
@@ -693,7 +702,7 @@ describe('Admin Users Management Page', () => {
 
   describe('User Detail Modal', () => {
     it('should open modal when clicking View button', async () => {
-      mockUseQuery.mockImplementation((doc) => {
+      mockUseQuery.mockImplementation(doc => {
         if (doc.kind || typeof doc === 'object') {
           return {
             data: mockUsersData,
@@ -1038,7 +1047,9 @@ describe('Admin Users Management Page', () => {
       renderUsersPage()
 
       expect(screen.getByText('User Management')).toBeInTheDocument()
-      expect(screen.getByText('Manage users, view activity, and emulate user sessions')).toBeInTheDocument()
+      expect(
+        screen.getByText('Manage users, view activity, and emulate user sessions'),
+      ).toBeInTheDocument()
     })
   })
 })

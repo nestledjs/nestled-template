@@ -99,5 +99,5 @@ The {{appName}} Team
 {{#if supportEmail}}
 Questions? Contact us at {{supportEmail}}
 {{/if}}
-  `.trim()
+  `.trim(),
 }

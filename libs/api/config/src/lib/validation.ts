@@ -2,10 +2,12 @@ import * as Joi from 'joi'
 
 export const validationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test'),
-  HOST: Joi.alternatives().try(
-    Joi.string().ip(), // Allow IP addresses like 0.0.0.0, 127.0.0.1
-    Joi.string().hostname(), // Allow hostnames like localhost, example.com
-  ).default('localhost'),
+  HOST: Joi.alternatives()
+    .try(
+      Joi.string().ip(), // Allow IP addresses like 0.0.0.0, 127.0.0.1
+      Joi.string().hostname(), // Allow hostnames like localhost, example.com
+    )
+    .default('localhost'),
   PORT: Joi.number().default(3000),
   WEB_PORT: Joi.number().default(4200),
   WEB_URL: Joi.string().default(

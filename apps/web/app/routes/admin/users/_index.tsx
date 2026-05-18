@@ -18,10 +18,146 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline'
 import { cn } from '@nestled-template/shared/utils'
-import { useNavigate } from 'react-router'
+
+function formatDate(date: string | null) {
+  if (!date) return 'Never'
+  return new Date(date).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+type UserRow = NonNullable<NonNullable<AdminUserManagementQuery['adminUsers']>['users']>[0]
+
+function UserStatusBadges({
+  emailVerified,
+  twoFactorEnabled,
+  isLocked,
+}: {
+  readonly emailVerified: boolean
+  readonly twoFactorEnabled: boolean | null | undefined
+  readonly isLocked: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      {emailVerified ? (
+        <span className="inline-flex items-center text-xs text-green-700 dark:text-green-400">
+          <CheckCircleIcon className="mr-1 h-3 w-3" />
+          Verified
+        </span>
+      ) : (
+        <span className="inline-flex items-center text-xs text-zinc-500 dark:text-zinc-400">
+          <XCircleIcon className="mr-1 h-3 w-3" />
+          Not Verified
+        </span>
+      )}
+      {twoFactorEnabled && (
+        <span className="inline-flex items-center text-xs text-purple-700 dark:text-purple-400">
+          <ShieldCheckIcon className="mr-1 h-3 w-3" />
+          2FA
+        </span>
+      )}
+      {isLocked && (
+        <span className="inline-flex items-center text-xs text-red-700 dark:text-red-400">
+          <LockClosedIcon className="mr-1 h-3 w-3" />
+          Locked
+        </span>
+      )}
+    </div>
+  )
+}
+
+function UserTableRow({
+  user,
+  emulating,
+  onView,
+  onEmulate,
+}: {
+  readonly user: UserRow
+  readonly emulating: boolean
+  readonly onView: (id: string) => void
+  readonly onEmulate: (id: string, email: string) => void
+}) {
+  const email = user.emails?.find(e => e.primary)?.email || 'No email'
+  const emailVerified = user.emails?.find(e => e.primary)?.verified || false
+  const isLocked = user.lockedUntil ? new Date(user.lockedUntil) > new Date() : false
+
+  return (
+    <tr key={user.id} className="hover:bg-zinc-50 dark:hover:bg-white/5 transition">
+      <td className="px-6 py-4 whitespace-nowrap">
+        <div className="flex items-center">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-medium text-zinc-900 dark:text-white">
+                {user.firstName} {user.lastName}
+              </div>
+              {user.isSuperAdmin && (
+                <span className="inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                  <ShieldCheckIcon className="mr-1 h-3 w-3" />
+                  Super Admin
+                </span>
+              )}
+            </div>
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">{email}</div>
+            <div className="text-xs text-zinc-400 dark:text-zinc-500">
+              ID: {user.id.slice(0, 8)}...
+            </div>
+          </div>
+        </div>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <UserStatusBadges
+          emailVerified={emailVerified}
+          twoFactorEnabled={user.twoFactorEnabled}
+          isLocked={isLocked}
+        />
+      </td>
+      <td className="px-6 py-4">
+        <div className="flex flex-wrap gap-1">
+          {user.organizations?.slice(0, 2).map(org => (
+            <span
+              key={org.organization?.id}
+              className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-xs text-zinc-700 dark:text-zinc-300"
+            >
+              {org.organization?.name}
+            </span>
+          ))}
+          {(user.organizations?.length || 0) > 2 && (
+            <span className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-xs text-zinc-700 dark:text-zinc-300">
+              +{(user.organizations?.length || 0) - 2} more
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
+        {formatDate(user.lastSuccessfulLogin)}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => onView(user.id)}
+            className="inline-flex items-center gap-1 rounded-lg bg-zinc-600 dark:bg-white/10 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-500 dark:hover:bg-white/20 transition"
+          >
+            <EyeIcon className="h-4 w-4" />
+            View
+          </button>
+          <button
+            onClick={() => onEmulate(user.id, email)}
+            disabled={emulating}
+            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50 transition"
+          >
+            Emulate
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
+}
 
 export default function AdminUsersPage() {
-  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState({
     isSuperAdmin: undefined as boolean | undefined,
@@ -54,11 +190,14 @@ export default function AdminUsersPage() {
   })
 
   // Query user details
-  const { data: detailsData, loading: loadingDetails } = useQuery<AdminUserManagementDetailsQuery>(AdminUserManagementDetails, {
-    variables: { userId: selectedUserId! },
-    skip: !selectedUserId,
-    fetchPolicy: 'network-only',
-  })
+  const { data: detailsData, loading: loadingDetails } = useQuery<AdminUserManagementDetailsQuery>(
+    AdminUserManagementDetails,
+    {
+      variables: { userId: selectedUserId || '' },
+      skip: !selectedUserId,
+      fetchPolicy: 'network-only',
+    },
+  )
 
   const userDetails = detailsData?.adminUserDetails
 
@@ -66,7 +205,7 @@ export default function AdminUsersPage() {
   const [emulateUser, { loading: emulating }] = useMutation<EmulateUserMutation>(EmulateUser, {
     onCompleted: () => {
       // Reload the page to switch to the emulated user's session
-      window.location.href = '/members/dashboard'
+      globalThis.location.href = '/members/dashboard'
     },
     onError: error => {
       setErrorMessage(error.message)
@@ -91,17 +230,6 @@ export default function AdminUsersPage() {
 
   const cancelEmulation = () => {
     setConfirmEmulation(null)
-  }
-
-  const formatDate = (date: string | null) => {
-    if (!date) return 'Never'
-    return new Date(date).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
   }
 
   return (
@@ -233,20 +361,23 @@ export default function AdminUsersPage() {
 
       {/* Users Table */}
       <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 shadow-sm overflow-hidden backdrop-blur">
-        {loading ? (
+        {loading && (
           <div className="p-12 text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-emerald-600 dark:border-emerald-400 border-r-transparent"></div>
             <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">Loading users...</p>
           </div>
-        ) : error ? (
+        )}
+        {!loading && error && (
           <div className="p-12 text-center">
             <p className="text-red-600 dark:text-red-400">Error loading users: {error.message}</p>
           </div>
-        ) : users.length === 0 ? (
+        )}
+        {!loading && !error && users.length === 0 && (
           <div className="p-12 text-center text-zinc-500 dark:text-zinc-400">
             No users found matching your criteria
           </div>
-        ) : (
+        )}
+        {!loading && !error && users.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-zinc-200 dark:divide-white/10">
               <thead className="bg-zinc-50 dark:bg-white/5">
@@ -269,104 +400,15 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200 dark:divide-white/10 bg-white dark:bg-white/5">
-                {users.map(user => {
-                  const email = user.emails?.find(e => e.primary)?.email || 'No email'
-                  const emailVerified = user.emails?.find(e => e.primary)?.verified || false
-                  const isLocked = user.lockedUntil
-                    ? new Date(user.lockedUntil) > new Date()
-                    : false
-
-                  return (
-                    <tr key={user.id} className="hover:bg-zinc-50 dark:hover:bg-white/5 transition">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <div className="text-sm font-medium text-zinc-900 dark:text-white">
-                                {user.firstName} {user.lastName}
-                              </div>
-                              {user.isSuperAdmin && (
-                                <span className="inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">
-                                  <ShieldCheckIcon className="mr-1 h-3 w-3" />
-                                  Super Admin
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-sm text-zinc-500 dark:text-zinc-400">{email}</div>
-                            <div className="text-xs text-zinc-400 dark:text-zinc-500">
-                              ID: {user.id.slice(0, 8)}...
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex flex-col gap-1">
-                          {emailVerified ? (
-                            <span className="inline-flex items-center text-xs text-green-700 dark:text-green-400">
-                              <CheckCircleIcon className="mr-1 h-3 w-3" />
-                              Verified
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center text-xs text-zinc-500 dark:text-zinc-400">
-                              <XCircleIcon className="mr-1 h-3 w-3" />
-                              Not Verified
-                            </span>
-                          )}
-                          {user.twoFactorEnabled && (
-                            <span className="inline-flex items-center text-xs text-purple-700 dark:text-purple-400">
-                              <ShieldCheckIcon className="mr-1 h-3 w-3" />
-                              2FA
-                            </span>
-                          )}
-                          {isLocked && (
-                            <span className="inline-flex items-center text-xs text-red-700 dark:text-red-400">
-                              <LockClosedIcon className="mr-1 h-3 w-3" />
-                              Locked
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {user.organizations?.slice(0, 2).map(org => (
-                            <span
-                              key={org.organization?.id}
-                              className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-xs text-zinc-700 dark:text-zinc-300"
-                            >
-                              {org.organization?.name}
-                            </span>
-                          ))}
-                          {(user.organizations?.length || 0) > 2 && (
-                            <span className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-xs text-zinc-700 dark:text-zinc-300">
-                              +{(user.organizations?.length || 0) - 2} more
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
-                        {formatDate(user.lastSuccessfulLogin)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => setSelectedUserId(user.id)}
-                            className="inline-flex items-center gap-1 rounded-lg bg-zinc-600 dark:bg-white/10 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-500 dark:hover:bg-white/20 transition"
-                          >
-                            <EyeIcon className="h-4 w-4" />
-                            View
-                          </button>
-                          <button
-                            onClick={() => handleEmulate(user.id, email)}
-                            disabled={emulating}
-                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50 transition"
-                          >
-                            Emulate
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
+                {users.map(user => (
+                  <UserTableRow
+                    key={user.id}
+                    user={user}
+                    emulating={emulating}
+                    onView={setSelectedUserId}
+                    onEmulate={handleEmulate}
+                  />
+                ))}
               </tbody>
             </table>
           </div>
@@ -483,42 +525,41 @@ export default function AdminUsersPage() {
 
             {/* Modal Content */}
             <div className="p-6">
-              {loadingDetails ? (
+              {loadingDetails && (
                 <div className="flex items-center justify-center py-12">
                   <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-emerald-600 dark:border-emerald-400 border-r-transparent"></div>
                 </div>
-              ) : userDetails ? (
+              )}
+              {!loadingDetails && userDetails && (
                 <div className="space-y-6">
                   {/* Basic Info */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-                        Name
-                      </label>
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Name</p>
                       <p className="mt-1 text-base font-medium text-zinc-900 dark:text-white">
                         {userDetails.firstName} {userDetails.lastName}
                       </p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
                         User ID
-                      </label>
+                      </p>
                       <p className="mt-1 text-sm text-zinc-900 dark:text-white font-mono">
                         {userDetails.id}
                       </p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
                         Created
-                      </label>
+                      </p>
                       <p className="mt-1 text-sm text-zinc-900 dark:text-white">
                         {formatDate(userDetails.createdAt)}
                       </p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
                         Last Login
-                      </label>
+                      </p>
                       <p className="mt-1 text-sm text-zinc-900 dark:text-white">
                         {formatDate(userDetails.lastSuccessfulLogin)}
                       </p>
@@ -527,9 +568,9 @@ export default function AdminUsersPage() {
 
                   {/* Emails */}
                   <div>
-                    <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                    <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
                       Email Addresses
-                    </label>
+                    </p>
                     <div className="mt-2 space-y-2">
                       {userDetails.emails?.map(email => (
                         <div
@@ -564,9 +605,9 @@ export default function AdminUsersPage() {
 
                   {/* Security Status */}
                   <div>
-                    <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                    <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
                       Security Status
-                    </label>
+                    </p>
                     <div className="mt-2 grid grid-cols-2 gap-4">
                       <div className="flex items-center justify-between rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-white/5 px-4 py-3">
                         <span className="text-sm text-zinc-700 dark:text-zinc-300">
@@ -613,9 +654,9 @@ export default function AdminUsersPage() {
                   {/* Organizations */}
                   {userDetails.organizations && userDetails.organizations.length > 0 && (
                     <div>
-                      <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
                         Organizations
-                      </label>
+                      </p>
                       <div className="mt-2 space-y-2">
                         {userDetails.organizations.map(org => (
                           <div
@@ -642,9 +683,13 @@ export default function AdminUsersPage() {
                   {/* Active Sessions */}
                   {userDetails.activeSessions && userDetails.activeSessions.length > 0 && (
                     <div>
-                      <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-                        Active Sessions ({userDetails.activeSessions.filter(s => s.isValid).length})
-                      </label>
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                        Active Sessions (
+                        {userDetails.activeSessions.some(s => s.isValid)
+                          ? userDetails.activeSessions.filter(s => s.isValid).length
+                          : 0}
+                        )
+                      </p>
                       <div className="mt-2 space-y-2">
                         {userDetails.activeSessions
                           .filter(s => s.isValid)
@@ -674,9 +719,9 @@ export default function AdminUsersPage() {
                   {/* Recent Activity */}
                   {userDetails.AuditLog && userDetails.AuditLog.length > 0 && (
                     <div>
-                      <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
                         Recent Activity
-                      </label>
+                      </p>
                       <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
                         {userDetails.AuditLog.slice(0, 10).map(log => (
                           <div
@@ -702,7 +747,8 @@ export default function AdminUsersPage() {
                     </div>
                   )}
                 </div>
-              ) : (
+              )}
+              {!loadingDetails && !userDetails && (
                 <div className="text-center py-8 text-zinc-500 dark:text-zinc-400">
                   Failed to load user details
                 </div>

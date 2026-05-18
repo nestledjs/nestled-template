@@ -33,76 +33,76 @@ export class WebhookService {
       switch (event.type) {
         // Checkout Session Events
         case 'checkout.session.completed':
-          await this.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session)
+          await this.handleCheckoutSessionCompleted(event.data.object)
           break
 
         // Subscription Events
         case 'customer.subscription.created':
-          await this.handleSubscriptionCreated(event.data.object as Stripe.Subscription)
+          await this.handleSubscriptionCreated(event.data.object)
           break
 
         case 'customer.subscription.updated':
-          await this.handleSubscriptionUpdated(event.data.object as Stripe.Subscription)
+          await this.handleSubscriptionUpdated(event.data.object)
           break
 
         case 'customer.subscription.deleted':
-          await this.handleSubscriptionDeleted(event.data.object as Stripe.Subscription)
+          await this.handleSubscriptionDeleted(event.data.object)
           break
 
         // Invoice Events
         case 'invoice.paid':
-          await this.handleInvoicePaid(event.data.object as Stripe.Invoice)
+          await this.handleInvoicePaid(event.data.object)
           break
 
         case 'invoice.payment_succeeded':
-          await this.handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice)
+          await this.handleInvoicePaymentSucceeded(event.data.object)
           break
 
         case 'invoice.payment_failed':
-          await this.handleInvoicePaymentFailed(event.data.object as Stripe.Invoice)
+          await this.handleInvoicePaymentFailed(event.data.object)
           break
 
         case 'invoice.upcoming':
-          await this.handleInvoiceUpcoming(event.data.object as Stripe.Invoice)
+          await this.handleInvoiceUpcoming(event.data.object)
           break
 
         // Payment Intent Events (One-time payments)
         case 'payment_intent.succeeded':
-          await this.handlePaymentIntentSucceeded(event.data.object as Stripe.PaymentIntent)
+          await this.handlePaymentIntentSucceeded(event.data.object)
           break
 
         case 'payment_intent.payment_failed':
-          await this.handlePaymentIntentFailed(event.data.object as Stripe.PaymentIntent)
+          await this.handlePaymentIntentFailed(event.data.object)
           break
 
         // Charge Events
         case 'charge.succeeded':
-          await this.handleChargeSucceeded(event.data.object as Stripe.Charge)
+          await this.handleChargeSucceeded(event.data.object)
           break
 
         case 'charge.refunded':
-          await this.handleChargeRefunded(event.data.object as Stripe.Charge)
+          await this.handleChargeRefunded(event.data.object)
           break
 
         // Product/Price Events
         case 'product.created':
         case 'product.updated':
-          await this.handleProductUpdated(event.data.object as Stripe.Product)
+          await this.handleProductUpdated(event.data.object)
           break
 
         case 'price.created':
         case 'price.updated':
-          await this.handlePriceUpdated(event.data.object as Stripe.Price)
+          await this.handlePriceUpdated(event.data.object)
           break
 
         // Customer Events
         case 'customer.created':
         case 'customer.updated':
-          await this.handleCustomerUpdated(event.data.object as Stripe.Customer)
+          await this.handleCustomerUpdated(event.data.object)
           break
 
         case 'customer.deleted':
-          await this.handleCustomerDeleted(event.data.object as Stripe.Customer)
+          await this.handleCustomerDeleted(event.data.object)
           break
 
         default:
@@ -251,7 +251,8 @@ export class WebhookService {
 
     const subscriptionField = (invoice as any).subscription
     if (subscriptionField) {
-      const subscriptionId = typeof subscriptionField === 'string' ? subscriptionField : subscriptionField.id
+      const subscriptionId =
+        typeof subscriptionField === 'string' ? subscriptionField : subscriptionField.id
 
       await this.prisma.subscription.updateMany({
         where: { stripeSubscriptionId: subscriptionId },
@@ -287,13 +288,15 @@ export class WebhookService {
       })
     }
 
-    // TODO: Send payment failed email
-    this.logger.warn(`Payment failed for invoice ${invoice.id} - consider sending email notification`)
+    // FUTURE: Send payment failed email
+    this.logger.warn(
+      `Payment failed for invoice ${invoice.id} - consider sending email notification`,
+    )
   }
 
   private async handleInvoiceUpcoming(invoice: Stripe.Invoice): Promise<void> {
     this.logger.log(`Invoice upcoming: ${invoice.id}`)
-    // TODO: Send upcoming invoice email (7 days before billing)
+    // FUTURE: Send upcoming invoice email (7 days before billing)
     this.logger.log(`Upcoming invoice in 7 days - consider sending reminder email`)
   }
 
@@ -304,16 +307,14 @@ export class WebhookService {
   private async handlePaymentIntentSucceeded(paymentIntent: Stripe.PaymentIntent): Promise<void> {
     this.logger.log(`Payment intent succeeded: ${paymentIntent.id}`)
 
-    // TODO: Create Payment record if you add the Payment model
+    // FUTURE: Create Payment record if you add the Payment model
     // For now, just log the successful payment
-    this.logger.log(
-      `One-time payment succeeded: ${paymentIntent.amount} ${paymentIntent.currency}`,
-    )
+    this.logger.log(`One-time payment succeeded: ${paymentIntent.amount} ${paymentIntent.currency}`)
   }
 
   private async handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent): Promise<void> {
     this.logger.error(`Payment intent failed: ${paymentIntent.id}`)
-    // TODO: Handle failed one-time payment
+    // FUTURE: Handle failed one-time payment
     // Send notification, log to database, etc.
   }
 
@@ -329,7 +330,7 @@ export class WebhookService {
 
   private async handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
     this.logger.log(`Charge refunded: ${charge.id}`)
-    // TODO: Handle refund logic
+    // FUTURE: Handle refund logic
     // Update payment records, revoke access if applicable, send confirmation email
   }
 

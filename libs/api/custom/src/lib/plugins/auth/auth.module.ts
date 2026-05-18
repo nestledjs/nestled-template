@@ -1,5 +1,4 @@
 import { ApiCoreDataAccessModule } from '@nestled-template/api/core/data-access'
-import { ApiCoreFeatureModule } from '@nestled-template/api/core/feature'
 import { Module } from '@nestjs/common'
 import { HttpModule } from '@nestjs/axios'
 import { JwtModule } from '@nestjs/jwt'
@@ -12,15 +11,12 @@ import { UserExtensionResolver } from './user-extension.resolver'
 import { OAuthService } from './oauth.service'
 import { OAuthController } from './oauth.controller'
 import { EmailIntegrationModule } from '@nestled-template/api/integrations'
-import { ConfigModule } from '@nestled-template/api/config'
 import { SecurityEventsModule } from '../security'
 
 @Module({
   imports: [
     ApiCoreDataAccessModule,
-    ApiCoreFeatureModule,
     EmailIntegrationModule,
-    ConfigModule,
     SecurityEventsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     HttpModule,
@@ -29,7 +25,14 @@ import { SecurityEventsModule } from '../security'
     }),
   ],
   exports: [AuthService, OAuthService, SessionService],
-  providers: [AuthService, SessionService, OAuthService, AuthResolver, UserExtensionResolver, JwtStrategy],
+  providers: [
+    AuthService,
+    SessionService,
+    OAuthService,
+    AuthResolver,
+    UserExtensionResolver,
+    JwtStrategy,
+  ],
   controllers: [OAuthController],
 })
 export class AuthModule {}

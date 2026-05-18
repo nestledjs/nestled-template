@@ -1,0 +1,24 @@
+id: 2026-05-17-public-template-bootstrap
+title: Public template bootstrap
+priority: ignore
+area: docs
+type: docs
+
+intent: >
+  Record the one-time public template bootstrap from the May 2026 security baseline.
+
+why: >
+  This commit establishes the public template starting point for future downstream upgrades. The
+  bootstrap itself is not an actionable downstream patch because new downstream projects clone this
+  state directly, and existing projects should migrate onto this baseline deliberately.
+
+skipIf:
+  - This note is only being used as historical public-template context.
+
+verification:
+  - pnpm run nestled-doctor
+  - pnpm template:validate-upgrade-notes
+
+agentHints:
+  - Do not apply this note as a downstream code patch.
+  - Treat the public template commit containing this note as the first downstream upgrade baseline.

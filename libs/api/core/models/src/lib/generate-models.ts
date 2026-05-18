@@ -42,7 +42,8 @@ function parseSchemaPathSettingFromConfigContent(content: string): string | null
     const parts = extractQuotedStrings(joinArgs)
     if (parts.length) return parts.join('/')
   }
-  return content.match(/schema\s*:\s*['"`]([^'"`]+)['"`]/)?.[1] ?? null
+  const schemaMatch = /schema\s*:\s*['"`]([^'"`]+)['"`]/.exec(content)
+  return schemaMatch?.[1] ?? null
 }
 
 // Resolve schema setting from prisma.config.ts or package.json
@@ -63,20 +64,22 @@ function getSchemaPathSetting(projectRoot: string): string | null {
   }
 }
 
+function findRootViaDevkit(startDir: string): string | null {
+  try {
+    const { findRootSync } = require('@nx/devkit')
+    return findRootSync(startDir)
+  } catch {
+    return null
+  }
+}
+
 // Find project root and get schema path from package.json
 function findProjectRoot(startDir: string): string {
   try {
-    // Try to use Nx's utility first if available
-    try {
-      const { findRootSync } = require('@nx/devkit')
-      return findRootSync(startDir)
-    } catch {
-      // Fallback to process.cwd() which should be project root when running scripts
-      return process.cwd()
-    }
+    return findRootViaDevkit(startDir) ?? process.cwd()
   } catch (error) {
     console.error('Error finding project root:', error)
-    return process.cwd() // Fallback
+    return process.cwd()
   }
 }
 
@@ -191,148 +194,89 @@ async function main() {
   console.log('Models and enums generated successfully!')
 }
 
+const SCALAR_TS_TYPE: Record<string, string> = {
+  Int: 'number',
+  Float: 'number',
+  Decimal: 'Decimal',
+  String: 'string',
+  ID: 'string',
+  Boolean: 'boolean',
+  DateTime: 'Date',
+  Json: 'JsonValue',
+  BigInt: 'bigint',
+  Bytes: 'Buffer',
+}
+
+const SCALAR_GQL_TYPE: Record<string, string> = {
+  Int: 'Int',
+  Float: 'Float',
+  Decimal: 'GraphQLDecimal',
+  BigInt: 'GraphQLBigInt',
+  Json: 'GraphQLJSONObject',
+  DateTime: 'GraphQLISODateTime',
+  Boolean: 'Boolean',
+  String: 'String',
+  ID: 'String',
+}
+
+function resolveGraphQLType(originalType: string, kind: string): string {
+  if (kind === 'scalar') return SCALAR_GQL_TYPE[originalType] ?? originalType
+  return originalType
+}
+
+function resolveTsType(originalType: string, kind: string): string {
+  if (kind === 'scalar') return SCALAR_TS_TYPE[originalType] ?? originalType
+  return originalType
+}
+
+function buildFieldDecorator(field: any): string {
+  const isRelation = field.kind === 'object'
+  const isFieldRequired = isRelation ? false : field.isRequired
+  const gqlType = resolveGraphQLType(field.type, field.kind)
+  const decoratorType = field.isList ? `() => [${gqlType}]` : `() => ${gqlType}`
+  const options = isFieldRequired ? '' : ', { nullable: true }'
+  return `@Field(${decoratorType}${options})`
+}
+
+function buildFieldDeclaration(field: any): string {
+  const isRelation = field.kind === 'object'
+  const isFieldRequired = isRelation ? false : field.isRequired
+  let tsType = resolveTsType(field.type, field.kind)
+  if (isRelation) tsType = `Partial<${tsType}>`
+  const typeMarker = isFieldRequired ? '!' : '?'
+  const nullUnion = isFieldRequired ? '' : ' | null'
+  return `  ${field.name}${typeMarker}: ${tsType}${field.isList ? '[]' : ''}${nullUnion};`
+}
+
+function usesType(models: readonly any[], type: string): boolean {
+  return models.some(m => m.fields.some((f: { type: string }) => f.type === type))
+}
+
 function generateModels(models: readonly any[], enums: readonly any[]): string {
-  // Check if any model field uses Float
-  const usesFloat = models.some(model =>
-    model.fields.some((field: { type: string }) => field.type === 'Float'),
-  )
-  // Check if any model field uses BigInt
-  const usesBigInt = models.some(model =>
-    model.fields.some((field: { type: string }) => field.type === 'BigInt'),
-  )
-  // Check if any model field uses DateTime
-  const usesDateTime = models.some(model =>
-    model.fields.some((field: { type: string }) => field.type === 'DateTime'),
-  )
-  let output = `import { Field, ObjectType${usesFloat ? ', Float' : ''}${
-    usesDateTime ? ', GraphQLISODateTime' : ''
-  }, Int } from '@nestjs/graphql';\n`
+  const gqlImports = ['Field', 'ObjectType', 'Int']
+  if (usesType(models, 'Float')) gqlImports.push('Float')
+  if (usesType(models, 'DateTime')) gqlImports.push('GraphQLISODateTime')
+
+  let output = `import { ${gqlImports.join(', ')} } from '@nestjs/graphql';\n`
   output += `import { GraphQLJSONObject } from 'graphql-type-json';\n`
 
-  // Check if any model field uses Decimal
-  const usesDecimal = models.some(model =>
-    model.fields.some((field: { type: string }) => field.type === 'Decimal'),
-  )
-  // Check if any model field uses Json
-  const usesJson = models.some(model =>
-    model.fields.some((field: { type: string }) => field.type === 'Json'),
-  )
-  if (usesDecimal) {
+  if (usesType(models, 'Decimal')) {
     output += `import Decimal from 'decimal.js';\n`
     output += `import { GraphQLDecimal } from 'prisma-graphql-type-decimal';\n`
   }
-  if (usesBigInt) {
-    output += `import { GraphQLBigInt } from 'graphql-scalars';\n`
-  }
-  // Import JsonValue type directly from Prisma v7 runtime (where it now lives)
-  if (usesJson) {
+  if (usesType(models, 'BigInt')) output += `import { GraphQLBigInt } from 'graphql-scalars';\n`
+  if (usesType(models, 'Json'))
     output += `import type { JsonValue } from '@prisma/client/runtime/client';\n`
-  }
-  // Ensure enums are imported correctly
-  const enumNames = enums.map(e => e.name)
-  if (enumNames.length > 0) {
-    output += `import { ${enumNames.join(', ')} } from './enums';\n`
-  }
+
+  const enumNames = enums.map((e: { name: string }) => e.name)
+  if (enumNames.length > 0) output += `import { ${enumNames.join(', ')} } from './enums';\n`
   output += `\n`
 
   for (const model of models) {
-    output += `@ObjectType({ description: undefined })\nexport class ${model.name} {\n` // Added description: undefined for clarity if not set
-
+    output += `@ObjectType({ description: undefined })\nexport class ${model.name} {\n`
     for (const field of model.fields) {
-      const isList = field.isList
-      const isEnum = field.kind === 'enum'
-      const isRelation = field.kind === 'object'
-      const originalType = field.type
-      const isFieldRequired = isRelation ? false : field.isRequired
-      // const isRequired = field.isRequired // Natively supported by DMMF
-
-      let tsType = originalType
-
-      if (field.kind === 'scalar') {
-        if (originalType === 'Int' || originalType === 'Float') {
-          tsType = 'number'
-        } else if (originalType === 'Decimal') {
-          tsType = 'Decimal'
-        } else if (originalType === 'String' || originalType === 'ID') {
-          tsType = 'string'
-        } else if (originalType === 'Boolean') {
-          tsType = 'boolean'
-        } else if (originalType === 'DateTime') {
-          tsType = 'Date'
-        } else if (originalType === 'Json') {
-          tsType = 'JsonValue'
-        } else if (originalType === 'BigInt') {
-          tsType = 'bigint' // Prisma uses bigint for BigInt
-        } else if (originalType === 'Bytes') {
-          tsType = 'Buffer' // Prisma uses Buffer for Bytes
-        }
-      } else if (field.kind === 'enum') {
-        tsType = originalType
-      } else if (field.kind === 'object') {
-        tsType = originalType
-      }
-
-      let decorator = '@Field('
-      const options: string[] = []
-      // Only add nullable: true for optional fields
-      if (!isFieldRequired) {
-        options.push('nullable: true')
-      }
-
-      // Always declare the type in the decorator
-      let decoratorType = ''
-      if (isList) {
-        let listItemGraphQLType = originalType
-        if (originalType === 'Int') listItemGraphQLType = 'Int'
-        else if (originalType === 'Float') listItemGraphQLType = 'Float'
-        else if (originalType === 'Decimal') listItemGraphQLType = 'GraphQLDecimal'
-        else if (originalType === 'BigInt') listItemGraphQLType = 'GraphQLBigInt'
-        else if (originalType === 'Json') listItemGraphQLType = 'GraphQLJSONObject'
-        else if (isEnum || isRelation)
-          listItemGraphQLType = originalType // Assumes enum/type is registered with GraphQL
-        else if (originalType === 'DateTime') listItemGraphQLType = 'GraphQLISODateTime'
-        else if (originalType === 'Boolean') listItemGraphQLType = 'Boolean'
-        else if (originalType.toLowerCase() === 'string' || originalType === 'ID') {
-          listItemGraphQLType = 'String'
-        } else {
-          listItemGraphQLType = originalType
-        }
-        decoratorType = `() => [${listItemGraphQLType}]`
-      } else {
-        // Always declare the type for non-list fields
-        if (originalType === 'Int') decoratorType = '() => Int'
-        else if (originalType === 'Float') decoratorType = '() => Float'
-        else if (originalType === 'Decimal') decoratorType = '() => GraphQLDecimal'
-        else if (originalType === 'BigInt') decoratorType = '() => GraphQLBigInt'
-        else if (originalType === 'Json') decoratorType = '() => GraphQLJSONObject'
-        else if (isEnum || isRelation) decoratorType = `() => ${originalType}`
-        else if (originalType === 'DateTime') decoratorType = '() => GraphQLISODateTime'
-        else if (originalType === 'Boolean') decoratorType = '() => Boolean'
-        else if (originalType.toLowerCase() === 'string' || originalType === 'ID')
-          decoratorType = '() => String'
-        else decoratorType = `() => ${originalType}`
-      }
-
-      decorator += decoratorType
-      if (options.length > 0) {
-        decorator += `, { ${options.join(', ')} }`
-      }
-      decorator += ')'
-
-      output += `  ${decorator}\n`
-      // Add optional marker (?) for non-required fields, or ! for required fields
-      const typeMarker = isFieldRequired ? '!' : '?'
-
-      // For relations, use Partial<Type> only if it's not required and can be partially loaded
-      let finalTsType = tsType
-      if (isRelation) {
-        // For relations, always use Partial<Type> (for both single and list)
-        finalTsType = `Partial<${tsType}>`
-      }
-
-      // Add null union type only for non-required fields
-      const nullUnion = isFieldRequired ? '' : ' | null'
-      output += `  ${field.name}${typeMarker}: ${finalTsType}${isList ? '[]' : ''}${nullUnion};\n\n`
+      output += `  ${buildFieldDecorator(field)}\n`
+      output += `${buildFieldDeclaration(field)}\n\n`
     }
     output += `}\n\n`
   }

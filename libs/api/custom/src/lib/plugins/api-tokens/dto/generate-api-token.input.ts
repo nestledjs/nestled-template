@@ -1,5 +1,5 @@
 import { Field, InputType } from '@nestjs/graphql'
-import { IsNotEmpty, IsOptional, IsDate } from 'class-validator'
+import { IsNotEmpty, IsOptional, IsDate, IsString } from 'class-validator'
 
 @InputType()
 export class GenerateApiTokenInput {
@@ -11,4 +11,9 @@ export class GenerateApiTokenInput {
   @IsOptional()
   @IsDate()
   expiresAt?: Date
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
+  organizationId?: string
 }

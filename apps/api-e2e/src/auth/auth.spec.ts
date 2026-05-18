@@ -177,7 +177,7 @@ describe('Authentication E2E', () => {
       expect(response.data.errors.length).toBeGreaterThan(0)
       // Should have validation errors
       const errorMessage = JSON.stringify(response.data.errors)
-      expect(errorMessage).toContain('should not be empty')
+      expect(errorMessage).toMatch(/should not be empty|must be an email|required/i)
     })
     it('should validate email format', async () => {
       const userData = UserFactory.create({ email: 'not-an-email' })

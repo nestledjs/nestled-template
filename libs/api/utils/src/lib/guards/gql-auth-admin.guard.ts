@@ -28,7 +28,7 @@ export class GqlAuthAdminGuard extends AuthGuard('jwt') {
     if (!hasAccess) {
       throw new ForbiddenException(`You need to have Super Admin access`)
     }
-    return req && req.user && this.hasAccess(req.user)
+    return !!(req?.user && this.hasAccess(req.user))
   }
 
   private hasAccess(user: User): boolean {

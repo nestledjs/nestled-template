@@ -20,7 +20,7 @@ export class SecurityEventsService {
   async logEvent(
     userId: string,
     eventType: SecurityEventType,
-    context?: SecurityEventContext
+    context?: SecurityEventContext,
   ): Promise<void> {
     try {
       // Use setImmediate to make this async and non-blocking
@@ -57,7 +57,7 @@ export class SecurityEventsService {
     userId: string,
     oldEmail: string,
     newEmail: string,
-    context?: SecurityEventContext
+    context?: SecurityEventContext,
   ): Promise<void> {
     return this.logEvent(userId, SecurityEventType.EMAIL_CHANGED, {
       ...context,
@@ -78,7 +78,7 @@ export class SecurityEventsService {
   async logSuspiciousLogin(
     userId: string,
     reason: string,
-    context?: SecurityEventContext
+    context?: SecurityEventContext,
   ): Promise<void> {
     return this.logEvent(userId, SecurityEventType.SUSPICIOUS_LOGIN_ATTEMPT, {
       ...context,
@@ -110,7 +110,11 @@ export class SecurityEventsService {
   /**
    * Log account locked
    */
-  async logAccountLocked(userId: string, reason: string, context?: SecurityEventContext): Promise<void> {
+  async logAccountLocked(
+    userId: string,
+    reason: string,
+    context?: SecurityEventContext,
+  ): Promise<void> {
     return this.logEvent(userId, SecurityEventType.ACCOUNT_LOCKED, {
       ...context,
       metadata: { reason, ...context?.metadata },
@@ -131,7 +135,7 @@ export class SecurityEventsService {
     userId: string,
     previousLocation: string,
     newLocation: string,
-    context?: SecurityEventContext
+    context?: SecurityEventContext,
   ): Promise<void> {
     return this.logEvent(userId, SecurityEventType.LOGIN_LOCATION_CHANGE, {
       ...context,

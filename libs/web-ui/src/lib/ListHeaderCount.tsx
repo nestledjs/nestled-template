@@ -14,13 +14,17 @@ export function ListHeaderCount({
   title?: string
   className?: string
 }>) {
-  const text = loading
-    ? 'Loading...'
-    : total !== undefined && showing !== undefined
-      ? total === showing
+  let text: string
+  if (loading) {
+    text = 'Loading...'
+  } else if (total !== undefined && showing !== undefined) {
+    text =
+      total === showing
         ? `${total} ${title ?? ''}`.trim()
         : `Showing ${showing} of ${total} ${title ?? ''}`.trim()
-      : (title ?? '')
+  } else {
+    text = title ?? ''
+  }
 
   return (
     <div

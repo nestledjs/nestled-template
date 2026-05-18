@@ -8,8 +8,8 @@ mutation userDeleteOrganization($organizationId: String!) {
   userDeleteOrganization(organizationId: $organizationId)
 }
 
-mutation userUpdateOrganization($organizationId: String!, $input: UpdateOrganizationInput!) {
-  userUpdateOrganization(organizationId: $organizationId, input: $input) {
+mutation userUpdateOrganization($input: UpdateOrganizationInput!) {
+  userUpdateOrganization(input: $input) {
     ...OrganizationDetails
   }
 }
@@ -20,6 +20,10 @@ mutation createOrganizationInvitation($input: CreateInvitationInput!) {
 
 mutation resendOrganizationInvitation($input: ResendInvitationInput!) {
   resendOrganizationInvitation(input: $input)
+}
+
+mutation cancelOrganizationInvitation($input: CancelInvitationInput!) {
+  cancelOrganizationInvitation(input: $input)
 }
 
 mutation acceptOrganizationInvitation($input: AcceptInvitationInput!) {

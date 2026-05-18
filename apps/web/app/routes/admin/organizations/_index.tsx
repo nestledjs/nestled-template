@@ -19,18 +19,21 @@ export default function AdminOrganizationsPage() {
   const [page, setPage] = useState(0)
   const pageSize = 50
 
-  const { data, loading, error } = useQuery<AdminPlatformOrganizationsQuery>(AdminPlatformOrganizations, {
-    variables: {
-      filters: {
-        take: pageSize,
-        skip: page * pageSize,
-        search: search || undefined,
+  const { data, loading, error } = useQuery<AdminPlatformOrganizationsQuery>(
+    AdminPlatformOrganizations,
+    {
+      variables: {
+        filters: {
+          take: pageSize,
+          skip: page * pageSize,
+          search: search || undefined,
+        },
       },
+      fetchPolicy: 'network-only',
     },
-    fetchPolicy: 'network-only',
-  })
+  )
 
-  type Organization = NonNullable<AdminPlatformOrganizationsQuery['adminOrganizations']['organizations'][number]>
+  type Organization = AdminPlatformOrganizationsQuery['adminOrganizations']['organizations'][number]
 
   const organizations = data?.adminOrganizations?.organizations || []
   const total = data?.adminOrganizations?.total || 0
@@ -45,9 +48,9 @@ export default function AdminOrganizationsPage() {
     })
   }
 
-  const getSubscriptionStatus = (org: any) => {
+  const getSubscriptionStatus = (org: Organization) => {
     const subscription = org.subscription
-    if (subscription && subscription.status === 'ACTIVE') {
+    if (subscription?.status === 'ACTIVE') {
       return {
         status: 'Active',
         plan: subscription.plan?.name || 'Unknown',
@@ -101,24 +104,27 @@ export default function AdminOrganizationsPage() {
 
       {/* Organizations Grid */}
       <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 shadow-sm overflow-hidden backdrop-blur">
-        {loading ? (
+        {loading && (
           <div className="p-12 text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-emerald-600 dark:border-emerald-400 border-r-transparent"></div>
             <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
               Loading organizations...
             </p>
           </div>
-        ) : error ? (
+        )}
+        {!loading && error && (
           <div className="p-12 text-center">
             <p className="text-red-600 dark:text-red-400">
               Error loading organizations: {error.message}
             </p>
           </div>
-        ) : organizations.length === 0 ? (
+        )}
+        {!loading && !error && organizations.length === 0 && (
           <div className="p-12 text-center text-zinc-500 dark:text-zinc-400">
             No organizations found matching your search
           </div>
-        ) : (
+        )}
+        {!loading && !error && organizations.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-zinc-200 dark:divide-white/10">
               <thead className="bg-zinc-50 dark:bg-white/5">
@@ -141,11 +147,10 @@ export default function AdminOrganizationsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200 dark:divide-white/10 bg-white dark:bg-white/5">
-                {organizations.map((org) => {
+                {organizations.map(org => {
                   const subscription = getSubscriptionStatus(org)
                   const memberCount = org.members?.length || 0
-                  const ownerCount =
-                    org.members?.filter((m) => m.role?.name === 'Owner').length || 0
+                  const ownerCount = org.members?.filter(m => m.role?.name === 'Owner').length || 0
 
                   return (
                     <tr key={org.id} className="hover:bg-zinc-50 dark:hover:bg-white/5 transition">

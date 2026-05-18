@@ -1,6 +1,6 @@
 import React from 'react'
 import { render, screen } from '@testing-library/react'
-import { createTestRouter } from "../../helpers/createTestRouter"
+import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import PublicIndex from '../../../app/routes/_public/_index'
 
@@ -159,7 +159,7 @@ describe('Landing Page (_public/_index)', () => {
     it('should stack CTA buttons on mobile', () => {
       const { container } = renderLandingPage()
 
-      const buttonContainer = container.querySelector('.flex-col.sm\\:flex-row')
+      const buttonContainer = container.querySelector(String.raw`.flex-col.sm\:flex-row`)
       expect(buttonContainer).toBeInTheDocument()
     })
   })

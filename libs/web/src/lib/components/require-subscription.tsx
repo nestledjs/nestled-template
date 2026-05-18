@@ -4,10 +4,10 @@ import { Link } from 'react-router'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 interface RequireSubscriptionProps {
-  children: ReactNode
-  fallback?: ReactNode
-  allowTrial?: boolean
-  message?: string
+  readonly children: ReactNode
+  readonly fallback?: ReactNode
+  readonly allowTrial?: boolean
+  readonly message?: string
 }
 
 /**
@@ -40,7 +40,7 @@ export function RequireSubscription({
   allowTrial = true,
   message = 'This feature requires an active subscription',
 }: RequireSubscriptionProps) {
-  const { hasActiveSubscription, isTrialing, isLoading, subscription } = useSubscription()
+  const { hasActiveSubscription, isTrialing, isLoading } = useSubscription()
 
   // Show loading state
   if (isLoading) {
@@ -90,7 +90,13 @@ export function RequireSubscription({
 /**
  * Inline variant that renders nothing if no subscription
  */
-export function RequireSubscriptionInline({ children, allowTrial = true }: { children: ReactNode; allowTrial?: boolean }) {
+export function RequireSubscriptionInline({
+  children,
+  allowTrial = true,
+}: {
+  readonly children: ReactNode
+  readonly allowTrial?: boolean
+}) {
   const { hasActiveSubscription, isTrialing, isLoading } = useSubscription()
 
   if (isLoading) return null

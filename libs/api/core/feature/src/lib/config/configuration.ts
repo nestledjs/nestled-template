@@ -2,7 +2,7 @@ export const configuration = () => ({
   prefix: 'api',
   environment: process.env['NODE_ENV'],
   host: process.env['HOST'],
-  port: parseInt(process.env['PORT'] ?? '3000', 10),
+  port: Number.parseInt(process.env['PORT'] ?? '3000', 10),
   apiUrl: process.env['API_URL'],
   api: {
     cookie: {

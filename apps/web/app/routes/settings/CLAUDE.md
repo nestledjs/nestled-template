@@ -5,7 +5,8 @@
 
 ### Feb 20, 2026
 
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #2962 | 9:43 PM | 🔵 | Flightdesk Admin Routes Structure Identified | ~329 |
+| ID    | Time    | T   | Title                                        | Read |
+| ----- | ------- | --- | -------------------------------------------- | ---- |
+| #2962 | 9:43 PM | 🔵  | Flightdesk Admin Routes Structure Identified | ~329 |
+
 </claude-mem-context>

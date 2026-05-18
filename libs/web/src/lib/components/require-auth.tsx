@@ -2,8 +2,8 @@ import React, { ReactNode } from 'react'
 import { Navigate, useLocation, useLoaderData } from 'react-router'
 
 interface RequireAuthProps {
-  children: ReactNode
-  redirectTo?: string
+  readonly children: ReactNode
+  readonly redirectTo?: string
 }
 
 export function RequireAuth({ children, redirectTo = '/login' }: RequireAuthProps) {

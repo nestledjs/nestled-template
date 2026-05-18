@@ -9,7 +9,7 @@ dayjs.extend(utc)
 export function formatUtcForDateInput(value: Date | string | number | null | undefined): string {
   if (!value) return ''
   const d = typeof value === 'string' || typeof value === 'number' ? new Date(value) : value
-  if (!(d instanceof Date) || isNaN(d.getTime())) return ''
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return ''
   return dayjs.utc(d).format('YYYY-MM-DD')
 }
 
@@ -27,7 +27,7 @@ export function toUtcMidnightIso(value: Date | string): string {
     // If a full ISO is provided, normalize to its UTC date @ 00:00
     if (value.includes('T')) {
       const d = new Date(value)
-      if (!isNaN(d.getTime())) {
+      if (!Number.isNaN(d.getTime())) {
         const y = d.getUTCFullYear()
         const m = String(d.getUTCMonth() + 1).padStart(2, '0')
         const dd = String(d.getUTCDate()).padStart(2, '0')
@@ -40,5 +40,3 @@ export function toUtcMidnightIso(value: Date | string): string {
   // Fallback
   return new Date().toISOString()
 }
-
-

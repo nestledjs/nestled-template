@@ -19,6 +19,7 @@ NC='\033[0m' # No Color
 cleanup() {
   echo -e "\n${YELLOW}🧹 Cleaning up...${NC}"
   ./scripts/test-db.sh stop 2>/dev/null || true
+  return 0
 }
 
 # Set up cleanup trap
@@ -44,7 +45,7 @@ pnpm prisma migrate deploy
 echo -e "${BLUE}3. Running E2E tests...${NC}"
 
 # Option 1: Run specific test file
-if [ "$1" != "" ]; then
+if [[ "$1" != "" ]]; then
   echo -e "${YELLOW}Running specific test: $1${NC}"
   pnpm nx run api-e2e:e2e --testPathPattern="$1"
 # Option 2: Run all tests  
@@ -54,7 +55,7 @@ else
 fi
 
 # Check test results
-if [ $? -eq 0 ]; then
+if [[ $? -eq 0 ]]; then
   echo -e "\n${GREEN}✅ All tests passed!${NC}"
 else
   echo -e "\n${RED}❌ Some tests failed.${NC}"

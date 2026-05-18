@@ -1,8 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { IStorageService, UploadOptions, UploadResult } from '../interfaces'
-import * as fs from 'fs/promises'
-import * as path from 'path'
+import * as fs from 'node:fs/promises'
+import * as path from 'node:path'
 import { v4 as uuidv4 } from 'uuid'
 
 /**
@@ -30,7 +30,9 @@ export class LocalStorageService implements IStorageService, OnModuleInit {
     }
     await this.ensureDirectory(this.storagePath)
     this.logger.warn('⚠️  WARNING: Using local storage - files will be lost on restart!')
-    this.logger.warn('⚠️  For production, set STORAGE_PROVIDER to: s3, cloudinary, imagekit, or gcs')
+    this.logger.warn(
+      '⚠️  For production, set STORAGE_PROVIDER to: s3, cloudinary, imagekit, or gcs',
+    )
   }
 
   private async ensureDirectory(dirPath: string): Promise<void> {

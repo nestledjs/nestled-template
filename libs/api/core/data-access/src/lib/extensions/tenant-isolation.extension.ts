@@ -30,7 +30,12 @@ export function createTenantIsolationExtension(organizationId?: string) {
       query: {
         // Apply to all models
         $allModels: {
-          async $allOperations({ model, operation, args, query }: {
+          async $allOperations({
+            model,
+            operation,
+            args,
+            query,
+          }: {
             model: string
             operation: string
             args: any
@@ -71,15 +76,15 @@ export function createTenantIsolationExtension(organizationId?: string) {
               return query({
                 ...args,
                 where: {
-                  ...((args as any).where || {}),
+                  ...args.where,
                   organizationId,
                 },
-              } as any)
+              })
             }
 
             if (dataOperations.includes(operation)) {
               if (operation === 'createMany') {
-                const argsData = (args as any).data
+                const argsData = args.data
                 const data = Array.isArray(argsData) ? argsData : [argsData]
                 return query({
                   ...args,
@@ -87,15 +92,15 @@ export function createTenantIsolationExtension(organizationId?: string) {
                     ...record,
                     organizationId,
                   })),
-                } as any)
+                })
               } else {
                 return query({
                   ...args,
                   data: {
-                    ...((args as any).data || {}),
+                    ...args.data,
                     organizationId,
                   },
-                } as any)
+                })
               }
             }
 
@@ -103,14 +108,14 @@ export function createTenantIsolationExtension(organizationId?: string) {
               return query({
                 ...args,
                 where: {
-                  ...((args as any).where || {}),
+                  ...args.where,
                   organizationId,
                 },
                 create: {
-                  ...((args as any).create || {}),
+                  ...args.create,
                   organizationId,
                 },
-              } as any)
+              })
             }
 
             // Default: just pass through

@@ -11,7 +11,7 @@ export class UserFactory {
 
   static create(overrides: CreateUserData = {}): Required<CreateUserData> {
     UserFactory.counter++
-    
+
     return {
       firstName: overrides.firstName ?? `FirstName${UserFactory.counter}`,
       lastName: overrides.lastName ?? `LastName${UserFactory.counter}`,
@@ -33,10 +33,7 @@ export class UserFactory {
   }
 
   static createVerifiedUser(overrides: CreateUserData = {}): Required<CreateUserData> {
-    return this.create({
-      ...overrides,
-      verified: true,
-    })
+    return this.createAdmin(overrides)
   }
 
   static createUnverifiedUser(overrides: CreateUserData = {}): Required<CreateUserData> {

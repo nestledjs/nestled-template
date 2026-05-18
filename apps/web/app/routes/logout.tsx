@@ -24,7 +24,7 @@ export default function LogoutRoute() {
       for (const name of cookieNames) {
         try {
           Cookies.remove(name)
-        } catch (e) {
+        } catch {
           // ignore
         }
       }

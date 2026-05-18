@@ -83,5 +83,5 @@ The {{appName}} Team
 {{#if supportEmail}}
 Need help? Contact us at {{supportEmail}}
 {{/if}}
-  `.trim()
+  `.trim(),
 }

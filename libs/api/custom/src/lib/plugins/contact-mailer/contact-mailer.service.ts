@@ -82,15 +82,23 @@ export class ContactMailerService {
   }
 
   async sendGuestConfirmationEmail(data: ContactFormData) {
-    const { firstName, lastName, email, chapterName, chapterLocation } = data
+    const { firstName, email, chapterName, chapterLocation } = data
 
     const subject = `Thank you for your interest in BizToBiz!`
+
+    const chapterLocationSuffix = chapterLocation ? ` in ${chapterLocation}` : ''
+    const chapterHtmlLine = chapterName
+      ? `<p>We see you're interested in the ${chapterName} chapter${chapterLocationSuffix}. We'll make sure to connect you with the right people!</p>`
+      : ''
+    const chapterTextLine = chapterName
+      ? `We see you're interested in the ${chapterName} chapter${chapterLocationSuffix}. We'll make sure to connect you with the right people!`
+      : ''
 
     const html = `
       <h2>Thank you for contacting BizToBiz!</h2>
       <p>Dear ${firstName},</p>
       <p>Thank you for your interest in BizToBiz. We have received your inquiry and one of our team members will be in touch with you soon.</p>
-      ${chapterName ? `<p>We see you're interested in the ${chapterName} chapter${chapterLocation ? ` in ${chapterLocation}` : ''}. We'll make sure to connect you with the right people!</p>` : ''}
+      ${chapterHtmlLine}
       <p>In the meantime, feel free to browse our website to learn more about our networking community and the benefits of membership.</p>
       <p>Best regards,<br>
       The BizToBiz Team</p>
@@ -105,7 +113,7 @@ export class ContactMailerService {
 
       Thank you for your interest in BizToBiz. We have received your inquiry and one of our team members will be in touch with you soon.
 
-      ${chapterName ? `We see you're interested in the ${chapterName} chapter${chapterLocation ? ` in ${chapterLocation}` : ''}. We'll make sure to connect you with the right people!` : ''}
+      ${chapterTextLine}
 
       In the meantime, feel free to browse our website to learn more about our networking community and the benefits of membership.
 

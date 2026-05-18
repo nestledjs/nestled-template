@@ -30,16 +30,18 @@ model Address {
 }
 
 model ApiToken {
-  id         String    @id @default(uuid())
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  userId     String
-  user       User      @relation("User_hasMany_APITokens", fields: [userId], references: [id])
-  tokenHash  String    @unique
-  name       String
-  expiresAt  DateTime?
-  lastUsedAt DateTime?
-  revoked    Boolean   @default(false)
+  id             String        @id @default(uuid())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  userId         String
+  user           User          @relation("User_hasMany_APITokens", fields: [userId], references: [id])
+  tokenHash      String        @unique
+  name           String
+  expiresAt      DateTime?
+  lastUsedAt     DateTime?
+  revoked        Boolean       @default(false)
+  organizationId String?
+  organization   Organization? @relation("ApiToken_belongsTo_Organization", fields: [organizationId], references: [id], onDelete: SetNull)
 }
 
 model AuditLog {
@@ -163,6 +165,7 @@ model Organization {
   Team         Team[]
   subscription Subscription?
   roles        Role[]
+  apiTokens    ApiToken[]           @relation("ApiToken_belongsTo_Organization")
 }
 
 model OrganizationMember {
@@ -384,7 +387,6 @@ model User {
   oAuthAccounts             OAuthAccount[]       @relation("User_hasMany_OAuthAccounts")
 }
 
-/// @crudAuth: { "readOne": "user", "readMany": "user", "create": "user", "update": "user", "delete": "user" }
 model UserPreference {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now())
@@ -411,6 +413,8 @@ model UserSession {
 }
 
 /// @skipCrud
+/// Security-sensitive internal credential history. Password hashes should not be exposed
+/// through generated admin CRUD or the generic admin data browser.
 model PasswordHistory {
   id           String   @id @default(uuid())
   createdAt    DateTime @default(now())

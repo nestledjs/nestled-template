@@ -1,6 +1,11 @@
-import React, { createContext, useContext, ReactNode } from 'react'
+import React, { createContext, useContext, useMemo, ReactNode } from 'react'
 import { useQuery } from '@apollo/client/react'
-import { CurrentSubscription, type CurrentSubscriptionQuery, Subscription, Plan } from '@nestled-template/shared/sdk'
+import {
+  CurrentSubscription,
+  type CurrentSubscriptionQuery,
+  Subscription,
+  Plan,
+} from '@nestled-template/shared/sdk'
 import { useGlobalCtx } from './global.context'
 
 export interface SubscriptionContextType {
@@ -26,10 +31,10 @@ export interface SubscriptionContextType {
   periodEndsAt: Date | null
 }
 
-const SubscriptionContext = createContext<SubscriptionContextType | undefined>(undefined)
+export const SubscriptionContext = createContext<SubscriptionContextType | undefined>(undefined)
 
 interface SubscriptionProviderProps {
-  children: ReactNode
+  readonly children: ReactNode
 }
 
 export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
@@ -45,14 +50,17 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   const plan = subscription?.plan || null
 
   // Status checks
-  const hasActiveSubscription = subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
+  const hasActiveSubscription =
+    subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
   const isTrialing = subscription?.status === 'TRIALING'
   const isCanceled = subscription?.status === 'CANCELED' || subscription?.cancelAtPeriodEnd === true
   const isPastDue = subscription?.status === 'PAST_DUE'
 
   // Date parsing
   const trialEndsAt = subscription?.trialEnd ? new Date(subscription.trialEnd) : null
-  const periodEndsAt = subscription?.stripeCurrentPeriodEnd ? new Date(subscription.stripeCurrentPeriodEnd) : null
+  const periodEndsAt = subscription?.stripeCurrentPeriodEnd
+    ? new Date(subscription.stripeCurrentPeriodEnd)
+    : null
 
   /**
    * Check if subscription has a specific feature
@@ -67,7 +75,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
     // Handle JSON object format
     if (typeof plan.features === 'object') {
-      return (plan.features as any)[feature] === true
+      return (plan.features as Record<string, unknown>)[feature] === true
     }
 
     return false
@@ -83,7 +91,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
     // Limits stored as JSON object
     if (typeof plan.limits === 'object') {
-      const limitValue = (plan.limits as any)[limitKey]
+      const limitValue = (plan.limits as Record<string, unknown>)[limitKey]
       if (typeof limitValue === 'number') {
         return { limit: limitValue, hasLimit: true }
       }
@@ -107,21 +115,36 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     return currentValue < limit
   }
 
-  const value: SubscriptionContextType = {
-    subscription: subscription as any,
-    plan: plan as any,
-    isLoading: loading,
-    error: error || null,
-    hasActiveSubscription,
-    isTrialing,
-    isCanceled,
-    isPastDue,
-    hasFeature,
-    checkLimit,
-    isWithinLimit,
-    trialEndsAt,
-    periodEndsAt,
-  }
+  const value = useMemo<SubscriptionContextType>(
+    () => ({
+      subscription: subscription as any,
+      plan: plan as any,
+      isLoading: loading,
+      error: error || null,
+      hasActiveSubscription,
+      isTrialing,
+      isCanceled,
+      isPastDue,
+      hasFeature,
+      checkLimit,
+      isWithinLimit,
+      trialEndsAt,
+      periodEndsAt,
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }),
+    [
+      subscription,
+      plan,
+      loading,
+      error,
+      hasActiveSubscription,
+      isTrialing,
+      isCanceled,
+      isPastDue,
+      trialEndsAt,
+      periodEndsAt,
+    ],
+  )
 
   return <SubscriptionContext.Provider value={value}>{children}</SubscriptionContext.Provider>
 }

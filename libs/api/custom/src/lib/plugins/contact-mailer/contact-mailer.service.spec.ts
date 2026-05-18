@@ -128,10 +128,7 @@ describe('ContactMailerService', () => {
         phone: '555-0002',
         questions: 'Testing parallel sending',
       }
-      // Track when each email is sent
-      const sendTimes: number[] = []
       mockEmailService.send.mockImplementation(async () => {
-        sendTimes.push(Date.now())
         // Simulate 100ms send time
         await new Promise(resolve => setTimeout(resolve, 100))
         return {

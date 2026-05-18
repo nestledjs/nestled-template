@@ -34,7 +34,7 @@ export const ForgotPasswordWrapper = (children: React.ReactNode) => (
   <div key={'remember'} className="flex items-center justify-between">
     {children}
     <div className="text-sm">
-      <Link to="/forgot-password" className="font-medium text-emerald-400 hover:text-emerald-300">
+      <Link to="/forgot-password" className="font-medium text-emerald-600 hover:text-emerald-500">
         Forgot your password?
       </Link>
     </div>
@@ -129,13 +129,16 @@ export default function LoginPage() {
       >
         <div className="space-y-6">
           {formError && (
-            <div className="text-center text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 text-sm">
+            <div className="text-center text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-lg p-3 text-sm">
               {formError}
             </div>
           )}
           <form onSubmit={handleComplete2FA} className="space-y-4">
             <div>
-              <label htmlFor="twoFACode" className="block text-sm font-medium text-zinc-300 mb-2">
+              <label
+                htmlFor="twoFACode"
+                className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2"
+              >
                 Authentication Code
               </label>
               <input
@@ -146,16 +149,16 @@ export default function LoginPage() {
                 placeholder="000000"
                 maxLength={6}
                 autoFocus
-                className="w-full px-4 py-3 bg-zinc-900/50 border border-zinc-700 rounded-lg text-white text-center text-2xl font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                className="w-full px-4 py-3 bg-white dark:bg-white border border-zinc-300 dark:border-zinc-300 rounded-lg text-zinc-900 text-center text-2xl font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-300"
               />
-              <p className="text-xs text-zinc-500 mt-2 text-center">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 text-center">
                 Enter the 6-digit code from your authenticator app
               </p>
             </div>
             <button
               type="submit"
               disabled={twoFACode.length !== 6}
-              className="w-full px-4 py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-300 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+              className="w-full px-4 py-3 bg-emerald-500 hover:bg-emerald-400 disabled:bg-emerald-300 disabled:cursor-not-allowed text-zinc-950 rounded-lg font-medium transition-colors"
             >
               Verify and Login
             </button>
@@ -169,7 +172,7 @@ export default function LoginPage() {
                 setTwoFACode('')
                 setFormError(null)
               }}
-              className="text-sm text-zinc-400 hover:text-zinc-300"
+              className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-300"
             >
               ← Back to login
             </button>
@@ -183,20 +186,20 @@ export default function LoginPage() {
   return (
     <AuthLayout title="Welcome Back" subtitle="Sign in to your account">
       <div className="space-y-6">
-        <p className="text-center text-sm text-zinc-400">
+        <p className="text-center text-sm text-zinc-600 dark:text-zinc-400">
           Don't have an account?{' '}
-          <Link to="/register" className="font-semibold text-emerald-400 hover:text-emerald-300">
+          <Link to="/register" className="font-semibold text-emerald-600 hover:text-emerald-500">
             Sign up
           </Link>
         </p>
         {formError && (
-          <div className="text-center text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 text-sm">
+          <div className="text-center text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-lg p-3 text-sm">
             {formError}
           </div>
         )}
         <Form id="login-form" theme={formTheme} fields={fields} submit={processLogin} />
 
-        {/* TODO: Add OAuth providers (Google, GitHub) when ready */}
+        {/* FUTURE: Add OAuth providers (Google, GitHub) when ready */}
       </div>
     </AuthLayout>
   )

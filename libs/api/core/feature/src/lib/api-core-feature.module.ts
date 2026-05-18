@@ -1,7 +1,7 @@
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo'
 import { Module } from '@nestjs/common'
 import { GraphQLModule } from '@nestjs/graphql'
-import { join } from 'path'
+import { join } from 'node:path'
 import { Request, Response } from 'express'
 import { apiCorePubSub } from '@nestled-template/api/core/data-access'
 import { Context } from 'graphql-ws'
@@ -13,6 +13,34 @@ import { NoCachePlugin } from './plugins/no-cache.plugin'
 
 interface ConnectionParameters {
   headers?: Record<string, string>
+}
+
+function extractTokenFromWsContext(extra: unknown): string {
+  if (
+    extra &&
+    typeof extra === 'object' &&
+    'request' in extra &&
+    extra.request &&
+    typeof extra.request === 'object' &&
+    'rawHeaders' in extra.request
+  ) {
+    const rawHeaders = (extra as any).request.rawHeaders as string[] | undefined
+    const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
+    return rawHeaders ? extractTokenFromRawHeaders(rawHeaders, cookieName) : ''
+  }
+  return ''
+}
+
+function extractTokenFromRawHeaders(rawHeaders: string[], cookieName: string): string {
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    if (rawHeaders[i].toLowerCase() !== 'cookie') continue
+    for (const cookie of rawHeaders[i + 1].split(';')) {
+      const [name, value] = cookie.trim().split('=')
+      if (name === cookieName) return value
+    }
+    break
+  }
+  return ''
 }
 
 const redisPubSubProvider = {
@@ -32,37 +60,8 @@ const redisPubSubProvider = {
         'graphql-ws': {
           onConnect: async (context: Context<Record<string, unknown> | undefined>) => {
             const { extra } = context
-            if (
-              extra &&
-              typeof extra === 'object' &&
-              'request' in extra &&
-              extra.request &&
-              typeof extra.request === 'object' &&
-              'rawHeaders' in extra.request
-            ) {
-              const rawHeaders = extra.request.rawHeaders as string[] | undefined
-              let token = ''
-              const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
-              if (rawHeaders) {
-                for (let i = 0; i < rawHeaders.length; i += 2) {
-                  if (rawHeaders[i].toLowerCase() === 'cookie') {
-                    const cookies = rawHeaders[i + 1].split(';')
-                    for (const cookie of cookies) {
-                      const [name, value] = cookie.trim().split('=')
-                      if (name === cookieName) {
-                        token = value
-                        break
-                      }
-                    }
-                    break
-                  }
-                }
-              }
-
-              if (token === '') {
-                throw new Error('Authentication token is missing')
-              }
-            } else {
+            const token = extractTokenFromWsContext(extra)
+            if (token === '') {
               throw new Error('Authentication token is missing')
             }
             return true

@@ -5,5 +5,5 @@ export default [
   'apps/web/vite.config.ts',
   'libs/web-ui/vite.config.ts', // Keep the main vite config but not vitest
   'libs/shared/apollo/vite.config.ts',
-  'libs/shared/sdk/vite.config.ts'
+  'libs/shared/sdk/vite.config.ts',
 ]

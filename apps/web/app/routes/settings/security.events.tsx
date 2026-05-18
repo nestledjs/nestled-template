@@ -1,9 +1,6 @@
 import { Link, useLoaderData } from 'react-router'
 import { apolloLoader } from '@nestled-template/shared/apollo'
-import {
-  MySecurityEvents,
-  type MySecurityEventsQuery,
-} from '@nestled-template/shared/sdk'
+import { MySecurityEvents, type MySecurityEventsQuery } from '@nestled-template/shared/sdk'
 import { useReadQuery, type QueryRef } from '@apollo/client/react'
 import { ChevronRightIcon, ShieldCheckIcon } from '@heroicons/react/24/outline'
 
@@ -93,9 +90,9 @@ export default function SecurityEventsPage() {
                 >
                   <td className="px-6 py-4 font-medium text-zinc-900 dark:text-white">
                     {event.eventType
-                      ?.replace(/_/g, ' ')
+                      ?.replaceAll('_', ' ')
                       .toLowerCase()
-                      .replace(/\b\w/g, l => l.toUpperCase()) || 'Security event'}
+                      .replaceAll(/\b\w/g, l => l.toUpperCase()) || 'Security event'}
                   </td>
                   <td className="px-6 py-4 text-zinc-600 dark:text-zinc-400">
                     {new Date(event.createdAt).toLocaleString()}

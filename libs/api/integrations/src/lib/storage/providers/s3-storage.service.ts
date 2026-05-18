@@ -1,10 +1,15 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { IStorageService, UploadOptions, UploadResult } from '../interfaces'
 import { v4 as uuidv4 } from 'uuid'
-import * as path from 'path'
+import * as path from 'node:path'
 
 /**
  * AWS S3 Storage Provider
@@ -42,7 +47,9 @@ export class S3StorageService implements IStorageService, OnModuleInit {
 
     // Only validate credentials if S3 is the active storage provider
     if (storageProvider === 's3' && (!accessKeyId || !secretAccessKey || !bucket)) {
-      throw new Error('AWS S3 credentials not configured. Required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET')
+      throw new Error(
+        'AWS S3 credentials not configured. Required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET',
+      )
     }
 
     // Skip initialization if not the active provider
@@ -50,13 +57,19 @@ export class S3StorageService implements IStorageService, OnModuleInit {
       return
     }
 
+    if (!accessKeyId || !secretAccessKey || !bucket) {
+      throw new Error(
+        'AWS S3 credentials not configured. Required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET',
+      )
+    }
+
     // After validation, we know these values are defined
-    this.bucket = bucket!
+    this.bucket = bucket
     this.s3Client = new S3Client({
       region: this.region,
       credentials: {
-        accessKeyId: accessKeyId!,
-        secretAccessKey: secretAccessKey!,
+        accessKeyId,
+        secretAccessKey,
       },
       endpoint,
       forcePathStyle,
@@ -74,9 +87,7 @@ export class S3StorageService implements IStorageService, OnModuleInit {
     const uniqueFilename = `${name}-${uuidv4().split('-')[0]}${ext}`
 
     // Build the S3 key (path in bucket)
-    const key = options.folder
-      ? `${options.folder}/${uniqueFilename}`
-      : uniqueFilename
+    const key = options.folder ? `${options.folder}/${uniqueFilename}` : uniqueFilename
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,

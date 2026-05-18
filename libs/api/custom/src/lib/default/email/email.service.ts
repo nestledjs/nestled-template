@@ -10,7 +10,7 @@ export class EmailService {
     // If trying to set email as primary, it must be verified
     if (input.primary === true) {
       const email = await this.data.email.findUnique({
-        where: { id: emailId }
+        where: { id: emailId },
       })
 
       if (!email) {
@@ -18,11 +18,11 @@ export class EmailService {
       }
 
       // Check if the email being updated would be verified after the update
-      const wouldBeVerified = input.verified !== undefined ? input.verified : email.verified
+      const wouldBeVerified = input.verified ?? email.verified
 
       if (!wouldBeVerified) {
         throw new BadRequestException(
-          'Cannot set an unverified email as primary. Please verify the email first.'
+          'Cannot set an unverified email as primary. Please verify the email first.',
         )
       }
 
@@ -32,18 +32,18 @@ export class EmailService {
           where: {
             userId: email.userId,
             primary: true,
-            NOT: { id: emailId }
+            NOT: { id: emailId },
           },
-          data: { primary: false }
+          data: { primary: false },
         })
       } else if (email.organizationId) {
         await this.data.email.updateMany({
           where: {
             organizationId: email.organizationId,
             primary: true,
-            NOT: { id: emailId }
+            NOT: { id: emailId },
           },
-          data: { primary: false }
+          data: { primary: false },
         })
       }
     }
@@ -57,20 +57,20 @@ export class EmailService {
     const where = userId ? { userId } : { organizationId }
 
     const primaryEmail = await this.data.email.findFirst({
-      where: { ...where, primary: true }
+      where: { ...where, primary: true },
     })
 
     // If no primary email exists, set the first verified email as primary
     if (!primaryEmail) {
       const firstVerified = await this.data.email.findFirst({
         where: { ...where, verified: true },
-        orderBy: { createdAt: 'asc' }
+        orderBy: { createdAt: 'asc' },
       })
 
       if (firstVerified) {
         await this.data.email.update({
           where: { id: firstVerified.id },
-          data: { primary: true }
+          data: { primary: true },
         })
       }
     }
@@ -78,7 +78,7 @@ export class EmailService {
 
   async validateEmailDeletion(emailId: string) {
     const email = await this.data.email.findUnique({
-      where: { id: emailId }
+      where: { id: emailId },
     })
 
     if (!email) {
@@ -87,12 +87,14 @@ export class EmailService {
 
     // Prevent deleting the only primary email
     if (email.primary) {
-      const where = email.userId ? { userId: email.userId } : { organizationId: email.organizationId }
+      const where = email.userId
+        ? { userId: email.userId }
+        : { organizationId: email.organizationId }
       const emailCount = await this.data.email.count({ where })
 
       if (emailCount <= 1) {
         throw new BadRequestException(
-          'Cannot delete the only email address. Add another email first.'
+          'Cannot delete the only email address. Add another email first.',
         )
       }
 
@@ -102,19 +104,19 @@ export class EmailService {
           where: {
             ...where,
             verified: true,
-            NOT: { id: emailId }
+            NOT: { id: emailId },
           },
-          orderBy: { createdAt: 'asc' }
+          orderBy: { createdAt: 'asc' },
         })
 
         if (nextEmail) {
           await this.data.email.update({
             where: { id: nextEmail.id },
-            data: { primary: true }
+            data: { primary: true },
           })
         } else {
           throw new BadRequestException(
-            'Cannot delete primary email when no other verified emails exist. Add and verify another email first.'
+            'Cannot delete primary email when no other verified emails exist. Add and verify another email first.',
           )
         }
       }

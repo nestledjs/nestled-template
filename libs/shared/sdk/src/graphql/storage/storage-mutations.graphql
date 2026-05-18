@@ -16,8 +16,8 @@ mutation UploadUserAvatar($file: Upload!) {
   }
 }
 
-mutation UploadOrganizationLogo($file: Upload!, $organizationId: String!) {
-  uploadOrganizationLogo(file: $file, organizationId: $organizationId) {
+mutation UploadOrganizationLogo($file: Upload!) {
+  uploadOrganizationLogo(file: $file) {
     id
     url
     publicUrl
@@ -55,8 +55,8 @@ mutation DeleteFile($uploadId: String!) {
   deleteFile(uploadId: $uploadId)
 }
 
-mutation RemoveOrganizationLogo($organizationId: String!) {
-  removeOrganizationLogo(organizationId: $organizationId)
+mutation RemoveOrganizationLogo {
+  removeOrganizationLogo
 }
 
 mutation RemoveUserAvatar {

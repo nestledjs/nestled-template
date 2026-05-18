@@ -83,7 +83,7 @@ export class AuthCacheService {
       await this.redis.setex(
         `${this.PREFIX.SESSION}${sessionId}`,
         this.TTL.SESSION,
-        isValid ? '1' : '0'
+        isValid ? '1' : '0',
       )
     } catch (error) {
       this.logger.warn(`Failed to cache session: ${(error as Error).message}`)
@@ -125,14 +125,14 @@ export class AuthCacheService {
   async setMembership(
     userId: string,
     organizationId: string,
-    context: OrganizationContext
+    context: OrganizationContext,
   ): Promise<void> {
     if (!this.redis) return
     try {
       await this.redis.setex(
         `${this.PREFIX.MEMBERSHIP}${userId}:${organizationId}`,
         this.TTL.MEMBERSHIP,
-        JSON.stringify(context)
+        JSON.stringify(context),
       )
     } catch (error) {
       this.logger.warn(`Failed to cache membership: ${(error as Error).message}`)
@@ -209,7 +209,7 @@ export class AuthCacheService {
       await this.redis.setex(
         `${this.PREFIX.USER_ACTIVE_ORG}${userId}`,
         this.TTL.USER_ACTIVE_ORG,
-        organizationId
+        organizationId,
       )
     } catch (error) {
       this.logger.warn(`Failed to cache user active org: ${(error as Error).message}`)
@@ -249,7 +249,11 @@ export class AuthCacheService {
   async setUser(userId: string, userData: Record<string, unknown>): Promise<void> {
     if (!this.redis) return
     try {
-      await this.redis.setex(`${this.PREFIX.USER}${userId}`, this.TTL.USER, JSON.stringify(userData))
+      await this.redis.setex(
+        `${this.PREFIX.USER}${userId}`,
+        this.TTL.USER,
+        JSON.stringify(userData),
+      )
     } catch (error) {
       this.logger.warn(`Failed to cache user: ${(error as Error).message}`)
     }

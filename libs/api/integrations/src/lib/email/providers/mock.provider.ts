@@ -35,13 +35,13 @@ export class MockEmailProvider implements EmailProvider {
   async sendTemplate(
     to: string | string[],
     template: EmailTemplate,
-    options?: Partial<EmailOptions>
+    options?: Partial<EmailOptions>,
   ): Promise<EmailResult> {
     try {
       // Render the template to validate it works
       const rendered = await this.templateManager.renderTemplate(
         template.templateId,
-        template.variables || {}
+        template.variables || {},
       )
 
       this.logger.log('📨 Mock templated email sent:')

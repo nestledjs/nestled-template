@@ -20,6 +20,7 @@ export default defineConfig(() => ({
     coverage: {
       reportsDirectory: '../../../coverage/libs/shared/apollo',
       provider: 'v8' as const,
+      reporter: ['text', 'json', 'html', 'lcov'],
     },
   },
 }))

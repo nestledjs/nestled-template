@@ -69,7 +69,7 @@ export class UsageService {
       members: organization._count.members,
       teams: organization._count.Team,
       storage: storageMB,
-      apiCalls: 0, // TODO: Implement API call tracking if needed
+      apiCalls: 0, // FUTURE: Implement API call tracking if needed
     }
   }
 
@@ -84,7 +84,7 @@ export class UsageService {
       },
     })
 
-    if (!subscription || !subscription.plan) {
+    if (!subscription?.plan) {
       return null
     }
 
@@ -96,14 +96,11 @@ export class UsageService {
   /**
    * Check if organization has exceeded a specific limit
    */
-  async hasExceededLimit(
-    organizationId: string,
-    metric: keyof UsageData,
-  ): Promise<boolean> {
+  async hasExceededLimit(organizationId: string, metric: keyof UsageData): Promise<boolean> {
     const usage = await this.getCurrentUsage(organizationId)
     const limits = await this.getPlanLimits(organizationId)
 
-    if (!limits || limits[metric] === undefined) {
+    if (limits?.[metric] === undefined) {
       // No limit defined for this metric
       return false
     }
@@ -122,7 +119,7 @@ export class UsageService {
     const usage = await this.getCurrentUsage(organizationId)
     const limits = await this.getPlanLimits(organizationId)
 
-    if (!limits || limits[metric] === undefined) {
+    if (limits?.[metric] === undefined) {
       // No limit defined for this metric
       return false
     }
@@ -133,14 +130,11 @@ export class UsageService {
   /**
    * Get usage percentage for a metric (0-100)
    */
-  async getUsagePercentage(
-    organizationId: string,
-    metric: keyof UsageData,
-  ): Promise<number> {
+  async getUsagePercentage(organizationId: string, metric: keyof UsageData): Promise<number> {
     const usage = await this.getCurrentUsage(organizationId)
     const limits = await this.getPlanLimits(organizationId)
 
-    if (!limits || limits[metric] === undefined || limits[metric] === 0) {
+    if (limits?.[metric] === undefined || limits[metric] === 0) {
       return 0
     }
 
@@ -161,16 +155,10 @@ export class UsageService {
       usage,
       limits: limits || {},
       percentages: Object.fromEntries(
-        metrics.map(metric => [
-          metric,
-          this.calculatePercentage(usage[metric], limits?.[metric]),
-        ]),
+        metrics.map(metric => [metric, this.calculatePercentage(usage[metric], limits?.[metric])]),
       ),
       exceeded: Object.fromEntries(
-        metrics.map(metric => [
-          metric,
-          this.isExceeded(usage[metric], limits?.[metric]),
-        ]),
+        metrics.map(metric => [metric, this.isExceeded(usage[metric], limits?.[metric])]),
       ),
     }
   }
@@ -190,7 +178,7 @@ export class UsageService {
    * Log usage metrics (for analytics/auditing)
    */
   async logUsage(organizationId: string, metric: string, value: number): Promise<void> {
-    // TODO: Implement usage logging to a separate table for analytics
+    // FUTURE: Implement usage logging to a separate table for analytics
     // This could be used for detailed usage reports, billing, etc.
     this.logger.log(`Usage - Org: ${organizationId}, Metric: ${metric}, Value: ${value}`)
   }

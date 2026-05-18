@@ -24,9 +24,7 @@
     },
     "react-router:build": {
       "executor": "nx:run-commands",
-      "outputs": [
-        "{workspaceRoot}/dist/apps/web"
-      ],
+      "outputs": ["{workspaceRoot}/dist/apps/web"],
       "options": {
         "command": "cd apps/web && npx react-router build",
         "cwd": "{workspaceRoot}"
@@ -34,12 +32,8 @@
     },
     "build": {
       "executor": "@nx/vite:build",
-      "dependsOn": [
-        "typegen"
-      ],
-      "outputs": [
-        "{options.outputPath}"
-      ],
+      "dependsOn": ["typegen"],
+      "outputs": ["{options.outputPath}"],
       "defaultConfiguration": "production",
       "options": {
         "outputPath": "dist/apps/web"
@@ -71,9 +65,7 @@
       }
     },
     "preview": {
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "executor": "@nx/vite:preview-server",
       "defaultConfiguration": "development",
       "options": {
@@ -90,18 +82,14 @@
     },
     "test": {
       "executor": "@nx/vitest:test",
-      "outputs": [
-        "{options.reportsDirectory}"
-      ],
+      "outputs": ["{options.reportsDirectory}"],
       "options": {
         "reportsDirectory": "{projectRoot}/../../coverage/apps/web"
       }
     },
     "serve-static": {
       "executor": "@nx/web:file-server",
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "options": {
         "buildTarget": "web:build",
         "spa": true

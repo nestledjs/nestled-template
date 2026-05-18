@@ -9,8 +9,12 @@ if (globalThis !== undefined && globalThis.crypto === undefined) {
     // Final fallback: fail explicitly rather than provide insecure crypto
     const error = e as Error
     console.error('[Apollo] CRITICAL: Failed to load Node.js crypto module:', error.message)
-    console.error('[Apollo] This environment lacks both globalThis.crypto and Node.js crypto module')
-    throw new Error('Cryptographically secure random number generation is not available in this environment. Please use a newer Node.js version or ensure crypto APIs are available.')
+    console.error(
+      '[Apollo] This environment lacks both globalThis.crypto and Node.js crypto module',
+    )
+    throw new Error(
+      'Cryptographically secure random number generation is not available in this environment. Please use a newer Node.js version or ensure crypto APIs are available.',
+    )
   }
 
   if (cryptoModule) {
@@ -25,36 +29,40 @@ if (globalThis !== undefined && globalThis.crypto === undefined) {
         randomUUID: () => {
           // Generate cryptographically secure UUID v4 using Node.js crypto
           const bytes = cryptoModule.randomBytes(16)
-          bytes[6] = (bytes[6] & 0x0f) | 0x40  // Version 4
-          bytes[8] = (bytes[8] & 0x3f) | 0x80  // Variant bits
+          bytes[6] = (bytes[6] & 0x0f) | 0x40 // Version 4
+          bytes[8] = (bytes[8] & 0x3f) | 0x80 // Variant bits
           const hex = bytes.toString('hex')
           return [
             hex.slice(0, 8),
             hex.slice(8, 12),
             hex.slice(12, 16),
             hex.slice(16, 20),
-            hex.slice(20, 32)
+            hex.slice(20, 32),
           ].join('-') as `${string}-${string}-${string}-${string}-${string}`
         },
         getRandomValues: <T extends ArrayBufferView>(array: T): T => {
           // Generate cryptographically secure random values using Node.js crypto
           const byteLength = (array as any).byteLength || (array as any).length || 0
           const bytes = cryptoModule.randomBytes(byteLength)
-          const uint8Array = new Uint8Array((array as any).buffer || array, (array as any).byteOffset || 0, byteLength)
+          const uint8Array = new Uint8Array(
+            (array as any).buffer || array,
+            (array as any).byteOffset || 0,
+            byteLength,
+          )
           for (let i = 0; i < uint8Array.length; i++) {
             uint8Array[i] = bytes[i]
           }
           return array
-        }
+        },
       } as Crypto
     }
   }
 }
 
-import { ApolloLink, Observable, Operation } from '@apollo/client'
+import { ApolloLink, CombinedGraphQLErrors, Observable } from '@apollo/client'
 import { ApolloClient } from '@apollo/client-integration-react-router'
-import { setContext } from '@apollo/client/link/context'
-import { onError } from '@apollo/client/link/error'
+import { SetContextLink } from '@apollo/client/link/context'
+import { ErrorLink } from '@apollo/client/link/error'
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
 import { getMainDefinition } from '@apollo/client/utilities'
 import { createClient } from 'graphql-ws'
@@ -89,11 +97,38 @@ function getSessionCookieName(): string {
   return '__session'
 }
 
+function pickNewestJwt(values: string[]): string {
+  let best: { token: string; iat: number } | null = null
+  for (const token of values) {
+    try {
+      const parts = token.split('.')
+      if (parts.length !== 3) continue
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8')) as {
+        iat?: number
+        exp?: number
+      }
+      let iat: number
+      if (typeof payload.iat === 'number') {
+        iat = payload.iat
+      } else if (typeof payload.exp === 'number') {
+        iat = payload.exp
+      } else {
+        iat = 0
+      }
+      if (!best || iat > best.iat) {
+        best = { token, iat }
+      }
+    } catch {
+      // ignore malformed
+    }
+  }
+  return best?.token ?? values[values.length - 1]
+}
+
 // Helper to parse cookies from a cookie header string
 function getCookieFromHeader(cookieHeader: string | null | undefined, name: string): string | null {
   if (!cookieHeader) return null
 
-  // Parse all cookies and pick the newest JWT by iat if duplicates exist
   const pairs = cookieHeader.split(';').map(part => part.trim())
   const values: string[] = []
   for (const pair of pairs) {
@@ -108,22 +143,7 @@ function getCookieFromHeader(cookieHeader: string | null | undefined, name: stri
   if (values.length === 0) return null
   if (values.length === 1) return values[0]
 
-  // If multiple cookies with same name exist, prefer the one with the latest JWT iat
-  let best: { token: string; iat: number } | null = null
-  for (const token of values) {
-    try {
-      const parts = token.split('.')
-      if (parts.length !== 3) continue
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8')) as { iat?: number; exp?: number }
-      const iat = typeof payload.iat === 'number' ? payload.iat : typeof payload.exp === 'number' ? payload.exp : 0
-      if (!best || iat > best.iat) {
-        best = { token, iat }
-      }
-    } catch {
-      // ignore malformed
-    }
-  }
-  return best?.token ?? values[values.length - 1]
+  return pickNewestJwt(values)
 }
 
 function resolveAuthToken(request?: Request, options?: ClientOptions): string | null {
@@ -149,7 +169,7 @@ function resolveAuthToken(request?: Request, options?: ClientOptions): string | 
   }
 
   // 4. Check browser cookies (client-side only)
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  if (globalThis.window !== undefined && typeof document !== 'undefined') {
     const browserToken = getCookieFromHeader(document.cookie, getSessionCookieName())
     if (browserToken) {
       return browserToken
@@ -173,15 +193,13 @@ function handleAuthenticationError(): void {
   console.log('[Apollo] Authentication error detected, redirecting to logout then login')
 
   // Redirect through logout to clear server-side session (client-side only)
-  if (typeof globalThis.window === 'undefined') {
+  if (globalThis.window === undefined) {
     return
   }
 
   const currentPath = globalThis.window.location.pathname
   const shouldRedirectWithReturnUrl =
-    currentPath &&
-    currentPath !== '/login' &&
-    !currentPath.startsWith('/logout')
+    currentPath && currentPath !== '/login' && !currentPath.startsWith('/logout')
 
   if (shouldRedirectWithReturnUrl) {
     globalThis.window.location.href = `/logout?return_url=${encodeURIComponent(currentPath)}`
@@ -191,19 +209,26 @@ function handleAuthenticationError(): void {
 }
 
 function logDevelopmentExtensions(extensions: any): void {
-  if (
-    extensions &&
-    typeof process !== 'undefined' &&
-    process.env.NODE_ENV === 'development'
-  ) {
+  if (extensions && typeof process !== 'undefined' && process.env.NODE_ENV === 'development') {
     console.error(`[GraphQL error]: Extensions:`, extensions)
   }
 }
 
+function errorFromUnknown(value: unknown): Error {
+  if (value instanceof Error) return value
+  if (typeof value === 'string') return new Error(value)
+
+  try {
+    return new Error(JSON.stringify(value))
+  } catch {
+    return new Error('Unknown Apollo network error')
+  }
+}
+
 function createErrorLink(): ApolloLink {
-  return onError(({ graphQLErrors, networkError, operation }: any) => {
-    if (graphQLErrors) {
-      for (const { message, path, extensions } of graphQLErrors) {
+  return new ErrorLink(({ error, operation }) => {
+    if (CombinedGraphQLErrors.is(error)) {
+      for (const { message, path, extensions } of error.errors) {
         console.error(`[GraphQL error]: Message: ${message}, Path: ${path}`)
 
         if (isAuthenticationError(message, extensions)) {
@@ -214,14 +239,15 @@ function createErrorLink(): ApolloLink {
       }
     }
 
-    if (networkError) {
+    if (!CombinedGraphQLErrors.is(error)) {
+      const networkError = errorFromUnknown(error)
       console.error(`[Apollo Error Link] Network error for operation: ${operation.operationName}`)
       handleNetworkError(networkError, operation)
     }
   })
 }
 
-function handleNetworkError(networkError: Error, operation: Operation): void {
+function handleNetworkError(networkError: Error, operation: ApolloLink.Operation): void {
   console.error(`[Network error]: ${networkError}`)
 
   if (isNetworkConnectivityError(networkError) && shouldShowServiceUnavailableMessage()) {
@@ -253,10 +279,13 @@ function isNetworkConnectivityError(networkError: Error): boolean {
 }
 
 function shouldShowServiceUnavailableMessage(): boolean {
-  return typeof window !== 'undefined' && !hasShownServiceUnavailableMessage
+  return globalThis.window !== undefined && !hasShownServiceUnavailableMessage
 }
 
-function dispatchServiceUnavailableEvent(networkError: Error, operation: Operation): void {
+function dispatchServiceUnavailableEvent(
+  networkError: Error,
+  operation: ApolloLink.Operation,
+): void {
   hasShownServiceUnavailableMessage = true
 
   const serviceUnavailableEvent = new CustomEvent('apollo-service-unavailable', {
@@ -267,7 +296,7 @@ function dispatchServiceUnavailableEvent(networkError: Error, operation: Operati
     },
   })
 
-  window.dispatchEvent(serviceUnavailableEvent)
+  globalThis.window.dispatchEvent(serviceUnavailableEvent)
 
   // Reset the flag after a delay to allow retry
   setTimeout(() => {
@@ -284,7 +313,7 @@ function getActiveOrganizationId(): string | null {
 }
 
 function createAuthLink(token: string | null): ApolloLink {
-  return setContext((_, { headers }) => {
+  return new SetContextLink(({ headers }) => {
     const newHeaders: Record<string, string> = { ...headers }
 
     // Add authorization header if token exists
@@ -306,13 +335,13 @@ function createLogLink(): ApolloLink {
   return new ApolloLink((operation, forward) => {
     console.log(`[Apollo] ${operation.operationName}`, operation.variables)
     const observable = forward(operation)
-    return new Observable((observer) => {
+    return new Observable(observer => {
       const subscription = observable.subscribe({
-        next: (result) => {
+        next: result => {
           console.log(`[Apollo][Result] ${operation.operationName}`, result)
           observer.next(result)
         },
-        error: (error) => observer.error(error),
+        error: error => observer.error(error),
         complete: () => observer.complete(),
       })
       return () => subscription.unsubscribe()
@@ -339,7 +368,7 @@ function createLinkChain(uri: string, token: string | null, isDev: boolean): Apo
       'apollo-require-preflight': 'true', // Prevent CSRF blocking
     },
   })
-  const isServer = typeof window === 'undefined'
+  const isServer = globalThis.window === undefined
 
   const splitLink = isServer
     ? uploadLink
@@ -385,7 +414,7 @@ export function makeClient(request?: Request, options?: ClientOptions) {
   return new ApolloClient({
     link,
     cache: createCache(), // Create a fresh cache for each client to avoid SSR cache pollution
-    ssrMode: typeof window === 'undefined',
+    ssrMode: globalThis.window === undefined,
     assumeImmutableResults: true, // This can help with fragment handling
     defaultOptions: {
       watchQuery: { fetchPolicy: 'cache-and-network' },

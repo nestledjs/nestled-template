@@ -1,0 +1,118 @@
+{
+  "libs/api/custom/src/lib/default/email/email.resolver.ts": {
+    "staffUpdateEmail": ["GqlAuthAdminGuard"],
+    "staffDeleteEmail": ["GqlAuthAdminGuard"]
+  },
+  "libs/api/custom/src/lib/default/organization/organization.resolver.ts": {
+    "userCreateOrganization": ["GqlAuthGuard"],
+    "userUpdateOrganization": ["GqlOrganizationScopedGuard"],
+    "userDeleteOrganization": ["GqlAuthGuard"],
+    "addOrganizationMember": ["GqlAuthGuard"],
+    "removeOrganizationMember": ["GqlAuthGuard"],
+    "updateOrganizationMemberRole": ["GqlAuthGuard"],
+    "createOrganizationInvitation": ["GqlAuthGuard"],
+    "resendOrganizationInvitation": ["GqlAuthGuard"],
+    "cancelOrganizationInvitation": ["GqlAuthGuard"],
+    "acceptOrganizationInvitation": ["GqlAuthGuard"],
+    "rejectOrganizationInvitation": ["GqlAuthGuard"],
+    "switchActiveOrganization": ["GqlAuthGuard"],
+    "transferOrganizationOwnership": ["GqlAuthGuard"],
+    "myOrganizations": ["GqlAuthGuard"],
+    "userOrganizationMembers": ["GqlAuthGuard"],
+    "organizationInvitations": ["GqlAuthGuard"],
+    "organizationRoles": ["GqlAuthGuard"],
+    "getInvitationDetails": []
+  },
+  "libs/api/custom/src/lib/default/plan/user-plan.resolver.ts": {
+    "availablePlans": ["GqlAuthGuard"],
+    "currentPlan": ["GqlAuthGuard"]
+  },
+  "libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts": {
+    "currentSubscription": ["GqlAuthGuard"],
+    "createCheckoutSession": ["GqlAuthGuard"],
+    "createPortalSession": ["GqlAuthGuard"],
+    "cancelSubscription": ["GqlAuthGuard"],
+    "currentUsage": ["GqlAuthGuard"]
+  },
+  "libs/api/custom/src/lib/default/user-preference/user-preference.resolver.ts": {
+    "userCreateUserPreference": ["GqlAuthGuard"],
+    "userUpdateUserPreference": ["GqlAuthGuard"],
+    "userDeleteUserPreference": ["GqlAuthGuard"],
+    "userGetUserPreference": ["GqlAuthGuard"],
+    "userGetUserPreferences": ["GqlAuthGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/admin/admin.resolver.ts": {
+    "adminUsers": ["GqlAuthAdminGuard"],
+    "adminUserDetails": ["GqlAuthAdminGuard"],
+    "adminOrganizations": ["GqlAuthAdminGuard"],
+    "adminSecurityEvents": ["GqlAuthAdminGuard"],
+    "adminAuditLogs": ["GqlAuthAdminGuard"],
+    "adminDashboardStats": ["GqlAuthAdminGuard"],
+    "adminAnalytics": ["GqlAuthAdminGuard"],
+    "adminDeactivateUser": ["GqlAuthAdminGuard"],
+    "adminActivateUser": ["GqlAuthAdminGuard"],
+    "adminVerifyEmail": ["GqlAuthAdminGuard"],
+    "adminForcePasswordReset": ["GqlAuthAdminGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/api-tokens/api-tokens.resolver.ts": {
+    "generateApiToken": ["GqlAuthGuard"],
+    "listApiTokens": ["GqlAuthGuard"],
+    "revokeApiToken": ["GqlAuthGuard"],
+    "rotateApiToken": ["GqlAuthGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/auth/auth.resolver.ts": {
+    "me": ["GqlAuthGuard"],
+    "login": [],
+    "complete2FALogin": [],
+    "logout": [],
+    "register": [],
+    "registerWithInvitation": [],
+    "forgotPassword": [],
+    "resetPassword": [],
+    "resendVerificationEmail": [],
+    "verifyEmail": [],
+    "emulateUser": ["GqlAuthAdminGuard"],
+    "changeEmail": ["GqlAuthGuard"],
+    "verifyEmailChange": [],
+    "changePassword": ["GqlAuthGuard"],
+    "endEmulation": ["GqlAuthGuard"],
+    "unlockAccount": ["GqlAuthGuard"],
+    "setup2FA": ["GqlAuthGuard"],
+    "enable2FA": ["GqlAuthGuard"],
+    "disable2FA": ["GqlAuthGuard"],
+    "verify2FACode": ["GqlAuthGuard"],
+    "availableOAuthProviders": [],
+    "linkOAuthAccount": ["GqlAuthGuard"],
+    "unlinkOAuthAccount": ["GqlAuthGuard"],
+    "getUserSessions": ["GqlAuthGuard"],
+    "invalidateSession": ["GqlAuthGuard"],
+    "invalidateAllSessions": ["GqlAuthGuard"],
+    "exportUserData": ["GqlAuthGuard"],
+    "deleteUserAccount": ["GqlAuthGuard"],
+    "transferOrganizationOwnership": ["GqlAuthGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/billing/billing.resolver.ts": {
+    "syncStripeProducts": ["GqlAuthAdminGuard"],
+    "syncStripePrices": ["GqlAuthAdminGuard"],
+    "syncStripeProduct": ["GqlAuthAdminGuard"],
+    "syncStripePrice": ["GqlAuthAdminGuard"],
+    "syncStripeSubscription": ["GqlAuthAdminGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/security/security-events.resolver.ts": {
+    "userSecurityEvents": ["GqlAuthGuard"],
+    "mySecurityEvents": ["GqlAuthGuard"],
+    "securityEventsByType": ["GqlAuthGuard"],
+    "securitySummary": ["GqlAuthGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/storage/storage.resolver.ts": {
+    "uploadFile": ["GqlAuthGuard"],
+    "uploadUserAvatar": ["GqlAuthGuard"],
+    "uploadOrganizationLogo": ["GqlOrganizationScopedGuard"],
+    "deleteFile": ["GqlAuthGuard"],
+    "removeUserAvatar": ["GqlAuthGuard"],
+    "removeOrganizationLogo": ["GqlOrganizationScopedGuard"],
+    "getSignedUrl": ["GqlAuthGuard"],
+    "userFiles": ["GqlAuthGuard"],
+    "organizationFiles": ["GqlAuthGuard"]
+  }
+}

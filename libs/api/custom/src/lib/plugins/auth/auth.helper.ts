@@ -1,5 +1,5 @@
 import { compareSync, hashSync } from 'bcryptjs'
-import { createHash } from 'crypto'
+import { createHash } from 'node:crypto'
 
 const getHash = (str: string): string => createHash('md5').update(str).digest('hex')
 
@@ -30,7 +30,7 @@ export function generateExpireDate(days = 1) {
 }
 
 export function randomId(length = 8): string {
-  return new Date().getTime().toString().substr(0, length)
+  return Date.now().toString().substring(0, length)
 }
 
 /**
@@ -38,8 +38,8 @@ export function randomId(length = 8): string {
  * Format: firstname.lastname (lowercase, alphanumeric only)
  */
 export function generateUsernameSlug(firstName?: string, lastName?: string): string {
-  const cleanFirst = (firstName || '').toLowerCase().replace(/[^a-z0-9]/g, '') || 'user'
-  const cleanLast = (lastName || '').toLowerCase().replace(/[^a-z0-9]/g, '') || randomId(4)
+  const cleanFirst = (firstName || '').toLowerCase().replaceAll(/[^a-z0-9]/g, '') || 'user'
+  const cleanLast = (lastName || '').toLowerCase().replaceAll(/[^a-z0-9]/g, '') || randomId(4)
   return `${cleanFirst}.${cleanLast}`
 }
 

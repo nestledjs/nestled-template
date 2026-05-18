@@ -3,13 +3,35 @@ import { BellAlertIcon, BellIcon, EnvelopeIcon } from '@heroicons/react/24/outli
 import {
   UserPreferences,
   UserPreferencesQuery,
-  CreateUserPreference,
-  UpdateUserPreference,
-  type CreateUserPreferenceMutation,
-  type UpdateUserPreferenceMutation,
+  UserCreateUserPreference,
+  UserUpdateUserPreference,
+  type UserCreateUserPreferenceMutation,
+  type UserUpdateUserPreferenceMutation,
 } from '@nestled-template/shared/sdk'
-import { gql } from '@apollo/client'
+import { gql, type ApolloCache } from '@apollo/client'
 import { useQuery, useMutation } from '@apollo/client/react'
+
+type CacheReference = {
+  __ref?: string
+}
+
+function updatePreferencesCache(
+  cache: ApolloCache,
+  updatedPreference: { __typename?: string; id: string; value: string },
+) {
+  const updatedPreferenceId = cache.identify(updatedPreference)
+  cache.modify({
+    fields: {
+      userPreferences(existingPreferences = []) {
+        return (existingPreferences as CacheReference[]).map(pref =>
+          pref.__ref === updatedPreferenceId
+            ? { ...pref, value: String(updatedPreference.value) }
+            : pref,
+        )
+      },
+    },
+  })
+}
 
 interface NotificationSetting {
   key: string
@@ -88,6 +110,18 @@ const DEFAULT_NOTIFICATIONS: NotificationSetting[] = [
 
 export const loader = () => ({})
 
+function handleUpdatePreferenceCache(
+  cache: Parameters<typeof updatePreferencesCache>[0],
+  data:
+    | { userUpdateUserPreference?: Parameters<typeof updatePreferencesCache>[1] | null }
+    | null
+    | undefined,
+) {
+  if (data?.userUpdateUserPreference) {
+    updatePreferencesCache(cache, data.userUpdateUserPreference)
+  }
+}
+
 export default function NotificationsSettings() {
   const { data: preferencesData } = useQuery<UserPreferencesQuery>(UserPreferences)
   const preferences = preferencesData?.userPreferences || []
@@ -95,8 +129,8 @@ export default function NotificationsSettings() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
 
-  const [createPreference] = useMutation<CreateUserPreferenceMutation>(CreateUserPreference)
-  const [updatePreference] = useMutation<UpdateUserPreferenceMutation>(UpdateUserPreference)
+  const [createPreference] = useMutation<UserCreateUserPreferenceMutation>(UserCreateUserPreference)
+  const [updatePreference] = useMutation<UserUpdateUserPreferenceMutation>(UserUpdateUserPreference)
 
   const showSuccess = (message: string) => {
     setFormSuccess(message)
@@ -118,93 +152,79 @@ export default function NotificationsSettings() {
     }
   })
 
+  const updateExistingPreference = async (existing: (typeof preferences)[0], newValue: boolean) => {
+    await updatePreference({
+      variables: {
+        userPreferenceId: existing.id,
+        input: { value: String(newValue) },
+      },
+      optimisticResponse: {
+        userUpdateUserPreference: {
+          __typename: 'UserPreference',
+          id: existing.id,
+          key: existing.key,
+          value: String(newValue),
+          createdAt: existing.createdAt,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      update: (cache, { data }) => handleUpdatePreferenceCache(cache, data),
+    })
+  }
+
+  const createNewPreference = async (key: string, newValue: boolean) => {
+    await createPreference({
+      variables: {
+        input: {
+          key,
+          value: String(newValue),
+        },
+      },
+      optimisticResponse: {
+        userCreateUserPreference: {
+          __typename: 'UserPreference',
+          id: `temp-${Date.now()}`,
+          key,
+          value: String(newValue),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      update: (cache, { data }) => {
+        if (!data?.userCreateUserPreference) return
+        cache.modify({
+          fields: {
+            userPreferences(existingPreferences = []) {
+              const newPrefRef = cache.writeFragment({
+                data: data.userCreateUserPreference,
+                fragment: gql`
+                  fragment NewUserPreference on UserPreference {
+                    id
+                    key
+                    value
+                    createdAt
+                    updatedAt
+                  }
+                `,
+              })
+              return [...existingPreferences, newPrefRef]
+            },
+          },
+        })
+      },
+    })
+  }
+
   const toggleNotification = async (key: string, currentValue: boolean) => {
     const newValue = !currentValue
 
     try {
-      // Check if preference exists
       const existing = preferences.find(p => p.key === key)
-
       if (existing) {
-        // Update existing preference with optimistic response
-        await updatePreference({
-          variables: {
-            userPreferenceId: existing.id,
-            input: { value: String(newValue) },
-          },
-          optimisticResponse: {
-            updateUserPreference: {
-              __typename: 'UserPreference',
-              id: existing.id,
-              key: existing.key,
-              value: String(newValue),
-              createdAt: existing.createdAt,
-              updatedAt: new Date().toISOString(),
-            },
-          },
-          update: (cache, { data }) => {
-            if (data?.updateUserPreference) {
-              // Update the cache directly
-              cache.modify({
-                fields: {
-                  userPreferences(existingPreferences = []) {
-                    return existingPreferences.map((pref: any) =>
-                      pref.__ref === cache.identify(data.updateUserPreference!)
-                        ? { ...pref, value: String(newValue) }
-                        : pref,
-                    )
-                  },
-                },
-              })
-            }
-          },
-        })
+        await updateExistingPreference(existing, newValue)
       } else {
-        // Create new preference with optimistic response
-        await createPreference({
-          variables: {
-            input: {
-              key,
-              value: String(newValue),
-            },
-          },
-          optimisticResponse: {
-            createUserPreference: {
-              __typename: 'UserPreference',
-              id: `temp-${Date.now()}`,
-              key,
-              value: String(newValue),
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            },
-          },
-          update: (cache, { data }) => {
-            if (data?.createUserPreference) {
-              // Update the cache to include the new preference
-              cache.modify({
-                fields: {
-                  userPreferences(existingPreferences = []) {
-                    const newPrefRef = cache.writeFragment({
-                      data: data.createUserPreference,
-                      fragment: gql`
-                        fragment NewUserPreference on UserPreference {
-                          id
-                          key
-                          value
-                          createdAt
-                          updatedAt
-                        }
-                      `,
-                    })
-                    return [...existingPreferences, newPrefRef]
-                  },
-                },
-              })
-            }
-          },
-        })
+        await createNewPreference(key, newValue)
       }
-
       showSuccess('Notification preferences saved!')
     } catch (error) {
       showError((error as Error)?.message ?? 'Failed to save preferences')
@@ -232,6 +252,20 @@ export default function NotificationsSettings() {
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-sky-200 bg-sky-50 p-5 text-sm text-sky-950 dark:border-sky-400/20 dark:bg-sky-400/10 dark:text-sky-100">
+        <p>
+          This template currently persists these settings to the database, but none of these
+          preferences do anything out-of-the-box. If you build internal notification features, you
+          can tie them to these preferences. If you use a third-party CRM or email platform, sync
+          email preferences through its API so subscription and compliance rules stay in one place.
+        </p>
+        <p className="mt-3">
+          Important account notices, such as password resets, verification emails, and security
+          warnings, should usually remain mandatory and should not be controlled by opt-out
+          switches.
+        </p>
       </div>
 
       {formSuccess && (
@@ -331,8 +365,8 @@ export default function NotificationsSettings() {
 }
 
 interface NotificationToggleProps {
-  notification: NotificationSetting
-  onToggle: (key: string, currentValue: boolean) => void
+  readonly notification: NotificationSetting
+  readonly onToggle: (key: string, currentValue: boolean) => void
 }
 
 function NotificationToggle({ notification, onToggle }: NotificationToggleProps) {

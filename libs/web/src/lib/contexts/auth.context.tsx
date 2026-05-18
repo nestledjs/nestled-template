@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react'
 import { useQuery, useMutation } from '@apollo/client/react'
 import {
   MyOrganizationsWithMembers,
@@ -41,8 +41,8 @@ export interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 interface AuthProviderProps {
-  children: ReactNode
-  initialUser?: AuthUser | null
+  readonly children: ReactNode
+  readonly initialUser?: AuthUser | null
 }
 
 export function AuthProvider({ children, initialUser = null }: AuthProviderProps) {
@@ -51,19 +51,27 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   const [originalUser, setOriginalUser] = useState<AuthUser | null>(null)
 
   // Fetch user's organizations with member details including roles and permissions
-  const { data: orgsData, loading: orgsLoading, refetch: refetchOrgs } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers, {
+  const {
+    data: orgsData,
+    loading: orgsLoading,
+    refetch: refetchOrgs,
+  } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers, {
     skip: !user?.id,
   })
 
-  const [switchOrgMutation] = useMutation<SwitchActiveOrganizationMutation>(SwitchActiveOrganization)
+  const [switchOrgMutation] =
+    useMutation<SwitchActiveOrganizationMutation>(SwitchActiveOrganization)
 
   const organizations = orgsData?.myOrganizations || []
-  const activeOrganization = organizations.find(org => org.id === (user as any)?.activeOrganizationId) || organizations[0] || null
+  const activeOrganization = user
+    ? organizations.find(org => org.id === (user as any)?.activeOrganizationId) ||
+      organizations[0] ||
+      null
+    : null
 
   // Find the current user's membership in the active organization
-  const activeOrganizationMember = (activeOrganization as any)?.members?.find(
-    (member: any) => member.userId === user?.id
-  ) || null
+  const activeOrganizationMember =
+    (activeOrganization as any)?.members?.find((member: any) => member.userId === user?.id) || null
 
   const isAuthenticated = !!user?.id
   const isLoading = orgsLoading
@@ -134,21 +142,38 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     }
   }, [user, activeOrganization])
 
-  const value: AuthContextType = {
-    user,
-    isAuthenticated,
-    isLoading,
-    organizations: organizations as any,
-    activeOrganization: activeOrganization as any,
-    activeOrganizationMember,
-    isEmulating,
-    originalUser,
-    login,
-    logout,
-    switchOrganization,
-    refreshOrganizations,
-    setUser,
-  }
+  const value = useMemo<AuthContextType>(
+    () => ({
+      user,
+      isAuthenticated,
+      isLoading,
+      organizations: organizations as any,
+      activeOrganization: activeOrganization as any,
+      activeOrganizationMember,
+      isEmulating,
+      originalUser,
+      login,
+      logout,
+      switchOrganization,
+      refreshOrganizations,
+      setUser,
+    }),
+    [
+      user,
+      isAuthenticated,
+      isLoading,
+      organizations,
+      activeOrganization,
+      activeOrganizationMember,
+      isEmulating,
+      originalUser,
+      login,
+      logout,
+      switchOrganization,
+      refreshOrganizations,
+      setUser,
+    ],
+  )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
@@ -184,7 +209,7 @@ export function useHasPermission(permission: string): boolean {
   const [subject, action] = permission.split(':')
 
   return activeOrganizationMember.role.permissions.some(
-    (p: any) => p.subject === subject && p.action === action
+    (p: any) => p.subject === subject && p.action === action,
   )
 }
 
@@ -204,7 +229,7 @@ export function useHasAnyPermission(permissions: string[]): boolean {
   return permissions.some(permission => {
     const [subject, action] = permission.split(':')
     return activeOrganizationMember.role?.permissions?.some(
-      (p: any) => p.subject === subject && p.action === action
+      (p: any) => p.subject === subject && p.action === action,
     )
   })
 }
@@ -225,7 +250,7 @@ export function useHasAllPermissions(permissions: string[]): boolean {
   return permissions.every(permission => {
     const [subject, action] = permission.split(':')
     return activeOrganizationMember.role?.permissions?.some(
-      (p: any) => p.subject === subject && p.action === action
+      (p: any) => p.subject === subject && p.action === action,
     )
   })
 }

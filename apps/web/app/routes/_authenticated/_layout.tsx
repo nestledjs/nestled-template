@@ -10,9 +10,14 @@ import { WebUiFooter, WebUiHeader } from '@nestled-template/web-ui'
 import { apolloLoader } from '@nestled-template/shared/apollo'
 import {
   MyOrganizationsWithMembers,
+  type MeQuery,
   type MyOrganizationsWithMembersQuery,
 } from '@nestled-template/shared/sdk'
 import { useReadQuery, type QueryRef } from '@apollo/client/react'
+
+type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
+  activeOrganizationId?: string | null
+}
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
   const myOrganizationsQueryRef = preloadQuery<MyOrganizationsWithMembersQuery>(
@@ -39,25 +44,28 @@ export default function AuthenticatedLayout() {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
-  const organizations = (orgsData?.myOrganizations || []) as any
+  const organizations = orgsData?.myOrganizations || []
+  const userWithActiveOrganization = user as UserWithActiveOrganization
   const activeOrganization =
-    organizations.find((org: any) => org?.id === (user as any).activeOrganizationId) || organizations[0] || null
+    organizations.find(org => org.id === userWithActiveOrganization.activeOrganizationId) ||
+    organizations[0] ||
+    null
   const activeOrganizationMember =
-    activeOrganization?.members?.find((member: any) => member.userId === user?.id) || null
+    activeOrganization?.members?.find(member => member.userId === user?.id) || null
 
-  // Build navigation based on user permissions
-  const navigation = [
-    { name: 'Dashboard', href: '/members/dashboard' },
-    { name: 'Pricing', href: '/pricing' },
-    { name: 'Settings', href: '/settings/profile' },
-  ]
-
-  // Add Admin link for super admins
-  if (user.isSuperAdmin) {
-    navigation.push({ name: 'Admin', href: '/admin/users' })
-  }
-
-  navigation.push({ name: 'Logout', href: '/logout' })
+  const isAdminRoute = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
+  const primaryEmail = user.emails?.find(email => email.primary)?.email ?? user.emails?.[0]?.email
+  const userName =
+    `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.displayName || primaryEmail
+  const userAvatarUrl = user.avatar?.publicUrl ?? user.avatar?.url ?? null
+  const activeOrganizationRoleName = activeOrganizationMember?.role?.name
+  const canViewBilling =
+    user.isSuperAdmin ||
+    activeOrganizationRoleName === 'Owner' ||
+    activeOrganizationRoleName === 'Admin' ||
+    !!activeOrganizationMember?.role?.permissions?.some(
+      permission => permission.subject === 'billing' && permission.action === 'read',
+    )
 
   return (
     <GlobalContextProvider
@@ -67,21 +75,35 @@ export default function AuthenticatedLayout() {
       activeOrganizationMember={activeOrganizationMember}
     >
       <SubscriptionProvider>
-        <div className="flex flex-col min-h-screen">
-          <EmulationBanner />
-          <WebUiHeader
-            logo={'/logo.png'}
-            icon={'/icon.png'}
-            siteName={activeOrganization?.name || 'Demo Site'}
-            navigation={navigation}
-            isAuthenticated={true}
-          />
-          <SubscriptionStatusBanner />
-          <main className="flex-1 flex flex-col">
-            <Outlet />
-          </main>
-          <WebUiFooter />
-        </div>
+        {isAdminRoute ? (
+          <div className="flex min-h-screen flex-col bg-zinc-950">
+            <EmulationBanner />
+            <main className="flex-1">
+              <Outlet />
+            </main>
+          </div>
+        ) : (
+          <div className="flex flex-col min-h-screen">
+            <EmulationBanner />
+            <WebUiHeader
+              logo={'/logo.png'}
+              icon={'/icon.png'}
+              siteName={activeOrganization?.name || 'Demo Site'}
+              navigation={[]}
+              isAuthenticated={true}
+              userName={userName}
+              userEmail={primaryEmail}
+              userAvatarUrl={userAvatarUrl}
+              isSuperAdmin={user.isSuperAdmin}
+              canViewBilling={canViewBilling}
+            />
+            <SubscriptionStatusBanner />
+            <main className="flex-1 flex flex-col">
+              <Outlet />
+            </main>
+            <WebUiFooter />
+          </div>
+        )}
       </SubscriptionProvider>
     </GlobalContextProvider>
   )

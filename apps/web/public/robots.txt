@@ -11,9 +11,9 @@ Disallow: /admin/
 Disallow: /members/
 Disallow: /leaders/
 
-# Allow blog and main pages
+# Allow main pages
 Allow: /blog/
-Allow: /post/
+Allow: /features/
 Allow: /about
 Allow: /contact
 Allow: /

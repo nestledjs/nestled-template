@@ -25,5 +25,3 @@ export function useUtcDateFilters() {
 
   return { startDate, endDate, setStartDate, setEndDate, buildFilters, chips }
 }
-
-

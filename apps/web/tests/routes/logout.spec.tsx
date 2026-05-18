@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import LogoutRoute from '../../app/routes/logout'
 import { ApolloClient } from '@apollo/client'
 import Cookies from 'js-cookie'
-import { createTestRouter } from "../helpers/createTestRouter"
+import { createTestRouter } from '../helpers/createTestRouter'
 
 import { useApolloClient } from '@apollo/client/react'
 
@@ -247,7 +247,7 @@ describe('Logout Route', () => {
       await waitFor(() => {
         expect(consoleWarnSpy).toHaveBeenCalledWith(
           '[logout] logoutMutation failed (continuing):',
-          'Connection failed'
+          'Connection failed',
         )
       })
     })
@@ -275,7 +275,7 @@ describe('Logout Route', () => {
       await waitFor(() => {
         expect(consoleWarnSpy).toHaveBeenCalledWith(
           '[logout] apollo.clearStore failed (continuing):',
-          'Cache error'
+          'Cache error',
         )
       })
     })
@@ -394,7 +394,7 @@ describe('Logout Route', () => {
         expect(mockApolloClient.mutate).toHaveBeenCalledWith(
           expect.objectContaining({
             mutation: expect.any(Object),
-          })
+          }),
         )
       })
     })
@@ -406,7 +406,7 @@ describe('Logout Route', () => {
       mockApolloClient.mutate.mockReturnValue(
         new Promise(resolve => {
           resolveLogout = resolve
-        })
+        }),
       )
 
       renderLogout()

@@ -10,31 +10,38 @@ export class TenancyMiddleware implements NestMiddleware {
 
   constructor(
     private readonly data: ApiCoreDataAccessService,
-    @Optional() private readonly authCache?: AuthCacheService
+    @Optional() private readonly authCache?: AuthCacheService,
   ) {}
 
-  async use(req: Request & { user?: User; organizationContext?: OrganizationContext }, res: Response, next: NextFunction) {
+  private async resolveOrganizationId(req: Request & { user?: User }): Promise<string | undefined> {
+    const rawHeader = req.headers['x-organization-id']
+    const fromHeader = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
+    if (fromHeader) return fromHeader
+
+    if (!req.user) return undefined
+
+    if (req.user.activeOrganizationId) return req.user.activeOrganizationId
+
+    if (this.authCache?.isEnabled()) {
+      const cachedOrgId = await this.authCache.getUserActiveOrganization(req.user.id)
+      if (cachedOrgId) return cachedOrgId
+    }
+
+    return undefined
+  }
+
+  async use(
+    req: Request & { user?: User; organizationContext?: OrganizationContext },
+    res: Response,
+    next: NextFunction,
+  ) {
     // Skip if no authenticated user
     if (!req.user) {
       return next()
     }
 
     try {
-      // TIER 1: Try to get organization ID from header (explicit context)
-      let organizationId = req.headers['x-organization-id'] as string
-
-      // TIER 2: Fall back to user's active organization
-      if (!organizationId && req.user.activeOrganizationId) {
-        organizationId = req.user.activeOrganizationId
-      }
-
-      // TIER 3: Try Redis cache for active organization
-      if (!organizationId && this.authCache?.isEnabled()) {
-        const cachedOrgId = await this.authCache.getUserActiveOrganization(req.user.id)
-        if (cachedOrgId) {
-          organizationId = cachedOrgId
-        }
-      }
+      const organizationId = await this.resolveOrganizationId(req)
 
       // If still no organization, skip (some endpoints don't require org context)
       if (!organizationId) {
@@ -43,17 +50,13 @@ export class TenancyMiddleware implements NestMiddleware {
       }
 
       // Check Redis cache for membership context
-      if (this.authCache?.isEnabled()) {
-        const cachedContext = await this.authCache.getMembership(req.user.id, organizationId)
-        if (cachedContext) {
-          // Apply super admin boost if needed
-          const finalContext = this.applySuperAdminBoost(cachedContext, req.user)
-          req.organizationContext = finalContext
-          this.logger.debug(
-            `Organization context from cache: User ${req.user.id} -> Org ${organizationId} (${cachedContext.roleName})`
-          )
-          return next()
-        }
+      const cachedContext = await this.getCachedMembership(req.user.id, organizationId)
+      if (cachedContext) {
+        req.organizationContext = this.applySuperAdminBoost(cachedContext, req.user)
+        this.logger.debug(
+          `Organization context from cache: User ${req.user.id} -> Org ${organizationId} (${cachedContext.roleName})`,
+        )
+        return next()
       }
 
       // Query database for membership
@@ -73,7 +76,7 @@ export class TenancyMiddleware implements NestMiddleware {
 
       if (!membership) {
         throw new ForbiddenException(
-          `User ${req.user.id} is not a member of organization ${organizationId}`
+          `User ${req.user.id} is not a member of organization ${organizationId}`,
         )
       }
 
@@ -91,16 +94,18 @@ export class TenancyMiddleware implements NestMiddleware {
 
       // Cache the membership context in Redis
       if (this.authCache?.isEnabled()) {
-        this.authCache.setMembership(req.user.id, organizationId, organizationContext).catch(err => {
-          this.logger.warn(`Failed to cache membership: ${err.message}`)
-        })
+        this.authCache
+          .setMembership(req.user.id, organizationId, organizationContext)
+          .catch(err => {
+            this.logger.warn(`Failed to cache membership: ${err.message}`)
+          })
       }
 
       // Apply super admin boost and attach to request
       req.organizationContext = this.applySuperAdminBoost(organizationContext, req.user)
 
       this.logger.debug(
-        `Organization context set: User ${req.user.id} -> Org ${organizationId} (${membership.role.name})`
+        `Organization context set: User ${req.user.id} -> Org ${organizationId} (${membership.role.name})`,
       )
 
       next()
@@ -114,6 +119,14 @@ export class TenancyMiddleware implements NestMiddleware {
     }
   }
 
+  private async getCachedMembership(
+    userId: string,
+    organizationId: string,
+  ): Promise<OrganizationContext | null> {
+    if (!this.authCache?.isEnabled()) return null
+    return (await this.authCache.getMembership(userId, organizationId)) ?? null
+  }
+
   /**
    * Super admins get all:manage permission automatically.
    * This grants them full access to any organization without needing explicit role permissions.
@@ -124,9 +137,7 @@ export class TenancyMiddleware implements NestMiddleware {
     }
 
     // Check if already has all:manage
-    const hasAllManage = context.permissions.some(
-      p => p.subject === 'all' && p.action === 'manage'
-    )
+    const hasAllManage = context.permissions.some(p => p.subject === 'all' && p.action === 'manage')
 
     if (hasAllManage) {
       return context

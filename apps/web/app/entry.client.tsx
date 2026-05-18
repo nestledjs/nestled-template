@@ -14,7 +14,7 @@ disableFragmentWarnings()
 
 startTransition(() => {
   const client = makeClient(undefined, {
-    apiUrl: `${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/graphql`
+    apiUrl: `${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/graphql`,
   })
   hydrateRoot(
     document,

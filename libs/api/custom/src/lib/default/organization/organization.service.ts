@@ -1,7 +1,14 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common'
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { Organization, User } from '@nestled-template/api/core/models'
-import { defaultRoles } from '@nestled-template/api/prisma'
+import { defaultRoles, type InputJsonValue } from '@nestled-template/api/prisma'
 import {
   CreateOrganizationInput,
   UpdateOrganizationInput,
@@ -12,14 +19,15 @@ import {
   UpdateMemberRoleInput,
   CreateInvitationInput,
   ResendInvitationInput,
+  CancelInvitationInput,
   AcceptInvitationInput,
   RejectInvitationInput,
   SwitchOrganizationInput,
-  TransferOrganizationOwnershipInput
+  TransferOrganizationOwnershipInput,
 } from './dto'
 import { EmailService } from '@nestled-template/api/integrations'
 import { ConfigService } from '@nestjs/config'
-import { randomBytes } from 'crypto'
+import { randomBytes } from 'node:crypto'
 import { AuthCacheService } from '@nestled-template/api/utils'
 
 @Injectable()
@@ -31,6 +39,34 @@ export class OrganizationService {
     @Optional() private readonly authCache?: AuthCacheService,
   ) {}
 
+  private async recordAuditLog(input: {
+    actorUserId: string
+    organizationId?: string
+    entityId: string
+    entityType: string
+    action: string
+    changes?: InputJsonValue
+  }): Promise<void> {
+    try {
+      await this.data.auditLog.create({
+        data: {
+          userId: input.actorUserId,
+          organizationId: input.organizationId,
+          entityId: input.entityId,
+          entityType: input.entityType,
+          action: input.action,
+          changes: input.changes,
+        },
+      })
+    } catch (error) {
+      Logger.warn(
+        `Failed to record audit log ${input.action} for ${input.entityType} ${input.entityId}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      )
+    }
+  }
+
   /**
    * Creates default roles for a new organization with proper permissions
    */
@@ -41,7 +77,7 @@ export class OrganizationService {
     for (const roleTemplate of defaultRoles) {
       // Find permissions that match this role's permission strings
       const rolePermissions = allPermissions.filter(p =>
-        roleTemplate.permissions.includes(`${p.subject}:${p.action}`)
+        roleTemplate.permissions.includes(`${p.subject}:${p.action}`),
       )
 
       await this.data.role.create({
@@ -50,9 +86,9 @@ export class OrganizationService {
           description: roleTemplate.description,
           organizationId,
           permissions: {
-            connect: rolePermissions.map(p => ({ id: p.id }))
-          }
-        }
+            connect: rolePermissions.map(p => ({ id: p.id })),
+          },
+        },
       })
     }
   }
@@ -67,17 +103,40 @@ export class OrganizationService {
         organizationId,
       },
       include: {
-        role: true
-      }
+        role: true,
+      },
     })
 
     return member?.role.name === 'Owner'
   }
 
+  private async assertCanAssignRole(
+    userId: string,
+    organizationId: string,
+    roleId: string,
+  ): Promise<void> {
+    const role = await this.data.role.findFirst({
+      where: { id: roleId, organizationId },
+      select: { name: true },
+    })
+
+    if (role?.name !== 'Owner') return
+
+    const inviterIsOwner = await this.isOwner(userId, organizationId)
+    if (!inviterIsOwner) {
+      throw new ForbiddenException('Only organization owners can assign the Owner role')
+    }
+  }
+
   /**
    * Check if user has permission in organization
    */
-  private async hasPermission(userId: string, organizationId: string, subject: string, action: string): Promise<boolean> {
+  private async hasPermission(
+    userId: string,
+    organizationId: string,
+    subject: string,
+    action: string,
+  ): Promise<boolean> {
     const member = await this.data.organizationMember.findFirst({
       where: {
         userId,
@@ -86,26 +145,27 @@ export class OrganizationService {
       include: {
         role: {
           include: {
-            permissions: true
-          }
-        }
-      }
+            permissions: true,
+          },
+        },
+      },
     })
 
     if (!member) return false
 
-    return member.role.permissions.some(p =>
-      p.subject === subject && p.action === action
-    )
+    return member.role.permissions.some(p => p.subject === subject && p.action === action)
   }
 
   /**
    * User creates a new organization
    */
-  async userCreateOrganization(userId: string, input: CreateOrganizationInput): Promise<Organization> {
+  async userCreateOrganization(
+    userId: string,
+    input: CreateOrganizationInput,
+  ): Promise<Organization> {
     // Create the organization
     const organization = await this.data.organization.create({
-      data: { name: input.name }
+      data: { name: input.name },
     })
 
     // Create default roles for the organization
@@ -115,8 +175,8 @@ export class OrganizationService {
     const ownerRole = await this.data.role.findFirst({
       where: {
         name: 'Owner',
-        organizationId: organization.id
-      }
+        organizationId: organization.id,
+      },
     })
 
     if (!ownerRole) {
@@ -128,8 +188,8 @@ export class OrganizationService {
       data: {
         userId,
         organizationId: organization.id,
-        roleId: ownerRole.id
-      }
+        roleId: ownerRole.id,
+      },
     })
 
     // Set as active organization if user doesn't have one
@@ -137,7 +197,7 @@ export class OrganizationService {
     if (!user?.activeOrganizationId) {
       await this.data.user.update({
         where: { id: userId },
-        data: { activeOrganizationId: organization.id }
+        data: { activeOrganizationId: organization.id },
       })
     }
 
@@ -149,20 +209,43 @@ export class OrganizationService {
   /**
    * Update organization (owner-only for critical fields)
    */
-  async userUpdateOrganization(userId: string, organizationId: string, input: UpdateOrganizationInput): Promise<Organization> {
-    // Check if user has permission to update organization
-    const canUpdate = await this.hasPermission(userId, organizationId, 'organization', 'update')
+  async userUpdateOrganization(
+    userId: string,
+    organizationId: string,
+    input: UpdateOrganizationInput,
+  ): Promise<Organization> {
+    // Organization identity and branding are owner-managed by default.
+    const canUpdate = await this.isOwner(userId, organizationId)
 
     if (!canUpdate) {
       throw new ForbiddenException('You do not have permission to update this organization')
     }
 
+    const existingOrganization = await this.data.organization.findUnique({
+      where: { id: organizationId },
+      select: { name: true },
+    })
+
     // Update the organization
     const organization = await this.data.organization.update({
       where: { id: organizationId },
       data: {
-        ...(input.name && { name: input.name })
-      }
+        ...(input.name && { name: input.name }),
+      },
+    })
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId,
+      entityId: organizationId,
+      entityType: 'Organization',
+      action: 'ORGANIZATION_UPDATED',
+      changes: {
+        name: {
+          before: existingOrganization?.name ?? null,
+          after: organization.name,
+        },
+      },
     })
 
     Logger.log(`User ${userId} updated organization: ${organization.id}`)
@@ -186,22 +269,22 @@ export class OrganizationService {
 
     // Delete all pending invitations
     await this.data.invite.deleteMany({
-      where: { organizationId }
+      where: { organizationId },
     })
 
     // Delete all organization members
     await this.data.organizationMember.deleteMany({
-      where: { organizationId }
+      where: { organizationId },
     })
 
     // Delete all roles (Prisma will handle disconnecting permissions via implicit many-to-many)
     await this.data.role.deleteMany({
-      where: { organizationId }
+      where: { organizationId },
     })
 
     // Delete the organization
     await this.data.organization.delete({
-      where: { id: organizationId }
+      where: { id: organizationId },
     })
 
     // If this was the user's active organization, clear it
@@ -209,7 +292,7 @@ export class OrganizationService {
     if (user?.activeOrganizationId === organizationId) {
       await this.data.user.update({
         where: { id: userId },
-        data: { activeOrganizationId: null }
+        data: { activeOrganizationId: null },
       })
     }
 
@@ -233,8 +316,8 @@ export class OrganizationService {
     const existingMember = await this.data.organizationMember.findFirst({
       where: {
         userId: input.userId,
-        organizationId: input.organizationId
-      }
+        organizationId: input.organizationId,
+      },
     })
 
     if (existingMember) {
@@ -246,11 +329,13 @@ export class OrganizationService {
       data: {
         userId: input.userId,
         organizationId: input.organizationId,
-        roleId: input.roleId
-      }
+        roleId: input.roleId,
+      },
     })
 
-    Logger.log(`User ${userId} added member ${input.userId} to organization ${input.organizationId}`)
+    Logger.log(
+      `User ${userId} added member ${input.userId} to organization ${input.organizationId}`,
+    )
 
     return true
   }
@@ -258,12 +343,17 @@ export class OrganizationService {
   /**
    * Remove member from organization (requires member:remove permission)
    */
-  async removeOrganizationMember(userId: string, input: RemoveOrganizationMemberInput): Promise<boolean> {
+  async removeOrganizationMember(
+    userId: string,
+    input: RemoveOrganizationMemberInput,
+  ): Promise<boolean> {
     // Check if user has permission to remove members
     const canRemove = await this.hasPermission(userId, input.organizationId, 'member', 'remove')
 
     if (!canRemove) {
-      throw new ForbiddenException('You do not have permission to remove members from this organization')
+      throw new ForbiddenException(
+        'You do not have permission to remove members from this organization',
+      )
     }
 
     // Cannot remove yourself
@@ -281,8 +371,8 @@ export class OrganizationService {
     const member = await this.data.organizationMember.findFirst({
       where: {
         userId: input.userId,
-        organizationId: input.organizationId
-      }
+        organizationId: input.organizationId,
+      },
     })
 
     if (!member) {
@@ -290,7 +380,19 @@ export class OrganizationService {
     }
 
     await this.data.organizationMember.delete({
-      where: { id: member.id }
+      where: { id: member.id },
+    })
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: input.organizationId,
+      entityId: input.userId,
+      entityType: 'OrganizationMember',
+      action: 'ORGANIZATION_MEMBER_REMOVED',
+      changes: {
+        removedUserId: input.userId,
+        membershipId: member.id,
+      },
     })
 
     // Invalidate cached membership for the removed user
@@ -299,7 +401,9 @@ export class OrganizationService {
       await this.authCache.invalidateUserActiveOrganization(input.userId)
     }
 
-    Logger.log(`User ${userId} removed member ${input.userId} from organization ${input.organizationId}`)
+    Logger.log(
+      `User ${userId} removed member ${input.userId} from organization ${input.organizationId}`,
+    )
 
     return true
   }
@@ -307,13 +411,20 @@ export class OrganizationService {
   /**
    * Update member role (requires member:update permission)
    */
-  async updateOrganizationMemberRole(userId: string, input: UpdateMemberRoleInput): Promise<boolean> {
+  async updateOrganizationMemberRole(
+    userId: string,
+    input: UpdateMemberRoleInput,
+  ): Promise<boolean> {
     // Check if user has permission to update members
     const canUpdate = await this.hasPermission(userId, input.organizationId, 'member', 'update')
 
     if (!canUpdate) {
-      throw new ForbiddenException('You do not have permission to update member roles in this organization')
+      throw new ForbiddenException(
+        'You do not have permission to update member roles in this organization',
+      )
     }
+
+    await this.assertCanAssignRole(userId, input.organizationId, input.roleId)
 
     // Cannot change owner's role
     const targetIsOwner = await this.isOwner(input.userId, input.organizationId)
@@ -325,8 +436,8 @@ export class OrganizationService {
     const member = await this.data.organizationMember.findFirst({
       where: {
         userId: input.userId,
-        organizationId: input.organizationId
-      }
+        organizationId: input.organizationId,
+      },
     })
 
     if (!member) {
@@ -335,7 +446,23 @@ export class OrganizationService {
 
     await this.data.organizationMember.update({
       where: { id: member.id },
-      data: { roleId: input.roleId }
+      data: { roleId: input.roleId },
+    })
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: input.organizationId,
+      entityId: input.userId,
+      entityType: 'OrganizationMember',
+      action: 'ORGANIZATION_MEMBER_ROLE_UPDATED',
+      changes: {
+        targetUserId: input.userId,
+        membershipId: member.id,
+        roleId: {
+          before: member.roleId ?? null,
+          after: input.roleId,
+        },
+      },
     })
 
     // Invalidate cached membership for the affected user
@@ -343,7 +470,9 @@ export class OrganizationService {
       await this.authCache.invalidateMembership(input.userId, input.organizationId)
     }
 
-    Logger.log(`User ${userId} updated role for member ${input.userId} in organization ${input.organizationId}`)
+    Logger.log(
+      `User ${userId} updated role for member ${input.userId} in organization ${input.organizationId}`,
+    )
 
     return true
   }
@@ -351,25 +480,34 @@ export class OrganizationService {
   /**
    * Create invitation to organization (requires member:invite permission)
    */
-  async createOrganizationInvitation(userId: string, input: CreateInvitationInput): Promise<string> {
+  async createOrganizationInvitation(
+    userId: string,
+    input: CreateInvitationInput,
+  ): Promise<string> {
     // Check if user has permission to invite members
     const canInvite = await this.hasPermission(userId, input.organizationId, 'member', 'invite')
 
     if (!canInvite) {
-      throw new ForbiddenException('You do not have permission to invite members to this organization')
+      throw new ForbiddenException(
+        'You do not have permission to invite members to this organization',
+      )
     }
+
+    await this.assertCanAssignRole(userId, input.organizationId, input.roleId)
 
     // Check if email already has a pending invitation
     const existingInvite = await this.data.invite.findFirst({
       where: {
         email: input.email.toLowerCase().trim(),
         organizationId: input.organizationId,
-        status: 'PENDING'
-      }
+        status: 'PENDING',
+      },
     })
 
     if (existingInvite) {
-      throw new BadRequestException('This email already has a pending invitation to this organization')
+      throw new BadRequestException(
+        'This email already has a pending invitation to this organization',
+      )
     }
 
     // Generate invitation token
@@ -377,7 +515,7 @@ export class OrganizationService {
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
 
     // Create invitation
-    const invite = await this.data.invite.create({
+    const invitation = await this.data.invite.create({
       data: {
         email: input.email.toLowerCase().trim(),
         token,
@@ -385,14 +523,27 @@ export class OrganizationService {
         inviterId: userId,
         organizationId: input.organizationId,
         roleId: input.roleId,
-        status: 'PENDING'
-      }
+        status: 'PENDING',
+      },
+    })
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: input.organizationId,
+      entityId: invitation.id,
+      entityType: 'Invite',
+      action: 'ORGANIZATION_INVITATION_CREATED',
+      changes: {
+        email: input.email.toLowerCase().trim(),
+        roleId: input.roleId,
+        expiresAt: expiresAt.toISOString(),
+      },
     })
 
     // Get organization and inviter details for email
     const [organization, inviter] = await Promise.all([
       this.data.organization.findUnique({ where: { id: input.organizationId } }),
-      this.data.user.findUnique({ where: { id: userId } })
+      this.data.user.findUnique({ where: { id: userId } }),
     ])
 
     if (!organization || !inviter) {
@@ -411,8 +562,8 @@ export class OrganizationService {
         inviterName: inviter.firstName || inviter.displayName || 'A team member',
         invitationUrl,
         appName,
-        expirationDays: 7
-      }
+        expirationDays: 7,
+      },
     })
 
     Logger.log(`User ${userId} invited ${input.email} to organization ${input.organizationId}`)
@@ -437,9 +588,9 @@ export class OrganizationService {
             firstName: true,
             lastName: true,
             displayName: true,
-          }
-        }
-      }
+          },
+        },
+      },
     })
 
     if (!invite) {
@@ -454,7 +605,7 @@ export class OrganizationService {
       // Mark as expired
       await this.data.invite.update({
         where: { id: invite.id },
-        data: { status: 'EXPIRED' }
+        data: { status: 'EXPIRED' },
       })
       throw new BadRequestException('This invitation has expired')
     }
@@ -475,11 +626,14 @@ export class OrganizationService {
   /**
    * Resend organization invitation (requires member:invite permission)
    */
-  async resendOrganizationInvitation(userId: string, input: ResendInvitationInput): Promise<boolean> {
+  async resendOrganizationInvitation(
+    userId: string,
+    input: ResendInvitationInput,
+  ): Promise<boolean> {
     // Find the invitation
     const invite = await this.data.invite.findUnique({
       where: { id: input.invitationId },
-      include: { organization: true, role: true }
+      include: { organization: true, role: true },
     })
 
     if (!invite) {
@@ -490,7 +644,9 @@ export class OrganizationService {
     const canInvite = await this.hasPermission(userId, invite.organizationId, 'member', 'invite')
 
     if (!canInvite) {
-      throw new ForbiddenException('You do not have permission to resend invitations for this organization')
+      throw new ForbiddenException(
+        'You do not have permission to resend invitations for this organization',
+      )
     }
 
     // Only allow resending PENDING invitations
@@ -508,7 +664,7 @@ export class OrganizationService {
       data: {
         token,
         expiresAt,
-      }
+      },
     })
 
     // Get inviter details for email
@@ -530,8 +686,8 @@ export class OrganizationService {
         inviterName: inviter.firstName || inviter.displayName || 'A team member',
         invitationUrl,
         appName,
-        expirationDays: 7
-      }
+        expirationDays: 7,
+      },
     })
 
     Logger.log(`User ${userId} resent invitation ${invite.id} to ${invite.email}`)
@@ -540,13 +696,76 @@ export class OrganizationService {
   }
 
   /**
+   * Cancel a pending organization invitation (requires member:invite permission).
+   */
+  async cancelOrganizationInvitation(
+    userId: string,
+    input: CancelInvitationInput,
+  ): Promise<boolean> {
+    const invite = await this.data.invite.findUnique({
+      where: { id: input.invitationId },
+      include: { role: true },
+    })
+
+    if (!invite) {
+      throw new NotFoundException('Invitation not found')
+    }
+
+    const canInvite = await this.hasPermission(userId, invite.organizationId, 'member', 'invite')
+    if (!canInvite) {
+      throw new ForbiddenException(
+        'You do not have permission to cancel invitations for this organization',
+      )
+    }
+
+    if (invite.role?.name === 'Owner') {
+      const userIsOwner = await this.isOwner(userId, invite.organizationId)
+      if (!userIsOwner) {
+        throw new ForbiddenException('Only organization owners can cancel Owner invitations')
+      }
+    }
+
+    if (invite.status !== 'PENDING') {
+      throw new BadRequestException('Can only cancel pending invitations')
+    }
+
+    await this.data.invite.update({
+      where: { id: invite.id },
+      data: { status: 'DECLINED' },
+    })
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: invite.organizationId,
+      entityId: invite.id,
+      entityType: 'Invite',
+      action: 'ORGANIZATION_INVITATION_CANCELLED',
+      changes: {
+        email: invite.email,
+        roleId: invite.roleId ?? null,
+        status: {
+          before: invite.status,
+          after: 'DECLINED',
+        },
+      },
+    })
+
+    Logger.log(`User ${userId} cancelled invitation ${invite.id} to ${invite.email}`)
+
+    return true
+  }
+
+  /**
    * Accept organization invitation
    */
-  async acceptOrganizationInvitation(userId: string, input: AcceptInvitationInput): Promise<Organization> {
+  async acceptOrganizationInvitation(
+    userId: string,
+    input: AcceptInvitationInput,
+  ): Promise<Organization> {
     // Find the invitation
     const invite = await this.data.invite.findUnique({
       where: { token: input.token },
-      include: { organization: true, role: true }
+      include: { organization: true, role: true },
     })
 
     if (!invite) {
@@ -561,17 +780,17 @@ export class OrganizationService {
       // Mark as expired
       await this.data.invite.update({
         where: { id: invite.id },
-        data: { status: 'EXPIRED' }
+        data: { status: 'EXPIRED' },
       })
       throw new BadRequestException('This invitation has expired')
     }
 
     // Verify email matches (get user's email)
     const userEmail = await this.data.email.findFirst({
-      where: { userId, primary: true }
+      where: { userId, primary: true },
     })
 
-    if (!userEmail || userEmail.email.toLowerCase() !== invite.email.toLowerCase()) {
+    if (userEmail?.email.toLowerCase() !== invite.email.toLowerCase()) {
       throw new BadRequestException('This invitation was sent to a different email address')
     }
 
@@ -579,8 +798,8 @@ export class OrganizationService {
     const existingMember = await this.data.organizationMember.findFirst({
       where: {
         userId,
-        organizationId: invite.organizationId
-      }
+        organizationId: invite.organizationId,
+      },
     })
 
     if (existingMember) {
@@ -588,19 +807,26 @@ export class OrganizationService {
     }
 
     // Add user to organization
-    Logger.log(`Adding user ${userId} to organization ${invite.organizationId} with role ${invite.roleId} (${invite.role?.name})`)
+    Logger.log(
+      `Adding user ${userId} to organization ${invite.organizationId} with role ${invite.roleId} (${invite.role?.name})`,
+    )
+    const roleId = invite.roleId ?? invite.role?.id
+    if (!roleId) {
+      throw new BadRequestException('Invitation is missing a role')
+    }
+
     await this.data.organizationMember.create({
       data: {
         userId,
         organizationId: invite.organizationId,
-        roleId: invite.roleId!
-      }
+        roleId,
+      },
     })
 
     // Mark invitation as accepted
     await this.data.invite.update({
       where: { id: invite.id },
-      data: { status: 'ACCEPTED' }
+      data: { status: 'ACCEPTED' },
     })
 
     // Set as active organization if user doesn't have one
@@ -608,7 +834,7 @@ export class OrganizationService {
     if (!user?.activeOrganizationId) {
       await this.data.user.update({
         where: { id: userId },
-        data: { activeOrganizationId: invite.organizationId }
+        data: { activeOrganizationId: invite.organizationId },
       })
     }
 
@@ -620,10 +846,13 @@ export class OrganizationService {
   /**
    * Reject organization invitation
    */
-  async rejectOrganizationInvitation(userId: string, input: RejectInvitationInput): Promise<boolean> {
+  async rejectOrganizationInvitation(
+    userId: string,
+    input: RejectInvitationInput,
+  ): Promise<boolean> {
     // Find the invitation
     const invite = await this.data.invite.findUnique({
-      where: { token: input.token }
+      where: { token: input.token },
     })
 
     if (!invite) {
@@ -636,17 +865,17 @@ export class OrganizationService {
 
     // Verify email matches
     const userEmail = await this.data.email.findFirst({
-      where: { userId, primary: true }
+      where: { userId, primary: true },
     })
 
-    if (!userEmail || userEmail.email.toLowerCase() !== invite.email.toLowerCase()) {
+    if (userEmail?.email.toLowerCase() !== invite.email.toLowerCase()) {
       throw new BadRequestException('This invitation was sent to a different email address')
     }
 
     // Mark invitation as declined
     await this.data.invite.update({
       where: { id: invite.id },
-      data: { status: 'DECLINED' }
+      data: { status: 'DECLINED' },
     })
 
     Logger.log(`User ${userId} rejected invitation to organization ${invite.organizationId}`)
@@ -662,8 +891,8 @@ export class OrganizationService {
     const member = await this.data.organizationMember.findFirst({
       where: {
         userId,
-        organizationId: input.organizationId
-      }
+        organizationId: input.organizationId,
+      },
     })
 
     if (!member) {
@@ -673,7 +902,7 @@ export class OrganizationService {
     // Update active organization
     const user = await this.data.user.update({
       where: { id: userId },
-      data: { activeOrganizationId: input.organizationId }
+      data: { activeOrganizationId: input.organizationId },
     })
 
     // Update cache with new active organization
@@ -695,11 +924,12 @@ export class OrganizationService {
       include: {
         organization: {
           include: {
-            images: true
-          }
+            logo: true,
+            images: true,
+          },
         },
-        role: true
-      }
+        role: true,
+      },
     })
 
     return memberships.map(m => m.organization)
@@ -712,14 +942,14 @@ export class OrganizationService {
     // Check if user is a super admin
     const user = await this.data.user.findUnique({
       where: { id: userId },
-      select: { isSuperAdmin: true }
+      select: { isSuperAdmin: true },
     })
 
     // Super admins can view all organization members without membership check
     if (!user?.isSuperAdmin) {
       // Verify user is a member
       const member = await this.data.organizationMember.findFirst({
-        where: { userId, organizationId }
+        where: { userId, organizationId },
       })
 
       if (!member) {
@@ -733,15 +963,15 @@ export class OrganizationService {
       include: {
         user: {
           include: {
-            emails: { where: { primary: true } }
-          }
+            emails: { where: { primary: true } },
+          },
         },
         role: {
           include: {
-            permissions: true
-          }
-        }
-      }
+            permissions: true,
+          },
+        },
+      },
     })
 
     return members
@@ -755,22 +985,24 @@ export class OrganizationService {
     const canView = await this.hasPermission(userId, organizationId, 'member', 'read')
 
     if (!canView) {
-      throw new ForbiddenException('You do not have permission to view invitations for this organization')
+      throw new ForbiddenException(
+        'You do not have permission to view invitations for this organization',
+      )
     }
 
     const invitations = await this.data.invite.findMany({
       where: {
         organizationId,
-        status: 'PENDING'
+        status: 'PENDING',
       },
       include: {
         inviter: {
           include: {
-            emails: { where: { primary: true } }
-          }
+            emails: { where: { primary: true } },
+          },
         },
-        role: true
-      }
+        role: true,
+      },
     })
 
     return invitations
@@ -783,14 +1015,14 @@ export class OrganizationService {
     // Check if user is a super admin
     const user = await this.data.user.findUnique({
       where: { id: userId },
-      select: { isSuperAdmin: true }
+      select: { isSuperAdmin: true },
     })
 
     // Super admins can view all organization roles without membership check
     if (!user?.isSuperAdmin) {
       // Verify user is a member
       const member = await this.data.organizationMember.findFirst({
-        where: { userId, organizationId }
+        where: { userId, organizationId },
       })
 
       if (!member) {
@@ -801,8 +1033,8 @@ export class OrganizationService {
     const roles = await this.data.role.findMany({
       where: { organizationId },
       include: {
-        permissions: true
-      }
+        permissions: true,
+      },
     })
 
     return roles
@@ -811,7 +1043,10 @@ export class OrganizationService {
   /**
    * Transfer organization ownership (owner-only)
    */
-  async transferOrganizationOwnership(userId: string, input: TransferOrganizationOwnershipInput): Promise<boolean> {
+  async transferOrganizationOwnership(
+    userId: string,
+    input: TransferOrganizationOwnershipInput,
+  ): Promise<boolean> {
     // Verify current user is the owner
     const isCurrentOwner = await this.isOwner(userId, input.organizationId)
     if (!isCurrentOwner) {
@@ -822,11 +1057,11 @@ export class OrganizationService {
     const targetMember = await this.data.organizationMember.findFirst({
       where: {
         userId: input.newOwnerUserId,
-        organizationId: input.organizationId
+        organizationId: input.organizationId,
       },
       include: {
-        role: true
-      }
+        role: true,
+      },
     })
 
     if (!targetMember) {
@@ -837,8 +1072,8 @@ export class OrganizationService {
     const ownerRole = await this.data.role.findFirst({
       where: {
         name: 'Owner',
-        organizationId: input.organizationId
-      }
+        organizationId: input.organizationId,
+      },
     })
 
     if (!ownerRole) {
@@ -849,8 +1084,8 @@ export class OrganizationService {
     const currentOwnerMember = await this.data.organizationMember.findFirst({
       where: {
         userId,
-        organizationId: input.organizationId
-      }
+        organizationId: input.organizationId,
+      },
     })
 
     if (!currentOwnerMember) {
@@ -862,13 +1097,13 @@ export class OrganizationService {
       // Update target user to Owner role
       this.data.organizationMember.update({
         where: { id: targetMember.id },
-        data: { roleId: ownerRole.id }
+        data: { roleId: ownerRole.id },
       }),
       // Update current owner to their previous role (or default to Member role)
       this.data.organizationMember.update({
         where: { id: currentOwnerMember.id },
-        data: { roleId: targetMember.roleId } // Give current owner the new owner's previous role
-      })
+        data: { roleId: targetMember.roleId }, // Give current owner the new owner's previous role
+      }),
     ])
 
     // Invalidate cached memberships for both users
@@ -879,7 +1114,9 @@ export class OrganizationService {
       ])
     }
 
-    Logger.log(`Organization ownership transferred from ${userId} to ${input.newOwnerUserId} for organization ${input.organizationId}`)
+    Logger.log(
+      `Organization ownership transferred from ${userId} to ${input.newOwnerUserId} for organization ${input.organizationId}`,
+    )
 
     return true
   }

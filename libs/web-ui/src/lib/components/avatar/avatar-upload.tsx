@@ -1,14 +1,14 @@
-import React, { useState, useRef } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { CameraIcon, TrashIcon } from '@heroicons/react/24/outline'
 
 interface AvatarUploadProps {
-  currentImageUrl?: string
-  fallbackText: string
-  onUpload: (file: File) => Promise<void>
-  onRemove?: () => Promise<void>
-  size?: 'sm' | 'md' | 'lg' | 'xl'
-  disabled?: boolean
-  className?: string
+  readonly currentImageUrl?: string
+  readonly fallbackText: string
+  readonly onUpload: (file: File) => Promise<void>
+  readonly onRemove?: () => Promise<void>
+  readonly size?: 'sm' | 'md' | 'lg' | 'xl'
+  readonly disabled?: boolean
+  readonly className?: string
 }
 
 const sizeClasses = {
@@ -45,6 +45,12 @@ export function AvatarUpload({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    if (currentImageUrl) {
+      setPreviewUrl(null)
+    }
+  }, [currentImageUrl])
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -63,8 +69,9 @@ export function AvatarUpload({
 
     // Create preview
     const reader = new FileReader()
-    reader.onload = (e) => {
-      setPreviewUrl(e.target?.result as string)
+    reader.onload = e => {
+      const result = e.target?.result
+      setPreviewUrl(typeof result === 'string' ? result : null)
     }
     reader.readAsDataURL(file)
 
@@ -90,7 +97,7 @@ export function AvatarUpload({
 
   const handleRemove = async () => {
     if (!onRemove) return
-    
+
     setIsUploading(true)
     try {
       await onRemove()
@@ -104,31 +111,31 @@ export function AvatarUpload({
   }
 
   const displayUrl = previewUrl || currentImageUrl
-  const displayText = fallbackText.split(' ').map(word => word[0]?.toUpperCase()).join('').slice(0, 2)
+  const displayText = fallbackText
+    .split(' ')
+    .map(word => word[0]?.toUpperCase())
+    .join('')
+    .slice(0, 2)
 
   return (
     <div className={`relative inline-block ${className}`}>
       {/* Avatar Display */}
       <div className={`${sizeClasses[size]} rounded-full overflow-hidden relative group`}>
         {displayUrl ? (
-          <img
-            src={displayUrl}
-            alt="Avatar"
-            className="w-full h-full object-cover"
-          />
+          <img src={displayUrl} alt="Avatar" className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-bold">
             {displayText}
           </div>
         )}
-        
+
         {/* Loading overlay */}
         {isUploading && (
           <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
             <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
           </div>
         )}
-        
+
         {/* Hover overlay */}
         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
           <CameraIcon className="w-6 h-6 text-white" />
@@ -172,10 +179,10 @@ export function AvatarUpload({
 
 // Simpler display-only Avatar component
 interface AvatarProps {
-  imageUrl?: string
-  fallbackText: string
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
-  className?: string
+  readonly imageUrl?: string
+  readonly fallbackText: string
+  readonly size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+  readonly className?: string
 }
 
 const displaySizeClasses = {
@@ -187,16 +194,16 @@ const displaySizeClasses = {
 }
 
 export function Avatar({ imageUrl, fallbackText, size = 'md', className = '' }: AvatarProps) {
-  const displayText = fallbackText.split(' ').map(word => word[0]?.toUpperCase()).join('').slice(0, 2)
+  const displayText = fallbackText
+    .split(' ')
+    .map(word => word[0]?.toUpperCase())
+    .join('')
+    .slice(0, 2)
 
   return (
     <div className={`${displaySizeClasses[size]} rounded-full overflow-hidden ${className}`}>
       {imageUrl ? (
-        <img
-          src={imageUrl}
-          alt="Avatar"
-          className="w-full h-full object-cover"
-        />
+        <img src={imageUrl} alt="Avatar" className="w-full h-full object-cover" />
       ) : (
         <div className="w-full h-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-bold">
           {displayText}

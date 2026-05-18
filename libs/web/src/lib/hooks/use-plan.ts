@@ -44,9 +44,7 @@ export function usePlan() {
     // Check if plan is one of multiple tiers
     isPlanOneOf: (planNames: string[]): boolean => {
       if (!context.plan?.name) return false
-      return planNames.some(
-        name => context.plan?.name?.toLowerCase() === name.toLowerCase()
-      )
+      return planNames.some(name => context.plan?.name?.toLowerCase() === name.toLowerCase())
     },
   }
 }

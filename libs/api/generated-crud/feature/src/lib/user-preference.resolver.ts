@@ -9,14 +9,14 @@ import {
   ListUserPreferenceInput,
   UpdateUserPreferenceInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard, GqlAuthGuard } from '@nestled-template/api/utils'
+import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => UserPreference)
 export class GeneratedUserPreferenceResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [UserPreference], { nullable: true })
-  @UseGuards(GqlAuthGuard)
+  @UseGuards(GqlAuthAdminGuard)
   userPreferences(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListUserPreferenceInput, nullable: true })
@@ -35,7 +35,7 @@ export class GeneratedUserPreferenceResolver {
   }
 
   @Query(() => UserPreference, { nullable: true })
-  @UseGuards(GqlAuthGuard)
+  @UseGuards(GqlAuthAdminGuard)
   userPreference(
     @Info() info: GraphQLResolveInfo,
     @Args('userPreferenceId') userPreferenceId: string,
@@ -44,7 +44,7 @@ export class GeneratedUserPreferenceResolver {
   }
 
   @Mutation(() => UserPreference, { nullable: true })
-  @UseGuards(GqlAuthGuard)
+  @UseGuards(GqlAuthAdminGuard)
   createUserPreference(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateUserPreferenceInput,
@@ -53,7 +53,7 @@ export class GeneratedUserPreferenceResolver {
   }
 
   @Mutation(() => UserPreference, { nullable: true })
-  @UseGuards(GqlAuthGuard)
+  @UseGuards(GqlAuthAdminGuard)
   updateUserPreference(
     @Info() info: GraphQLResolveInfo,
     @Args('userPreferenceId') userPreferenceId: string,
@@ -63,7 +63,7 @@ export class GeneratedUserPreferenceResolver {
   }
 
   @Mutation(() => UserPreference, { nullable: true })
-  @UseGuards(GqlAuthGuard)
+  @UseGuards(GqlAuthAdminGuard)
   deleteUserPreference(@Args('userPreferenceId') userPreferenceId: string) {
     return this.generatedService.deleteUserPreference(userPreferenceId)
   }

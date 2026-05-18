@@ -1,11 +1,11 @@
 query UserPreference($userPreferenceId: String!) {
-  userPreference(userPreferenceId: $userPreferenceId) {
+  userPreference: userGetUserPreference(userPreferenceId: $userPreferenceId) {
     ...UserPreferenceDetails
   }
 }
 
 query UserPreferences {
-  userPreferences {
+  userPreferences: userGetUserPreferences {
     ...UserPreferenceList
   }
 }
