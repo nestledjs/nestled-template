@@ -112,7 +112,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * API tokens are opaque 64-character hex strings, not JWTs. Check them before
    * passport-jwt attempts to parse the bearer value as a JWT.
    */
-  override async authenticate(req: Request): Promise<void> {
+  override async authenticate(req: Request, options?: object): Promise<void> {
     const token = headerAndCookieExtractor(req)
 
     if (token && /^[a-f0-9]{64}$/i.test(token)) {
@@ -139,6 +139,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
-    return super.authenticate(req)
+    return super.authenticate(req, options)
   }
 }
