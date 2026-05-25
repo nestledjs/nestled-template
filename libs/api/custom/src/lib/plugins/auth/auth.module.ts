@@ -12,12 +12,14 @@ import { OAuthService } from './oauth.service'
 import { OAuthController } from './oauth.controller'
 import { EmailIntegrationModule } from '@nestled-template/api/integrations'
 import { SecurityEventsModule } from '../security'
+import { ApiTokensModule } from '../api-tokens/api-tokens.module'
 
 @Module({
   imports: [
     ApiCoreDataAccessModule,
     EmailIntegrationModule,
     SecurityEventsModule,
+    ApiTokensModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     HttpModule,
     JwtModule.register({

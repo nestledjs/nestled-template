@@ -6,6 +6,7 @@ fragment ApiTokenList on ApiToken {
   expiresAt
   lastUsedAt
   revoked
+  organizationId
 }
 
 fragment ApiTokenDetails on ApiToken {

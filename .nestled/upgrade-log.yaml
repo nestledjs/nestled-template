@@ -1,7 +1,7 @@
 template:
   repo: nestled-template
   originCommit: e784a19
-  lastReviewedCommit: d0a9aef
+  lastReviewedCommit: a44d58f
 upgrades:
   2026-05-17-public-landing-cleanup:
     status: applied
@@ -17,4 +17,9 @@ upgrades:
     status: applied
     reviewedAt: "2026-05-18T02:36:41.149Z"
     branch: nestled-upgrade/2026-05-17-auth-delay-csprng
+    notes: Patch applied cleanly.
+  2026-05-25-api-token-mcp-settings:
+    status: applied
+    reviewedAt: "2026-05-25T18:28:01.915Z"
+    branch: nestled-upgrade/2026-05-25-api-token-mcp-settings
     notes: Patch applied cleanly.

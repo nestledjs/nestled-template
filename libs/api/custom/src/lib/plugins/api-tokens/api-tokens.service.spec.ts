@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing'
-import { BadRequestException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException } from '@nestjs/common'
 import { ApiTokensService } from './api-tokens.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { SecurityEventsService } from '../security/security-events.service'
@@ -17,6 +17,9 @@ describe('ApiTokensService', () => {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
         update: jest.fn(),
+      },
+      organizationMember: {
+        findFirst: jest.fn(),
       },
     }
     mockSecurityEvents = {
@@ -66,13 +69,71 @@ describe('ApiTokensService', () => {
           tokenHash: expect.any(String),
           userId,
           expiresAt: input.expiresAt,
+          organizationId: undefined,
           lastUsedAt: null,
           revoked: false,
         },
       })
       expect(mockSecurityEvents.logEvent).toHaveBeenCalledWith(userId, 'API_TOKEN_CREATED', {
-        metadata: { tokenId: 'token-123', tokenName: 'Production API Token' },
+        metadata: {
+          tokenId: 'token-123',
+          tokenName: 'Production API Token',
+          organizationId: null,
+        },
       })
+    })
+    it('should verify organization membership before generating an org-scoped token', async () => {
+      const userId = 'user-123'
+      const input: GenerateApiTokenInput = {
+        name: 'MCP Token',
+        organizationId: 'org-123',
+      }
+      const mockApiToken = {
+        id: 'token-123',
+        name: 'MCP Token',
+        tokenHash: 'hashed-token',
+        userId,
+        organizationId: 'org-123',
+        lastUsedAt: null,
+        revoked: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+
+      mockData.organizationMember.findFirst.mockResolvedValue({ id: 'member-123' })
+      mockData.apiToken.create.mockResolvedValue(mockApiToken as any)
+
+      const result = await service.generateApiToken(userId, input)
+
+      expect(result.apiToken).toEqual(mockApiToken)
+      expect(mockData.organizationMember.findFirst).toHaveBeenCalledWith({
+        where: { userId, organizationId: 'org-123' },
+        select: { id: true },
+      })
+      expect(mockData.apiToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ organizationId: 'org-123' }),
+        }),
+      )
+      expect(mockSecurityEvents.logEvent).toHaveBeenCalledWith(userId, 'API_TOKEN_CREATED', {
+        metadata: {
+          tokenId: 'token-123',
+          tokenName: 'MCP Token',
+          organizationId: 'org-123',
+        },
+      })
+    })
+    it('should reject org-scoped token generation for non-members', async () => {
+      mockData.organizationMember.findFirst.mockResolvedValue(null)
+
+      await expect(
+        service.generateApiToken('user-123', {
+          name: 'MCP Token',
+          organizationId: 'org-123',
+        }),
+      ).rejects.toThrow(ForbiddenException)
+
+      expect(mockData.apiToken.create).not.toHaveBeenCalled()
     })
     it('should generate unique tokens each time', async () => {
       const userId = 'user-123'
@@ -213,6 +274,7 @@ describe('ApiTokensService', () => {
         userId,
         tokenHash: 'old-hash',
         expiresAt: new Date('2025-12-31'),
+        organizationId: 'org-123',
         revoked: false,
       }
       const newToken = {
@@ -221,6 +283,7 @@ describe('ApiTokensService', () => {
         userId,
         tokenHash: 'new-hash',
         expiresAt: oldToken.expiresAt,
+        organizationId: oldToken.organizationId,
         revoked: false,
       }
       mockData.apiToken.findUnique.mockResolvedValue(oldToken as any)
@@ -230,6 +293,11 @@ describe('ApiTokensService', () => {
       expect(result.token).toBeDefined()
       expect(result.token).toHaveLength(64)
       expect(result.apiToken.id).toBe('new-token-456')
+      expect(mockData.apiToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          organizationId: 'org-123',
+        }),
+      })
       // Old token should be revoked
       expect(mockData.apiToken.update).toHaveBeenCalledWith({
         where: { id: 'old-token-123' },
@@ -240,6 +308,7 @@ describe('ApiTokensService', () => {
           oldTokenId: 'old-token-123',
           newTokenId: 'new-token-456',
           tokenName: 'Production Token',
+          organizationId: 'org-123',
           keepOldTokenActive: undefined,
         },
       })
