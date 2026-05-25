@@ -1,0 +1,39 @@
+id: 2026-05-25-shared-utils-cookie-vite-ssr-fix
+title: Fix getSessionCookieName Vitest SSR transform inconsistency
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Ensure getSessionCookieName() in libs/shared/utils returns the '__session' fallback
+  correctly when VITE_COOKIE_NAME is present in .env but deleted from process.env at
+  test time, and returns the correct value in all Vite SSR runtime contexts.
+
+why: >
+  Vitest's SSR transform compiles import.meta?.env?.VITE_COOKIE_NAME differently
+  depending on where it appears. In the condition position it reads from a module-load
+  snapshot of metaEnv; in the return-value position it compiles to
+  Object.assign(globalThis.__vitest_worker__?.metaEnv ?? ...).VITE_COOKIE_NAME,
+  a live read. When VITE_COOKIE_NAME is set in the project .env file and a test
+  deletes it from process.env, the condition evaluates truthy (snapshot still has the
+  value) but the return reads undefined (live ref sees the deletion). This causes
+  getSessionCookieName() to return undefined instead of '__session', failing the
+  test that verifies the default fallback. The same transform inconsistency applies
+  in production Vite SSR, making this a latent runtime correctness issue as well.
+
+affectedPaths:
+  - libs/shared/utils/src/lib/cookies.tsx
+
+skipIf:
+  - getSessionCookieName in libs/shared/utils/src/lib/cookies.tsx already captures
+    import.meta?.env?.VITE_COOKIE_NAME into a local variable before the condition check.
+
+verification:
+  - pnpm nx test utils
+
+agentHints:
+  - "The fix is a one-function change in libs/shared/utils/src/lib/cookies.tsx: capture import.meta?.env?.VITE_COOKIE_NAME into a local variable (e.g. viteEnvName) before the if-check so condition and return read the same value."
+  - "Before (buggy): if (import.meta?.env?.VITE_COOKIE_NAME) { return import.meta.env.VITE_COOKIE_NAME }"
+  - "After (fixed): const viteEnvName = import.meta?.env?.VITE_COOKIE_NAME as string | undefined; if (viteEnvName) { return viteEnvName }"
+  - "This bug is silent when VITE_COOKIE_NAME is absent from .env — the condition is simply false. It only surfaces when the var is present, so projects that have not yet set the var will not see the failure."

@@ -3,15 +3,13 @@
  * Works in both server (process.env) and client (import.meta.env) contexts.
  */
 export function getSessionCookieName(): string {
-  // Server-side (Node.js)
   if (process?.env?.VITE_COOKIE_NAME) {
     return process.env.VITE_COOKIE_NAME
   }
-  // Client-side (Vite)
-  if (import.meta?.env?.VITE_COOKIE_NAME) {
-    return import.meta.env.VITE_COOKIE_NAME
+  const viteEnvName = import.meta?.env?.VITE_COOKIE_NAME as string | undefined
+  if (viteEnvName) {
+    return viteEnvName
   }
-  // Default fallback
   return '__session'
 }
 
