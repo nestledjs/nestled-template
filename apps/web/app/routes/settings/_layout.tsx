@@ -5,7 +5,9 @@ import {
   BuildingOfficeIcon,
   Cog6ToothIcon,
   CreditCardIcon,
+  KeyIcon,
   ShieldCheckIcon,
+  SparklesIcon,
   UserCircleIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline'
@@ -97,6 +99,12 @@ export default function SettingsLayout() {
       description: '2FA, sessions, and password settings',
     },
     {
+      name: 'API Tokens',
+      href: '/settings/api-tokens',
+      icon: KeyIcon,
+      description: 'Personal API tokens and client access',
+    },
+    {
       name: 'Notifications',
       href: '/settings/notifications',
       icon: BellIcon,
@@ -125,6 +133,13 @@ export default function SettingsLayout() {
       icon: CreditCardIcon,
       permission: 'billing:read',
       description: 'Subscription and payment settings',
+    },
+    {
+      name: 'AI & MCP',
+      href: '/settings/ai',
+      icon: SparklesIcon,
+      permission: 'organization:read',
+      description: 'Organization-scoped AI assistant tokens',
     },
   ]
 

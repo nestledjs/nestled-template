@@ -7,6 +7,7 @@ import { AuthCacheService } from './auth-cache.service'
 type RequestWithOrganizationContext = {
   headers?: Record<string, string | string[] | undefined>
   user?: User
+  apiTokenOrganizationId?: string | null
   organizationContext?: OrganizationContext
 }
 
@@ -67,6 +68,8 @@ export class OrganizationContextService {
   private async resolveOrganizationId(
     req: RequestWithOrganizationContext,
   ): Promise<string | undefined> {
+    if (req.apiTokenOrganizationId) return req.apiTokenOrganizationId
+
     const rawHeader = req.headers?.['x-organization-id']
     const fromHeader = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
     if (fromHeader) return fromHeader

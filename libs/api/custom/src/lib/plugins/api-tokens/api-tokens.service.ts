@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common'
+import { Injectable, BadRequestException, ForbiddenException, Logger } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { SecurityEventsService } from '../security/security-events.service'
 import { randomBytes, createHash } from 'node:crypto'
@@ -21,11 +21,17 @@ export class ApiTokensService {
     userId: string,
     input: GenerateApiTokenInput,
   ): Promise<GenerateApiTokenOutput> {
+    const organizationId = input.organizationId?.trim() || undefined
+
     // Generate a secure random token (32 bytes = 64 hex characters)
     const tokenValue = randomBytes(32).toString('hex')
 
     // Hash the token for storage (we only store the hash)
     const tokenHash = this.hashToken(tokenValue)
+
+    if (organizationId) {
+      await this.assertOrganizationMembership(userId, organizationId)
+    }
 
     // Create the API token record
     const apiToken = await this.data.apiToken.create({
@@ -34,7 +40,7 @@ export class ApiTokensService {
         tokenHash,
         userId,
         expiresAt: input.expiresAt,
-        organizationId: input.organizationId,
+        organizationId,
         lastUsedAt: null,
         revoked: false,
       },
@@ -42,7 +48,11 @@ export class ApiTokensService {
 
     // Log security event
     await this.securityEvents.logEvent(userId, 'API_TOKEN_CREATED', {
-      metadata: { tokenId: apiToken.id, tokenName: input.name },
+      metadata: {
+        tokenId: apiToken.id,
+        tokenName: input.name,
+        organizationId: organizationId ?? null,
+      },
     })
 
     this.logger.log(`API token generated for user ${userId}: ${input.name}`)
@@ -124,6 +134,7 @@ export class ApiTokensService {
         tokenHash: newTokenHash,
         userId,
         expiresAt: oldToken.expiresAt,
+        organizationId: oldToken.organizationId ?? undefined,
         lastUsedAt: null,
         revoked: false,
       },
@@ -143,6 +154,7 @@ export class ApiTokensService {
         oldTokenId: input.tokenId,
         newTokenId: newApiToken.id,
         tokenName: oldToken.name,
+        organizationId: oldToken.organizationId ?? null,
         keepOldTokenActive: input.keepOldTokenActive,
       },
     })
@@ -205,5 +217,19 @@ export class ApiTokensService {
    */
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex')
+  }
+
+  private async assertOrganizationMembership(
+    userId: string,
+    organizationId: string,
+  ): Promise<void> {
+    const membership = await this.data.organizationMember.findFirst({
+      where: { userId, organizationId },
+      select: { id: true },
+    })
+
+    if (!membership) {
+      throw new ForbiddenException('You are not a member of this organization')
+    }
   }
 }

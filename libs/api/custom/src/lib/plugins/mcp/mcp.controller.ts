@@ -10,6 +10,25 @@ interface UnrefableTimer {
   unref: () => void
 }
 
+type McpPermission = {
+  name?: string
+  subject?: string
+  action?: string
+}
+
+type McpAuthenticatedRequest = Request & {
+  user?: {
+    id: string
+    isSuperAdmin?: boolean
+    organizations?: Array<{
+      role?: {
+        permissions?: McpPermission[]
+      }
+    }>
+  }
+  apiTokenOrganizationId?: string | null
+}
+
 function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
   if (typeof timer !== 'object' || timer === null || !('unref' in timer)) return
 
@@ -106,7 +125,8 @@ export class McpController {
       return
     }
 
-    const user = (req as any).user
+    const mcpReq = req as McpAuthenticatedRequest
+    const user = mcpReq.user
     if (!user) {
       const proto = (req.get('x-forwarded-proto') || req.protocol) as string
       const host = (req.get('x-forwarded-host') || req.get('host')) as string
@@ -126,11 +146,17 @@ export class McpController {
 
     const auth: McpAuthContext = {
       userId: user.id,
-      organizationId: (req as any).apiTokenOrganizationId ?? null,
-      isAdmin:
-        user.organizations?.some((m: any) =>
-          m.role?.permissions?.some((p: any) => p.name === 'all:manage'),
-        ) ?? false,
+      organizationId: mcpReq.apiTokenOrganizationId ?? null,
+      isAdmin: Boolean(
+        user.isSuperAdmin ||
+          user.organizations?.some(membership =>
+            membership.role?.permissions?.some(
+              permission =>
+                permission.name === 'all:manage' ||
+                (permission.subject === 'all' && permission.action === 'manage'),
+            ),
+          ),
+      ),
     }
 
     let server: McpServer | null = null

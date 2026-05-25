@@ -3,6 +3,7 @@ import {
   AddressModule,
   AdminModule,
   ApiTokenModule,
+  ApiTokenAuthMiddleware,
   ApiTokensModule,
   AuditLogModule,
   AuthModule,
@@ -13,6 +14,7 @@ import {
   InviteModule,
   LinkModule,
   LoginAttemptModule,
+  McpController,
   McpModule,
   OAuthAccountModule,
   OrganizationMemberModule,
@@ -120,6 +122,9 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     // Apply logging middleware to all routes
     consumer.apply(LoggerMiddleware).forRoutes({ path: '*path', method: RequestMethod.ALL })
+
+    // Apply API token auth middleware to MCP routes.
+    consumer.apply(ApiTokenAuthMiddleware).forRoutes(McpController)
 
     // Apply tenancy middleware to GraphQL endpoint (runs after authentication)
     consumer.apply(TenancyMiddleware).forRoutes({ path: 'graphql', method: RequestMethod.ALL })

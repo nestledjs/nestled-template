@@ -77,6 +77,8 @@ export default [
         route('billing', './routes/settings/billing.tsx'),
         route('security', './routes/settings/security.tsx'),
         route('security/events', './routes/settings/security.events.tsx'),
+        route('api-tokens', './routes/settings/api-tokens.tsx'),
+        route('ai', './routes/settings/ai.tsx'),
         route('notifications', './routes/settings/notifications.tsx'),
         route('preferences', './routes/settings/preferences.tsx'),
       ]),

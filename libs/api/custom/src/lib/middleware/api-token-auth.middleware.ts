@@ -3,6 +3,12 @@ import { Request, Response, NextFunction } from 'express'
 import { ApiTokensService } from '../plugins/api-tokens/api-tokens.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 
+type ApiTokenRequest = Request & {
+  user?: unknown
+  apiTokenId?: string
+  apiTokenOrganizationId?: string | null
+}
+
 @Injectable()
 export class ApiTokenAuthMiddleware implements NestMiddleware {
   private readonly logger = new Logger(ApiTokenAuthMiddleware.name)
@@ -17,10 +23,13 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
     const authHeader = req.headers['authorization'] as string | undefined
 
     if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.substring(7) // Remove 'Bearer ' prefix
+      const token = authHeader.substring(7)
+
+      if (!/^[a-f0-9]{64}$/i.test(token)) {
+        return next()
+      }
 
       try {
-        // Validate the token
         const result = await this.apiTokensService.validateApiToken(token)
 
         if (result) {
@@ -42,10 +51,10 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
           })
 
           if (user) {
-            // Attach user to request object for downstream guards/resolvers
-            ;(req as any).user = user
-            ;(req as any).apiTokenId = result.tokenId
-            ;(req as any).apiTokenOrganizationId = result.organizationId
+            const apiTokenReq = req as ApiTokenRequest
+            apiTokenReq.user = user
+            apiTokenReq.apiTokenId = result.tokenId
+            apiTokenReq.apiTokenOrganizationId = result.organizationId
 
             this.logger.log(`API token authentication successful for user ${user.id}`)
           } else {

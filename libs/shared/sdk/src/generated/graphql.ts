@@ -7524,6 +7524,7 @@ export type ApiTokenListFragment = {
   expiresAt?: any | null
   lastUsedAt?: any | null
   revoked: boolean
+  organizationId?: string | null
 }
 
 export type ApiTokenDetailsFragment = {
@@ -7535,6 +7536,7 @@ export type ApiTokenDetailsFragment = {
   expiresAt?: any | null
   lastUsedAt?: any | null
   revoked: boolean
+  organizationId?: string | null
 }
 
 export type GeneratedApiTokenFragment = {
@@ -7549,6 +7551,7 @@ export type GeneratedApiTokenFragment = {
     expiresAt?: any | null
     lastUsedAt?: any | null
     revoked: boolean
+    organizationId?: string | null
   }
 }
 
@@ -7570,6 +7573,7 @@ export type GenerateApiTokenMutation = {
       expiresAt?: any | null
       lastUsedAt?: any | null
       revoked: boolean
+      organizationId?: string | null
     }
   }
 }
@@ -7592,6 +7596,7 @@ export type RotateApiTokenMutation = {
       expiresAt?: any | null
       lastUsedAt?: any | null
       revoked: boolean
+      organizationId?: string | null
     }
   }
 }
@@ -7611,6 +7616,7 @@ export type RevokeApiTokenMutation = {
     expiresAt?: any | null
     lastUsedAt?: any | null
     revoked: boolean
+    organizationId?: string | null
   }
 }
 
@@ -7629,6 +7635,7 @@ export type ApiTokenQuery = {
     expiresAt?: any | null
     lastUsedAt?: any | null
     revoked: boolean
+    organizationId?: string | null
   } | null
 }
 
@@ -7647,6 +7654,7 @@ export type ApiTokensQuery = {
     expiresAt?: any | null
     lastUsedAt?: any | null
     revoked: boolean
+    organizationId?: string | null
   }> | null
   counters?: {
     __typename?: 'CorePaging'
@@ -7675,6 +7683,7 @@ export type ListApiTokensQuery = {
     expiresAt?: any | null
     lastUsedAt?: any | null
     revoked: boolean
+    organizationId?: string | null
   }>
 }
 
@@ -14570,6 +14579,7 @@ export const ApiTokenListFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -14601,6 +14611,7 @@ export const ApiTokenDetailsFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -14644,6 +14655,7 @@ export const GeneratedApiTokenFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -29458,6 +29470,7 @@ export const GenerateApiToken = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -29547,6 +29560,7 @@ export const RotateApiToken = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -29636,6 +29650,7 @@ export const RevokeApiToken = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -29704,6 +29719,7 @@ export const ApiToken = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -29787,6 +29803,7 @@ export const ApiTokens = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },
@@ -29848,6 +29865,7 @@ export const ListApiTokens = {
           { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'lastUsedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'revoked' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
         ],
       },
     },

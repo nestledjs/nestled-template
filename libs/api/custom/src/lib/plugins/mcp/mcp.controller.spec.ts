@@ -100,6 +100,36 @@ describe('McpController', () => {
     expect(server.close).toHaveBeenCalled()
   })
 
+  it('treats subject/action all manage permissions as MCP admin access', async () => {
+    const server = {
+      connect: jest.fn(async (transport: any) => {
+        transport.onmessage = (message: any) => {
+          transport.send({ jsonrpc: '2.0', id: message.id, result: { ok: true } })
+        }
+      }),
+      close: jest.fn().mockResolvedValue(undefined),
+    }
+    const factory = { create: jest.fn().mockReturnValue(server) }
+    const controller = new McpController(factory as any)
+    const res = createResponse()
+    const req = {
+      method: 'POST',
+      body: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      user: {
+        id: 'user-123',
+        organizations: [{ role: { permissions: [{ subject: 'all', action: 'manage' }] } }],
+      },
+    }
+
+    await controller.handle(req as any, res)
+
+    expect(factory.create).toHaveBeenCalledWith({
+      userId: 'user-123',
+      organizationId: null,
+      isAdmin: true,
+    })
+  })
+
   it('returns no content for notification-only requests', async () => {
     const server = {
       connect: jest.fn(async () => undefined),

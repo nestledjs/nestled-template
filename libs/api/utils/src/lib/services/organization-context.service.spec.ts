@@ -71,6 +71,23 @@ describe('OrganizationContextService', () => {
     )
   })
 
+  it('prefers an org-scoped API token organization over request headers', async () => {
+    const { data, service } = createService()
+    const req = {
+      headers: { 'x-organization-id': 'org-from-header' },
+      user: { id: 'user-1', activeOrganizationId: 'org-active', isSuperAdmin: false },
+      apiTokenOrganizationId: 'org-token',
+    }
+
+    await service.attach(req as never)
+
+    expect(data.organizationMember.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: 'user-1', organizationId: 'org-token' },
+      }),
+    )
+  })
+
   it('adds all:manage for super admins without mutating cached permissions', async () => {
     const { authCache, service } = createService()
     const cachedContext = {

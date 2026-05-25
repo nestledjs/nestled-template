@@ -117,6 +117,14 @@ describe('SettingsLayout Component', () => {
             path: 'billing',
             Component: () => <div data-testid="billing-content">Billing Content</div>,
           },
+          {
+            path: 'api-tokens',
+            Component: () => <div data-testid="api-tokens-content">API Tokens Content</div>,
+          },
+          {
+            path: 'ai',
+            Component: () => <div data-testid="ai-content">AI Content</div>,
+          },
         ],
       },
     ])
@@ -236,6 +244,13 @@ describe('SettingsLayout Component', () => {
       expect(screen.getByText('Email and notification preferences')).toBeInTheDocument()
     })
 
+    it('should display api tokens link', () => {
+      renderWithRouter()
+
+      expect(screen.getByText('API Tokens')).toBeInTheDocument()
+      expect(screen.getByText('Personal API tokens and client access')).toBeInTheDocument()
+    })
+
     it('should highlight active route', () => {
       renderWithRouter('/settings/profile')
 
@@ -271,6 +286,13 @@ describe('SettingsLayout Component', () => {
 
       expect(screen.getByText('Billing')).toBeInTheDocument()
       expect(screen.getByText('Subscription and payment settings')).toBeInTheDocument()
+    })
+
+    it('should display AI and MCP link', () => {
+      renderWithRouter()
+
+      expect(screen.getByText('AI & MCP')).toBeInTheDocument()
+      expect(screen.getByText('Organization-scoped AI assistant tokens')).toBeInTheDocument()
     })
 
     it('should highlight active organization route', () => {
@@ -405,6 +427,7 @@ describe('SettingsLayout Component', () => {
       expect(screen.queryByText('Name, logo, and organization details')).not.toBeInTheDocument()
       expect(screen.queryByText('Team Members')).not.toBeInTheDocument()
       expect(screen.queryByText('Billing')).not.toBeInTheDocument()
+      expect(screen.queryByText('AI & MCP')).not.toBeInTheDocument()
     })
   })
 
@@ -564,6 +587,18 @@ describe('SettingsLayout Component', () => {
 
       expect(screen.getByTestId('billing-content')).toBeInTheDocument()
     })
+
+    it('should render api tokens content on api tokens route', () => {
+      renderWithRouter('/settings/api-tokens')
+
+      expect(screen.getByTestId('api-tokens-content')).toBeInTheDocument()
+    })
+
+    it('should render AI content on AI route', () => {
+      renderWithRouter('/settings/ai')
+
+      expect(screen.getByTestId('ai-content')).toBeInTheDocument()
+    })
   })
 
   describe('Responsive Layout', () => {
@@ -609,6 +644,13 @@ describe('SettingsLayout Component', () => {
       expect(notificationsLink).toHaveAttribute('href', '/settings/notifications')
     })
 
+    it('should have correct api tokens link URL', () => {
+      renderWithRouter()
+
+      const apiTokensLink = screen.getByText('API Tokens').closest('a')
+      expect(apiTokensLink).toHaveAttribute('href', '/settings/api-tokens')
+    })
+
     it('should have correct organization link URL', () => {
       renderWithRouter()
 
@@ -628,6 +670,13 @@ describe('SettingsLayout Component', () => {
 
       const billingLink = screen.getByText('Billing').closest('a')
       expect(billingLink).toHaveAttribute('href', '/settings/billing')
+    })
+
+    it('should have correct AI and MCP link URL', () => {
+      renderWithRouter()
+
+      const aiLink = screen.getByText('AI & MCP').closest('a')
+      expect(aiLink).toHaveAttribute('href', '/settings/ai')
     })
   })
 
