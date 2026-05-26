@@ -28,7 +28,47 @@ describe('registerOrganizationTools', () => {
       content: [{ type: 'text', text: 'No organization associated with this token' }],
       isError: true,
     })
-    expect(server.registerTool).toHaveBeenCalledTimes(1)
+    expect(server.registerTool).toHaveBeenCalledTimes(2)
+  })
+
+  it("lists only the user's own organization memberships for unscoped non-admin tokens", async () => {
+    const memberships = [
+      {
+        organization: { id: 'org-1', name: 'Acme' },
+        role: { name: 'Member' },
+      },
+    ]
+    const prisma = {
+      organizationMember: {
+        findMany: jest.fn().mockResolvedValue(memberships),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    }
+    const { server, handlers } = createServerMock()
+
+    registerOrganizationTools(server as any, prisma as any, {
+      userId: 'user-1',
+      organizationId: null,
+      isAdmin: false,
+    })
+
+    expect(handlers.has('list_organizations')).toBe(true)
+    const result = await handlers.get('list_organizations')?.({ search: 'ac', limit: 10, offset: 0 })
+
+    expect(prisma.organizationMember.findMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', organization: { name: { contains: 'ac', mode: 'insensitive' } } },
+      take: 10,
+      skip: 0,
+      include: {
+        organization: { select: { id: true, name: true } },
+        role: { select: { name: true } },
+      },
+      orderBy: { organization: { name: 'asc' } },
+    })
+    expect(prisma.organizationMember.count).toHaveBeenCalledWith({
+      where: { userId: 'user-1', organization: { name: { contains: 'ac', mode: 'insensitive' } } },
+    })
+    expect(JSON.parse(result.content[0].text)).toEqual({ organizations: memberships, total: 1 })
   })
 
   it('loads the current organization with members and primary email relation', async () => {
@@ -138,7 +178,7 @@ describe('registerOrganizationTools', () => {
       where: { name: { contains: 'ac', mode: 'insensitive' } },
     })
     expect(JSON.parse(result.content[0].text)).toEqual({
-      orgs: [{ id: 'org-1', name: 'Acme' }],
+      organizations: [{ id: 'org-1', name: 'Acme' }],
       total: 1,
     })
     expect(server.registerTool).toHaveBeenCalledTimes(2)

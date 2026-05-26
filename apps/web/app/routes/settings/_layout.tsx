@@ -138,7 +138,7 @@ export default function SettingsLayout() {
       name: 'AI & MCP',
       href: '/settings/ai',
       icon: SparklesIcon,
-      permission: 'organization:read',
+      permission: 'organization:update',
       description: 'Organization-scoped AI assistant tokens',
     },
   ]

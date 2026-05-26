@@ -414,6 +414,40 @@ describe('SettingsLayout Component', () => {
       expect(screen.getByText('Platform setup and operations')).toBeInTheDocument()
     })
 
+    it('should hide AI & MCP from users without organization:update', () => {
+      vi.mocked(useQuery).mockReturnValue({
+        data: {
+          myOrganizations: [
+            {
+              ...mockOrganization,
+              members: [
+                {
+                  id: 'member-1',
+                  userId: 'user-123',
+                  role: {
+                    id: 'role-member',
+                    name: 'Member',
+                    permissions: [
+                      { subject: 'organization', action: 'read' },
+                      { subject: 'member', action: 'read' },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      } as any)
+
+      renderWithRouter()
+      expect(screen.queryByText('AI & MCP')).not.toBeInTheDocument()
+    })
+
+    it('should show AI & MCP to users with organization:update', () => {
+      renderWithRouter()
+      expect(screen.getByText('AI & MCP')).toBeInTheDocument()
+    })
+
     it('should hide organization settings when no organization', () => {
       vi.mocked(useQuery).mockReturnValue({
         data: {

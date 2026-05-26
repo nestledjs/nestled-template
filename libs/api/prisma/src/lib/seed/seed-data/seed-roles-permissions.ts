@@ -66,9 +66,10 @@ export const defaultRoles = [
   {
     name: 'Admin',
     description:
-      'Can invite members and manage teams, but cannot change member roles, remove members, modify organization settings, billing, or delete organization',
+      'Can update organization settings, invite members and manage teams, but cannot change member roles, remove members, manage billing, or delete the organization',
     permissions: [
       'organization:read',
+      'organization:update',
       'member:read',
       'member:invite',
       'role:read',
