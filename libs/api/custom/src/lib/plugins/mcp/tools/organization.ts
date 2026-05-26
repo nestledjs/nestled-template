@@ -54,11 +54,13 @@ export function registerOrganizationTools(
     },
   )
 
-  if (auth.isAdmin && !auth.organizationId) {
+  if (!auth.organizationId) {
     server.registerTool(
       'list_organizations',
       {
-        description: 'List all organizations (admin only)',
+        description: auth.isAdmin
+          ? 'List all organizations (admin)'
+          : 'List organizations you belong to',
         inputSchema: {
           search: z.string().optional().describe('Filter by name'),
           limit: z.coerce.number().min(1).max(100).default(20),
@@ -66,23 +68,40 @@ export function registerOrganizationTools(
         },
       },
       async ({ search, limit, offset }) => {
-        const where: any = {}
-        if (search) where.name = { contains: search, mode: 'insensitive' }
+        if (auth.isAdmin) {
+          const where: any = {}
+          if (search) where.name = { contains: search, mode: 'insensitive' }
 
-        const [orgs, total] = await Promise.all([
-          prisma.organization.findMany({
-            where,
-            take: limit,
-            skip: offset,
-            orderBy: { name: 'asc' },
-            include: {
-              _count: { select: { members: true } },
-            },
-          }),
-          prisma.organization.count({ where }),
-        ])
+          const [orgs, total] = await Promise.all([
+            prisma.organization.findMany({
+              where,
+              take: limit,
+              skip: offset,
+              orderBy: { name: 'asc' },
+              include: { _count: { select: { members: true } } },
+            }),
+            prisma.organization.count({ where }),
+          ])
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ orgs, total }, null, 2) }],
+          }
+        }
+
+        const where: any = { userId: auth.userId }
+        if (search) where.organization = { name: { contains: search, mode: 'insensitive' } }
+
+        const memberships = await prisma.organizationMember.findMany({
+          where,
+          take: limit,
+          skip: offset,
+          include: {
+            organization: { select: { id: true, name: true } },
+            role: { select: { name: true } },
+          },
+          orderBy: { organization: { name: 'asc' } },
+        })
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ orgs, total }, null, 2) }],
+          content: [{ type: 'text' as const, text: JSON.stringify(memberships, null, 2) }],
         }
       },
     )

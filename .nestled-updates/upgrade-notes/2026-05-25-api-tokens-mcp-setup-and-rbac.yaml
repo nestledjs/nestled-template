@@ -1,0 +1,52 @@
+id: 2026-05-25-api-tokens-mcp-setup-and-rbac
+title: Restrict AI & MCP nav to admins; fix list_organizations for personal tokens; add MCP setup to personal tokens page
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Limit the AI & MCP settings nav item to organization Owners and Admins. Fix
+  list_organizations on the MCP server so personal tokens return the user's own
+  organization memberships (not admin-only all-orgs). Bring the personal API Tokens page
+  to feature parity with the AI & MCP page by adding inline token display with Claude
+  Desktop config, a template snippet, and an available-tools reference.
+
+why: >
+  The AI & MCP page creates organization-scoped tokens. Allowing any Member to generate
+  org-scoped tokens is overly permissive — gated behind organization:update (Owner/Admin
+  only). The MCP server's list_organizations tool was gated admin-only, meaning regular
+  users with personal tokens could not discover their own organizations via MCP despite
+  being able to see them in the app. The fix applies the principle that MCP access mirrors
+  app access: any data a user can see logged in, they can access via their personal token.
+
+affectedPaths:
+  - apps/web/app/routes/settings/_layout.tsx
+  - apps/web/app/routes/settings/_mcp-shared.tsx
+  - apps/web/app/routes/settings/api-tokens.tsx
+  - apps/web/app/routes/settings/ai.tsx
+  - libs/api/custom/src/lib/plugins/mcp/tools/organization.ts
+  - libs/api/custom/src/lib/plugins/mcp/tools/organization.spec.ts
+  - libs/api/prisma/src/lib/seed/seed-data/seed-roles-permissions.ts
+
+packageReleases: []
+
+skipIf:
+  - The downstream project has already restricted AI & MCP to organization:update or higher.
+  - The downstream project has removed or significantly customised either settings page.
+  - The downstream project has replaced the MCP organization tools entirely.
+
+verification:
+  - pnpm nx test api-custom --testPathPattern="organization.spec"
+  - pnpm nx typecheck web
+  - pnpm nx lint web
+
+agentHints:
+  - "In apps/web/app/routes/settings/_layout.tsx: change the AI & MCP nav item permission from 'organization:read' to 'organization:update'."
+  - "Create apps/web/app/routes/settings/_mcp-shared.tsx: extract shared MCP helpers (MCP_SERVER_URL, buildClaudeConfig, formatDate, TokenMeta, NewTokenDisplay) used by both ai.tsx and api-tokens.tsx to avoid code duplication."
+  - "In apps/web/app/routes/settings/ai.tsx: add a page-level permission guard (canManageAi) using useGlobalCtx() — check user.isSuperAdmin or activeOrganizationMember.role.permissions includes organization:update. Return an access-denied message if the user lacks permission. Import shared helpers from _mcp-shared.tsx."
+  - "In apps/web/app/routes/settings/ai.tsx: remove list_organizations from AVAILABLE_TOOLS — org-scoped tokens never have that tool registered."
+  - "In apps/web/app/routes/settings/api-tokens.tsx: import shared helpers from _mcp-shared.tsx. AVAILABLE_TOOLS should be get_profile and list_organizations only."
+  - "In libs/api/custom/src/lib/plugins/mcp/tools/organization.ts: change the list_organizations registration condition from 'auth.isAdmin && !auth.organizationId' to '!auth.organizationId'. Inside the handler, branch on auth.isAdmin — admins get all orgs (existing query), regular users get prisma.organizationMember.findMany({ where: { userId: auth.userId } }) with organization and role included."
+  - "In libs/api/prisma/src/lib/seed/seed-data/seed-roles-permissions.ts: add 'organization:update' to the Admin role's permissions array so Admins can access AI & MCP settings (the nav item requires organization:update, which previously only Owner had)."
+  - "Personal tokens do not register get_organization — omit it from personal page AVAILABLE_TOOLS."

@@ -1,7 +1,7 @@
 template:
   repo: nestled-template
   originCommit: e784a19
-  lastReviewedCommit: a44d58f
+  lastReviewedCommit: c5c35d0
 upgrades:
   2026-05-17-public-landing-cleanup:
     status: applied
@@ -23,3 +23,8 @@ upgrades:
     reviewedAt: "2026-05-25T18:28:01.915Z"
     branch: nestled-upgrade/2026-05-25-api-token-mcp-settings
     notes: Patch applied cleanly.
+  2026-05-25-api-tokens-mcp-setup-and-rbac:
+    status: adapted
+    reviewedAt: "2026-05-26T01:52:32Z"
+    branch: nestled-upgrade/2026-05-25-api-tokens-mcp-setup-and-rbac
+    notes: Adapted from nestled-dev-template by applying the RBAC/MCP setup files and tests directly, preserving already-applied earlier API-token and cookie fixes. Verification passed.

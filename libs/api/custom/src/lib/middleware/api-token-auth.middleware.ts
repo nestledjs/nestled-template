@@ -30,6 +30,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
       }
 
       try {
+        // Validate the token
         const result = await this.apiTokensService.validateApiToken(token)
 
         if (result) {

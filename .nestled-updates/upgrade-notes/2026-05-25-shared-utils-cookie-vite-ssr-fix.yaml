@@ -1,39 +1,37 @@
 id: 2026-05-25-shared-utils-cookie-vite-ssr-fix
-title: Fix getSessionCookieName Vitest SSR transform inconsistency
+title: Fix double import.meta.env access in getSessionCookieName
 priority: normal
 area: web
 type: correctness
 delivery: code-patch
 
 intent: >
-  Ensure getSessionCookieName() in libs/shared/utils returns the '__session' fallback
-  correctly when VITE_COOKIE_NAME is present in .env but deleted from process.env at
-  test time, and returns the correct value in all Vite SSR runtime contexts.
+  Capture import.meta?.env?.VITE_COOKIE_NAME into a local variable before the truthiness
+  check in getSessionCookieName so the env value is read once and returned consistently.
 
 why: >
-  Vitest's SSR transform compiles import.meta?.env?.VITE_COOKIE_NAME differently
-  depending on where it appears. In the condition position it reads from a module-load
-  snapshot of metaEnv; in the return-value position it compiles to
-  Object.assign(globalThis.__vitest_worker__?.metaEnv ?? ...).VITE_COOKIE_NAME,
-  a live read. When VITE_COOKIE_NAME is set in the project .env file and a test
-  deletes it from process.env, the condition evaluates truthy (snapshot still has the
-  value) but the return reads undefined (live ref sees the deletion). This causes
-  getSessionCookieName() to return undefined instead of '__session', failing the
-  test that verifies the default fallback. The same transform inconsistency applies
-  in production Vite SSR, making this a latent runtime correctness issue as well.
+  When VITE_COOKIE_NAME is set in .env, the original code accessed import.meta.env.VITE_COOKIE_NAME
+  twice (once in the condition, once in the return). In some Vite/SSR environments this causes the
+  second access to return undefined while the first returned a string, resulting in the function
+  silently falling through to the '__session' default despite the variable being set. The fix
+  captures the value once, making the condition and return agree.
 
 affectedPaths:
   - libs/shared/utils/src/lib/cookies.tsx
 
+packageReleases: []
+
 skipIf:
-  - getSessionCookieName in libs/shared/utils/src/lib/cookies.tsx already captures
-    import.meta?.env?.VITE_COOKIE_NAME into a local variable before the condition check.
+  - The downstream project has removed or replaced getSessionCookieName.
+  - The downstream project has already applied the single-capture fix.
+  - The downstream project does not use VITE_COOKIE_NAME.
 
 verification:
-  - pnpm nx test utils
+  - pnpm nx test utils --skipNxCache
 
 agentHints:
-  - "The fix is a one-function change in libs/shared/utils/src/lib/cookies.tsx: capture import.meta?.env?.VITE_COOKIE_NAME into a local variable (e.g. viteEnvName) before the if-check so condition and return read the same value."
-  - "Before (buggy): if (import.meta?.env?.VITE_COOKIE_NAME) { return import.meta.env.VITE_COOKIE_NAME }"
-  - "After (fixed): const viteEnvName = import.meta?.env?.VITE_COOKIE_NAME as string | undefined; if (viteEnvName) { return viteEnvName }"
-  - "This bug is silent when VITE_COOKIE_NAME is absent from .env — the condition is simply false. It only surfaces when the var is present, so projects that have not yet set the var will not see the failure."
+  - In getSessionCookieName, locate the client-side Vite block.
+  - "Before: if (import.meta?.env?.VITE_COOKIE_NAME) { return import.meta.env.VITE_COOKIE_NAME }"
+  - "After: const viteEnvName = import.meta?.env?.VITE_COOKIE_NAME as string | undefined; if (viteEnvName) { return viteEnvName }"
+  - The server-side process.env block above it is fine and should not be changed.
+  - All three cookie tests should pass after the change.
