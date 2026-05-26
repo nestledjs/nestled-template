@@ -31,7 +31,7 @@ describe('registerOrganizationTools', () => {
     expect(server.registerTool).toHaveBeenCalledTimes(2)
   })
 
-  it('lists only the user own organization memberships for unscoped non-admin tokens', async () => {
+  it("lists only the user's own organization memberships for unscoped non-admin tokens", async () => {
     const memberships = [
       {
         organization: { id: 'org-1', name: 'Acme' },
@@ -41,6 +41,7 @@ describe('registerOrganizationTools', () => {
     const prisma = {
       organizationMember: {
         findMany: jest.fn().mockResolvedValue(memberships),
+        count: jest.fn().mockResolvedValue(1),
       },
     }
     const { server, handlers } = createServerMock()
@@ -64,7 +65,10 @@ describe('registerOrganizationTools', () => {
       },
       orderBy: { organization: { name: 'asc' } },
     })
-    expect(JSON.parse(result.content[0].text)).toEqual(memberships)
+    expect(prisma.organizationMember.count).toHaveBeenCalledWith({
+      where: { userId: 'user-1', organization: { name: { contains: 'ac', mode: 'insensitive' } } },
+    })
+    expect(JSON.parse(result.content[0].text)).toEqual({ organizations: memberships, total: 1 })
   })
 
   it('loads the current organization with members and primary email relation', async () => {
@@ -174,7 +178,7 @@ describe('registerOrganizationTools', () => {
       where: { name: { contains: 'ac', mode: 'insensitive' } },
     })
     expect(JSON.parse(result.content[0].text)).toEqual({
-      orgs: [{ id: 'org-1', name: 'Acme' }],
+      organizations: [{ id: 'org-1', name: 'Acme' }],
       total: 1,
     })
     expect(server.registerTool).toHaveBeenCalledTimes(2)

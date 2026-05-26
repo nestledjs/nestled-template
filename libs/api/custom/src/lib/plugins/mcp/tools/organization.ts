@@ -72,7 +72,7 @@ export function registerOrganizationTools(
           const where: any = {}
           if (search) where.name = { contains: search, mode: 'insensitive' }
 
-          const [orgs, total] = await Promise.all([
+          const [organizations, total] = await Promise.all([
             prisma.organization.findMany({
               where,
               take: limit,
@@ -83,25 +83,32 @@ export function registerOrganizationTools(
             prisma.organization.count({ where }),
           ])
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ orgs, total }, null, 2) }],
+            content: [
+              { type: 'text' as const, text: JSON.stringify({ organizations, total }, null, 2) },
+            ],
           }
         }
 
         const where: any = { userId: auth.userId }
         if (search) where.organization = { name: { contains: search, mode: 'insensitive' } }
 
-        const memberships = await prisma.organizationMember.findMany({
-          where,
-          take: limit,
-          skip: offset,
-          include: {
-            organization: { select: { id: true, name: true } },
-            role: { select: { name: true } },
-          },
-          orderBy: { organization: { name: 'asc' } },
-        })
+        const [organizations, total] = await Promise.all([
+          prisma.organizationMember.findMany({
+            where,
+            take: limit,
+            skip: offset,
+            include: {
+              organization: { select: { id: true, name: true } },
+              role: { select: { name: true } },
+            },
+            orderBy: { organization: { name: 'asc' } },
+          }),
+          prisma.organizationMember.count({ where }),
+        ])
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(memberships, null, 2) }],
+          content: [
+            { type: 'text' as const, text: JSON.stringify({ organizations, total }, null, 2) },
+          ],
         }
       },
     )
