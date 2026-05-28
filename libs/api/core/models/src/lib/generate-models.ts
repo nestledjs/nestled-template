@@ -172,8 +172,20 @@ async function main() {
 
   const dmmf = await getDMMF({ datamodel: combinedSchemaContent })
 
-  // Extract models and enums from parsed schema
-  const models = dmmf.datamodel.models
+  // Exclude @skipCrud models and their relation fields from other models so
+  // security-sensitive types don't appear in the generated GraphQL schema.
+  const allModels = dmmf.datamodel.models
+  const skippedModelNames = new Set(
+    allModels.filter(m => m.documentation?.includes('@skipCrud')).map(m => m.name)
+  )
+  const models = allModels
+    .filter(m => !skippedModelNames.has(m.name))
+    .map(m => ({
+      ...m,
+      fields: m.fields.filter(
+        f => !(f.kind === 'object' && skippedModelNames.has(f.type))
+      ),
+    }))
   const enums = dmmf.datamodel.enums
 
   // Generate models

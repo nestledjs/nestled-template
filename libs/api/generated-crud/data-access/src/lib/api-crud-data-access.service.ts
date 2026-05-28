@@ -2327,7 +2327,6 @@ export class ApiCrudDataAccessService {
       addressesIds,
       invitesSentIds,
       activeSessionsIds,
-      passwordHistoryIds,
       loginAttemptsIds,
       AuditLogIds,
       UserPreferenceIds,
@@ -2349,12 +2348,6 @@ export class ApiCrudDataAccessService {
       addresses: { ids: addressesIds, isVirtual: true, isList: true, isRequired: false },
       invitesSent: { ids: invitesSentIds, isVirtual: true, isList: true, isRequired: false },
       activeSessions: { ids: activeSessionsIds, isVirtual: true, isList: true, isRequired: false },
-      passwordHistory: {
-        ids: passwordHistoryIds,
-        isVirtual: true,
-        isList: true,
-        isRequired: false,
-      },
       loginAttempts: { ids: loginAttemptsIds, isVirtual: true, isList: true, isRequired: false },
       AuditLog: { ids: AuditLogIds, isVirtual: true, isList: true, isRequired: false },
       UserPreference: { ids: UserPreferenceIds, isVirtual: true, isList: true, isRequired: false },
@@ -2434,7 +2427,6 @@ export class ApiCrudDataAccessService {
       addressesIds,
       invitesSentIds,
       activeSessionsIds,
-      passwordHistoryIds,
       loginAttemptsIds,
       AuditLogIds,
       UserPreferenceIds,
@@ -2456,12 +2448,6 @@ export class ApiCrudDataAccessService {
       addresses: { ids: addressesIds, isVirtual: true, isList: true, isRequired: false },
       invitesSent: { ids: invitesSentIds, isVirtual: true, isList: true, isRequired: false },
       activeSessions: { ids: activeSessionsIds, isVirtual: true, isList: true, isRequired: false },
-      passwordHistory: {
-        ids: passwordHistoryIds,
-        isVirtual: true,
-        isList: true,
-        isRequired: false,
-      },
       loginAttempts: { ids: loginAttemptsIds, isVirtual: true, isList: true, isRequired: false },
       AuditLog: { ids: AuditLogIds, isVirtual: true, isList: true, isRequired: false },
       UserPreference: { ids: UserPreferenceIds, isVirtual: true, isList: true, isRequired: false },
@@ -2721,118 +2707,6 @@ export class ApiCrudDataAccessService {
 
   async deleteUserSession(id: string) {
     return this.data['userSession'].delete({
-      where: { id },
-    })
-  }
-
-  async createPasswordHistory(info: GraphQLResolveInfo, input: dto.CreatePasswordHistoryInput) {
-    const { userId, ...regularFields } = input
-    const data: any = regularFields
-
-    const relationMappings = {
-      user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
-    }
-
-    for (const [relationName, config] of Object.entries(relationMappings)) {
-      if (config.ids !== undefined && config.ids !== null) {
-        const ids = Array.isArray(config.ids)
-          ? config.ids.map(id => ({ id }))
-          : [{ id: config.ids }]
-
-        if (config.isList) {
-          // List relationships: always use connect for creates
-          const relationOperation = 'connect'
-          data[relationName] = { [relationOperation]: ids }
-        } else {
-          // Single relationship - always use connect
-          data[relationName] = { connect: { id: config.ids } }
-        }
-      }
-    }
-
-    return this.data['passwordHistory'].create({
-      data,
-      select: createSelect(info),
-    })
-  }
-
-  async passwordHistories(info: GraphQLResolveInfo, input?: dto.ListPasswordHistoryInput) {
-    return this.data['passwordHistory'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
-    })
-  }
-
-  async passwordHistoriesCount(input?: dto.ListPasswordHistoryInput) {
-    const total = await this.data['passwordHistory'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
-    const filteredTotal = await this.data['passwordHistory'].count({ where })
-    const page = Math.floor(skip / take)
-    const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
-    const hasNext = skip + take < filteredTotal
-    const hasPrev = skip > 0
-    const count = Math.max(0, Math.min(take, filteredTotal - skip))
-    return {
-      take,
-      skip,
-      page,
-      pages,
-      hasNext,
-      hasPrev,
-      count,
-      total,
-      filteredTotal,
-    }
-  }
-
-  async passwordHistory(info: GraphQLResolveInfo, id: string) {
-    return this.data['passwordHistory'].findUnique({
-      where: { id },
-      select: createSelect(info),
-    })
-  }
-
-  async updatePasswordHistory(
-    info: GraphQLResolveInfo,
-    id: string,
-    input: dto.UpdatePasswordHistoryInput,
-  ) {
-    const { userId, ...regularFields } = input
-    const data: any = regularFields
-
-    const relationMappings = {
-      user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
-    }
-
-    for (const [relationName, config] of Object.entries(relationMappings)) {
-      if (config.ids !== undefined && config.ids !== null) {
-        const ids = Array.isArray(config.ids)
-          ? config.ids.map(id => ({ id }))
-          : [{ id: config.ids }]
-
-        if (config.isList) {
-          // List relationships: use set for updates on virtual relations, connect for foreign key relations
-          const relationOperation = config.isVirtual ? 'set' : 'connect'
-          data[relationName] = { [relationOperation]: ids }
-        } else {
-          // Single relationship - connect when an id is provided; disconnect when null on update
-          data[relationName] = { connect: { id: config.ids } }
-        }
-      } else if (config.ids === null && !config.isList && !config.isRequired && !config.isVirtual) {
-        // Explicitly null - disconnect the optional single relationship (only when this model owns the FK)
-        data[relationName] = { disconnect: true }
-      }
-    }
-
-    return this.data['passwordHistory'].update({
-      where: { id },
-      data,
-      select: createSelect(info),
-    })
-  }
-
-  async deletePasswordHistory(id: string) {
-    return this.data['passwordHistory'].delete({
       where: { id },
     })
   }
