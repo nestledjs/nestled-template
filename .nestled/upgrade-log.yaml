@@ -28,3 +28,9 @@ upgrades:
     reviewedAt: "2026-05-26T01:52:32Z"
     branch: nestled-upgrade/2026-05-25-api-tokens-mcp-setup-and-rbac
     notes: Adapted from nestled-dev-template by applying the RBAC/MCP setup files and tests directly, preserving already-applied earlier API-token and cookie fixes. Verification passed.
+  2026-05-27-skip-crud-graphql-type-filtering:
+    status: blocked
+    reviewedAt: "2026-05-28T01:48:37.118Z"
+    branch: nestled-upgrade/2026-05-27-skip-crud-graphql-type-filtering
+    reason: Direct patch did not apply cleanly; agent adaptation is required.
+    notes: "error: patch failed: libs/api/custom/src/lib/plugins/mcp/tools/organization.spec.ts:31\nerror: libs/api/custom/src/lib/plugins/mcp/tools/organization.spec.ts: patch does not apply\nerror: patch failed: libs/api/custom/src/lib/plugins/mcp/tools/organization.ts:72\nerror: libs/api/custom/src/lib/plugins/mcp/tools/organization.ts: patch does not apply\nerror: patch failed: libs/api/prisma/src/lib/seed/seed.ts:18\nerror: libs/api/prisma/src/lib/seed/seed.ts: patch does not apply\n"
