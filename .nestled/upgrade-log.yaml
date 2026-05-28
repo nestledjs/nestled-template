@@ -32,8 +32,4 @@ upgrades:
     status: applied
     reviewedAt: "2026-05-27T00:00:00.000Z"
     branch: nestled-upgrade/2026-05-27-skip-crud-graphql-type-filtering
-    notes: >
-      Patch applied via git apply --3way --exclude=package.json --exclude=pnpm-lock.yaml.
-      Three files (organization.ts, organization.spec.ts, seed.ts) were already at the
-      post-patch state from the PR #5 merge; 3-way merge resolved them cleanly as no-ops.
-      All 23 files applied. PasswordHistory CRUD surface fully removed.
+    notes: Patch applied via git apply --3way --exclude=package.json --exclude=pnpm-lock.yaml. Three files (organization.ts, organization.spec.ts, seed.ts) were already at the post-patch state from the PR All 23 files applied. PasswordHistory CRUD surface fully removed.

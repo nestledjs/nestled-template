@@ -414,13 +414,6 @@ export type CreateOrganizationMemberInput = {
   userId: Scalars['String']['input']
 }
 
-export type CreatePasswordHistoryInput = {
-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
-  id?: InputMaybe<Scalars['String']['input']>
-  passwordHash: Scalars['String']['input']
-  userId: Scalars['String']['input']
-}
-
 export type CreatePermissionInput = {
   action: Scalars['String']['input']
   description?: InputMaybe<Scalars['String']['input']>
@@ -570,7 +563,6 @@ export type CreateUserInput = {
   oAuthAccountsIds?: InputMaybe<Array<Scalars['String']['input']>>
   organizationsIds?: InputMaybe<Array<Scalars['String']['input']>>
   password?: InputMaybe<Scalars['String']['input']>
-  passwordHistoryIds?: InputMaybe<Array<Scalars['String']['input']>>
   passwordResetExpires?: InputMaybe<Scalars['DateTime']['input']>
   passwordResetToken?: InputMaybe<Scalars['String']['input']>
   phoneNumbersIds?: InputMaybe<Array<Scalars['String']['input']>>
@@ -955,20 +947,6 @@ export type ListOrganizationMemberInput = {
   userId?: InputMaybe<Scalars['String']['input']>
 }
 
-export type ListPasswordHistoryInput = {
-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
-  filters?: InputMaybe<Scalars['JSONObject']['input']>
-  id?: InputMaybe<Scalars['String']['input']>
-  orderBy?: InputMaybe<Scalars['String']['input']>
-  orderDirection?: InputMaybe<Scalars['String']['input']>
-  passwordHash?: InputMaybe<Scalars['String']['input']>
-  search?: InputMaybe<Scalars['String']['input']>
-  searchFields?: InputMaybe<Array<Scalars['String']['input']>>
-  skip?: InputMaybe<Scalars['Float']['input']>
-  take?: InputMaybe<Scalars['Float']['input']>
-  userId?: InputMaybe<Scalars['String']['input']>
-}
-
 export type ListPermissionInput = {
   action?: InputMaybe<Scalars['String']['input']>
   description?: InputMaybe<Scalars['String']['input']>
@@ -1184,7 +1162,6 @@ export type ListUserInput = {
   orderDirection?: InputMaybe<Scalars['String']['input']>
   organizationsIds?: InputMaybe<Array<Scalars['String']['input']>>
   password?: InputMaybe<Scalars['String']['input']>
-  passwordHistoryIds?: InputMaybe<Array<Scalars['String']['input']>>
   passwordResetExpires?: InputMaybe<Scalars['DateTime']['input']>
   passwordResetToken?: InputMaybe<Scalars['String']['input']>
   phoneNumbersIds?: InputMaybe<Array<Scalars['String']['input']>>
@@ -1285,7 +1262,6 @@ export type Mutation = {
   createOrganization?: Maybe<Organization>
   createOrganizationInvitation: Scalars['String']['output']
   createOrganizationMember?: Maybe<OrganizationMember>
-  createPasswordHistory?: Maybe<PasswordHistory>
   createPermission?: Maybe<Permission>
   createPhoneNumber?: Maybe<PhoneNumber>
   createPlan?: Maybe<Plan>
@@ -1311,7 +1287,6 @@ export type Mutation = {
   deleteOAuthAccount?: Maybe<OAuthAccount>
   deleteOrganization?: Maybe<Organization>
   deleteOrganizationMember?: Maybe<OrganizationMember>
-  deletePasswordHistory?: Maybe<PasswordHistory>
   deletePermission?: Maybe<Permission>
   deletePhoneNumber?: Maybe<PhoneNumber>
   deletePlan?: Maybe<Plan>
@@ -1371,7 +1346,6 @@ export type Mutation = {
   updateOrganization?: Maybe<Organization>
   updateOrganizationMember?: Maybe<OrganizationMember>
   updateOrganizationMemberRole: Scalars['Boolean']['output']
-  updatePasswordHistory?: Maybe<PasswordHistory>
   updatePermission?: Maybe<Permission>
   updatePhoneNumber?: Maybe<PhoneNumber>
   updatePlan?: Maybe<Plan>
@@ -1492,10 +1466,6 @@ export type MutationCreateOrganizationMemberArgs = {
   input: CreateOrganizationMemberInput
 }
 
-export type MutationCreatePasswordHistoryArgs = {
-  input: CreatePasswordHistoryInput
-}
-
 export type MutationCreatePermissionArgs = {
   input: CreatePermissionInput
 }
@@ -1590,10 +1560,6 @@ export type MutationDeleteOrganizationArgs = {
 
 export type MutationDeleteOrganizationMemberArgs = {
   organizationMemberId: Scalars['String']['input']
-}
-
-export type MutationDeletePasswordHistoryArgs = {
-  passwordHistoryId: Scalars['String']['input']
 }
 
 export type MutationDeletePermissionArgs = {
@@ -1808,11 +1774,6 @@ export type MutationUpdateOrganizationMemberRoleArgs = {
   input: UpdateMemberRoleInput
 }
 
-export type MutationUpdatePasswordHistoryArgs = {
-  input: UpdatePasswordHistoryInput
-  passwordHistoryId: Scalars['String']['input']
-}
-
 export type MutationUpdatePermissionArgs = {
   input: UpdatePermissionInput
   permissionId: Scalars['String']['input']
@@ -1982,15 +1943,6 @@ export type OrganizationMember = {
   userId: Scalars['String']['output']
 }
 
-export type PasswordHistory = {
-  __typename?: 'PasswordHistory'
-  createdAt: Scalars['DateTime']['output']
-  id: Scalars['String']['output']
-  passwordHash: Scalars['String']['output']
-  user?: Maybe<User>
-  userId: Scalars['String']['output']
-}
-
 export type Permission = {
   __typename?: 'Permission'
   action: Scalars['String']['output']
@@ -2097,9 +2049,6 @@ export type Query = {
   organizationRoles: Array<Role>
   organizations?: Maybe<Array<Organization>>
   organizationsCount?: Maybe<CorePaging>
-  passwordHistories?: Maybe<Array<PasswordHistory>>
-  passwordHistoriesCount?: Maybe<CorePaging>
-  passwordHistory?: Maybe<PasswordHistory>
   permission?: Maybe<Permission>
   permissions?: Maybe<Array<Permission>>
   permissionsCount?: Maybe<CorePaging>
@@ -2323,18 +2272,6 @@ export type QueryOrganizationsArgs = {
 
 export type QueryOrganizationsCountArgs = {
   input?: InputMaybe<ListOrganizationInput>
-}
-
-export type QueryPasswordHistoriesArgs = {
-  input?: InputMaybe<ListPasswordHistoryInput>
-}
-
-export type QueryPasswordHistoriesCountArgs = {
-  input?: InputMaybe<ListPasswordHistoryInput>
-}
-
-export type QueryPasswordHistoryArgs = {
-  passwordHistoryId: Scalars['String']['input']
 }
 
 export type QueryPermissionArgs = {
@@ -2876,13 +2813,6 @@ export type UpdateOrganizationMemberInput = {
   userId?: InputMaybe<Scalars['String']['input']>
 }
 
-export type UpdatePasswordHistoryInput = {
-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
-  id?: InputMaybe<Scalars['String']['input']>
-  passwordHash?: InputMaybe<Scalars['String']['input']>
-  userId?: InputMaybe<Scalars['String']['input']>
-}
-
 export type UpdatePermissionInput = {
   action?: InputMaybe<Scalars['String']['input']>
   description?: InputMaybe<Scalars['String']['input']>
@@ -3032,7 +2962,6 @@ export type UpdateUserInput = {
   oAuthAccountsIds?: InputMaybe<Array<Scalars['String']['input']>>
   organizationsIds?: InputMaybe<Array<Scalars['String']['input']>>
   password?: InputMaybe<Scalars['String']['input']>
-  passwordHistoryIds?: InputMaybe<Array<Scalars['String']['input']>>
   passwordResetExpires?: InputMaybe<Scalars['DateTime']['input']>
   passwordResetToken?: InputMaybe<Scalars['String']['input']>
   phoneNumbersIds?: InputMaybe<Array<Scalars['String']['input']>>
@@ -3125,7 +3054,6 @@ export type User = {
   organizations?: Maybe<Array<OrganizationMember>>
   originalAdminId?: Maybe<Scalars['String']['output']>
   password?: Maybe<Scalars['String']['output']>
-  passwordHistory?: Maybe<Array<PasswordHistory>>
   passwordResetExpires?: Maybe<Scalars['DateTime']['output']>
   passwordResetToken?: Maybe<Scalars['String']['output']>
   phoneNumbers?: Maybe<Array<PhoneNumber>>
@@ -4953,130 +4881,6 @@ export type __AdminOrganizationPaginationQueryVariables = Exact<{
 }>
 
 export type __AdminOrganizationPaginationQuery = {
-  __typename?: 'Query'
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
-  } | null
-}
-
-export type __AdminPasswordHistorySummaryFragment = {
-  __typename?: 'PasswordHistory'
-  id: string
-  createdAt: any
-  userId: string
-  passwordHash: string
-  user?: { __typename?: 'User'; id: string } | null
-}
-
-export type __AdminPasswordHistoryDetailsFragment = {
-  __typename?: 'PasswordHistory'
-  id: string
-  createdAt: any
-  userId: string
-  passwordHash: string
-  user?: { __typename?: 'User'; id: string } | null
-}
-
-export type __AdminCreatePasswordHistoryMutationVariables = Exact<{
-  input: CreatePasswordHistoryInput
-}>
-
-export type __AdminCreatePasswordHistoryMutation = {
-  __typename?: 'Mutation'
-  createPasswordHistory?: {
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    userId: string
-    passwordHash: string
-    user?: { __typename?: 'User'; id: string } | null
-  } | null
-}
-
-export type __AdminDeletePasswordHistoryMutationVariables = Exact<{
-  passwordHistoryId: Scalars['String']['input']
-}>
-
-export type __AdminDeletePasswordHistoryMutation = {
-  __typename?: 'Mutation'
-  deletePasswordHistory?: { __typename?: 'PasswordHistory'; id: string } | null
-}
-
-export type __AdminUpdatePasswordHistoryMutationVariables = Exact<{
-  passwordHistoryId: Scalars['String']['input']
-  input: UpdatePasswordHistoryInput
-}>
-
-export type __AdminUpdatePasswordHistoryMutation = {
-  __typename?: 'Mutation'
-  updatePasswordHistory?: {
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    userId: string
-    passwordHash: string
-    user?: { __typename?: 'User'; id: string } | null
-  } | null
-}
-
-export type __AdminPasswordHistoryQueryVariables = Exact<{
-  passwordHistoryId: Scalars['String']['input']
-}>
-
-export type __AdminPasswordHistoryQuery = {
-  __typename?: 'Query'
-  passwordHistory?: {
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    userId: string
-    passwordHash: string
-    user?: { __typename?: 'User'; id: string } | null
-  } | null
-}
-
-export type __AdminPasswordHistoriesQueryVariables = Exact<{
-  input?: InputMaybe<ListPasswordHistoryInput>
-}>
-
-export type __AdminPasswordHistoriesQuery = {
-  __typename?: 'Query'
-  passwordHistories?: Array<{
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    userId: string
-    passwordHash: string
-    user?: { __typename?: 'User'; id: string } | null
-  }> | null
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
-  } | null
-}
-
-export type __AdminPasswordHistoryPaginationQueryVariables = Exact<{
-  input?: InputMaybe<ListPasswordHistoryInput>
-}>
-
-export type __AdminPasswordHistoryPaginationQuery = {
   __typename?: 'Query'
   counters?: {
     __typename?: 'CorePaging'
@@ -10288,118 +10092,6 @@ export type GetInvitationDetailsQuery = {
   }
 }
 
-export type PasswordHistoryListFragment = {
-  __typename?: 'PasswordHistory'
-  id: string
-  createdAt: any
-  passwordHash: string
-}
-
-export type PasswordHistoryDetailsFragment = {
-  __typename?: 'PasswordHistory'
-  id: string
-  createdAt: any
-  passwordHash: string
-}
-
-export type CreatePasswordHistoryMutationVariables = Exact<{
-  input: CreatePasswordHistoryInput
-}>
-
-export type CreatePasswordHistoryMutation = {
-  __typename?: 'Mutation'
-  createPasswordHistory?: {
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    passwordHash: string
-  } | null
-}
-
-export type DeletePasswordHistoryMutationVariables = Exact<{
-  passwordHistoryId: Scalars['String']['input']
-}>
-
-export type DeletePasswordHistoryMutation = {
-  __typename?: 'Mutation'
-  deletePasswordHistory?: { __typename?: 'PasswordHistory'; id: string } | null
-}
-
-export type UpdatePasswordHistoryMutationVariables = Exact<{
-  passwordHistoryId: Scalars['String']['input']
-  input: UpdatePasswordHistoryInput
-}>
-
-export type UpdatePasswordHistoryMutation = {
-  __typename?: 'Mutation'
-  updatePasswordHistory?: {
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    passwordHash: string
-  } | null
-}
-
-export type PasswordHistoryQueryVariables = Exact<{
-  passwordHistoryId: Scalars['String']['input']
-}>
-
-export type PasswordHistoryQuery = {
-  __typename?: 'Query'
-  passwordHistory?: {
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    passwordHash: string
-  } | null
-}
-
-export type PasswordHistoriesQueryVariables = Exact<{
-  input?: InputMaybe<ListPasswordHistoryInput>
-}>
-
-export type PasswordHistoriesQuery = {
-  __typename?: 'Query'
-  passwordHistories?: Array<{
-    __typename?: 'PasswordHistory'
-    id: string
-    createdAt: any
-    passwordHash: string
-  }> | null
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
-  } | null
-}
-
-export type PasswordHistoryPaginationQueryVariables = Exact<{
-  input?: InputMaybe<ListPasswordHistoryInput>
-}>
-
-export type PasswordHistoryPaginationQuery = {
-  __typename?: 'Query'
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
-  } | null
-}
-
 export type PermissionListFragment = {
   __typename?: 'Permission'
   id: string
@@ -13427,74 +13119,6 @@ export const __AdminOrganizationDetailsFragmentDoc = {
     },
   ],
 } as unknown as DocumentNode<__AdminOrganizationDetailsFragment, unknown>
-export const __AdminPasswordHistorySummaryFragmentDoc = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminPasswordHistorySummaryFragment, unknown>
-export const __AdminPasswordHistoryDetailsFragmentDoc = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'FragmentSpread',
-            name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminPasswordHistoryDetailsFragment, unknown>
 export const __AdminPermissionSummaryFragmentDoc = {
   kind: 'Document',
   definitions: [
@@ -15583,53 +15207,6 @@ export const OrganizationDetailsFragmentDoc = {
     },
   ],
 } as unknown as DocumentNode<OrganizationDetailsFragment, unknown>
-export const PasswordHistoryListFragmentDoc = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<PasswordHistoryListFragment, unknown>
-export const PasswordHistoryDetailsFragmentDoc = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryList' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<PasswordHistoryDetailsFragment, unknown>
 export const PermissionListFragmentDoc = {
   kind: 'Document',
   definitions: [
@@ -21814,480 +21391,6 @@ export const __AdminOrganizationPagination = {
 } as unknown as DocumentNode<
   __AdminOrganizationPaginationQuery,
   __AdminOrganizationPaginationQueryVariables
->
-export const __AdminCreatePasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: '__AdminCreatePasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: {
-            kind: 'NonNullType',
-            type: {
-              kind: 'NamedType',
-              name: { kind: 'Name', value: 'CreatePasswordHistoryInput' },
-            },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'createPasswordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminPasswordHistoryDetails' },
-                },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'FragmentSpread',
-            name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminCreatePasswordHistoryMutation,
-  __AdminCreatePasswordHistoryMutationVariables
->
-export const __AdminDeletePasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: '__AdminDeletePasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'deletePasswordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'passwordHistoryId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminDeletePasswordHistoryMutation,
-  __AdminDeletePasswordHistoryMutationVariables
->
-export const __AdminUpdatePasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: '__AdminUpdatePasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: {
-            kind: 'NonNullType',
-            type: {
-              kind: 'NamedType',
-              name: { kind: 'Name', value: 'UpdatePasswordHistoryInput' },
-            },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'updatePasswordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'passwordHistoryId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-              },
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminPasswordHistoryDetails' },
-                },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'FragmentSpread',
-            name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminUpdatePasswordHistoryMutation,
-  __AdminUpdatePasswordHistoryMutationVariables
->
-export const __AdminPasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: '__AdminPasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'passwordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'passwordHistoryId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminPasswordHistoryDetails' },
-                },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'FragmentSpread',
-            name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminPasswordHistoryQuery, __AdminPasswordHistoryQueryVariables>
-export const __AdminPasswordHistories = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: '__AdminPasswordHistories' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListPasswordHistoryInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'passwordHistories' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-                },
-              ],
-            },
-          },
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'passwordHistoriesCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminPasswordHistorySummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminPasswordHistoriesQuery, __AdminPasswordHistoriesQueryVariables>
-export const __AdminPasswordHistoryPagination = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: '__AdminPasswordHistoryPagination' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListPasswordHistoryInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'passwordHistoriesCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminPasswordHistoryPaginationQuery,
-  __AdminPasswordHistoryPaginationQueryVariables
 >
 export const __AdminCreatePermission = {
   kind: 'Document',
@@ -36591,414 +35694,6 @@ export const GetInvitationDetails = {
     },
   ],
 } as unknown as DocumentNode<GetInvitationDetailsQuery, GetInvitationDetailsQueryVariables>
-export const CreatePasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: 'createPasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: {
-            kind: 'NonNullType',
-            type: {
-              kind: 'NamedType',
-              name: { kind: 'Name', value: 'CreatePasswordHistoryInput' },
-            },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'createPasswordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryList' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<CreatePasswordHistoryMutation, CreatePasswordHistoryMutationVariables>
-export const DeletePasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: 'deletePasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'deletePasswordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'passwordHistoryId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<DeletePasswordHistoryMutation, DeletePasswordHistoryMutationVariables>
-export const UpdatePasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: 'updatePasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: {
-            kind: 'NonNullType',
-            type: {
-              kind: 'NamedType',
-              name: { kind: 'Name', value: 'UpdatePasswordHistoryInput' },
-            },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'updatePasswordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'passwordHistoryId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-              },
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryList' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<UpdatePasswordHistoryMutation, UpdatePasswordHistoryMutationVariables>
-export const PasswordHistory = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: 'PasswordHistory' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'passwordHistory' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'passwordHistoryId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'passwordHistoryId' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryList' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<PasswordHistoryQuery, PasswordHistoryQueryVariables>
-export const PasswordHistories = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: 'PasswordHistories' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListPasswordHistoryInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'passwordHistories' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'PasswordHistoryList' } },
-              ],
-            },
-          },
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'passwordHistoriesCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'PasswordHistoryList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'PasswordHistory' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'passwordHash' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<PasswordHistoriesQuery, PasswordHistoriesQueryVariables>
-export const PasswordHistoryPagination = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: 'PasswordHistoryPagination' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListPasswordHistoryInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'passwordHistoriesCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  PasswordHistoryPaginationQuery,
-  PasswordHistoryPaginationQueryVariables
->
 export const CreatePermission = {
   kind: 'Document',
   definitions: [
