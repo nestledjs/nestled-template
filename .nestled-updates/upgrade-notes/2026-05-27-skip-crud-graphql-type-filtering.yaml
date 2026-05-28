@@ -1,0 +1,44 @@
+id: 2026-05-27-skip-crud-graphql-type-filtering
+title: "@skipCrud models excluded from generated GraphQL ObjectTypes"
+priority: high
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  Models annotated with @skipCrud must not appear as GraphQL ObjectType classes in the generated
+  models file, and the generators themselves must not produce CRUD resolvers, custom modules, or
+  SDK operations for those models. Together these changes close the full surface area: @skipCrud
+  models are invisible to GraphQL introspection, the admin data browser, and the SDK.
+
+why: >
+  The generate-models script previously iterated dmmf.datamodel.models without filtering,
+  so every model — including @skipCrud ones such as PasswordHistory — was emitted as an
+  @ObjectType() class. NestJS/GraphQL registers these types at startup and they appear in
+  introspection. Separately, the @nestledjs/api, @nestledjs/shared, and @nestledjs/utils
+  generators also ignored @skipCrud, so CRUD resolvers, custom modules, data-access methods,
+  DTOs, and SDK operations were all generated for skipped models. The combined effect was that
+  @skipCrud only blocked nothing at the schema level — the type and all its operations were
+  still fully visible.
+
+affectedPaths:
+  - libs/api/core/models/src/lib/generate-models.ts
+
+skipIf:
+  - Your project has no models annotated with @skipCrud.
+  - You have already applied equivalent @skipCrud filtering in your generate-models.ts and are running @nestledjs/api>=2.9.5, @nestledjs/shared>=1.0.2, @nestledjs/utils>=1.0.2.
+
+agentHints:
+  - Add pnpm.overrides in package.json to pin "@nestledjs/api" to "2.9.5", "@nestledjs/shared" to "1.0.2", and "@nestledjs/utils" to "1.0.2", then run pnpm install. These packages are transitive dependencies of @nestledjs/generators and the overrides ensure the fixed versions are resolved.
+  - In libs/api/core/models/src/lib/generate-models.ts, in the main() function after getDMMF resolves, replace `const models = dmmf.datamodel.models` with filtering logic that computes skippedModelNames as a Set of model names whose documentation includes '@skipCrud', filters allModels to exclude skipped models, and for each remaining model removes relation fields (kind === 'object') whose type is in skippedModelNames.
+  - The enums variable and generateModels() signature are unaffected.
+  - Run `pnpm db-update` (not just generate:models) — the new generators will automatically delete any stale artifacts for @skipCrud models (resolver files, custom module folders, SDK operation dirs, app.module.ts entries).
+  - If any @skipCrud model folders still exist under libs/api/custom/src/lib/default/ after db-update, delete them manually — they are stale from before the fix.
+
+verification:
+  - "pnpm install"
+  - "pnpm db-update"
+  - "pnpm nx build api"
+  - Confirm no @ObjectType class exists in libs/api/core/models/src/lib/models/models.ts for any @skipCrud model (e.g. PasswordHistory).
+  - Confirm no resolver, module, or SDK operation files exist for any @skipCrud model.
+  - Confirm @skipCrud models are absent from apps/api/src/app.module.ts defaultModules.

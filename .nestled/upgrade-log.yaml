@@ -1,7 +1,7 @@
 template:
   repo: nestled-template
   originCommit: e784a19
-  lastReviewedCommit: c5c35d0
+  lastReviewedCommit: 59c84d0
 upgrades:
   2026-05-17-public-landing-cleanup:
     status: applied
@@ -28,3 +28,8 @@ upgrades:
     reviewedAt: "2026-05-26T01:52:32Z"
     branch: nestled-upgrade/2026-05-25-api-tokens-mcp-setup-and-rbac
     notes: Adapted from nestled-dev-template by applying the RBAC/MCP setup files and tests directly, preserving already-applied earlier API-token and cookie fixes. Verification passed.
+  2026-05-27-skip-crud-graphql-type-filtering:
+    status: applied
+    reviewedAt: "2026-05-27T00:00:00.000Z"
+    branch: nestled-upgrade/2026-05-27-skip-crud-graphql-type-filtering
+    notes: Patch applied via git apply --3way --exclude=package.json --exclude=pnpm-lock.yaml. Three files (organization.ts, organization.spec.ts, seed.ts) were already at the post-patch state from the PR All 23 files applied. PasswordHistory CRUD surface fully removed.
