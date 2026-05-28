@@ -1115,7 +1115,7 @@ const cleanDownstreamAgentsMd = () => {
   if (!existsSync(agentsPath)) return
 
   const content = readFileSync(agentsPath, 'utf8')
-  if (!content.includes('\n## Downstream Upgrade Notes\n')) return
+  if (!content.includes('\n\n## Downstream Upgrade Notes\n')) return
 
   const cleaned = content.replace(/\n\n## Downstream Upgrade Notes\n[\s\S]*?(?=\n\n## )/, '')
   writeFileSync(agentsPath, cleaned, 'utf8')
