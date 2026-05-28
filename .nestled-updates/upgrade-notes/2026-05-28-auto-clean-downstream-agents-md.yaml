@@ -1,0 +1,35 @@
+id: 2026-05-28-auto-clean-downstream-agents-md
+title: Doctor auto-removes template-only upgrade note instructions from AGENTS.md
+priority: normal
+area: infra
+type: cleanup
+delivery: code-patch
+
+intent: >
+  When nestled-doctor runs in a downstream project it automatically detects and removes the
+  "Downstream Upgrade Notes" section from AGENTS.md, then commits the change. This prevents
+  AI agents in downstream projects from creating upgrade notes, which is a source-template-only
+  responsibility.
+
+why: >
+  AGENTS.md is copied verbatim from the template when a project is created. The "Downstream
+  Upgrade Notes" section contains detailed instructions (including the create-upgrade-note
+  command) that caused AI agents in downstream projects to create upgrade notes incorrectly.
+  The fix is self-healing: doctor strips the section on first run and commits it, so no manual
+  cleanup is needed per project.
+
+affectedPaths:
+  - scripts/doctor.ts
+
+skipIf:
+  - The "Downstream Upgrade Notes" section is already absent from AGENTS.md or AGENTS.md does not exist
+  - NESTLED_TEMPLATE_SOURCE=true is set (source template repos keep the section)
+
+verification:
+  - Run pnpm nestled-doctor — if AGENTS.md contained "## Downstream Upgrade Notes" it should log "Removed template-only upgrade note section from AGENTS.md and committed." and commit the change
+  - Confirm the section is gone from AGENTS.md after the run
+
+agentHints:
+  - Add cleanDownstreamAgentsMd() to scripts/doctor.ts just before the main execution block (before the shouldUpdateGuardBaseline guard)
+  - "The function: (1) return early if isSourceTemplateRepository(), (2) read AGENTS.md, (3) check for the section marker, (4) strip with regex /\\n\\n## Downstream Upgrade Notes\\n[\\s\\S]*?(?=\\n\\n## )/, (5) write the file, (6) git add and commit with message 'chore: remove template-only upgrade note instructions from AGENTS.md'"
+  - Call cleanDownstreamAgentsMd() as the first call in the main execution block
