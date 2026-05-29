@@ -1,7 +1,7 @@
 template:
   repo: nestled-template
   originCommit: e784a19
-  lastReviewedCommit: ad422ef
+  lastReviewedCommit: 935b3f6
 upgrades:
   2026-05-17-public-landing-cleanup:
     status: applied
@@ -38,3 +38,8 @@ upgrades:
     reviewedAt: "2026-05-29T12:23:10.426Z"
     branch: nestled-upgrade/2026-05-28-59c84d0-to-ad422ef
     notes: Patch appears to already be present in this project.
+  2026-05-28-bump-generators-296:
+    status: applied
+    reviewedAt: "2026-05-29T12:23:15.156Z"
+    branch: nestled-upgrade/2026-05-28-bump-generators-296
+    notes: Patch applied cleanly.
