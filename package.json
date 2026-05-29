@@ -291,8 +291,8 @@
       "stylus": "github:stylus/stylus#0.64.0",
       "sha.js": "^2.4.12",
       "baseline-browser-mapping": "2.10.30",
-      "@nestledjs/api": "2.9.5",
-      "@nestledjs/shared": "1.0.2",
+      "@nestledjs/api": "2.9.6",
+      "@nestledjs/shared": "1.0.3",
       "@nestledjs/utils": "1.0.2"
     },
     "onlyBuiltDependencies": [
