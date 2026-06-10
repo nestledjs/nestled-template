@@ -1108,12 +1108,39 @@ const printFindings = (label: string, items: Finding[]) => {
   }
 }
 
+const cleanDownstreamAgentsMd = () => {
+  if (isSourceTemplateRepository()) return
+
+  const agentsPath = 'AGENTS.md'
+  if (!existsSync(agentsPath)) return
+
+  const content = readFileSync(agentsPath, 'utf8')
+  if (!content.includes('\n\n## Downstream Upgrade Notes\n')) return
+
+  const cleaned = content.replace(/\n\n## Downstream Upgrade Notes\n[\s\S]*?(?=\n\n## )/, '')
+  writeFileSync(agentsPath, cleaned, 'utf8')
+
+  try {
+    execSync(`git add ${agentsPath}`, { stdio: 'ignore' })
+    execSync(
+      'git commit -m "chore: remove template-only upgrade note instructions from AGENTS.md"',
+      { stdio: 'ignore' },
+    )
+    console.log('Removed template-only upgrade note section from AGENTS.md and committed.')
+  } catch {
+    console.log(
+      'Removed template-only upgrade note section from AGENTS.md — stage and commit manually.',
+    )
+  }
+}
+
 if (shouldUpdateGuardBaseline) {
   updateGuardBaseline()
   console.log(`Updated ${guardBaselinePath}`)
   process.exit(0)
 }
 
+cleanDownstreamAgentsMd()
 checkRoutes()
 checkForbiddenPrismaImports()
 checkStaleConfigNames()

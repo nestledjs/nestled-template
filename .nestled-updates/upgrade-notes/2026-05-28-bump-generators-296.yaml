@@ -1,0 +1,38 @@
+id: 2026-05-28-bump-generators-296
+title: "Upgrade @nestledjs/api@2.9.6 and @nestledjs/shared@1.0.3 generators"
+priority: normal
+area: infra
+type: deps
+delivery: code-patch
+
+intent: >
+  Pin the @nestledjs/api and @nestledjs/shared generator packages to 2.9.6 and 1.0.3
+  respectively via pnpm.overrides, then run pnpm install and pnpm db-update to pick up
+  the latest generator fixes and regenerated artifacts.
+
+why: >
+  These patch releases follow 2.9.5/1.0.2 and include generator maintenance fixes.
+  Downstream projects should stay current with the generator versions to ensure
+  db-update produces correct output and all existing fixes remain active.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - libs/api/generated-crud/**
+  - libs/shared/sdk/**
+
+packageReleases: []
+
+skipIf:
+  - The downstream project is already running @nestledjs/api>=2.9.6 and @nestledjs/shared>=1.0.3.
+
+verification:
+  - "pnpm install"
+  - "pnpm db-update"
+  - "pnpm nx build api"
+  - "pnpm nx build web"
+
+agentHints:
+  - In package.json under pnpm.overrides, set "@nestledjs/api" to "2.9.6" and "@nestledjs/shared" to "1.0.3", then run pnpm install.
+  - Run pnpm db-update after installing to regenerate CRUD resolvers, models, and SDK.
+  - Commit the updated package.json, pnpm-lock.yaml, and any regenerated files together.

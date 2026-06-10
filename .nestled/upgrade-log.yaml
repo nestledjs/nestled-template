@@ -1,7 +1,7 @@
 template:
   repo: nestled-template
   originCommit: e784a19
-  lastReviewedCommit: 59c84d0
+  lastReviewedCommit: 935b3f6
 upgrades:
   2026-05-17-public-landing-cleanup:
     status: applied
@@ -33,3 +33,13 @@ upgrades:
     reviewedAt: "2026-05-27T00:00:00.000Z"
     branch: nestled-upgrade/2026-05-27-skip-crud-graphql-type-filtering
     notes: Patch applied via git apply --3way --exclude=package.json --exclude=pnpm-lock.yaml. Three files (organization.ts, organization.spec.ts, seed.ts) were already at the post-patch state from the PR All 23 files applied. PasswordHistory CRUD surface fully removed.
+  2026-05-28-59c84d0-to-ad422ef:
+    status: superseded
+    reviewedAt: "2026-05-29T12:23:10.426Z"
+    branch: nestled-upgrade/2026-05-28-59c84d0-to-ad422ef
+    notes: Patch appears to already be present in this project.
+  2026-05-28-bump-generators-296:
+    status: applied
+    reviewedAt: "2026-05-29T12:23:15.156Z"
+    branch: nestled-upgrade/2026-05-28-bump-generators-296
+    notes: Patch applied cleanly.
