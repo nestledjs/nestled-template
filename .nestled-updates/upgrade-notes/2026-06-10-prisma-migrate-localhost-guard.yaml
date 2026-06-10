@@ -1,0 +1,48 @@
+id: 2026-06-10-prisma-migrate-localhost-guard
+title: "prisma.config.ts guard blocks migrate dev/reset against non-local databases"
+priority: high
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  prisma migrate dev and prisma migrate reset must be structurally impossible to run against any
+  non-localhost database. prisma.config.ts executes on every Prisma CLI invocation, so a guard
+  there throws before any connection is made when the resolved DATABASE_URL host is not
+  localhost/127.0.0.1/::1 and the invoked command is migrate dev or migrate reset. prisma migrate
+  deploy (the supported path for applying committed migrations to remote environments) is
+  unaffected, as are generate, db pull/push, and migrate status.
+
+why: >
+  migrate dev and migrate reset are destructive — they can drop and recreate the target database.
+  Prisma has no built-in environment protection: both commands target whatever the datasource URL
+  resolves to. On headless/pipeline machines the ambient .env may point DATABASE_URL at a staging
+  or production database (this nearly happened on the Monroe pipeline box, where .env pointed at
+  the production EC2 Postgres — only a prompt-level instruction in the pipeline agent stood
+  between migrate dev and that database). A prompt-level gate is advisory; this guard is
+  mechanical and cannot be bypassed by ambient env vars, agent error, or a typo.
+
+affectedPaths:
+  - prisma.config.ts
+
+skipIf:
+  - Your prisma.config.ts already throws on migrate dev/reset when the DATABASE_URL host is not local.
+
+agentHints:
+  - >
+    In prisma.config.ts, after the databaseUrl constant is defined and before defineConfig is
+    called, insert the guard block: detect the migrate subcommand via process.argv (find the index
+    of 'migrate'; the subcommand is the next argv entry), and if it is 'dev' or 'reset', parse
+    databaseUrl with new URL(...) and throw unless the hostname is one of localhost, 127.0.0.1,
+    ::1, or [::1].
+  - Throw on unparseable DATABASE_URL too when the command is migrate dev/reset — do not let a malformed URL fall through to Prisma.
+  - "Do not gate any other Prisma command: generate, db pull/push, migrate deploy, migrate status must behave exactly as before."
+  - >
+    Some projects have small local edits to prisma.config.ts (e.g. mi-core orders the migrations
+    block differently and includes a seed entry). Apply the guard block around the existing
+    structure rather than overwriting the file.
+
+verification:
+  - "bash -c \"DATABASE_URL='postgresql://u:p@db.example.com:5432/db' pnpm exec prisma migrate dev --name guard_check 2>&1 | grep -q 'BLOCKED: prisma migrate dev'\""
+  - "bash -c \"! (DATABASE_URL='postgresql://u:p@db.example.com:5432/db' timeout 20 pnpm exec prisma migrate status 2>&1 | grep -q 'BLOCKED')\""
+  - pnpm nx build api
