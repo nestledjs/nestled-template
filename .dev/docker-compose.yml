@@ -1,3 +1,7 @@
+# Compose project name — MUST be unique per repo. When cloning this template,
+# change this to the new repo's slug or parallel test/dev databases will collide.
+name: nestled-template
+
 services:
   postgres:
     image: postgres:15
