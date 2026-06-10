@@ -35,7 +35,7 @@ fi
 
 # Call vitest directly to avoid infinite loop (since NX now calls this script)
 # "$@" passes through any extra flags from the caller (e.g. --coverage)
-npx vitest run --config apps/api-e2e/vitest.config.ts "$@" 2>&1 | tee "$TMPFILE"
+npx vitest run --config apps/api-e2e/vitest.config.mts "$@" 2>&1 | tee "$TMPFILE"
 EXIT_CODE=${PIPESTATUS[0]}
 
 # Read the captured output

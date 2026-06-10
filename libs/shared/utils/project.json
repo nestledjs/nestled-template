@@ -10,7 +10,7 @@
       "executor": "@nx/vitest:test",
       "outputs": ["{workspaceRoot}/coverage/libs/shared/utils"],
       "options": {
-        "configFile": "libs/shared/utils/vitest.config.ts",
+        "configFile": "libs/shared/utils/vitest.config.mts",
         "reportsDirectory": "libs/shared/utils/../../../coverage/libs/shared/utils"
       }
     }

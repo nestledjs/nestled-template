@@ -11,7 +11,7 @@
         "{workspaceRoot}/test-results/{e2eProjectRoot}"
       ],
       "options": {
-        "config": "apps/api-e2e/vitest.config.ts",
+        "config": "apps/api-e2e/vitest.config.mts",
         "passWithNoTests": true
       },
       "dependsOn": ["api:build"]

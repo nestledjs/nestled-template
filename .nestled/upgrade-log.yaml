@@ -56,4 +56,4 @@ upgrades:
   2026-06-10-bump-api-2-10-0-clone-identity:
     status: adapted
     reviewedAt: "2026-06-10T18:05:00.000Z"
-    notes: "Applied manually (package manifests are excluded from raw promotion). pnpm.overrides @nestledjs/api -> 2.10.0, generators -> ^0.2.31. .nestled-updates kept — template tooling belongs here."
+    notes: Applied manually (package manifests are excluded from raw promotion). pnpm.overrides @nestledjs/api -> 2.10.0, generators -> ^0.2.31. .nestled-updates kept — template tooling belongs here.

@@ -1,0 +1,40 @@
+id: 2026-06-10-vitest-configs-mts
+title: "Vitest configs as .mts — eliminate require(esm) race during Nx graph construction"
+priority: high
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Every vitest.config.ts in the workspace becomes vitest.config.mts, with all references
+  (project.json commands, tsconfig include arrays, shell scripts) updated. Explicit ESM
+  configs make vite load them via native import() instead of its CJS bundle-require path.
+
+why: >
+  With .ts configs, vite's config loader bundles to CJS and executes via require hooks,
+  turning top-level ESM imports (e.g. @vitest/browser-playwright) into require() of ESM
+  module graphs. When Nx loads multiple vitest configs concurrently during project-graph
+  construction on Node 22.20+, Node's require(esm) hits mid-link races ("Cannot require()
+  ES Module ... not yet fully loaded", "module not been linked") and graph construction
+  fails. This broke mi-core CI the moment its runner moved to Node 22.22.1 (mi-core PR
+  1339 diagnosed and validated this fix). It is latent in every repo until its CI or a
+  pipeline box runs newer Node. MUST be applied before 2026-06-10-node-engines-ci-22-22.
+
+affectedPaths:
+  - libs/**/vitest.config.ts
+  - apps/**/vitest.config.ts
+  - libs/**/project.json
+  - libs/**/tsconfig.spec.json
+  - libs/**/tsconfig.lib.json
+
+skipIf:
+  - The project has no vitest.config.ts files (all already .mts).
+
+agentHints:
+  - "git mv each vitest.config.ts to vitest.config.mts (do not change file content)."
+  - "Update every textual reference: project.json vitest --config commands, tsconfig include arrays, any shell scripts. Grep for vitest.config.ts afterwards — zero references may remain outside node_modules."
+  - "Verify with a cold graph build: npx nx reset, then NX_DAEMON=false CI=true npx nx show projects must list all projects."
+
+verification:
+  - npx nx show projects
+  - pnpm run --if-present nestled-doctor

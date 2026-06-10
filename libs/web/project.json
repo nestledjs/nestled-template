@@ -10,7 +10,7 @@
       "executor": "@nx/vitest:test",
       "outputs": ["{workspaceRoot}/coverage/libs/web"],
       "options": {
-        "configFile": "libs/web/vitest.config.ts",
+        "configFile": "libs/web/vitest.config.mts",
         "reportsDirectory": "libs/web/../../coverage/libs/web"
       }
     }

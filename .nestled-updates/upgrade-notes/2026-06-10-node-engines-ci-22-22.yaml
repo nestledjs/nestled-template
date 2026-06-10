@@ -1,0 +1,36 @@
+id: 2026-06-10-node-engines-ci-22-22
+title: "Widen engines.node to ^22.14.0; pin CI to Node 22.22.1 (Qalatra box alignment)"
+priority: high
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  engines.node widens from exact 22.14.0 to ^22.14.0 in every package.json that pins it,
+  and CI workflows pin node-version 22.22.1. Any Node 22.x >= 22.14 satisfies engines
+  (developer machines on 22.14, pipeline boxes on 22.22.1), Node 23+ is excluded, and CI
+  validates on the exact version the Qalatra pipeline boxes run.
+
+why: >
+  Exact engines.node 22.14.0 with engine-strict hard-blocks any host on a newer 22.x
+  patch: pnpm script invocations fail ERR_PNPM_UNSUPPORTED_ENGINE. This blocked automated
+  migration/codegen reconciliation on the Monroe pipeline box (Node 22.22.1) and will
+  block every repo a pipeline box touches. Mirrors the fix already applied to mi-core.
+  HARD PREREQUISITE: 2026-06-10-vitest-configs-mts must be applied first — Node 22.20+
+  CI runners with .ts vitest configs fail project-graph construction.
+
+affectedPaths:
+  - package.json
+  - .github/workflows/ci.yml
+
+skipIf:
+  - engines.node is already a range accepting 22.22.1 and CI already runs node-version 22.22.1.
+
+agentHints:
+  - "Replace every exact engines.node 22.14.0 with ^22.14.0 across root and app package.json files."
+  - "In .github/workflows, replace node-version 22.14.0 pins with 22.22.1."
+  - "Apply 2026-06-10-vitest-configs-mts BEFORE this note. Never bump CI Node while .ts vitest configs remain."
+
+verification:
+  - npx nx show projects
+  - pnpm install --frozen-lockfile
