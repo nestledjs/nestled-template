@@ -43,3 +43,8 @@ upgrades:
     reviewedAt: "2026-05-29T12:23:15.156Z"
     branch: nestled-upgrade/2026-05-28-bump-generators-296
     notes: Patch applied cleanly.
+  2026-06-10-prisma-migrate-localhost-guard:
+    status: adapted
+    reviewedAt: "2026-06-10T15:51:03.059Z"
+    branch: nestled-upgrade/2026-06-10-prisma-migrate-localhost-guard
+    notes: "Patch applied cleanly; nx build api passed. Original blocked outcome was a false negative — verification entries were prose, not executable commands (fixed in the note, dev-template 582aebf). Manually verified: remote migrate dev blocked with BLOCKED error, migrate status not gated."
