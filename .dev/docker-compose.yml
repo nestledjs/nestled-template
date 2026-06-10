@@ -1,5 +1,5 @@
-# Compose project name — MUST be unique per repo. When cloning this template,
-# change this to the new repo's slug or parallel test/dev databases will collide.
+# Compose project name — keeps this repo's containers isolated from other repos.
+# Workspace-setup's rename sets this automatically when a new project is created.
 name: nestled-template
 
 services:
