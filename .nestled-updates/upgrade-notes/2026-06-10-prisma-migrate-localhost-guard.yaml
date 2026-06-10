@@ -43,6 +43,6 @@ agentHints:
     structure rather than overwriting the file.
 
 verification:
-  - "bash -c \"DATABASE_URL='postgresql://u:p@db.example.com:5432/db' pnpm exec prisma migrate dev --name guard_check 2>&1 | grep -q 'BLOCKED: prisma migrate dev'\""
-  - "bash -c \"! (DATABASE_URL='postgresql://u:p@db.example.com:5432/db' timeout 20 pnpm exec prisma migrate status 2>&1 | grep -q 'BLOCKED')\""
+  - DATABASE_URL=postgresql://u:p@db.example.com:5432/db pnpm exec prisma migrate dev --name guard_check 2>&1 | grep -q BLOCKED
+  - DATABASE_URL=postgresql://u:p@db.example.com:5432/db timeout 20 pnpm exec prisma migrate status 2>&1 | grep -q BLOCKED && exit 1 || exit 0
   - pnpm nx build api

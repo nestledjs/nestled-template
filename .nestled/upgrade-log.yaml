@@ -48,3 +48,8 @@ upgrades:
     reviewedAt: "2026-06-10T15:51:03.059Z"
     branch: nestled-upgrade/2026-06-10-prisma-migrate-localhost-guard
     notes: "Patch applied cleanly; nx build api passed. Original blocked outcome was a false negative — verification entries were prose, not executable commands (fixed in the note, dev-template 582aebf). Manually verified: remote migrate dev blocked with BLOCKED error, migrate status not gated."
+  2026-06-10-compose-project-name:
+    status: superseded
+    reviewedAt: "2026-06-10T17:27:17.448Z"
+    branch: nestled-upgrade/2026-06-10-compose-project-name
+    notes: "Compose project name was pushed directly to develop (4520adf) before promotion ran; note copies synced from dev-template. No further action."

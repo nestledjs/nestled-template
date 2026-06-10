@@ -1,0 +1,26 @@
+id: 2026-06-10-compose-project-name
+title: "Explicit compose project name in .dev/docker-compose.yml"
+priority: ignore
+area: infra
+type: fix
+delivery: code-patch
+
+intent: >
+  Every repo's .dev/docker-compose.yml must declare a top-level name: set to that repo's
+  unique slug, so docker compose never groups two repos' containers under the same default
+  project and one repo's test-db startup cannot recreate or steal another repo's container.
+
+why: >
+  Without an explicit name, compose derives the project name from context shared across
+  repos, and on 2026-06-10 qalatra.com's e2e test-db startup recreated cashcast's postgres
+  container. All existing nestled repos (biztobiz, mi-core, muzebook, flightdesk, cashcast,
+  moceanic-ai, qalatra.com, travel-outlook) were fixed directly on develop the same day, so
+  this note is a historical/decision record (priority: ignore) — no downstream action needed.
+  Future clones of nestled-template inherit the name: key with a comment instructing them to
+  set their own unique slug.
+
+affectedPaths:
+  - .dev/docker-compose.yml
+
+skipIf:
+  - Your .dev/docker-compose.yml already has a top-level name set to this repo's unique slug.
