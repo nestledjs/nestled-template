@@ -1,40 +1,41 @@
 id: 2026-06-10-bump-api-2-10-0-clone-identity
-title: "Upgrade @nestledjs/api@2.10.0 / generators@0.2.31 — clone-identity fix; remove stray .nestled-updates"
+title: "Upgrade @nestledjs/api@2.10.1 / generators@^0.2.32 — clone-identity workspace-setup fix"
 priority: high
-area: infra
+area: api
 type: deps
 delivery: code-patch
 
 intent: >
-  Pin @nestledjs/api to 2.10.0 via pnpm.overrides and bump @nestledjs/generators to
-  ^0.2.31, then remove any .nestled-updates directory that shipped into this clone.
-  api 2.10.0 fixes the workspace-setup generator so future clones delete template-only
-  tooling before the rename and exclude .nestled from the nestled-template find-and-replace.
+  Pin @nestledjs/api to 2.10.1 via pnpm.overrides and bump @nestledjs/generators to
+  ^0.2.32, using scoped dependency resolution only. api 2.10.1 fixes the workspace-setup
+  generator so the clone-time rename excludes .nestled and .nestled-updates, preserving
+  the upstream template identity in clones. Do NOT delete .nestled-updates anywhere —
+  CI's nestled-doctor and validate-upgrade-notes consume its baselines and notes.
 
 why: >
   The clone-time rename previously corrupted .nestled/upgrade-log.yaml (the upstream
-  template pointer became the project's own name) and shipped .nestled-updates/ (note
-  authoring tooling + upgrader contract) downstream, where its presence makes the
-  nestled-upgrader and coding agents treat the clone as a template source of truth.
-  Existing clones created before this fix still carry a stray .nestled-updates directory
-  that should be deleted; their upgrade-log template pointers were verified intact on
-  2026-06-10.
+  template pointer became the project's own name) and rewrote template references inside
+  .nestled-updates, making clones present themselves as the template source of truth.
+  api 2.10.0 tried to fix this by deleting .nestled-updates at clone time, which broke
+  CI fleet-wide (nestled-doctor baselines and the upgrade-notes directory are consumed
+  by every repo's CI). 2.10.1 replaces deletion with rename-exclusion.
 
 affectedPaths:
   - package.json
   - pnpm-lock.yaml
-  - .nestled-updates/**
 
 packageReleases: []
 
 skipIf:
-  - The project already has @nestledjs/api>=2.10.0 in pnpm.overrides and no .nestled-updates directory. (nestled-dev-template and nestled-template keep .nestled-updates — it is template tooling; only downstream clones must delete it.)
+  - The project already has @nestledjs/api>=2.10.1 in pnpm.overrides.
 
 agentHints:
-  - In package.json under pnpm.overrides, set "@nestledjs/api" to "2.10.0"; set the "@nestledjs/generators" dependency to "^0.2.31"; run pnpm install.
-  - Delete the .nestled-updates directory from the repo if present (downstream clones only — never in the templates themselves).
-  - Verify .nestled/upgrade-log.yaml still has "repo: nestled-template" as its template pointer; restore it if a past rename corrupted it.
+  - "In package.json set pnpm.overrides '@nestledjs/api' to '2.10.1' and the '@nestledjs/generators' dependency to '^0.2.32'."
+  - "Resolve with scope discipline: after editing package.json run pnpm install, then inspect the pnpm-lock.yaml diff — only @nestledjs/* entries may change. If unrelated transitive packages churn (e.g. playwright, jiti), restore the lockfile and update only the scoped packages. Unscoped churn from this exact bump previously broke Nx project-graph construction via vitest config loading."
+  - "Never delete .nestled-updates. Verify .nestled/upgrade-log.yaml still says 'repo: nestled-template'."
 
 verification:
-  - pnpm install
+  - pnpm install --frozen-lockfile
+  - pnpm run --if-present template:validate-upgrade-notes
+  - pnpm run --if-present nestled-doctor
   - pnpm nx build api
