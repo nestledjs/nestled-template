@@ -102,7 +102,7 @@
     "@nestledjs/data-browser": "^1.0.15",
     "@nestledjs/forms": "0.7.7",
     "@nestledjs/forms-core": "^0.1.3",
-    "@nestledjs/generators": "^0.2.31",
+    "@nestledjs/generators": "^0.2.32",
     "@nestledjs/shared-components": "^1.0.15",
     "@nx/devkit": "22.7.2",
     "@octokit/oauth-app": "^8.0.3",
@@ -291,7 +291,7 @@
       "stylus": "github:stylus/stylus#0.64.0",
       "sha.js": "^2.4.12",
       "baseline-browser-mapping": "2.10.30",
-      "@nestledjs/api": "2.10.0",
+      "@nestledjs/api": "2.10.1",
       "@nestledjs/shared": "1.0.3",
       "@nestledjs/utils": "1.0.2"
     },
