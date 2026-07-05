@@ -26,7 +26,7 @@ affectedPaths:
 packageReleases: []
 
 skipIf:
-  - No hand-written GraphQLJSONObject usages remain in libs/apps source (excluding node_modules
+  - No hand-written GraphQLJSONObject usages remain in libs/ and apps/ source (excluding node_modules
     and generated output).
 
 verification:
