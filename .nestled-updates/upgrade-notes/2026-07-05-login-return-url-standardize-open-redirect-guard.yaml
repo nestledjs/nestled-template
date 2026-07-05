@@ -30,6 +30,7 @@ why: >
 affectedPaths:
   - apps/web/app/routes/_public/login.tsx
   - apps/web/app/routes/mcp-connect.tsx
+  - apps/web/tests/routes/_public/login.spec.tsx
 
 skipIf:
   - The downstream project does not use the template login flow, or already reads and validates return_url/redirect with an equivalent same-origin check.
