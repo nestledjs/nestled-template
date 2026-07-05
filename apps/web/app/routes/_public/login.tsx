@@ -48,6 +48,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return isRemembered ?? {}
 }
 
+// The rest of the app builds post-login destinations as `return_url`. Only accept a
+// same-origin absolute path — reject protocol-relative (`//host`) and backslash tricks
+// so a crafted `return_url` cannot bounce a just-authenticated user off-site.
+function safeReturnUrl(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
+    return '/members/dashboard'
+  }
+  return raw
+}
+
 export const ForgotPasswordWrapper = (children: React.ReactNode) => (
   <div key={'remember'} className="flex items-center justify-between">
     {children}
@@ -68,7 +78,7 @@ export default function LoginPage() {
   const [tempToken, setTempToken] = useState<string | null>(null)
   const [twoFACode, setTwoFACode] = useState('')
 
-  const redirectUrl = searchParams.get('redirect') || '/members/dashboard'
+  const redirectUrl = safeReturnUrl(searchParams.get('return_url'))
 
   const [loginMutation] = useMutation<LoginMutation>(Login)
   const [complete2FALoginMutation] = useMutation<Complete2FaLoginMutation>(Complete2FaLogin)

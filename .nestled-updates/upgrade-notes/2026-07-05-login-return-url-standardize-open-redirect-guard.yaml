@@ -1,0 +1,39 @@
+id: 2026-07-05-login-return-url-standardize-open-redirect-guard
+title: Login honors return_url (was ignored) and validates it against open redirects
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Standardize the post-login destination on the `return_url` query param and validate it
+  before navigating. The login page now reads `return_url` (previously it read `redirect`,
+  which nothing sets) through a `safeReturnUrl()` helper that accepts only same-origin
+  absolute paths — rejecting protocol-relative (`//host`) and backslash (`/\`) values and
+  falling back to `/members/dashboard`.
+
+why: >
+  Every producer in the app builds the post-login destination as `return_url`
+  (root.tsx, force-logout.tsx, logout.tsx, entry.server.tsx, _authenticated/_layout.tsx),
+  but the login page's sole reader used `redirect`. Because `redirect` is never set, the
+  param was silently dropped and every login landed on the default dashboard regardless of
+  origin. Wiring the reader to `return_url` fixes that, but a raw value flows into
+  navigate() — so it must be validated in the same change, otherwise the previously-dead
+  param becomes a working open redirect (e.g. `return_url=//evil.com` bounces a
+  just-authenticated user off-site). The two fixes must land together.
+
+affectedPaths:
+  - apps/web/app/routes/_public/login.tsx
+
+skipIf:
+  - The downstream project does not use the template login flow, or already reads and validates return_url with an equivalent same-origin check.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm nx test web
+  - pnpm typecheck
+
+agentHints:
+  - Confirm the app's redirect producers already emit `return_url` (they do in the template). If a project standardized on `redirect` instead, align the producers and reader on one param — either is fine, but the validation is mandatory.
+  - The validator must reject protocol-relative (`//`) and backslash-prefixed paths, not just check `startsWith('/')`. Anything not a same-origin absolute path falls back to the default authenticated route.
+  - This builds on the auth redirect-loop work (see 2026-06-21-auth-redirect-loop-circuit-breaker); the `expired=1` circuit breaker is unaffected.
