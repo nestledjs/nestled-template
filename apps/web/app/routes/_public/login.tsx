@@ -50,22 +50,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 const DEFAULT_POST_LOGIN = '/members/dashboard'
 
+// An origin-local target: a single-slash absolute path with no backslash tricks.
+// Protocol-relative (`//host`) and backslash forms (`/\host`, `\host`) are rejected
+// because browsers/routers normalize them into off-site navigations.
+function isSafeLocalPath(path: string): boolean {
+  return path.startsWith('/') && !path.startsWith('//') && !path.includes('\\')
+}
+
 // Producers pass the post-login destination as either a same-origin relative path
 // (`return_url`, most routes) or an absolute URL (`redirect`, e.g. mcp-connect passes
 // request.url). Return a path we can navigate to that can never leave our origin:
-// relative paths pass through; absolute/other inputs are reduced to pathname+search+hash
-// (the origin is discarded, so even a cross-origin URL becomes a local path). Reject
-// protocol-relative (`//host`) and backslash tricks that browsers treat as off-site.
+// safe relative paths pass through; absolute/other inputs are reduced to
+// pathname+search+hash (the origin is discarded) and the derived path is re-validated
+// with the same rule — so `https://host//evil.com` (pathname `//evil.com`) is rejected.
 export function safeReturnUrl(raw: string | null): string {
   if (!raw) return DEFAULT_POST_LOGIN
-  if (raw.startsWith('//') || raw.startsWith('\\') || raw.startsWith('/\\')) {
-    return DEFAULT_POST_LOGIN
-  }
-  if (raw.startsWith('/')) return raw
+  if (isSafeLocalPath(raw)) return raw
   try {
     const { pathname, search, hash } = new URL(raw)
     const path = `${pathname}${search}${hash}`
-    return path.startsWith('/') ? path : DEFAULT_POST_LOGIN
+    return isSafeLocalPath(path) ? path : DEFAULT_POST_LOGIN
   } catch {
     return DEFAULT_POST_LOGIN
   }

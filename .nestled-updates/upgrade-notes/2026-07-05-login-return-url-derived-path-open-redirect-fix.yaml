@@ -1,0 +1,49 @@
+id: 2026-07-05-login-return-url-derived-path-open-redirect-fix
+title: safeReturnUrl re-validates the origin-stripped path (closes //host derived open redirect)
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Harden `safeReturnUrl()` so the path derived from an absolute URL is validated with the
+  same rule as a raw relative path. Both the relative branch and the origin-stripped
+  `pathname+search+hash` now pass through a single `isSafeLocalPath()` helper (single-slash
+  absolute path, no leading `//`, no backslash), and unsafe derived paths fall back to
+  `/members/dashboard`.
+
+why: >
+  The prior guard (see 2026-07-05-login-return-url-standardize-open-redirect-guard) rejected
+  raw values starting with `//`, but only checked the *raw* input. An absolute URL such as
+  `https://host//evil.com` starts with `https`, passes the raw check, and `new URL(...).pathname`
+  is `//evil.com` — which was returned unchanged. Routers/browsers treat a leading `//` as
+  protocol-relative and can navigate off-site, reintroducing the open redirect after login.
+  Re-validating the derived path with the same same-origin rule closes the bypass. This note
+  supersedes the validation logic delivered by the standardize note; projects that already
+  applied that note still carry the weaker check and need this fix.
+
+affectedPaths:
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/tests/routes/_public/login.spec.tsx
+
+skipIf:
+  - The downstream project does not use the template login flow, or already reduces absolute URLs to a same-origin path AND re-validates that derived path against protocol-relative (`//`) and backslash forms.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm nx test web
+  - pnpm typecheck
+
+agentHints:
+  - >-
+    The bug is that the absolute-URL branch returned the derived path whenever it
+    started with a single slash, which is also true for `//evil.com`. Fix by validating
+    the derived path with the same helper used for the relative branch, not a bare
+    startsWith('/') check.
+  - >-
+    isSafeLocalPath(p) must require that p starts with `/`, does NOT start with `//`,
+    and contains no backslash character.
+  - >-
+    Ship the spec alongside the source. The added regression case asserts that
+    safeReturnUrl('https://example.com//evil.com') returns the default. Without the
+    spec, SonarQube Coverage on New Code will fail on the new source lines downstream.
