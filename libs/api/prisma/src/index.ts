@@ -15,4 +15,10 @@ export type InputJsonValue = PrismaNamespace.InputJsonValue
 export type InputJsonObject = PrismaNamespace.InputJsonObject
 export type InputJsonArray = PrismaNamespace.InputJsonArray
 
+// Re-export commonly used Prisma runtime error classes for direct import, so app
+// code doesn't reach into '@prisma/client/runtime/client' (the resolution path the
+// wrapper exists to avoid). Exported as both value and type, matching the client.
+export const PrismaClientKnownRequestError = PrismaNamespace.PrismaClientKnownRequestError
+export type PrismaClientKnownRequestError = PrismaNamespace.PrismaClientKnownRequestError
+
 export { defaultRoles, defaultPermissions } from './lib/seed/seed-data/seed-roles-permissions'

@@ -21,7 +21,7 @@ import {
   UserSessionOutput,
 } from './dto'
 import { CookieOptions, Response } from 'express'
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client'
+import { PrismaClientKnownRequestError } from '@nestled-template/api/prisma'
 import { UserToken } from './models'
 import { EmailService } from '@nestled-template/api/integrations'
 import {
