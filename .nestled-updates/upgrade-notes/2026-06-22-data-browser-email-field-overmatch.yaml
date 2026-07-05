@@ -1,0 +1,39 @@
+id: 2026-06-22-data-browser-email-field-overmatch
+title: "data-browser: email/textarea input inference matches whole words, not substrings"
+priority: high
+area: admin
+type: correctness
+delivery: package-release
+
+intent: >
+  In @nestledjs/data-browser auto-generated admin forms, a String field is only rendered
+  as an email-validated input when the field name's last word IS email/emailAddress
+  (e.g. email, userEmail, emailAddress) — not when "email" is a substring of a larger
+  name like validateEmailToken or emailVerificationToken. The same word-boundary rule
+  applies to description/content/notes -> textarea. Token/secret String fields render as
+  plain text and no longer block saving the record.
+
+why: >
+  The auto-form inferred input type from a substring match on the field name, so any String
+  field containing "email" (e.g. User.validateEmailToken, a verification token) rendered as
+  an email input. Because the form validates the whole record on save, the stored non-email
+  token value failed email-format validation and the record became impossible to save —
+  blocking all edits to affected models (found editing a User in moceanic-ai, 2026-06-22).
+
+packageReleases:
+  - name: "@nestledjs/data-browser"
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.16
+    versionRange: ">=1.0.16"
+
+skipIf:
+  - The project does not use @nestledjs/data-browser auto-generated admin forms.
+  - The project already runs @nestledjs/data-browser>=1.0.16.
+
+agentHints:
+  - "Downstream: bump @nestledjs/data-browser to >=1.0.16 (do not copy libs/data-browser source)."
+  - "The fix is in buildRegularFormField() in graphql-utils.ts — input-type heuristics now match the last camelCase/snake word, not a substring."
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm nx test data-browser

@@ -1,0 +1,60 @@
+id: 2026-07-04-consolidate-generators
+title: Consolidate codegen onto the consolidated @nestledjs/generators package (four generators)
+priority: high
+area: api
+type: deps
+delivery: code-patch
+
+intent: >
+  All Prisma-driven codegen (CRUD resolvers, GraphQL models/enums, SDK, custom barrels) must
+  run from the single @nestledjs/generators@1.x package via the four generators
+  crud/models/sdk/custom, with no locally owned generate-models script and no dependency on
+  the retired @nestledjs/api, @nestledjs/shared, or @nestledjs/utils packages.
+
+why: >
+  The old six-package layout required coordinated version pins (pnpm.overrides for api,
+  shared, and utils) and left every project owning a scaffolded copy of generate-models.ts
+  that drifted from upstream — Prisma v7 fixes had to be hand-patched per project. One
+  versioned package makes every codegen fix a version bump + regen, keeps generate-crud and
+  sdk output guaranteed-consistent, and removes the temptation for local agents to patch
+  generator logic instead of reporting bugs upstream.
+
+affectedPaths:
+  - package.json
+  - libs/api/core/models/**
+  - libs/api/generated-crud/**
+  - libs/shared/sdk/**
+  - libs/api/custom/src/index.ts
+  - libs/api/custom/src/lib/default/index.ts
+
+packageReleases: []
+
+skipIf:
+  - package.json already depends on @nestledjs/generators >= 1.0.0 and has no
+    pnpm.overrides entries for @nestledjs/api, @nestledjs/shared, or @nestledjs/utils.
+
+verification:
+  - pnpm install
+  - pnpm db-update
+  - git diff --stat # generated output should be unchanged or explainable
+  - pnpm run nestled-doctor
+  - pnpm build:api
+
+agentHints:
+  - Set the @nestledjs/generators dependency to an exact 1.x version and delete the
+    pnpm.overrides entries for @nestledjs/api, @nestledjs/shared, and @nestledjs/utils.
+  - Rewrite the db-update script to "pnpm prisma:generate && nx g
+    @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g
+    @nestledjs/generators:sdk && nx g @nestledjs/generators:custom" (prisma:generate is now
+    an explicit first step; the models generator no longer shells out to prisma).
+  - Point the generate:models script at "nx g @nestledjs/generators:models" and delete
+    libs/api/core/models/src/lib/generate-models.ts. IMPORTANT - if the local
+    generate-models.ts has project-specific patches, diff it against the upstream models
+    generator behavior first; report any fix the consolidated package lacks as a nestledjs issue rather than
+    keeping the local fork.
+  - The models generator resolves the Prisma wrapper import path from tsconfig.base.json;
+    projects with a nonstandard path alias for libs/api/prisma can pass
+    --prismaImportPath explicitly.
+  - After pnpm db-update, generated output should be byte-identical for projects that were
+    current on @nestledjs/api 2.10.1 / @nestledjs/shared 1.0.3. Diffs beyond that indicate
+    the project was behind on generator versions; review the regenerated code normally.
