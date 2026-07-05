@@ -1,5 +1,5 @@
 import { Field, InputType } from '@nestjs/graphql'
-import { GraphQLJSONObject } from 'graphql-type-json'
+import { GraphQLJSON } from 'graphql-type-json'
 
 @InputType()
 export class CorePagingInput {
@@ -21,6 +21,6 @@ export class CorePagingInput {
   @Field({ nullable: true })
   orderBy?: string
 
-  @Field(() => GraphQLJSONObject, { nullable: true })
+  @Field(() => GraphQLJSON, { nullable: true })
   filters?: Record<string, unknown>
 }

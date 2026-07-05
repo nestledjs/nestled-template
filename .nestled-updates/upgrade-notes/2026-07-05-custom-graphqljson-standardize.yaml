@@ -1,0 +1,45 @@
+id: 2026-07-05-custom-graphqljson-standardize
+title: Standardize hand-written GraphQLJSONObject -> GraphQLJSON in custom resolvers/DTOs
+priority: normal
+area: api
+type: cleanup
+
+delivery: code-patch
+
+intent: >
+  Replace the object-only `GraphQLJSONObject` scalar with `GraphQLJSON` in all hand-written
+  (non-generated) resolvers, DTOs, and inputs, so the entire GraphQL surface uses one JSON
+  scalar. The generated models already emit `GraphQLJSON` (see
+  2026-07-05-generators-json-scalar); this covers the custom code the generator does not own.
+
+why: >
+  `GraphQLJSONObject` rejects non-object values, so any custom `Json`/JSON field holding a
+  top-level array or scalar throws `"JSONObject cannot represent non-object value"` at
+  serialization. `GraphQLJSON` is a strict superset (objects plus arrays/scalars), so the swap
+  is non-breaking: every object value still validates and arrays/scalars now work. Client SDK
+  types are unaffected because graphql-codegen maps both scalars to `any` (no explicit scalar
+  mapping in codegen.yml). Leaving a mix of the two scalars is the drift this removes.
+
+affectedPaths:
+  - libs/api/**
+
+packageReleases: []
+
+skipIf:
+  - No hand-written GraphQLJSONObject usages remain in libs/apps source (excluding node_modules
+    and generated output).
+
+verification:
+  - pnpm build:api
+  - pnpm run --if-present typecheck
+
+agentHints:
+  - "Find every hand-written GraphQLJSONObject in libs/ and apps/ (EXCLUDE node_modules, the
+    generated SDK libs/shared/sdk/src/generated/graphql.ts, and generated models
+    libs/api/core/models/src/lib/models/models.ts — those are regenerated) and replace
+    GraphQLJSONObject with GraphQLJSON, including the `graphql-type-json` import and any
+    `typeof GraphQLJSONObject` type references."
+  - "If a file imports BOTH scalars (import { GraphQLJSON, GraphQLJSONObject }), the replace
+    produces a duplicate specifier — dedup it to `import { GraphQLJSON }`."
+  - "This is a non-breaking superset change; do not regenerate or hand-edit the SDK. Verify with
+    pnpm build:api and the web typecheck."
