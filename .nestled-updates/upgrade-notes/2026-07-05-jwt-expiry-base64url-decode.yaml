@@ -1,0 +1,37 @@
+id: 2026-07-05-jwt-expiry-base64url-decode
+title: isJwtExpired decodes the JWT payload as base64url (not standard base64)
+priority: normal
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  Fix isJwtExpired() in shared/utils to base64url-decode the JWT payload before parsing.
+  It normalizes `-`→`+` and `_`→`/` and re-pads before atob(), so a valid token whose
+  payload segment contains url-safe characters is no longer misread as expired. Adds a
+  regression spec (auth.spec.ts).
+
+why: >
+  atob() decodes standard base64, but JWT payloads are base64url. When a payload segment
+  contained a `-` or `_` (content-dependent — common when a claim value carries certain
+  bytes), atob() threw and the catch returned `true`, treating a valid, non-expired session
+  as expired. isJwtExpired now gates both the login loader and the root auth loader (part of
+  the redirect-loop circuit breaker), so an intermittent false-expired there bounces valid
+  users to the login form. It fails safe (the server is the authoritative validator), so
+  this is a correctness/UX fix, not a security hole. Note: unlike the `-`/`_` substitution,
+  missing padding is NOT a failure mode — atob tolerates it — so the re-pad is belt-and-suspenders.
+
+affectedPaths:
+  - libs/shared/utils/src/lib/auth.ts
+  - libs/shared/utils/src/lib/auth.spec.ts
+
+skipIf:
+  - The downstream project does not use shared/utils isJwtExpired, or already decodes the payload as base64url.
+
+verification:
+  - pnpm nx test utils
+  - pnpm typecheck
+
+agentHints:
+  - The decode must map `-`→`+` and `_`→`/` and pad to a multiple of 4 before atob(); keep the try/catch returning true for genuinely malformed tokens.
+  - The regression fixture must use a payload whose base64url actually contains `-` or `_` (assert /[-_]/ on the encoded segment) so it exercises the url-safe path and would fail against a plain-atob implementation.

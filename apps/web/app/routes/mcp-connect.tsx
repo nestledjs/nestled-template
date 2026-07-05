@@ -10,7 +10,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (!back) throw redirect('/')
 
   const token = getCookie(request.headers, getSessionCookieName())
-  if (!token) throw redirect(`/login?redirect=${encodeURIComponent(request.url)}`)
+  if (!token) {
+    // Same-origin relative path, consistent with every other return_url producer.
+    throw redirect(`/login?return_url=${encodeURIComponent(url.pathname + url.search)}`)
+  }
 
   return { back }
 }
