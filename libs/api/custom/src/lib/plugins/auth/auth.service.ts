@@ -21,7 +21,11 @@ import {
   UserSessionOutput,
 } from './dto'
 import { CookieOptions, Response } from 'express'
-import { PrismaClientKnownRequestError } from '@nestled-template/api/prisma'
+import {
+  PrismaClientKnownRequestError,
+  defaultPermissions,
+  defaultRoles,
+} from '@nestled-template/api/prisma'
 import { UserToken } from './models'
 import { EmailService } from '@nestled-template/api/integrations'
 import {
@@ -34,7 +38,6 @@ import {
 } from './auth.helper'
 import { ConfigService } from '@nestjs/config'
 import { randomInt } from 'node:crypto'
-import { defaultPermissions, defaultRoles } from '@nestled-template/api/prisma'
 import { SecurityEventsService } from '../security'
 import { SessionService, SessionInfo } from './session.service'
 import {

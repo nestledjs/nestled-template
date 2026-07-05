@@ -1,32 +1,38 @@
 id: 2026-07-05-login-return-url-standardize-open-redirect-guard
-title: Login honors return_url (was ignored) and validates it against open redirects
+title: Login honors return_url/redirect (was ignored) and validates it against open redirects
 priority: high
 area: auth
 type: security
 delivery: code-patch
 
 intent: >
-  Standardize the post-login destination on the `return_url` query param and validate it
-  before navigating. The login page now reads `return_url` (previously it read `redirect`,
-  which nothing sets) through a `safeReturnUrl()` helper that accepts only same-origin
-  absolute paths — rejecting protocol-relative (`//host`) and backslash (`/\`) values and
-  falling back to `/members/dashboard`.
+  Standardize the post-login destination and validate it before navigating. The login page
+  now reads `return_url` (the param every producer sets) and falls back to the legacy
+  `redirect` param, running both through a `safeReturnUrl()` guard. The guard passes
+  same-origin relative paths through, reduces absolute URLs to their path (pathname + search
+  + hash, discarding the origin so navigation can never leave our site), and rejects
+  protocol-relative (`//host`) / backslash tricks — falling back to `/members/dashboard`.
+  mcp-connect.tsx is updated to emit `return_url` with a relative path instead of `redirect`
+  with an absolute URL, so all producers are consistent.
 
 why: >
-  Every producer in the app builds the post-login destination as `return_url`
-  (root.tsx, force-logout.tsx, logout.tsx, entry.server.tsx, _authenticated/_layout.tsx),
-  but the login page's sole reader used `redirect`. Because `redirect` is never set, the
-  param was silently dropped and every login landed on the default dashboard regardless of
-  origin. Wiring the reader to `return_url` fixes that, but a raw value flows into
-  navigate() — so it must be validated in the same change, otherwise the previously-dead
-  param becomes a working open redirect (e.g. `return_url=//evil.com` bounces a
-  just-authenticated user off-site). The two fixes must land together.
+  Every SSR producer builds the destination as `return_url` (root.tsx, force-logout.tsx,
+  logout.tsx, entry.server.tsx, _authenticated/_layout.tsx), but the login page's sole
+  reader used `redirect`, which nothing sets — so the param was silently dropped and every
+  login landed on the default dashboard. One producer (mcp-connect.tsx) is the exception:
+  it sent `redirect=<absolute request.url>` so an OAuth/MCP connect could resume after
+  login. Reading only `return_url`, or a guard that rejects absolute URLs, would break that
+  flow. Wiring the reader to `return_url` also puts a raw value into navigate(), so it must
+  be validated in the same change — otherwise the previously-dead param becomes a working
+  open redirect (e.g. `return_url=//evil.com`). Reducing absolute URLs to their path keeps
+  the mcp-connect flow working while remaining immune to cross-origin redirects.
 
 affectedPaths:
   - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/mcp-connect.tsx
 
 skipIf:
-  - The downstream project does not use the template login flow, or already reads and validates return_url with an equivalent same-origin check.
+  - The downstream project does not use the template login flow, or already reads and validates return_url/redirect with an equivalent same-origin check.
 
 verification:
   - pnpm template:validate-upgrade-notes
@@ -34,6 +40,6 @@ verification:
   - pnpm typecheck
 
 agentHints:
-  - Confirm the app's redirect producers already emit `return_url` (they do in the template). If a project standardized on `redirect` instead, align the producers and reader on one param — either is fine, but the validation is mandatory.
-  - The validator must reject protocol-relative (`//`) and backslash-prefixed paths, not just check `startsWith('/')`. Anything not a same-origin absolute path falls back to the default authenticated route.
+  - The reader must accept both params — `searchParams.get('return_url') ?? searchParams.get('redirect')` — and route both through the same guard. Producers should prefer `return_url` with a relative path; check for any producer (like mcp-connect) still emitting `redirect` or an absolute URL.
+  - The guard must do more than a `startsWith('/')` check — reject `//` and `/\`/`\` up front, pass relative paths, and for absolute/other inputs parse with `new URL()` and keep only pathname+search+hash (so a cross-origin URL is reduced to a local path rather than followed). Non-path schemes such as javascript URLs and parse failures fall back to the default authenticated route.
   - This builds on the auth redirect-loop work (see 2026-06-21-auth-redirect-loop-circuit-breaker); the `expired=1` circuit breaker is unaffected.

@@ -48,14 +48,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return isRemembered ?? {}
 }
 
-// The rest of the app builds post-login destinations as `return_url`. Only accept a
-// same-origin absolute path — reject protocol-relative (`//host`) and backslash tricks
-// so a crafted `return_url` cannot bounce a just-authenticated user off-site.
-function safeReturnUrl(raw: string | null): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
-    return '/members/dashboard'
+const DEFAULT_POST_LOGIN = '/members/dashboard'
+
+// Producers pass the post-login destination as either a same-origin relative path
+// (`return_url`, most routes) or an absolute URL (`redirect`, e.g. mcp-connect passes
+// request.url). Return a path we can navigate to that can never leave our origin:
+// relative paths pass through; absolute/other inputs are reduced to pathname+search+hash
+// (the origin is discarded, so even a cross-origin URL becomes a local path). Reject
+// protocol-relative (`//host`) and backslash tricks that browsers treat as off-site.
+export function safeReturnUrl(raw: string | null): string {
+  if (!raw) return DEFAULT_POST_LOGIN
+  if (raw.startsWith('//') || raw.startsWith('\\') || raw.startsWith('/\\')) {
+    return DEFAULT_POST_LOGIN
   }
-  return raw
+  if (raw.startsWith('/')) return raw
+  try {
+    const { pathname, search, hash } = new URL(raw)
+    const path = `${pathname}${search}${hash}`
+    return path.startsWith('/') ? path : DEFAULT_POST_LOGIN
+  } catch {
+    return DEFAULT_POST_LOGIN
+  }
 }
 
 export const ForgotPasswordWrapper = (children: React.ReactNode) => (
@@ -78,7 +91,9 @@ export default function LoginPage() {
   const [tempToken, setTempToken] = useState<string | null>(null)
   const [twoFACode, setTwoFACode] = useState('')
 
-  const redirectUrl = safeReturnUrl(searchParams.get('return_url'))
+  // Accept `return_url` (standard) or the legacy/absolute `redirect` param; both go
+  // through the same open-redirect guard.
+  const redirectUrl = safeReturnUrl(searchParams.get('return_url') ?? searchParams.get('redirect'))
 
   const [loginMutation] = useMutation<LoginMutation>(Login)
   const [complete2FALoginMutation] = useMutation<Complete2FaLoginMutation>(Complete2FaLogin)
