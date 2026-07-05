@@ -45,7 +45,7 @@ describe('additional route coverage', () => {
     })
 
     expect(response.status).toBe(302)
-    expect(response.headers.get('Location')).toBe('/login?return_url=%2Fsettings')
+    expect(response.headers.get('Location')).toBe('/login?return_url=%2Fsettings&expired=1')
     expect(response.headers.getSetCookie()).toHaveLength(2)
 
     const { container } = render(<ForceLogoutRoute />)

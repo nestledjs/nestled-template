@@ -10,7 +10,12 @@ import {
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { AuthLayout } from '@nestled-template/web'
-import { getCookie, getJsonCookie, getSessionCookieName } from '@nestled-template/shared/utils'
+import {
+  getCookie,
+  getJsonCookie,
+  getSessionCookieName,
+  isJwtExpired,
+} from '@nestled-template/shared/utils'
 import {
   LoginInput,
   Login,
@@ -22,8 +27,21 @@ import { formTheme } from '@nestled-template/shared/styles'
 import { useMutation } from '@apollo/client/react'
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url)
+
+  // Circuit breaker: force-logout and the root loader's auth-error redirect append
+  // `expired=1`. When present, never auto-redirect even if a (possibly un-clearable)
+  // session cookie is still on the browser — always render the form so the
+  // login↔dashboard loop cannot sustain itself.
+  if (url.searchParams.has('expired')) {
+    const isRemembered = getJsonCookie<{ email: string }>(request.headers, '_nestled_remember')
+    return isRemembered ?? {}
+  }
+
   const token = getCookie(request.headers, getSessionCookieName())
-  if (token) {
+  // Only redirect a genuinely-present, non-expired token. An expired-but-present
+  // cookie must fall through to the form rather than bounce to the dashboard.
+  if (token && !isJwtExpired(token)) {
     throw redirect('/members/dashboard')
   }
   const isRemembered = getJsonCookie<{ email: string }>(request.headers, '_nestled_remember')

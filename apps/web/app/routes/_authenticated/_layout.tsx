@@ -39,9 +39,11 @@ export default function AuthenticatedLayout() {
   // Read organizations from preloaded query
   const { data: orgsData } = useReadQuery(loaderData.myOrganizationsQueryRef)
 
-  // Redirect to login if not authenticated
+  // Not authenticated: go through force-logout so the session cookie is cleared
+  // (force-logout appends `expired=1`, so /login renders the form instead of looping).
   if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    const returnUrl = `${location.pathname}${location.search}`
+    return <Navigate to={`/force-logout?return_url=${encodeURIComponent(returnUrl)}`} replace />
   }
 
   const organizations = orgsData?.myOrganizations || []

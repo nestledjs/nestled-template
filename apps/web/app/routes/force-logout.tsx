@@ -16,7 +16,15 @@ export async function loader({ request }: { request: Request }) {
   const cookieName = getSessionCookieName()
   const url = new URL(request.url)
   const returnUrl = url.searchParams.get('return_url')
-  const loginPath = returnUrl ? `/login?return_url=${encodeURIComponent(returnUrl)}` : '/login'
+  // Always append `expired=1`. Even after clearing the cookie (which can fail when the
+  // web service lacks VITE_COOKIE_DOMAIN on a split-subdomain deploy), the login page
+  // must not auto-redirect back to the dashboard — see PIR-173.
+  const params = new URLSearchParams()
+  if (returnUrl) {
+    params.set('return_url', returnUrl)
+  }
+  params.set('expired', '1')
+  const loginPath = `/login?${params.toString()}`
 
   const headers = new Headers()
   for (const cookie of buildClearCookieHeader(cookieName)) {

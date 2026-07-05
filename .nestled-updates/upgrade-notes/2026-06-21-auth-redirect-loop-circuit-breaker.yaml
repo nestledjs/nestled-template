@@ -1,0 +1,39 @@
+id: 2026-06-21-auth-redirect-loop-circuit-breaker
+title: Auth Redirect Loop Circuit Breaker
+priority: normal
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  Break the login↔dashboard redirect loop that occurs on split web/API subdomain
+  deploys when the session cookie is domain-scoped and cannot be cleared by the web app.
+
+why: >
+  The login loader auto-redirected on cookie presence alone, the authenticated layout
+  redirected to /login without clearing the cookie, and the web app could only clear a
+  domain-scoped cookie when VITE_COOKIE_DOMAIN was set. Combined, a rejected session
+  looped forever. An `expired=1` query-param circuit breaker (login loader + root loader
+  + force-logout) plus routing the null-user case through /force-logout fixes it
+  independent of whether the cookie can be cleared.
+
+affectedPaths:
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/_authenticated/_layout.tsx
+  - apps/web/app/routes/force-logout.tsx
+  - apps/web/app/root.tsx
+  - .env.example
+
+packageReleases: []
+
+skipIf:
+  - The downstream project does not use the template auth/session-cookie flow.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm exec tsx scripts/doctor.ts
+  - npx nx test web
+
+agentHints:
+  - For split-subdomain deploys set VITE_COOKIE_DOMAIN on the web service to match API_COOKIE_DOMAIN.
+  - The expired=1 param is the real safety net; the env var is for clean cookie removal.

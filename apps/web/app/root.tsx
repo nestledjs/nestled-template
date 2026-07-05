@@ -49,11 +49,16 @@ function clearSessionCookieHeaders(cookieName: string): Headers {
   return headers
 }
 
-function buildLoginRedirect(pathname: string) {
+function buildLoginRedirect(pathname: string, opts?: { expired?: boolean }) {
+  const params = new URLSearchParams()
   if (pathname && pathname !== '/') {
-    return '/login?return_url=' + encodeURIComponent(pathname)
+    params.set('return_url', pathname)
   }
-  return '/login'
+  if (opts?.expired) {
+    params.set('expired', '1')
+  }
+  const qs = params.toString()
+  return qs ? `/login?${qs}` : '/login'
 }
 
 function buildAuthRedirectResponse(cookieName: string, loginRedirect: string) {
@@ -65,7 +70,7 @@ function buildAuthRedirectResponse(cookieName: string, loginRedirect: string) {
 function handlePrivateRoutePreloadError(
   error: unknown,
   cookieName: string,
-  loginRedirect: string,
+  pathname: string,
   theme: string,
 ) {
   console.error('[Root Loader] Error during Me query preload:', error)
@@ -78,7 +83,9 @@ function handlePrivateRoutePreloadError(
 
   if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
     console.log('[Root Loader] Auth error detected, redirecting to login')
-    return buildAuthRedirectResponse(cookieName, loginRedirect)
+    // Append `expired=1` so the rejected session lands on a login form that
+    // won't auto-bounce back to the dashboard (breaks the redirect loop).
+    return buildAuthRedirectResponse(cookieName, buildLoginRedirect(pathname, { expired: true }))
   }
 
   console.log('[Root Loader] Unknown error, returning serviceUnavailable as fallback')
@@ -89,7 +96,11 @@ export const loader = apolloLoader()(({ preloadQuery, request }) => {
   const url = new URL(request.url)
   const cookieName = getSessionCookieName()
   const token = getCookie(request.headers, cookieName)
-  const isAuthenticated = token && !isJwtExpired(token)
+  // `?expired` is the circuit-breaker signal: treat the request as unauthenticated
+  // so we never re-preload `Me` with a rejected token (which would 500 the public
+  // login route and restart the loop).
+  const forceUnauthenticated = url.searchParams.has('expired')
+  const isAuthenticated = !!token && !isJwtExpired(token) && !forceUnauthenticated
   const theme = getCookie(request.headers, 'theme') || 'dark'
 
   const isPrivateRoute =
@@ -106,12 +117,7 @@ export const loader = apolloLoader()(({ preloadQuery, request }) => {
       const meQueryRef = preloadQuery<MeQuery>(Me)
       return { meQueryRef, theme }
     } catch (error) {
-      return handlePrivateRoutePreloadError(
-        error,
-        cookieName,
-        buildLoginRedirect(url.pathname),
-        theme,
-      )
+      return handlePrivateRoutePreloadError(error, cookieName, url.pathname, theme)
     }
   }
 
