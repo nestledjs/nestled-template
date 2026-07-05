@@ -2,7 +2,7 @@ import { Field, ObjectType, Int, GraphQLISODateTime } from '@nestjs/graphql'
 import { GraphQLJSON } from 'graphql-type-json'
 import Decimal from 'decimal.js'
 import { GraphQLDecimal } from 'prisma-graphql-type-decimal'
-import type { JsonValue } from '@prisma/client/runtime/client'
+import type { JsonValue } from '@nestled-template/api/prisma'
 import {
   AddressType,
   EmailType,
