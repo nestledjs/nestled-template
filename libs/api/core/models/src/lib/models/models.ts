@@ -1,993 +1,980 @@
-import { Field, ObjectType, Int, GraphQLISODateTime } from '@nestjs/graphql';
-import { GraphQLJSONObject } from 'graphql-type-json';
-import Decimal from 'decimal.js';
-import { GraphQLDecimal } from 'prisma-graphql-type-decimal';
-import type { JsonValue } from '@prisma/client/runtime/client';
-import { AddressType, EmailType, FailureReason, ImageType, InviteStatus, PhoneType, SecurityEventType, StorageProvider, SubscriptionStatus, TwoFactorMethod } from './enums';
+import { Field, ObjectType, Int, GraphQLISODateTime } from '@nestjs/graphql'
+import { GraphQLJSON } from 'graphql-type-json'
+import Decimal from 'decimal.js'
+import { GraphQLDecimal } from 'prisma-graphql-type-decimal'
+import type { JsonValue } from '@prisma/client/runtime/client'
+import {
+  AddressType,
+  EmailType,
+  FailureReason,
+  ImageType,
+  InviteStatus,
+  PhoneType,
+  SecurityEventType,
+  StorageProvider,
+  SubscriptionStatus,
+  TwoFactorMethod,
+} from './enums'
 
 @ObjectType({ description: undefined })
 export class Address {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String, { nullable: true })
-  address1?: string | null;
+  address1?: string | null
 
   @Field(() => String, { nullable: true })
-  address2?: string | null;
+  address2?: string | null
 
   @Field(() => String, { nullable: true })
-  city?: string | null;
+  city?: string | null
 
   @Field(() => String, { nullable: true })
-  region?: string | null;
+  region?: string | null
 
   @Field(() => String, { nullable: true })
-  postalCode?: string | null;
+  postalCode?: string | null
 
   @Field(() => AddressType)
-  addressType!: AddressType;
+  addressType!: AddressType
 
   @Field(() => Boolean)
-  isPrimary!: boolean;
+  isPrimary!: boolean
 
   @Field(() => String, { nullable: true })
-  countryId?: string | null;
+  countryId?: string | null
 
   @Field(() => Country, { nullable: true })
-  country?: Partial<Country> | null;
+  country?: Partial<Country> | null
 
   @Field(() => String, { nullable: true })
-  userId?: string | null;
+  userId?: string | null
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  organizationId?: string | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
-
+  organization?: Partial<Organization> | null
 }
 
 @ObjectType({ description: undefined })
 export class ApiToken {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String)
-  tokenHash!: string;
+  tokenHash!: string
 
   @Field(() => String)
-  name!: string;
+  name!: string
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  expiresAt?: Date | null;
+  expiresAt?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  lastUsedAt?: Date | null;
+  lastUsedAt?: Date | null
 
   @Field(() => Boolean)
-  revoked!: boolean;
+  revoked!: boolean
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  organizationId?: string | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
-
+  organization?: Partial<Organization> | null
 }
 
 @ObjectType({ description: undefined })
 export class AuditLog {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  entityId!: string;
+  entityId!: string
 
   @Field(() => String)
-  entityType!: string;
+  entityType!: string
 
   @Field(() => String)
-  action!: string;
+  action!: string
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  organizationId?: string | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
+  organization?: Partial<Organization> | null
 
-  @Field(() => GraphQLJSONObject, { nullable: true })
-  changes?: JsonValue | null;
-
+  @Field(() => GraphQLJSON, { nullable: true })
+  changes?: JsonValue | null
 }
 
 @ObjectType({ description: undefined })
 export class Country {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  name!: string;
+  name!: string
 
   @Field(() => String)
-  alpha2!: string;
+  alpha2!: string
 
   @Field(() => String)
-  alpha3!: string;
+  alpha3!: string
 
   @Field(() => String)
-  countryCode!: string;
+  countryCode!: string
 
   @Field(() => String)
-  iso3166_2!: string;
+  iso3166_2!: string
 
   @Field(() => String)
-  region!: string;
+  region!: string
 
   @Field(() => String)
-  subRegion!: string;
+  subRegion!: string
 
   @Field(() => String)
-  intermediateRegion!: string;
+  intermediateRegion!: string
 
   @Field(() => String)
-  regionCode!: string;
+  regionCode!: string
 
   @Field(() => String)
-  subRegionCode!: string;
+  subRegionCode!: string
 
   @Field(() => String)
-  intermediateRegionCode!: string;
+  intermediateRegionCode!: string
 
   @Field(() => [Address], { nullable: true })
-  addresses?: Partial<Address>[] | null;
-
+  addresses?: Partial<Address>[] | null
 }
 
 @ObjectType({ description: undefined })
 export class Email {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  email!: string;
+  email!: string
 
   @Field(() => Boolean)
-  public!: boolean;
+  public!: boolean
 
   @Field(() => Boolean)
-  primary!: boolean;
+  primary!: boolean
 
   @Field(() => Boolean)
-  verified!: boolean;
+  verified!: boolean
 
   @Field(() => String, { nullable: true })
-  verifyToken?: string | null;
+  verifyToken?: string | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  verifyExpires?: Date | null;
+  verifyExpires?: Date | null
 
   @Field(() => String, { nullable: true })
-  userId?: string | null;
+  userId?: string | null
 
   @Field(() => EmailType)
-  emailType!: EmailType;
+  emailType!: EmailType
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  organizationId?: string | null
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
-
+  organization?: Partial<Organization> | null
 }
 
 @ObjectType({ description: undefined })
 export class Invite {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  expiresAt!: Date;
+  expiresAt!: Date
 
   @Field(() => String)
-  email!: string;
+  email!: string
 
   @Field(() => String)
-  token!: string;
+  token!: string
 
   @Field(() => String)
-  inviterId!: string;
+  inviterId!: string
 
   @Field(() => User, { nullable: true })
-  inviter?: Partial<User> | null;
+  inviter?: Partial<User> | null
 
   @Field(() => String)
-  organizationId!: string;
+  organizationId!: string
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
+  organization?: Partial<Organization> | null
 
   @Field(() => InviteStatus)
-  status!: InviteStatus;
+  status!: InviteStatus
 
   @Field(() => String, { nullable: true })
-  roleId?: string | null;
+  roleId?: string | null
 
   @Field(() => Role, { nullable: true })
-  role?: Partial<Role> | null;
-
+  role?: Partial<Role> | null
 }
 
 @ObjectType({ description: undefined })
 export class Link {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  name!: string;
+  name!: string
 
   @Field(() => String)
-  url!: string;
+  url!: string
 
   @Field(() => String, { nullable: true })
-  userId?: string | null;
+  userId?: string | null
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  organizationId?: string | null
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
-
+  organization?: Partial<Organization> | null
 }
 
 @ObjectType({ description: undefined })
 export class LoginAttempt {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String, { nullable: true })
-  userId?: string | null;
+  userId?: string | null
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String)
-  email!: string;
+  email!: string
 
   @Field(() => Boolean)
-  success!: boolean;
+  success!: boolean
 
   @Field(() => String, { nullable: true })
-  ipAddress?: string | null;
+  ipAddress?: string | null
 
   @Field(() => String, { nullable: true })
-  userAgent?: string | null;
+  userAgent?: string | null
 
   @Field(() => String, { nullable: true })
-  location?: string | null;
+  location?: string | null
 
   @Field(() => FailureReason, { nullable: true })
-  reason?: FailureReason | null;
-
+  reason?: FailureReason | null
 }
 
 @ObjectType({ description: undefined })
 export class OAuthAccount {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  provider!: string;
+  provider!: string
 
   @Field(() => String)
-  providerUserId!: string;
+  providerUserId!: string
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
-
+  user?: Partial<User> | null
 }
 
 @ObjectType({ description: undefined })
 export class Organization {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  name!: string;
+  name!: string
 
   @Field(() => String, { nullable: true })
-  logoId?: string | null;
+  logoId?: string | null
 
   @Field(() => StoredFile, { nullable: true })
-  logo?: Partial<StoredFile> | null;
+  logo?: Partial<StoredFile> | null
 
   @Field(() => [Email], { nullable: true })
-  emails?: Partial<Email>[] | null;
+  emails?: Partial<Email>[] | null
 
   @Field(() => [Link], { nullable: true })
-  links?: Partial<Link>[] | null;
+  links?: Partial<Link>[] | null
 
   @Field(() => [PhoneNumber], { nullable: true })
-  phoneNumbers?: Partial<PhoneNumber>[] | null;
+  phoneNumbers?: Partial<PhoneNumber>[] | null
 
   @Field(() => [StoredFile], { nullable: true })
-  images?: Partial<StoredFile>[] | null;
+  images?: Partial<StoredFile>[] | null
 
   @Field(() => [OrganizationMember], { nullable: true })
-  members?: Partial<OrganizationMember>[] | null;
+  members?: Partial<OrganizationMember>[] | null
 
   @Field(() => [Address], { nullable: true })
-  addresses?: Partial<Address>[] | null;
+  addresses?: Partial<Address>[] | null
 
   @Field(() => [Invite], { nullable: true })
-  invites?: Partial<Invite>[] | null;
+  invites?: Partial<Invite>[] | null
 
   @Field(() => [AuditLog], { nullable: true })
-  AuditLog?: Partial<AuditLog>[] | null;
+  AuditLog?: Partial<AuditLog>[] | null
 
   @Field(() => [Team], { nullable: true })
-  Team?: Partial<Team>[] | null;
+  Team?: Partial<Team>[] | null
 
   @Field(() => Subscription, { nullable: true })
-  subscription?: Partial<Subscription> | null;
+  subscription?: Partial<Subscription> | null
 
   @Field(() => [Role], { nullable: true })
-  roles?: Partial<Role>[] | null;
+  roles?: Partial<Role>[] | null
 
   @Field(() => [ApiToken], { nullable: true })
-  apiTokens?: Partial<ApiToken>[] | null;
-
+  apiTokens?: Partial<ApiToken>[] | null
 }
 
 @ObjectType({ description: undefined })
 export class OrganizationMember {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  roleId!: string;
+  roleId!: string
 
   @Field(() => Role, { nullable: true })
-  role?: Partial<Role> | null;
+  role?: Partial<Role> | null
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String)
-  organizationId!: string;
+  organizationId!: string
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
-
+  organization?: Partial<Organization> | null
 }
 
 @ObjectType({ description: undefined })
 export class Permission {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => String)
-  action!: string;
+  action!: string
 
   @Field(() => String)
-  subject!: string;
+  subject!: string
 
   @Field(() => String, { nullable: true })
-  description?: string | null;
+  description?: string | null
 
   @Field(() => [Role], { nullable: true })
-  roles?: Partial<Role>[] | null;
-
+  roles?: Partial<Role>[] | null
 }
 
 @ObjectType({ description: undefined })
 export class PhoneNumber {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  phone!: string;
+  phone!: string
 
   @Field(() => PhoneType)
-  phoneType!: PhoneType;
+  phoneType!: PhoneType
 
   @Field(() => String, { nullable: true })
-  userId?: string | null;
+  userId?: string | null
 
   @Field(() => Boolean)
-  primary!: boolean;
+  primary!: boolean
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  organizationId?: string | null
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
-
+  organization?: Partial<Organization> | null
 }
 
 @ObjectType({ description: undefined })
 export class Plan {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  name!: string;
+  name!: string
 
   @Field(() => String, { nullable: true })
-  description?: string | null;
+  description?: string | null
 
   @Field(() => GraphQLDecimal)
-  price!: Decimal;
+  price!: Decimal
 
   @Field(() => String)
-  interval!: string;
+  interval!: string
 
-  @Field(() => GraphQLJSONObject, { nullable: true })
-  features?: JsonValue | null;
+  @Field(() => GraphQLJSON, { nullable: true })
+  features?: JsonValue | null
 
-  @Field(() => GraphQLJSONObject, { nullable: true })
-  limits?: JsonValue | null;
+  @Field(() => GraphQLJSON, { nullable: true })
+  limits?: JsonValue | null
 
   @Field(() => Boolean)
-  active!: boolean;
+  active!: boolean
 
   @Field(() => String, { nullable: true })
-  stripeProductId?: string | null;
+  stripeProductId?: string | null
 
   @Field(() => String, { nullable: true })
-  stripePriceId?: string | null;
+  stripePriceId?: string | null
 
   @Field(() => Int, { nullable: true })
-  trialPeriodDays?: number | null;
+  trialPeriodDays?: number | null
 
   @Field(() => [Subscription], { nullable: true })
-  subscriptions?: Partial<Subscription>[] | null;
-
+  subscriptions?: Partial<Subscription>[] | null
 }
 
 @ObjectType({ description: undefined })
 export class Role {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => String)
-  name!: string;
+  name!: string
 
   @Field(() => String, { nullable: true })
-  description?: string | null;
+  description?: string | null
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  organizationId?: string | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
+  organization?: Partial<Organization> | null
 
   @Field(() => [Permission], { nullable: true })
-  permissions?: Partial<Permission>[] | null;
+  permissions?: Partial<Permission>[] | null
 
   @Field(() => [OrganizationMember], { nullable: true })
-  members?: Partial<OrganizationMember>[] | null;
+  members?: Partial<OrganizationMember>[] | null
 
   @Field(() => [TeamMember], { nullable: true })
-  teamMembers?: Partial<TeamMember>[] | null;
+  teamMembers?: Partial<TeamMember>[] | null
 
   @Field(() => [Invite], { nullable: true })
-  invites?: Partial<Invite>[] | null;
-
+  invites?: Partial<Invite>[] | null
 }
 
 @ObjectType({ description: undefined })
 export class SecurityEvent {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => SecurityEventType)
-  eventType!: SecurityEventType;
+  eventType!: SecurityEventType
 
   @Field(() => String, { nullable: true })
-  ipAddress?: string | null;
+  ipAddress?: string | null
 
   @Field(() => String, { nullable: true })
-  userAgent?: string | null;
+  userAgent?: string | null
 
-  @Field(() => GraphQLJSONObject, { nullable: true })
-  metadata?: JsonValue | null;
-
+  @Field(() => GraphQLJSON, { nullable: true })
+  metadata?: JsonValue | null
 }
 
 @ObjectType({ description: undefined })
 export class Subscription {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  organizationId!: string;
+  organizationId!: string
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
+  organization?: Partial<Organization> | null
 
   @Field(() => String)
-  planId!: string;
+  planId!: string
 
   @Field(() => Plan, { nullable: true })
-  plan?: Partial<Plan> | null;
+  plan?: Partial<Plan> | null
 
   @Field(() => String, { nullable: true })
-  stripeCustomerId?: string | null;
+  stripeCustomerId?: string | null
 
   @Field(() => String, { nullable: true })
-  stripeSubscriptionId?: string | null;
+  stripeSubscriptionId?: string | null
 
   @Field(() => String, { nullable: true })
-  stripePriceId?: string | null;
+  stripePriceId?: string | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  stripeCurrentPeriodEnd?: Date | null;
+  stripeCurrentPeriodEnd?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  trialStart?: Date | null;
+  trialStart?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  trialEnd?: Date | null;
+  trialEnd?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  cancelAt?: Date | null;
+  cancelAt?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  canceledAt?: Date | null;
+  canceledAt?: Date | null
 
   @Field(() => Boolean)
-  cancelAtPeriodEnd!: boolean;
+  cancelAtPeriodEnd!: boolean
 
   @Field(() => SubscriptionStatus)
-  status!: SubscriptionStatus;
-
+  status!: SubscriptionStatus
 }
 
 @ObjectType({ description: undefined })
 export class Team {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  name!: string;
+  name!: string
 
   @Field(() => String, { nullable: true })
-  description?: string | null;
+  description?: string | null
 
   @Field(() => String)
-  organizationId!: string;
+  organizationId!: string
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
+  organization?: Partial<Organization> | null
 
   @Field(() => [TeamMember], { nullable: true })
-  members?: Partial<TeamMember>[] | null;
-
+  members?: Partial<TeamMember>[] | null
 }
 
 @ObjectType({ description: undefined })
 export class TeamMember {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  teamId!: string;
+  teamId!: string
 
   @Field(() => Team, { nullable: true })
-  team?: Partial<Team> | null;
+  team?: Partial<Team> | null
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String)
-  roleId!: string;
+  roleId!: string
 
   @Field(() => Role, { nullable: true })
-  role?: Partial<Role> | null;
-
+  role?: Partial<Role> | null
 }
 
 @ObjectType({ description: undefined })
 export class StoredFile {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => StorageProvider)
-  provider!: StorageProvider;
+  provider!: StorageProvider
 
   @Field(() => String)
-  providerFileId!: string;
+  providerFileId!: string
 
   @Field(() => String, { nullable: true })
-  folder?: string | null;
+  folder?: string | null
 
   @Field(() => String)
-  filename!: string;
+  filename!: string
 
   @Field(() => String)
-  originalName!: string;
+  originalName!: string
 
   @Field(() => String)
-  mimeType!: string;
+  mimeType!: string
 
   @Field(() => Int)
-  size!: number;
+  size!: number
 
   @Field(() => String)
-  url!: string;
+  url!: string
 
   @Field(() => String, { nullable: true })
-  publicUrl?: string | null;
+  publicUrl?: string | null
 
   @Field(() => Int, { nullable: true })
-  width?: number | null;
+  width?: number | null
 
   @Field(() => Int, { nullable: true })
-  height?: number | null;
+  height?: number | null
 
-  @Field(() => GraphQLJSONObject, { nullable: true })
-  metadata?: JsonValue | null;
-
-  @Field(() => String, { nullable: true })
-  userId?: string | null;
+  @Field(() => GraphQLJSON, { nullable: true })
+  metadata?: JsonValue | null
 
   @Field(() => String, { nullable: true })
-  organizationId?: string | null;
+  userId?: string | null
+
+  @Field(() => String, { nullable: true })
+  organizationId?: string | null
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => Organization, { nullable: true })
-  organization?: Partial<Organization> | null;
+  organization?: Partial<Organization> | null
 
   @Field(() => User, { nullable: true })
-  userAvatar?: Partial<User> | null;
+  userAvatar?: Partial<User> | null
 
   @Field(() => Organization, { nullable: true })
-  organizationLogo?: Partial<Organization> | null;
-
+  organizationLogo?: Partial<Organization> | null
 }
 
 @ObjectType({ description: undefined })
 export class User {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String, { nullable: true })
-  firstName?: string | null;
+  firstName?: string | null
 
   @Field(() => String, { nullable: true })
-  lastName?: string | null;
+  lastName?: string | null
 
   @Field(() => Boolean)
-  isSuperAdmin!: boolean;
+  isSuperAdmin!: boolean
 
   @Field(() => String, { nullable: true })
-  bio?: string | null;
+  bio?: string | null
 
   @Field(() => String, { nullable: true })
-  displayName?: string | null;
+  displayName?: string | null
 
   @Field(() => String, { nullable: true })
-  password?: string | null;
+  password?: string | null
 
   @Field(() => String, { nullable: true })
-  passwordResetToken?: string | null;
+  passwordResetToken?: string | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  passwordResetExpires?: Date | null;
+  passwordResetExpires?: Date | null
 
   @Field(() => Boolean)
-  emailValidated!: boolean;
+  emailValidated!: boolean
 
   @Field(() => String, { nullable: true })
-  validateEmailToken?: string | null;
+  validateEmailToken?: string | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  validateEmailTokenExpires?: Date | null;
+  validateEmailTokenExpires?: Date | null
 
   @Field(() => [Email], { nullable: true })
-  emails?: Partial<Email>[] | null;
+  emails?: Partial<Email>[] | null
 
   @Field(() => [Link], { nullable: true })
-  links?: Partial<Link>[] | null;
+  links?: Partial<Link>[] | null
 
   @Field(() => [PhoneNumber], { nullable: true })
-  phoneNumbers?: Partial<PhoneNumber>[] | null;
+  phoneNumbers?: Partial<PhoneNumber>[] | null
 
   @Field(() => String, { nullable: true })
-  avatarId?: string | null;
+  avatarId?: string | null
 
   @Field(() => StoredFile, { nullable: true })
-  avatar?: Partial<StoredFile> | null;
+  avatar?: Partial<StoredFile> | null
 
   @Field(() => [StoredFile], { nullable: true })
-  images?: Partial<StoredFile>[] | null;
+  images?: Partial<StoredFile>[] | null
 
   @Field(() => [OrganizationMember], { nullable: true })
-  organizations?: Partial<OrganizationMember>[] | null;
+  organizations?: Partial<OrganizationMember>[] | null
 
   @Field(() => String, { nullable: true })
-  activeOrganizationId?: string | null;
+  activeOrganizationId?: string | null
 
   @Field(() => [Address], { nullable: true })
-  addresses?: Partial<Address>[] | null;
+  addresses?: Partial<Address>[] | null
 
   @Field(() => [Invite], { nullable: true })
-  invitesSent?: Partial<Invite>[] | null;
+  invitesSent?: Partial<Invite>[] | null
 
   @Field(() => Boolean)
-  twoFactorEnabled!: boolean;
+  twoFactorEnabled!: boolean
 
   @Field(() => String, { nullable: true })
-  twoFactorSecret?: string | null;
+  twoFactorSecret?: string | null
 
   @Field(() => [String])
-  twoFactorRecoveryCodes!: string[];
+  twoFactorRecoveryCodes!: string[]
 
   @Field(() => TwoFactorMethod)
-  twoFactorMethod!: TwoFactorMethod;
+  twoFactorMethod!: TwoFactorMethod
 
   @Field(() => [UserSession], { nullable: true })
-  activeSessions?: Partial<UserSession>[] | null;
+  activeSessions?: Partial<UserSession>[] | null
 
   @Field(() => [LoginAttempt], { nullable: true })
-  loginAttempts?: Partial<LoginAttempt>[] | null;
+  loginAttempts?: Partial<LoginAttempt>[] | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  lastSuccessfulLogin?: Date | null;
+  lastSuccessfulLogin?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  lastFailedLogin?: Date | null;
+  lastFailedLogin?: Date | null
 
   @Field(() => Int)
-  failedLoginCount!: number;
+  failedLoginCount!: number
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  lockedUntil?: Date | null;
+  lockedUntil?: Date | null
 
   @Field(() => [AuditLog], { nullable: true })
-  AuditLog?: Partial<AuditLog>[] | null;
+  AuditLog?: Partial<AuditLog>[] | null
 
   @Field(() => [UserPreference], { nullable: true })
-  UserPreference?: Partial<UserPreference>[] | null;
+  UserPreference?: Partial<UserPreference>[] | null
 
   @Field(() => [TeamMember], { nullable: true })
-  TeamMember?: Partial<TeamMember>[] | null;
+  TeamMember?: Partial<TeamMember>[] | null
 
   @Field(() => [SecurityEvent], { nullable: true })
-  SecurityEvent?: Partial<SecurityEvent>[] | null;
+  SecurityEvent?: Partial<SecurityEvent>[] | null
 
   @Field(() => Boolean)
-  isActive!: boolean;
+  isActive!: boolean
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  deactivatedAt?: Date | null;
+  deactivatedAt?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  termsAcceptedAt?: Date | null;
+  termsAcceptedAt?: Date | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
-  privacyPolicyAcceptedAt?: Date | null;
+  privacyPolicyAcceptedAt?: Date | null
 
   @Field(() => [ApiToken], { nullable: true })
-  apiTokens?: Partial<ApiToken>[] | null;
+  apiTokens?: Partial<ApiToken>[] | null
 
   @Field(() => [OAuthAccount], { nullable: true })
-  oAuthAccounts?: Partial<OAuthAccount>[] | null;
-
+  oAuthAccounts?: Partial<OAuthAccount>[] | null
 }
 
 @ObjectType({ description: undefined })
 export class UserPreference {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String)
-  key!: string;
+  key!: string
 
   @Field(() => String)
-  value!: string;
-
+  value!: string
 }
 
 @ObjectType({ description: undefined })
 export class UserSession {
   @Field(() => String)
-  id!: string;
+  id!: string
 
   @Field(() => GraphQLISODateTime)
-  createdAt!: Date;
+  createdAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  updatedAt!: Date;
+  updatedAt!: Date
 
   @Field(() => GraphQLISODateTime)
-  lastActiveAt!: Date;
+  lastActiveAt!: Date
 
   @Field(() => String)
-  userId!: string;
+  userId!: string
 
   @Field(() => User, { nullable: true })
-  user?: Partial<User> | null;
+  user?: Partial<User> | null
 
   @Field(() => String, { nullable: true })
-  deviceInfo?: string | null;
+  deviceInfo?: string | null
 
   @Field(() => String, { nullable: true })
-  ipAddress?: string | null;
+  ipAddress?: string | null
 
   @Field(() => Boolean)
-  isValid!: boolean;
+  isValid!: boolean
 
   @Field(() => Boolean)
-  twoFactorVerified!: boolean;
-
+  twoFactorVerified!: boolean
 }
-
