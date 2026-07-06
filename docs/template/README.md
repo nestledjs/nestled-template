@@ -146,3 +146,44 @@ pnpm nx show project api
 pnpm nx build api
 pnpm nx test data-browser
 ```
+
+## Staying Up To Date With The Template
+
+Your project was created from the Nestled template, which keeps improving —
+security fixes, dependency bumps, and new capabilities. `nestled-update` pulls
+those improvements into your project on your schedule. Nothing is installed as a
+dependency; it runs on demand via `npx`.
+
+The first time, establish your baseline (this reads the `.nestled/template-version`
+stamp your project was created with):
+
+```bash
+npx @nestledjs/upgrades init
+```
+
+Then, whenever you want to check for and apply updates:
+
+```bash
+npx @nestledjs/upgrades check    # list updates available to your project
+npx @nestledjs/upgrades apply    # apply them on a branch, run your lint/test, and commit
+```
+
+### How it works
+
+- Updates are published to a **channel**. New projects follow `stable` by
+  default — changes that have already been validated across the Nestled fleet.
+- Your project records what it has already received in `.nestled/upgrade-log.yaml`,
+  so `apply` only ever brings what's actually new to you.
+- `apply` works on a dedicated `nestled-update/*` branch and runs your
+  verification commands. If everything passes it commits (add `--pr` to open a
+  pull request instead). Your `main`/`develop` is never touched directly.
+
+### When an update needs your judgment
+
+Most updates apply automatically. But if a change touches code you've customized
+and can't be applied cleanly — or if your tests fail after applying — `apply`
+**rolls the change back** and reports it as *blocked* with a description of the
+intent. That's your cue to make the equivalent change by hand (or hand it to a
+coding agent). Nothing half-applied is ever left behind.
+
+Run `npx @nestledjs/upgrades help` for the full command list.
