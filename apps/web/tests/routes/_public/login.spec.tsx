@@ -131,6 +131,12 @@ describe('Login Component', () => {
       expect(safeReturnUrl('https://evil.com/phish?q=1')).toBe('/phish?q=1')
     })
 
+    it('rejects an absolute URL whose derived path is protocol-relative (//host)', () => {
+      // new URL('https://host//evil.com').pathname === '//evil.com'; the origin-stripped
+      // path must be re-validated so it cannot slip through as an off-site redirect.
+      expect(safeReturnUrl('https://example.com//evil.com')).toBe(DEFAULT)
+    })
+
     it('falls back for non-path schemes like javascript:', () => {
       expect(safeReturnUrl('javascript:alert(1)')).toBe(DEFAULT)
     })
