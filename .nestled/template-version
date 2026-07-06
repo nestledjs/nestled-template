@@ -1,0 +1,5 @@
+release: "2026.07.0"
+commit: "6614a1b"
+repo: nestled-template
+remote: "https://github.com/nestledjs/nestled-template.git"
+ref: develop

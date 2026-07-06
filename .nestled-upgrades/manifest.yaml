@@ -1,0 +1,6 @@
+schemaVersion: 1
+generatedAt: "2026-07-06"
+channels:
+  canary: "2026.07.0"
+  stable: "2026.07.0"
+releases: []
