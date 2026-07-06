@@ -150,9 +150,11 @@ pnpm nx test data-browser
 ## Staying Up To Date With The Template
 
 Your project was created from the Nestled template, which keeps improving —
-security fixes, dependency bumps, and new capabilities. `nestled-update` pulls
-those improvements into your project on your schedule. Nothing is installed as a
-dependency; it runs on demand via `npx`.
+security fixes, dependency bumps, and new capabilities. The `nestled-update`
+command — provided by the [`@nestledjs/upgrades`](https://www.npmjs.com/package/@nestledjs/upgrades)
+package and run on demand with `npx`, so nothing is added to your dependencies —
+pulls those improvements into your project on your schedule. Every command below
+invokes it as `npx @nestledjs/upgrades …`.
 
 The first time, establish your baseline (this reads the `.nestled/template-version`
 stamp your project was created with):
