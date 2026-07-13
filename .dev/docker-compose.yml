@@ -1,6 +1,6 @@
 # Compose project name — keeps this repo's containers isolated from other repos.
 # Workspace-setup's rename sets this automatically when a new project is created.
-name: nestled-dev-template
+name: nestled-template
 
 services:
   postgres:

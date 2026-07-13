@@ -46,8 +46,9 @@ export class StripeWebhookController {
     try {
       event = this.stripe.constructWebhookEvent(rawBody, signature as string)
     } catch (error) {
-      this.logger.error(`Webhook signature verification failed: ${error.message}`)
-      return response.status(HttpStatus.BAD_REQUEST).send(`Webhook Error: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(`Webhook signature verification failed: ${message}`)
+      return response.status(HttpStatus.BAD_REQUEST).send(`Webhook Error: ${message}`)
     }
 
     this.logger.log(`Received webhook event: ${event.type} (${event.id})`)
@@ -61,10 +62,11 @@ export class StripeWebhookController {
       await this.webhookService.handleWebhookEvent(event)
       return response.status(HttpStatus.OK).json({ received: true })
     } catch (error) {
-      this.logger.error(`Error processing webhook event ${event.id}: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(`Error processing webhook event ${event.id}: ${message}`)
       return response
         .status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .send(`Webhook processing error: ${error.message}`)
+        .send(`Webhook processing error: ${message}`)
     }
   }
 }
