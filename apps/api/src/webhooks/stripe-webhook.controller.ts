@@ -26,7 +26,9 @@ export class StripeWebhookController {
     @Req() request: RawBodyRequest<Request>,
     @Res() response: Response,
   ): Promise<Response> {
-    const signature = request.headers['stripe-signature']
+    // `stripe-signature` can arrive as a string[] (repeated header); normalize to one value.
+    const signatureHeader = request.headers['stripe-signature']
+    const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader
 
     if (!signature) {
       this.logger.error('Missing stripe-signature header')
@@ -44,7 +46,7 @@ export class StripeWebhookController {
     // error (bad signature or secret) — return 400 so Stripe does NOT retry.
     let event: Awaited<ReturnType<StripeService['constructWebhookEvent']>>
     try {
-      event = this.stripe.constructWebhookEvent(rawBody, signature as string)
+      event = this.stripe.constructWebhookEvent(rawBody, signature)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.logger.error(`Webhook signature verification failed: ${message}`)
