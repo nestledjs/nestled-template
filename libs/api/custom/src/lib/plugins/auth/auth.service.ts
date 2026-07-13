@@ -1358,22 +1358,26 @@ export class AuthService {
       return true
     }
 
-    // Check if it's a backup code
+    // Check if it's a backup code — consume it ATOMICALLY.
+    //
+    // The previous read-modify-write (read array → splice in memory → write back) had two races:
+    // (1) two concurrent logins with the SAME code both read it as present and both succeed
+    //     (a single-use code authenticates two sessions); (2) two concurrent logins with DIFFERENT
+    //     codes clobber each other's write-back, resurrecting an already-used code.
+    //
+    // `array_remove` operates on the live column value inside a single UPDATE, and the
+    // `= ANY(...)` guard makes the removal conditional on the code still being present. The row is
+    // locked for the duration, so a concurrent UPDATE re-evaluates the guard against the committed
+    // post-update value. The affected-row count is therefore 1 for exactly one winner and 0 for any
+    // loser — the login only succeeds when this consume removed exactly one code.
     const hashedCode = hashBackupCode(code)
-    const backupCodeIndex = user.twoFactorRecoveryCodes.indexOf(hashedCode)
+    const affected = await this.data.$executeRaw`
+      UPDATE "User"
+      SET "twoFactorRecoveryCodes" = array_remove("twoFactorRecoveryCodes", ${hashedCode})
+      WHERE "id" = ${userId} AND ${hashedCode} = ANY("twoFactorRecoveryCodes")
+    `
 
-    if (backupCodeIndex !== -1) {
-      // Remove used backup code
-      const updatedCodes = [...user.twoFactorRecoveryCodes]
-      updatedCodes.splice(backupCodeIndex, 1)
-
-      await this.data.user.update({
-        where: { id: userId },
-        data: {
-          twoFactorRecoveryCodes: updatedCodes,
-        },
-      })
-
+    if (affected === 1) {
       Logger.log(`Backup code used for 2FA login by user ${userId}`)
       return true
     }
@@ -1389,8 +1393,15 @@ export class AuthService {
     code: string,
     sessionInfo?: SessionInfo,
   ): Promise<UserToken> {
-    // Decode temp token
-    const decoded = this.jwtService.decode(tempToken) as any
+    // Verify (not just decode) the temp token: check the signature and expiry against JWT_SECRET.
+    // `decode()` performs neither, so a client could forge `{ temp2FA, userId }` for any victim and
+    // drop the password factor entirely, as well as bypass the intended 5-minute lifetime.
+    let decoded: { temp2FA?: boolean; userId?: string; remember?: boolean } | null = null
+    try {
+      decoded = this.jwtService.verify(tempToken)
+    } catch {
+      throw new BadRequestException('Invalid or expired 2FA token')
+    }
 
     if (!decoded?.temp2FA || !decoded?.userId) {
       throw new BadRequestException('Invalid or expired 2FA token')

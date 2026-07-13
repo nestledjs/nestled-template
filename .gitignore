@@ -42,6 +42,7 @@ Thumbs.db
 
 .nx/cache
 .nx/workspace-data
+.cursor/mcp.json
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
 
@@ -64,3 +65,7 @@ uploads
 .claude/settings.local.json
 .nx/polygraph
 .nx/self-healing
+
+# yalc local package linking (dev-only)
+.yalc/
+yalc.lock

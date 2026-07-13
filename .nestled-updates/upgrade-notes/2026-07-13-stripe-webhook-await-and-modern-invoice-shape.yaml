@@ -1,0 +1,64 @@
+id: 2026-07-13-stripe-webhook-await-and-modern-invoice-shape
+title: Make Stripe webhooks reliable — await handler, 500-on-failure, basil+ invoice/subscription shape
+priority: high
+area: billing
+type: correctness
+delivery: code-patch
+
+intent: >
+  Four billing/webhook reliability fixes.
+  (C7) In the Stripe webhook controller, AWAIT `handleWebhookEvent(event)` and return HTTP 500 on
+  failure (verify the signature first and return 400 only for signature failures). The handler was
+  fire-and-forget behind a `.catch()` that returned 200 immediately.
+  (C19) Resolve the subscription id from the modern invoice shape in `handleInvoicePaid` /
+  `handleInvoicePaymentFailed`: basil+ invoices have no top-level `subscription`; read
+  `invoice.parent.subscription_details.subscription` (and the per-line variants), falling back to
+  the legacy top-level, with a guard for not-found.
+  (P1) In `syncSubscriptionToDatabase`, read `current_period_end` from
+  `items.data[0].current_period_end` (falling back to the legacy top-level) and only build a Date
+  from a finite number — never `new Date(undefined * 1000)`.
+  (C25) In `handleCheckoutSessionCompleted`, resolve/validate the Plan FK before writing; never
+  upsert `planId: ''`. Fall back to a Plan lookup by the Stripe price id from metadata, and fail
+  fast with a clear log if no plan resolves for a create.
+
+why: >
+  (C7) Returning 200 before processing means a transient handler failure (DB error, pool
+  exhaustion) is swallowed and Stripe, having received 2xx, never retries — a paying customer
+  silently never gets access. Awaiting + 500 lets Stripe's retry schedule recover; handlers are
+  idempotent (keyed by Stripe IDs) so retries are safe.
+  (C19) On stripe@18+/basil the `(invoice as any).subscription` read silently returns undefined, so
+  the whole update branch is skipped: failed payments never move a subscription to PAST_DUE and
+  paid invoices never refresh the period. This is flightdesk P-lineage for the same file.
+  (P1) `current_period_end` moved off the top-level Subscription object onto each item; the old
+  unconditional `new Date((sub as any).current_period_end * 1000)` is an Invalid Date, which Prisma
+  rejects, throwing on every subscription webhook (silently, per C7). This is flightdesk P2.
+  (C25) `checkout.session.completed` could write `planId: ''` (session metadata missing planId),
+  which always violates the required Plan FK (raw P2003) — thrown silently, per C7. This is
+  flightdesk P3.
+
+why_no_durable_event_table: >
+  The spec also floated a durable `processedEvent` table to replace the in-memory idempotency Set.
+  It is NOT included here: adding a Prisma model triggers a full CRUD/models/SDK regen (pnpm
+  db-update) that is heavy to propagate, and the handlers are already idempotent operations, so a
+  Stripe retry after the C7 fix re-runs them safely. The await + 500 change is the correctness fix.
+  A durable event ledger + periodic Stripe reconciliation remains a recommended follow-up
+  (defense-in-depth), best done in a dedicated schema-change PR.
+
+affectedPaths:
+  - apps/api/src/webhooks/stripe-webhook.controller.ts
+  - libs/api/custom/src/lib/plugins/billing/webhook.service.ts
+  - libs/api/custom/src/lib/plugins/billing/webhook.service.spec.ts
+
+skipIf:
+  - The downstream project already awaits the webhook handler (500 on failure) and resolves invoice/subscription fields from the basil+ shape with guarded date conversion and Plan-FK validation.
+
+verification:
+  - grep -n "await this.webhookService.handleWebhookEvent" apps/api/src/webhooks/stripe-webhook.controller.ts
+  - grep -n "INTERNAL_SERVER_ERROR" apps/api/src/webhooks/stripe-webhook.controller.ts
+  - grep -n "resolveInvoiceSubscriptionId" libs/api/custom/src/lib/plugins/billing/webhook.service.ts
+  - pnpm nx test api-custom
+
+agentHints:
+  - Verify the signature FIRST (400 on failure, so Stripe does not retry a bad-secret request), then await the handler in a separate try and return 500 on failure.
+  - Read Stripe fields that moved (basil+) via structural helpers, not `as any` or `as unknown as` — the template's nestled-doctor fails on both. See the toRecord/numberField/refToId helpers in webhook.service.ts.
+  - flightdesk adds compute-overage billing on top of this file's lineage; after the upgrader run, re-run flightdesk's billing tests rather than assuming a clean merge (resolves flightdesk P2 and P3 — do not open flightdesk issues for them).

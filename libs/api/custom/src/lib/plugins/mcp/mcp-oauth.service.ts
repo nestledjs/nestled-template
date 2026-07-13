@@ -40,9 +40,10 @@ export class McpOAuthService {
       const host = req.get('x-forwarded-host') || req.get('host')
       return `${proto}://${host}/api/mcp`
     }
+    // API_URL is the origin only (no `/api` suffix — see libs/api/config validation.ts), so the
+    // `/api/mcp` prefix is appended directly. No defensive strip needed.
     const apiUrl = this.config.get<string>('apiUrl') || 'http://localhost:3000'
-    const base = apiUrl.replace(/\/api\/?$/, '')
-    return `${base}/api/mcp`
+    return `${apiUrl}/api/mcp`
   }
 
   registerClient(clientName: string, redirectUris: string[]): OAuthClient {

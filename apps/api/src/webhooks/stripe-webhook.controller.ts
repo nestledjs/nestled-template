@@ -40,22 +40,31 @@ export class StripeWebhookController {
       return response.status(HttpStatus.BAD_REQUEST).send('Missing raw body')
     }
 
+    // Step 1: verify the signature and construct the event. A failure here is a client/config
+    // error (bad signature or secret) — return 400 so Stripe does NOT retry.
+    let event: Awaited<ReturnType<StripeService['constructWebhookEvent']>>
     try {
-      // Verify webhook signature and construct event
-      const event = this.stripe.constructWebhookEvent(rawBody, signature as string)
-
-      this.logger.log(`Received webhook event: ${event.type} (${event.id})`)
-
-      // Process the event asynchronously (don't block Stripe's webhook call)
-      this.webhookService.handleWebhookEvent(event).catch(error => {
-        this.logger.error(`Error processing webhook event ${event.id}: ${error.message}`)
-      })
-
-      // Return 200 immediately to acknowledge receipt
-      return response.status(HttpStatus.OK).json({ received: true })
+      event = this.stripe.constructWebhookEvent(rawBody, signature as string)
     } catch (error) {
       this.logger.error(`Webhook signature verification failed: ${error.message}`)
       return response.status(HttpStatus.BAD_REQUEST).send(`Webhook Error: ${error.message}`)
+    }
+
+    this.logger.log(`Received webhook event: ${event.type} (${event.id})`)
+
+    // Step 2: AWAIT the handler. Do NOT ack before processing — the previous fire-and-forget
+    // returned 200 immediately, so a transient handler failure (DB error, pool exhaustion) was
+    // swallowed and Stripe, having received 2xx, never retried. A paying customer would then never
+    // get access, silently. Returning 500 on failure lets Stripe's retry schedule recover.
+    // (Handlers are idempotent — keyed by Stripe IDs — so retries are safe.)
+    try {
+      await this.webhookService.handleWebhookEvent(event)
+      return response.status(HttpStatus.OK).json({ received: true })
+    } catch (error) {
+      this.logger.error(`Error processing webhook event ${event.id}: ${error.message}`)
+      return response
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .send(`Webhook processing error: ${error.message}`)
     }
   }
 }

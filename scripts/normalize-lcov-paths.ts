@@ -10,6 +10,8 @@ const reports: LcovReport[] = [
   { path: 'coverage/apps/api-e2e/lcov.info', sourcePrefix: 'apps/api-e2e' },
   { path: 'coverage/libs/web-ui/lcov.info', sourcePrefix: 'libs/web-ui' },
   { path: 'coverage/libs/web/lcov.info', sourcePrefix: 'libs/web' },
+  { path: 'coverage/libs/data-browser/lcov.info', sourcePrefix: 'libs/data-browser' },
+  { path: 'coverage/libs/shared-components/lcov.info', sourcePrefix: 'libs/shared-components' },
   { path: 'coverage/libs/shared/apollo/lcov.info', sourcePrefix: 'libs/shared/apollo' },
   { path: 'coverage/libs/shared/utils/lcov.info', sourcePrefix: 'libs/shared/utils' },
   { path: 'coverage/libs/shared/sdk/lcov.info', sourcePrefix: 'libs/shared/sdk' },

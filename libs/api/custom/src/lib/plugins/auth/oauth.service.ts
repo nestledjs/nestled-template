@@ -31,17 +31,19 @@ export class OAuthService {
   }
 
   private initializeProviders() {
-    // Initialize Google OAuth
+    // Gate on the computed `enabled` flag (which rejects `.env.example` placeholder values like
+    // `your-google-client-id`) rather than raw presence, so an uncommented placeholder does not
+    // build a junk OAuth client that then fails at runtime.
     const googleClientId = this.config.get<string>('oauth.google.clientId')
     const googleClientSecret = this.config.get<string>('oauth.google.clientSecret')
-    if (googleClientId && googleClientSecret) {
+    if (this.config.get<boolean>('oauth.google.enabled') && googleClientId && googleClientSecret) {
       this.googleClient = new OAuth2Client(googleClientId, googleClientSecret)
     }
 
     // Initialize GitHub OAuth
     const githubClientId = this.config.get<string>('oauth.github.clientId')
     const githubClientSecret = this.config.get<string>('oauth.github.clientSecret')
-    if (githubClientId && githubClientSecret) {
+    if (this.config.get<boolean>('oauth.github.enabled') && githubClientId && githubClientSecret) {
       this.githubApp = new OAuthApp({
         clientType: 'oauth-app',
         clientId: githubClientId,

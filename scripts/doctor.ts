@@ -829,6 +829,49 @@ const checkPublishablePackageReadmes = () => {
   }
 }
 
+const checkPublishedPackageVersions = () => {
+  // Only this repository publishes @nestledjs/data-browser and @nestledjs/shared-components;
+  // downstream projects consume them from npm and must not run this check.
+  if (!isSourceTemplateRepository()) return
+
+  // A version bump lands in a PR but the npm publish happens after merge, so an
+  // unpublished version is expected on pull_request runs and only a failure once
+  // the bump has been pushed to develop.
+  const enforce = process.env.GITHUB_EVENT_NAME === 'push'
+  const packageFiles = walkFiles('libs', path => basename(path) === 'package.json')
+
+  for (const file of packageFiles) {
+    const pkg = JSON.parse(readFileSync(file, 'utf8')) as {
+      name?: string
+      version?: string
+      publishConfig?: unknown
+      private?: boolean
+    }
+    const isPublishable = !pkg.private && (pkg.publishConfig || pkg.name?.startsWith('@nestledjs/'))
+    if (!isPublishable || !pkg.name || !pkg.version) continue
+
+    const publishedVersion = getCommandOutput(`npm view "${pkg.name}@${pkg.version}" version`)
+    if (publishedVersion === pkg.version) continue
+
+    const packageOnRegistry = getCommandOutput(`npm view "${pkg.name}" name`)
+    if (!packageOnRegistry) {
+      review(
+        'published-versions',
+        `Could not verify ${pkg.name}@${pkg.version} on npm (registry unreachable or package never published)`,
+        file,
+      )
+      continue
+    }
+
+    const message = `${pkg.name}@${pkg.version} is not published to npm; publish it (pnpm nx release publish -p <project>) or revert the version bump`
+    if (enforce) {
+      fail('published-versions', message, file)
+    } else {
+      review('published-versions', message, file)
+    }
+  }
+}
+
 const readGuardBaseline = (): GuardBaseline | null => {
   if (!existsSync(guardBaselinePath)) {
     fail(
@@ -1091,6 +1134,46 @@ const checkEmulationPrivilegeCeiling = () => {
   }
 }
 
+const checkCookieDomainConfig = () => {
+  if (!existsSync('.env')) return
+  const env = readFileSync('.env', 'utf8')
+  const read = (key: string) => {
+    const line = env.split('\n').find(l => l.startsWith(`${key}=`))
+    const raw = line ? line.slice(key.length + 1).trim() : ''
+    // Quoted value: strip the surrounding quotes and keep it verbatim. Unquoted
+    // value: drop a dotenv-style inline ` # comment` so the parsed value matches
+    // what dotenv actually loads. (String ops, not regex — avoids backtracking.)
+    const quote = raw[0]
+    if ((quote === '"' || quote === "'") && raw.length >= 2 && raw[raw.length - 1] === quote) {
+      return raw.slice(1, -1)
+    }
+    const commentAt = raw.indexOf(' #')
+    return (commentAt === -1 ? raw : raw.slice(0, commentAt)).trim()
+  }
+  const apiDomain = read('API_COOKIE_DOMAIN')
+  const webDomain = read('VITE_COOKIE_DOMAIN')
+  const isLocal = (v: string) => !v || v === 'localhost' || v.startsWith('127.')
+  // Cookie scope ignores a single leading dot and case, so `.example.com` and
+  // `example.com` are equivalent — normalize before comparing to avoid false warnings.
+  const sameDomain = (a: string, b: string) =>
+    a.replace(/^\./, '').toLowerCase() === b.replace(/^\./, '').toLowerCase()
+  if (!isLocal(apiDomain) && isLocal(webDomain)) {
+    warn(
+      'cookie-domain',
+      `API_COOKIE_DOMAIN=${apiDomain} is domain-scoped but VITE_COOKIE_DOMAIN is unset/localhost; ` +
+        `the web app cannot clear the session cookie (PIR-173 redirect-loop risk). ` +
+        `Set VITE_COOKIE_DOMAIN to match.`,
+      '.env',
+    )
+  } else if (!isLocal(apiDomain) && !isLocal(webDomain) && !sameDomain(apiDomain, webDomain)) {
+    warn(
+      'cookie-domain',
+      `VITE_COOKIE_DOMAIN (${webDomain}) does not match API_COOKIE_DOMAIN (${apiDomain}).`,
+      '.env',
+    )
+  }
+}
+
 const printFindings = (label: string, items: Finding[]) => {
   if (items.length === 0) return
 
@@ -1152,7 +1235,9 @@ checkPluginExportsAndRegistration()
 checkIntegrationExports()
 checkSkipCrudDocumentation()
 checkPublishablePackageReadmes()
+checkPublishedPackageVersions()
 checkUpgradeNoteImpactGate()
+checkCookieDomainConfig()
 checkGuardRegressions()
 checkUnsafeTypeScriptCasts()
 checkResolverScopeAnchoring()

@@ -203,7 +203,7 @@ export type ApiToken = {
 export type AuditLog = {
   __typename?: 'AuditLog'
   action: Scalars['String']['output']
-  changes?: Maybe<Scalars['JSONObject']['output']>
+  changes?: Maybe<Scalars['JSON']['output']>
   createdAt: Scalars['DateTime']['output']
   entityId: Scalars['String']['output']
   entityType: Scalars['String']['output']
@@ -1978,10 +1978,10 @@ export type Plan = {
   active: Scalars['Boolean']['output']
   createdAt: Scalars['DateTime']['output']
   description?: Maybe<Scalars['String']['output']>
-  features?: Maybe<Scalars['JSONObject']['output']>
+  features?: Maybe<Scalars['JSON']['output']>
   id: Scalars['String']['output']
   interval: Scalars['String']['output']
-  limits?: Maybe<Scalars['JSONObject']['output']>
+  limits?: Maybe<Scalars['JSON']['output']>
   name: Scalars['String']['output']
   price: Scalars['Decimal']['output']
   stripePriceId?: Maybe<Scalars['String']['output']>
@@ -2513,7 +2513,7 @@ export type SecurityEvent = {
   eventType: SecurityEventType
   id: Scalars['String']['output']
   ipAddress?: Maybe<Scalars['String']['output']>
-  metadata?: Maybe<Scalars['JSONObject']['output']>
+  metadata?: Maybe<Scalars['JSON']['output']>
   updatedAt: Scalars['DateTime']['output']
   user?: Maybe<User>
   userAgent?: Maybe<Scalars['String']['output']>
@@ -2566,7 +2566,7 @@ export type StoredFile = {
   folder?: Maybe<Scalars['String']['output']>
   height?: Maybe<Scalars['Int']['output']>
   id: Scalars['String']['output']
-  metadata?: Maybe<Scalars['JSONObject']['output']>
+  metadata?: Maybe<Scalars['JSON']['output']>
   mimeType: Scalars['String']['output']
   organization?: Maybe<Organization>
   organizationId?: Maybe<Scalars['String']['output']>
