@@ -41,9 +41,10 @@ export class McpOAuthService {
       return `${proto}://${host}/api/mcp`
     }
     // API_URL is the origin only (no `/api` suffix — see libs/api/config validation.ts), so the
-    // `/api/mcp` prefix is appended directly. Strip a stray trailing slash defensively (env vars
-    // are often set with one) so we never produce `//api/mcp`.
-    const apiUrl = (this.config.get<string>('apiUrl') || 'http://localhost:3000').replace(/\/+$/, '')
+    // `/api/mcp` prefix is appended directly. Trim any trailing slashes defensively (env vars are
+    // often set with one) so we never produce `//api/mcp` — string ops avoid regex backtracking.
+    let apiUrl = this.config.get<string>('apiUrl') || 'http://localhost:3000'
+    while (apiUrl.endsWith('/')) apiUrl = apiUrl.slice(0, -1)
     return `${apiUrl}/api/mcp`
   }
 
