@@ -165,7 +165,7 @@ type ApiToken {
 
 type AuditLog {
   action: String!
-  changes: JSONObject
+  changes: JSON
   createdAt: DateTime!
   entityId: String!
   entityType: String!
@@ -1429,10 +1429,10 @@ type Plan {
   active: Boolean!
   createdAt: DateTime!
   description: String
-  features: JSONObject
+  features: JSON
   id: String!
   interval: String!
-  limits: JSONObject
+  limits: JSON
   name: String!
   price: Decimal!
   stripePriceId: String
@@ -1616,7 +1616,7 @@ type SecurityEvent {
   eventType: SecurityEventType!
   id: String!
   ipAddress: String
-  metadata: JSONObject
+  metadata: JSON
   updatedAt: DateTime!
   user: User
   userAgent: String
@@ -1666,7 +1666,7 @@ type StoredFile {
   folder: String
   height: Int
   id: String!
-  metadata: JSONObject
+  metadata: JSON
   mimeType: String!
   organization: Organization
   organizationId: String

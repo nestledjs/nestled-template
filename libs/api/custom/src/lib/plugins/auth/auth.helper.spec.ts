@@ -97,10 +97,23 @@ describe('Auth Helper Functions', () => {
       expect(typeof token).toBe('string')
       expect(token.length).toBeGreaterThan(0)
     })
-    it('should generate a valid token string', () => {
+    it('should generate a 64-character CSPRNG hex token', () => {
       const token = generateToken()
-      // Token should be a 32-character MD5 hash
-      expect(token).toMatch(/^[a-f0-9]{32}$/)
+      // 32 bytes of crypto.randomBytes -> 64 hex chars (was md5(Date.now()) = 32 chars, predictable)
+      expect(token).toMatch(/^[a-f0-9]{64}$/)
+    })
+    it('should not be predictable from time — two calls in the same millisecond differ', () => {
+      // Regression for C6: the old randomId() returned Date.now() truncated, so two tokens minted
+      // in the same millisecond were identical and brute-forceable. Freeze the clock to prove the
+      // entropy no longer comes from time.
+      const spy = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+      try {
+        const a = generateToken()
+        const b = generateToken()
+        expect(a).not.toBe(b)
+      } finally {
+        spy.mockRestore()
+      }
     })
   })
   describe('generateExpireDate', () => {
@@ -144,9 +157,9 @@ describe('Auth Helper Functions', () => {
       expect(id).toBeDefined()
       expect(id.length).toBeLessThanOrEqual(length)
     })
-    it('should generate numeric string', () => {
+    it('should generate a CSPRNG hex string (not a time-derived numeric string)', () => {
       const id = randomId()
-      expect(/^\d+$/.test(id)).toBe(true)
+      expect(/^[a-f0-9]+$/.test(id)).toBe(true)
     })
   })
   describe('generateUsernameSlug', () => {
@@ -169,12 +182,12 @@ describe('Auth Helper Functions', () => {
     it('should use random suffix when last name is empty', () => {
       const slug = generateUsernameSlug('John', '')
       expect(slug).toContain('john.')
-      expect(slug.split('.')[1]).toMatch(/^\d+$/)
+      expect(slug.split('.')[1]).toMatch(/^[a-f0-9]+$/)
     })
     it('should handle undefined names', () => {
       const slug = generateUsernameSlug()
       expect(slug).toContain('user.')
-      expect(slug.split('.')[1]).toMatch(/^\d+$/)
+      expect(slug.split('.')[1]).toMatch(/^[a-f0-9]+$/)
     })
     it('should lowercase all characters', () => {
       const slug = generateUsernameSlug('JOHN', 'DOE')

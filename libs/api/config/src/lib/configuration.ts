@@ -1,3 +1,8 @@
+// Treat unset OR `.env.example` placeholder values (e.g. `your-google-client-id`) as "not
+// configured", so a plain `cp .env.example .env` does not falsely report OAuth as enabled.
+const isConfigured = (value: string | undefined): boolean =>
+  !!value && value.trim().length > 0 && !value.startsWith('your-')
+
 export const configuration = () => ({
   prefix: 'api',
   environment: process.env['NODE_ENV'],
@@ -58,16 +63,16 @@ export const configuration = () => ({
     google: {
       clientId: process.env['GOOGLE_OAUTH_CLIENT_ID'],
       clientSecret: process.env['GOOGLE_OAUTH_CLIENT_SECRET'],
-      enabled: !!(
-        process.env['GOOGLE_OAUTH_CLIENT_ID'] && process.env['GOOGLE_OAUTH_CLIENT_SECRET']
-      ),
+      enabled:
+        isConfigured(process.env['GOOGLE_OAUTH_CLIENT_ID']) &&
+        isConfigured(process.env['GOOGLE_OAUTH_CLIENT_SECRET']),
     },
     github: {
       clientId: process.env['GITHUB_OAUTH_CLIENT_ID'],
       clientSecret: process.env['GITHUB_OAUTH_CLIENT_SECRET'],
-      enabled: !!(
-        process.env['GITHUB_OAUTH_CLIENT_ID'] && process.env['GITHUB_OAUTH_CLIENT_SECRET']
-      ),
+      enabled:
+        isConfigured(process.env['GITHUB_OAUTH_CLIENT_ID']) &&
+        isConfigured(process.env['GITHUB_OAUTH_CLIENT_SECRET']),
     },
   },
 })

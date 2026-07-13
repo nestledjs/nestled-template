@@ -28,8 +28,7 @@ export default defineConfig(() => ({
   },
   server: {
     port: 4200,
-    host: process.env.VITE_HOST || 'localhost',
-    allowedHosts: ['.preview.flightdesk.dev'],
+    host: 'localhost',
     fs: {
       allow: [path.resolve(__dirname, '../../libs'), path.resolve(__dirname, './.react-router')],
     },

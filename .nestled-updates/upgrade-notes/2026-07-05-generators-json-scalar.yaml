@@ -1,0 +1,52 @@
+id: 2026-07-05-generators-json-scalar
+title: Bump @nestledjs/generators to 1.1.2 — Prisma Json fields emit GraphQLJSON (not GraphQLJSONObject)
+priority: high
+area: api
+type: deps
+delivery: code-patch
+
+intent: >
+  Pin @nestledjs/generators to exact 1.1.2 and regenerate. The models generator now maps
+  Prisma `Json` fields to the `GraphQLJSON` scalar instead of the object-only
+  `GraphQLJSONObject`, so `models.ts` `@Field(() => GraphQLJSONObject)` decorators (and the
+  import) become `GraphQLJSON`. No other intended output change.
+
+why: >
+  generators@1.0.0's models generator emitted `GraphQLJSONObject` for every Prisma `Json`
+  column, while its own CRUD/DTO generator already emitted `GraphQLJSON`. `GraphQLJSONObject`
+  rejects non-object values, so any `Json` column holding a top-level array or scalar throws
+  `"JSONObject cannot represent non-object value"` at GraphQL serialization (real cases seen
+  downstream: `additionalLinks/additionalFiles` as `{label,url}[]`, Shopify line-item
+  `properties`, polymorphic form-answer values). `GraphQLJSON` is a superset — every existing
+  object value stays valid and arrays/scalars also serialize — so 1.1.2 is a non-breaking fix
+  that removes the need for local generator forks that reverted the scalar.
+
+affectedPaths:
+  - package.json
+  - libs/api/core/models/**
+  - libs/shared/sdk/**
+
+packageReleases: []
+
+skipIf:
+  - package.json already depends on @nestledjs/generators >= 1.1.2.
+
+verification:
+  - pnpm install
+  - pnpm db-update
+  - git diff --stat # models.ts Json fields flip GraphQLJSONObject -> GraphQLJSON; nothing else
+  - pnpm run --if-present nestled-doctor
+  - pnpm build:api
+
+agentHints:
+  - Set the @nestledjs/generators dependency to an exact 1.1.2, then pnpm install and pnpm db-update.
+  - Expect models.ts to change the JSON scalar only — every `@Field(() => GraphQLJSONObject)`
+    becomes `@Field(() => GraphQLJSON)` and the `graphql-type-json` import switches from
+    `GraphQLJSONObject` to `GraphQLJSON`. This is a superset change; do not treat it as a
+    regression. Any Json column that legitimately stores a top-level array/scalar now works.
+  - If a project carries a local generate-models.ts fork that hardcoded GraphQLJSON to work
+    around the old behavior, this bump makes that fork unnecessary — consolidate onto the
+    package (see 2026-07-04-consolidate-generators) as part of the same change.
+  - "Keep hand-written custom SDK operations OUT of any folder named after a @skipCrud model
+    (e.g. graphql/transfer-route/ for a skipped TransferRoute model) — the sdk generator
+    deletes graphql/<kebab-model-name>/ for skipped models. Put them in a non-model folder."

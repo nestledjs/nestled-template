@@ -1,5 +1,5 @@
 import { compareSync, hashSync } from 'bcryptjs'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 const getHash = (str: string): string => createHash('md5').update(str).digest('hex')
 
@@ -21,16 +21,31 @@ export function generateMd5Hash(input: string): string {
   return getHash(input)
 }
 
-export function generateToken() {
-  return generateMd5Hash(randomId(24))
+/**
+ * Generate a cryptographically secure, unguessable token.
+ *
+ * Used for password-reset, email-verification and email-change links — all reachable via
+ * unauthenticated public mutations. The previous implementation was `md5(randomId(24))` where
+ * `randomId` returned `Date.now()` truncated, i.e. the current millisecond: an attacker who knows
+ * server time (from the HTTP `Date` header) could brute-force the md5 over a few thousand candidate
+ * milliseconds offline and forge a valid reset token. 32 bytes of CSPRNG entropy closes that.
+ */
+export function generateToken(): string {
+  return randomBytes(32).toString('hex')
 }
 
 export function generateExpireDate(days = 1) {
   return new Date(Date.now() + 60 * 60 * 24 * 1000 * days)
 }
 
+/**
+ * Random hex string of `length` characters. Backed by a CSPRNG (was `Date.now()`-based, which is
+ * predictable). Used for non-security-critical uniqueness such as username-slug suffixes.
+ */
 export function randomId(length = 8): string {
-  return Date.now().toString().substring(0, length)
+  return randomBytes(Math.ceil(length / 2))
+    .toString('hex')
+    .slice(0, length)
 }
 
 /**

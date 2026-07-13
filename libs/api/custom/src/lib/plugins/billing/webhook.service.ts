@@ -4,6 +4,39 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
 import type { Stripe } from 'stripe/cjs/stripe.core'
 
 /**
+ * Convert a Stripe unix-seconds timestamp to a Date, or undefined when the value is absent/invalid.
+ * Guards against `new Date(undefined * 1000)` (Invalid Date), which Prisma rejects.
+ */
+function toDateFromUnix(seconds: unknown): Date | undefined {
+  return typeof seconds === 'number' && Number.isFinite(seconds)
+    ? new Date(seconds * 1000)
+    : undefined
+}
+
+// The pinned Stripe types lag the runtime API, so a few fields (basil+) that moved location aren't
+// on the compile-time types. Rather than reach for `any`, read them off a structural record view.
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+function numberField(source: unknown, key: string): number | undefined {
+  const value = toRecord(source)[key]
+  return typeof value === 'number' ? value : undefined
+}
+
+function booleanField(source: unknown, key: string): boolean | undefined {
+  const value = toRecord(source)[key]
+  return typeof value === 'boolean' ? value : undefined
+}
+
+/** Resolve a Stripe `string | { id }` reference field to its id string. */
+function refToId(value: unknown): string | undefined {
+  if (typeof value === 'string') return value || undefined
+  const id = toRecord(value)['id']
+  return typeof id === 'string' && id ? id : undefined
+}
+
+/**
  * Stripe Webhook Handler Service
  *
  * Processes Stripe webhook events and syncs data to the database.
@@ -149,17 +182,40 @@ export class WebhookService {
     const customerId = typeof customer === 'string' ? customer : customer.id
     const subscriptionId = typeof subscription === 'string' ? subscription : subscription.id
 
-    // Update or create subscription record
+    // Resolve the Plan FK BEFORE writing. `planId` is a required, FK-constrained column, so writing
+    // an empty string (the old `metadata.planId || ''` default) is guaranteed to throw a raw Prisma
+    // P2003 — silently, since the controller used to ack before this ran. Fail fast with a clear log
+    // instead. On create we must have a plan; on update the existing row already has one, so a
+    // missing planId there is non-fatal.
+    const planId = await this.resolveCheckoutPlanId(session, metadata)
+
+    const existing = await this.prisma.subscription.findUnique({
+      where: { organizationId },
+      select: { id: true },
+    })
+
+    if (!existing && !planId) {
+      this.logger.error(
+        `Cannot create subscription for organization ${organizationId}: no resolvable planId ` +
+          `(session ${session.id}). Ensure checkout metadata carries planId, or that a Plan row ` +
+          `exists for the purchased price.`,
+      )
+      return
+    }
+
     await this.prisma.subscription.upsert({
       where: { organizationId },
       create: {
         organizationId,
-        planId: metadata?.['planId'] || '', // This should be set from the checkout metadata
+        // Non-null here: guarded by the `!existing && !planId` check above.
+        planId: planId as string,
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscriptionId,
         status: SubscriptionStatus.ACTIVE,
       },
       update: {
+        // Only overwrite planId when we could resolve one; never clobber an existing FK with null.
+        ...(planId ? { planId } : {}),
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscriptionId,
         status: SubscriptionStatus.ACTIVE,
@@ -167,6 +223,40 @@ export class WebhookService {
     })
 
     this.logger.log(`Subscription created for organization: ${organizationId}`)
+  }
+
+  /**
+   * Resolve the local Plan id for a completed checkout session.
+   *
+   * Prefers the explicit `planId` in session metadata. Falls back to looking up a Plan by the
+   * Stripe price id (from metadata) so a checkout for a price present in the Plan table still
+   * resolves even when the caller forgot to set `planId`. Returns null when nothing resolves — the
+   * caller decides whether that is fatal.
+   */
+  private async resolveCheckoutPlanId(
+    session: Stripe.Checkout.Session,
+    metadata: Stripe.Metadata | null | undefined,
+  ): Promise<string | null> {
+    const metadataPlanId = metadata?.['planId']?.trim()
+    if (metadataPlanId) {
+      return metadataPlanId
+    }
+
+    const stripePriceId = metadata?.['priceId']?.trim() || metadata?.['stripePriceId']?.trim()
+    if (stripePriceId) {
+      const plan = await this.prisma.plan.findUnique({
+        where: { stripePriceId },
+        select: { id: true },
+      })
+      if (plan) {
+        return plan.id
+      }
+      this.logger.warn(
+        `Checkout session ${session.id} referenced Stripe price ${stripePriceId} with no matching Plan row`,
+      )
+    }
+
+    return null
   }
 
   // ============================================================================
@@ -201,27 +291,64 @@ export class WebhookService {
   private async syncSubscriptionToDatabase(stripeSubscription: Stripe.Subscription): Promise<void> {
     const status = this.mapStripeStatusToPrisma(stripeSubscription.status)
 
-    // Extract properties to avoid type confusion
-    const currentPeriodEnd = (stripeSubscription as any).current_period_end
-    const trialStart = (stripeSubscription as any).trial_start
-    const trialEnd = (stripeSubscription as any).trial_end
-    const cancelAt = (stripeSubscription as any).cancel_at
-    const canceledAt = (stripeSubscription as any).canceled_at
-    const cancelAtPeriodEnd = (stripeSubscription as any).cancel_at_period_end
+    // `current_period_end` moved off the top-level Subscription object (basil+ API) onto each
+    // subscription item (`items.data[].current_period_end`). Read the item value first, fall back
+    // to the legacy top-level for older API versions, and GUARD the conversion: an unconditional
+    // `new Date(undefined * 1000)` is an Invalid Date, which Prisma rejects — throwing on every
+    // subscription webhook (silently, before the controller fix, since it acked first).
+    const firstItem = stripeSubscription.items?.data?.[0]
+    const currentPeriodEnd =
+      numberField(firstItem, 'current_period_end') ??
+      numberField(stripeSubscription, 'current_period_end')
+    const trialStart = numberField(stripeSubscription, 'trial_start')
+    const trialEnd = numberField(stripeSubscription, 'trial_end')
+    const cancelAt = numberField(stripeSubscription, 'cancel_at')
+    const canceledAt = numberField(stripeSubscription, 'canceled_at')
+    const cancelAtPeriodEnd = booleanField(stripeSubscription, 'cancel_at_period_end')
 
     await this.prisma.subscription.updateMany({
       where: { stripeSubscriptionId: stripeSubscription.id },
       data: {
         status,
         stripePriceId: stripeSubscription.items.data[0]?.price.id,
-        stripeCurrentPeriodEnd: new Date(currentPeriodEnd * 1000),
+        stripeCurrentPeriodEnd: toDateFromUnix(currentPeriodEnd),
         trialStart: trialStart ? new Date(trialStart * 1000) : undefined,
         trialEnd: trialEnd ? new Date(trialEnd * 1000) : undefined,
         cancelAt: cancelAt ? new Date(cancelAt * 1000) : null,
         canceledAt: canceledAt ? new Date(canceledAt * 1000) : null,
-        cancelAtPeriodEnd: cancelAtPeriodEnd,
+        cancelAtPeriodEnd: cancelAtPeriodEnd ?? undefined,
       },
     })
+  }
+
+  /**
+   * Resolve the Stripe subscription id from an invoice across API versions.
+   *
+   * On basil+ (stripe@18+/dahlia-era) `Invoice` no longer carries a top-level `subscription` field;
+   * it moved under `invoice.parent.subscription_details.subscription` (and per-line
+   * `parent.subscription_item_details.subscription`). The previous cast-based top-level
+   * `subscription` read silently returned undefined there, so the whole update branch was skipped — failed
+   * payments never moved a subscription to PAST_DUE and paid invoices never refreshed the period.
+   */
+  private resolveInvoiceSubscriptionId(invoice: Stripe.Invoice): string | undefined {
+    const inv = toRecord(invoice)
+    const parentSubDetails = toRecord(toRecord(inv['parent'])['subscription_details'])
+
+    const lineData = toRecord(inv['lines'])['data']
+    const firstLine = toRecord(Array.isArray(lineData) ? lineData[0] : undefined)
+    const lineSubItemDetails = toRecord(toRecord(firstLine['parent'])['subscription_item_details'])
+
+    const candidates: unknown[] = [
+      inv['subscription'], // legacy top-level
+      parentSubDetails['subscription'], // basil+ invoice.parent.subscription_details
+      lineSubItemDetails['subscription'], // basil+ per-line
+      firstLine['subscription'], // older per-line
+    ]
+    for (const candidate of candidates) {
+      const id = refToId(candidate)
+      if (id) return id
+    }
+    return undefined
   }
 
   /**
@@ -249,20 +376,17 @@ export class WebhookService {
   private async handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
     this.logger.log(`Invoice paid: ${invoice.id}`)
 
-    const subscriptionField = (invoice as any).subscription
-    if (subscriptionField) {
-      const subscriptionId =
-        typeof subscriptionField === 'string' ? subscriptionField : subscriptionField.id
-
+    const subscriptionId = this.resolveInvoiceSubscriptionId(invoice)
+    if (subscriptionId) {
       await this.prisma.subscription.updateMany({
         where: { stripeSubscriptionId: subscriptionId },
         data: {
           status: SubscriptionStatus.ACTIVE,
-          stripeCurrentPeriodEnd: invoice.period_end
-            ? new Date(invoice.period_end * 1000)
-            : undefined,
+          stripeCurrentPeriodEnd: toDateFromUnix(invoice.period_end),
         },
       })
+    } else {
+      this.logger.warn(`invoice.paid ${invoice.id} has no resolvable subscription id — skipping`)
     }
   }
 
@@ -275,17 +399,18 @@ export class WebhookService {
   private async handleInvoicePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
     this.logger.log(`Invoice payment failed: ${invoice.id}`)
 
-    const subscriptionField = (invoice as any).subscription
-    if (subscriptionField) {
-      const subscriptionId =
-        typeof subscriptionField === 'string' ? subscriptionField : subscriptionField.id
-
+    const subscriptionId = this.resolveInvoiceSubscriptionId(invoice)
+    if (subscriptionId) {
       await this.prisma.subscription.updateMany({
         where: { stripeSubscriptionId: subscriptionId },
         data: {
           status: SubscriptionStatus.PAST_DUE,
         },
       })
+    } else {
+      this.logger.warn(
+        `invoice.payment_failed ${invoice.id} has no resolvable subscription id — skipping`,
+      )
     }
 
     // FUTURE: Send payment failed email

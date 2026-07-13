@@ -100,6 +100,10 @@ describe('AuthService', () => {
         // Array of operations
         return Promise.all(arg)
       }),
+      // Atomic backup-code consumption (verify2FALogin) runs a raw UPDATE ... array_remove.
+      // Default to 0 affected rows (code not present); tests that exercise a successful consume
+      // override this per-test with mockResolvedValueOnce(1).
+      $executeRaw: jest.fn().mockResolvedValue(0),
     }
     mockJwtService = {
       sign: jest.fn(),
@@ -1327,6 +1331,37 @@ describe('AuthService', () => {
       const result = await service.verify2FALogin(userId, code)
       expect(typeof result).toBe('boolean')
     })
+    it('consumes a backup code atomically — succeeds only when exactly one row is removed', async () => {
+      // C5: TOTP fails, so the backup-code path runs. The atomic array_remove UPDATE reports 1
+      // affected row (this caller won the race and consumed the single-use code) -> login succeeds.
+      ;(require('./twofa.helper').verify2FACode as jest.Mock).mockReturnValueOnce(false)
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-123',
+        twoFactorEnabled: true,
+        twoFactorSecret: '1234567890abcdef1234567890abcdef:fedcba0987654321fedcba0987654321',
+      } as any)
+      mockData.$executeRaw.mockResolvedValueOnce(1)
+
+      const result = await service.verify2FALogin('user-123', 'backup-code')
+
+      expect(result).toBe(true)
+      expect(mockData.$executeRaw).toHaveBeenCalledTimes(1)
+    })
+    it('rejects a backup code that another concurrent login already consumed (0 rows removed)', async () => {
+      // C5: the atomic guard removed nothing (code already used / never existed) -> login fails,
+      // so a single-use code can never authenticate two sessions.
+      ;(require('./twofa.helper').verify2FACode as jest.Mock).mockReturnValueOnce(false)
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-123',
+        twoFactorEnabled: true,
+        twoFactorSecret: '1234567890abcdef1234567890abcdef:fedcba0987654321fedcba0987654321',
+      } as any)
+      mockData.$executeRaw.mockResolvedValueOnce(0)
+
+      const result = await service.verify2FALogin('user-123', 'already-used-code')
+
+      expect(result).toBe(false)
+    })
     it('should reject 2FA setup when user is missing', async () => {
       mockData.user.findUnique.mockResolvedValue(null)
 
@@ -1408,8 +1443,8 @@ describe('AuthService', () => {
         twoFactorEnabled: true,
         emails: [{ email: 'test@example.com', primary: true }],
       }
-      // Use decode instead of verify - implementation uses jwtService.decode()
-      mockJwtService.decode.mockReturnValue(mockDecoded as any)
+      // Implementation now verifies (signature + expiry), not just decodes, the temp 2FA token.
+      mockJwtService.verify.mockReturnValue(mockDecoded as any)
       mockData.user.findUnique.mockResolvedValue(mockUser as any)
       mockSessionService.createSession.mockResolvedValue({
         id: 'session-123',
@@ -1433,7 +1468,7 @@ describe('AuthService', () => {
     })
     it('should reject complete 2FA login when code verification fails', async () => {
       const tempToken = 'temp-jwt-token'
-      mockJwtService.decode.mockReturnValue({ userId: 'user-123', temp2FA: true } as any)
+      mockJwtService.verify.mockReturnValue({ userId: 'user-123', temp2FA: true } as any)
       mockData.user.findUnique.mockResolvedValue({
         id: 'user-123',
         twoFactorEnabled: true,

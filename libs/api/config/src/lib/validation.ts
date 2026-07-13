@@ -15,8 +15,11 @@ export const validationSchema = Joi.object({
   ),
   API_COOKIE_DOMAIN: Joi.string().default('localhost'),
   VITE_COOKIE_NAME: Joi.string().default('__session'),
+  // API_URL is the origin only, WITHOUT the `/api` global prefix. The prefix is appended by the
+  // URL-building code (OAuth redirect_uri, MCP base URL, upload public URLs). Keep this consistent
+  // with .env.example and docs/template/README.md — a `/api` suffix here breaks all of those.
   API_URL: Joi.string().default(
-    `http://${process.env['HOST'] || 'localhost'}:${process.env['PORT']}/api`,
+    `http://${process.env['HOST'] || 'localhost'}:${process.env['PORT']}`,
   ),
   APP_NAME: Joi.string().default('BizToBiz'), // Made optional with default
   APP_EMAIL: Joi.string().email().default('admin@example.com'), // Made optional with default

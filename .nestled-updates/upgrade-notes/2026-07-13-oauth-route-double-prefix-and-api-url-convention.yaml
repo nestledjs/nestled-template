@@ -1,0 +1,53 @@
+id: 2026-07-13-oauth-route-double-prefix-and-api-url-convention
+title: Fix double-prefixed OAuth routes (all social logins dead) and normalize API_URL convention
+priority: critical
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  Mount the OAuth controller at `auth` instead of `api/auth`. The app sets a global prefix of
+  `api` (apps/api/src/main.ts), so `@Controller('api/auth')` registered every route at
+  `/api/api/auth/...` — double-prefixed and unreachable — while the controller's own
+  redirect_uri-building code, the `.env.example` callback URLs, and main.ts's `/api/auth`
+  whitelist entry all expect `/api/auth/...`. Also standardize on a single API_URL convention
+  repo-wide: API_URL is the ORIGIN ONLY, without a `/api` suffix (the prefix is appended by the
+  URL-building code). Fix the Joi default in libs/api/config/src/lib/validation.ts and
+  docs/template/README.md to drop `/api`, remove the now-unnecessary defensive `/api` strip in
+  mcp-oauth.service.ts, comment out the OAuth placeholder block in `.env.example` (mirroring the
+  Stripe block), treat `your-*` placeholder credentials as "not configured" in
+  configuration.ts + oauth.service.ts, and fix the Stripe CLI comment to forward to
+  `/api/webhooks/stripe`.
+
+why: >
+  With `@Controller('api/auth')` under a global `api` prefix, `GET /api/auth/google/authorize`
+  (the URL the template itself builds and documents) had NO registered route and 404'd, so every
+  Google/GitHub OAuth login was dead in the template and every child repo (this is flightdesk P4,
+  same root cause). Separately, docs told operators to set API_URL WITH `/api` while `.env.example`
+  and all the URL-building code assume WITHOUT — following the docs breaks OAuth redirect_uri and
+  upload public URLs; the Joi default agreed with the wrong doc. Uncommented `your-google-client-id`
+  placeholders also made the app report OAuth as enabled after a plain `cp .env.example .env` and
+  build junk clients that fail at runtime.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+  - libs/api/config/src/lib/validation.ts
+  - libs/api/config/src/lib/configuration.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+  - docs/template/README.md
+  - .env.example
+  - apps/api-e2e/src/auth/oauth-routes.spec.ts
+
+skipIf:
+  - The downstream project does not use the template OAuth controller, or has already mounted it at `auth` (single `/api/auth` prefix) and normalized API_URL to origin-only.
+
+verification:
+  - grep -n "Controller('auth')" libs/api/custom/src/lib/plugins/auth/oauth.controller.ts
+  - grep -n "API_URL" .env.example docs/template/README.md libs/api/config/src/lib/validation.ts
+  - pnpm nx e2e api-e2e
+
+agentHints:
+  - The controller path is the whole fix — change the OAuth controller decorator from api/auth to auth. Do NOT touch the redirect_uri strings inside the handlers; they already build /api/auth/... and become correct once the double prefix is gone.
+  - Pick API_URL WITHOUT /api everywhere (origin only). If a child previously set API_URL with /api in its deploy env, that env var must be updated too, or OAuth redirect_uri and upload URLs will carry a stray /api.
+  - Treat placeholder credentials starting with your- as unset in the oauth enabled computation, and gate client construction on the enabled flag (not raw presence) so an uncommented placeholder never builds a junk client.
