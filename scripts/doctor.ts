@@ -1208,7 +1208,10 @@ const cleanDownstreamAgentsMd = () => {
 
   const nextHeader = content.indexOf('\n\n## ', start + marker.length)
   const end = nextHeader === -1 ? content.length : nextHeader
-  const cleaned = content.slice(0, start) + content.slice(end)
+  // `marker` starts with the section's leading `\n\n`, so when the section is LAST the remainder
+  // ends mid-text with no trailing newline. Re-add it — .editorconfig sets insert_final_newline.
+  const removed = content.slice(0, start) + content.slice(end)
+  const cleaned = removed.endsWith('\n') ? removed : `${removed}\n`
   writeFileSync(agentsPath, cleaned, 'utf8')
 
   // Leave the edit UNSTAGED and let the caller commit it. Auto-running `git add`/`git commit` here

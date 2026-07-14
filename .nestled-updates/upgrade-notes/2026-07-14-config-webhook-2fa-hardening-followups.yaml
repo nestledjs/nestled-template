@@ -32,7 +32,7 @@ intent: >
   longer claims Stripe won't retry; and `scripts/doctor.ts cleanDownstreamAgentsMd()` no longer
   auto-`git add`/`commit`s (unsafe in CI / dirty tree / pre-commit hooks) and its section removal now
   handles "Downstream Upgrade Notes" being the last section (end-of-file terminator, string scan
-  instead of a lookahead regex).
+  instead of a lookahead regex), preserving the file's final newline in that case.
 
 why: >
   The 2026-07-13 OAuth note made API_URL origin-only and removed per-consumer `/api` strips, but
@@ -74,4 +74,11 @@ verification:
 agentHints:
   - Normalize API_URL in BOTH configuration.ts (the load function reads process.env directly) and validation.ts (fail-fast) using the shared api-url.ts helper — do not re-add per-consumer `/api` strips (e.g. in mcp-oauth.service.ts); the origin is already clean.
   - Keep the checkout no-plan-resolved path NON-FATAL (return 200) but loud (ALERT log); do not switch it to throw, or Stripe retries a genuinely unmappable price forever.
-  - If a downstream doctor.ts still auto-commits in cleanDownstreamAgentsMd(), remove the git add/commit and use a string-scan section removal that treats end-of-file as a valid terminator.
+  - If a downstream doctor.ts still auto-commits in cleanDownstreamAgentsMd(), remove the git add/commit and use a string-scan section removal that treats end-of-file as a valid terminator — and re-add the trailing newline when the removed section was last, since the marker swallows the preceding `\n\n` (.editorconfig sets insert_final_newline).
+  - |
+    The metadata.planId lookup uses `plan.findUnique({ where: { id } })`. That is safe on the
+    template schema because Plan.id is `String @id @default(uuid())` with NO `@db.Uuid` — i.e. a
+    Postgres `text` column — so a non-UUID id simply returns null (treated as unresolved).
+    If a downstream project mapped its ids to `@db.Uuid` (a real Postgres uuid column), a malformed
+    id would instead raise a Postgres invalid-uuid error, turning this non-fatal path into a 500 and
+    a Stripe retry loop. Guard the lookup with a UUID-format check in that case.

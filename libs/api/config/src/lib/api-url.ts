@@ -56,9 +56,14 @@ export function normalizeApiOrigin(
 
 /**
  * True only when the value is an origin-ONLY http(s) URL — scheme + host + optional port, with no
- * path, query, fragment, or credentials. Used to fail fast at config validation so a misconfigured
- * API_URL that carries a path (e.g. `https://x.com/graphql`) is rejected rather than silently
- * reintroducing broken URL concatenation.
+ * path, query, fragment, or credentials.
+ *
+ * NOTE: validation.ts NORMALIZES before calling this, so an API_URL carrying a path (e.g.
+ * `https://x.com/graphql`) is self-healed by normalizeApiOrigin to `https://x.com` and therefore
+ * ACCEPTED — not rejected. In that flow this guard only fails fast on values normalizeApiOrigin
+ * could not reduce to an origin at all: a non-http(s) protocol (`ftp://…`), or an unparseable /
+ * scheme-less value (`localhost:3000`). The strict origin-only contract still holds for direct
+ * callers, which is what the spec pins.
  */
 export function isHttpOrigin(value: string): boolean {
   try {
