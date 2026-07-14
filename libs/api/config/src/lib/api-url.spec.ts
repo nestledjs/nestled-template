@@ -79,3 +79,22 @@ describe('defaultOrigin', () => {
     expect(defaultOrigin()).toBe(defaultApiOrigin())
   })
 })
+
+describe('defaultOrigin with IPv6 hosts', () => {
+  // HOST validation accepts Joi.string().ip(), which includes IPv6. An unbracketed IPv6 literal
+  // produces an unparseable URL (`http://::1:3000`) that fails isHttpOrigin() and takes down
+  // startup — so defaultOrigin must bracket it per RFC 3986.
+  it('brackets IPv6 literals so the result is a valid origin', () => {
+    expect(defaultOrigin('::1', undefined, 3000)).toBe('http://[::1]:3000')
+    expect(defaultOrigin('2001:db8::1', '4200', 3000)).toBe('http://[2001:db8::1]:4200')
+    expect(isHttpOrigin(defaultOrigin('::1', undefined, 3000))).toBe(true)
+    expect(isHttpOrigin(defaultOrigin('2001:db8::1', undefined, 4200))).toBe(true)
+  })
+  it('does not double-bracket an already-bracketed literal', () => {
+    expect(defaultOrigin('[::1]', undefined, 3000)).toBe('http://[::1]:3000')
+  })
+  it('leaves hostnames and IPv4 untouched', () => {
+    expect(defaultOrigin('localhost', undefined, 3000)).toBe('http://localhost:3000')
+    expect(defaultOrigin('127.0.0.1', undefined, 3000)).toBe('http://127.0.0.1:3000')
+  })
+})

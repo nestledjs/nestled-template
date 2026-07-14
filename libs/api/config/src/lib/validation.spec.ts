@@ -5,16 +5,18 @@ import { validationSchema } from './validation'
  * bad value either crashes with an unhelpful message or silently produces a `:undefined` URL.
  */
 describe('validationSchema', () => {
-  const ENV = process.env
-
-  beforeEach(() => {
-    process.env = { ...ENV }
-    // A Joi `.default()` is evaluated against process.env at schema-build time, so these specs
-    // assert the *shape* of the default rather than mutating env after import.
-  })
+  // These specs never mutate env: the *_URL defaults are computed from process.env when the schema
+  // module is imported, so setting env here could not change them anyway — they assert the SHAPE of
+  // the already-computed defaults. Snapshot/restore keys on the existing process.env object rather
+  // than reassigning it: `process.env` is a special object (assignments coerce to strings and
+  // propagate to the environment), and replacing its identity affects everything else in the worker.
+  const ENV = { ...process.env }
 
   afterEach(() => {
-    process.env = ENV
+    for (const key of Object.keys(process.env)) {
+      if (!(key in ENV)) delete process.env[key]
+    }
+    Object.assign(process.env, ENV)
   })
 
   describe('API_URL', () => {

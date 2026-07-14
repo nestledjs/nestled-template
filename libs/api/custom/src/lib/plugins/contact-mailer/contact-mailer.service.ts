@@ -15,13 +15,11 @@ export interface ContactFormData {
 export class ContactMailerService {
   private readonly logger = new Logger('ContactMailerService')
 
-  // Hardcoded admin emails from original nestled-templatenow
-  private readonly adminEmails = [
-    'jennifer@nestled-templatenow.com',
-    'tami@nestled-templatenow.com',
-    'justin@pirateandfox.com',
-    'memberservices@nestled-templatenow.com',
-  ]
+  // Placeholder notification recipient. Clone-identity rewrites the `nestled-template` token
+  // wherever it appears, so real addresses hardcoded here get mangled into plausible-but-fake
+  // domains in every clone (e.g. `jennifer@<project>now.com`) and notifications silently vanish.
+  // Set the real recipients per deployment via APP_ADMIN_EMAILS instead of editing this list.
+  private readonly adminEmails = ['test@test.com']
 
   constructor(private readonly emailService: EmailService) {}
 
@@ -40,7 +38,7 @@ export class ContactMailerService {
       <p><strong>Message:</strong></p>
       <p>${questions}</p>
       <hr>
-      <p><em>This email was sent from the BizToBiz contact form.</em></p>
+      <p><em>This email was sent from the nestled-template contact form.</em></p>
     `
 
     const text = `
@@ -55,7 +53,7 @@ export class ContactMailerService {
       Message:
       ${questions}
 
-      This email was sent from the BizToBiz contact form.
+      This email was sent from the nestled-template contact form.
     `
 
     // Send to all admin emails
@@ -84,7 +82,7 @@ export class ContactMailerService {
   async sendGuestConfirmationEmail(data: ContactFormData) {
     const { firstName, email, chapterName, chapterLocation } = data
 
-    const subject = `Thank you for your interest in BizToBiz!`
+    const subject = `Thank you for your interest in nestled-template!`
 
     const chapterLocationSuffix = chapterLocation ? ` in ${chapterLocation}` : ''
     const chapterHtmlLine = chapterName
@@ -95,30 +93,30 @@ export class ContactMailerService {
       : ''
 
     const html = `
-      <h2>Thank you for contacting BizToBiz!</h2>
+      <h2>Thank you for contacting nestled-template!</h2>
       <p>Dear ${firstName},</p>
-      <p>Thank you for your interest in BizToBiz. We have received your inquiry and one of our team members will be in touch with you soon.</p>
+      <p>Thank you for your interest in nestled-template. We have received your inquiry and one of our team members will be in touch with you soon.</p>
       ${chapterHtmlLine}
       <p>In the meantime, feel free to browse our website to learn more about our networking community and the benefits of membership.</p>
       <p>Best regards,<br>
-      The BizToBiz Team</p>
+      The nestled-template Team</p>
       <hr>
       <p><em>This is an automated response. Please do not reply to this email.</em></p>
     `
 
     const text = `
-      Thank you for contacting BizToBiz!
+      Thank you for contacting nestled-template!
 
       Dear ${firstName},
 
-      Thank you for your interest in BizToBiz. We have received your inquiry and one of our team members will be in touch with you soon.
+      Thank you for your interest in nestled-template. We have received your inquiry and one of our team members will be in touch with you soon.
 
       ${chapterTextLine}
 
       In the meantime, feel free to browse our website to learn more about our networking community and the benefits of membership.
 
       Best regards,
-      The BizToBiz Team
+      The nestled-template Team
 
       This is an automated response. Please do not reply to this email.
     `

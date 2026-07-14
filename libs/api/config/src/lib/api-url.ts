@@ -7,17 +7,29 @@
 const API_PREFIX_SUFFIX = '/api'
 
 /**
+ * An IPv6 literal must be bracketed in a URL authority (RFC 3986) — `http://[::1]:3000`, not
+ * `http://::1:3000`, which is unparseable. HOST validation accepts `Joi.string().ip()`, which
+ * includes IPv6, so this is reachable: an unbracketed value fails isHttpOrigin() and takes down
+ * startup. A hostname or IPv4 address never contains a colon, so that alone identifies IPv6.
+ */
+function formatHost(host: string): string {
+  if (host.includes(':') && !host.startsWith('[')) return `[${host}]`
+  return host
+}
+
+/**
  * Build a local-dev origin, defaulting the port when it is unset/blank (never `:undefined`).
  *
- * Generic over the port fallback so every `*_URL` default can share one implementation: a Joi
- * `.default()` is evaluated against `process.env` directly, so it cannot see a sibling key's Joi
- * default (e.g. `WEB_PORT: Joi.number().default(4200)`) and must supply its own fallback here.
+ * Generic over the port fallback so every `*_URL` default can share one implementation. Each
+ * `*_URL` default must pass its own fallback because these values are computed from `process.env`
+ * when this module is imported — the string handed to Joi's `.default()` is already concrete, so a
+ * sibling key's Joi default (e.g. `WEB_PORT: Joi.number().default(4200)`) cannot influence it.
  */
 export function defaultOrigin(host?: string, port?: string | number, fallbackPort = 3000): string {
   // Trim the port too — a stray `PORT=" 3000 "` must not yield `http://localhost: 3000 `.
   const trimmedPort = `${port ?? ''}`.trim()
   const resolvedPort = trimmedPort === '' ? fallbackPort : trimmedPort
-  return `http://${host?.trim() || 'localhost'}:${resolvedPort}`
+  return `http://${formatHost(host?.trim() || 'localhost')}:${resolvedPort}`
 }
 
 /** Build the local-dev default API origin, defaulting PORT to 3000 (never `:undefined`). */

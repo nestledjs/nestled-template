@@ -19,7 +19,7 @@ Allow: /contact
 Allow: /
 
 # Sitemap location
-Sitemap: https://nestled-templatenow.com/sitemap.xml
+Sitemap: https://nestled-template.com/sitemap.xml
 
 # Crawl-delay for politeness
 Crawl-delay: 1
