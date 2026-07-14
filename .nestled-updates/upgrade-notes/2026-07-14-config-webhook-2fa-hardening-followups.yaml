@@ -33,6 +33,16 @@ intent: >
   auto-`git add`/`commit`s (unsafe in CI / dirty tree / pre-commit hooks) and its section removal now
   handles "Downstream Upgrade Notes" being the last section (end-of-file terminator, string scan
   instead of a lookahead regex), preserving the file's final newline in that case.
+  (PIR-202) Fix the SAME `:undefined` defect on WEB_URL that PIR-194 fixed on API_URL. A Joi
+  `.default()` is evaluated against `process.env` directly and CANNOT see a sibling key's Joi default,
+  so `WEB_URL`'s default interpolating `process.env['WEB_PORT']` rendered `http://localhost:undefined`
+  whenever WEB_PORT was unset — `WEB_PORT: Joi.number().default(4200)` never applied to it. api-url.ts
+  gains a generic `defaultOrigin(host, port, fallbackPort = 3000)`; `defaultApiOrigin` delegates to it
+  (3000) and WEB_URL now uses `defaultOrigin(HOST, WEB_PORT, 4200)`.
+  (PIR-203) The API_URL custom validator raises a dedicated `string.apiOrigin` error code with a
+  registered message instead of the generic `any.invalid` ("contains an invalid value"). This check
+  fails fast at STARTUP, so the boot log must state the expected shape, the `/api`-prefix trap, and
+  the received value — otherwise the misconfiguration is undiagnosable from the crash alone.
 
 why: >
   The 2026-07-13 OAuth note made API_URL origin-only and removed per-consumer `/api` strips, but
@@ -46,6 +56,13 @@ why: >
   Validating the FK first turns that into a clean, reconcilable non-fatal path.
   A consumed recovery code left `User.updatedAt` stale, breaking anything keyed off it
   (audit/debug/cache invalidation).
+  PIR-202/203 were surfaced by review on the downstream 2026-07-14 PRs and are folded into THIS note
+  (rather than a new one) so they land on the existing `nestled-upgrade/2026-07-14-...` branches
+  instead of forcing a second propagation round. Both are fixes to template-derived code, so they
+  originate here and flow down — two downstream projects had independently patched the `any.invalid`
+  line with DIFFERENT local error codes (`string.originOnly` vs `string.apiOrigin`); `string.apiOrigin`
+  is canonical and those must reconcile to it. `WEB_URL` carried the identical `:undefined` bug in the
+  template and all nine downstream projects.
 
 affectedPaths:
   - libs/api/config/src/lib/api-url.ts
@@ -68,11 +85,15 @@ verification:
   - grep -n "Webhook processing error'" apps/api/src/webhooks/stripe-webhook.controller.ts
   - grep -n "matches no Plan row" libs/api/custom/src/lib/plugins/billing/webhook.service.ts
   - grep -n "updatedAt\" = NOW" libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - grep -n "defaultOrigin(process.env\['HOST'\], process.env\['WEB_PORT'\], 4200)" libs/api/config/src/lib/validation.ts
+  - grep -n "string.apiOrigin" libs/api/config/src/lib/validation.ts
   - pnpm nx test config
   - pnpm nx test api-custom
 
 agentHints:
   - Normalize API_URL in BOTH configuration.ts (the load function reads process.env directly) and validation.ts (fail-fast) using the shared api-url.ts helper — do not re-add per-consumer `/api` strips (e.g. in mcp-oauth.service.ts); the origin is already clean.
+  - "PIR-202 (WEB_URL): the bug is that a Joi `.default()` is evaluated against process.env and cannot see `WEB_PORT: Joi.number().default(4200)`, so `${process.env['WEB_PORT']}` interpolates undefined. Fix it via the shared `defaultOrigin(HOST, WEB_PORT, 4200)` helper — do NOT inline a `|| 4200` in the template literal, and do NOT route WEB_URL through normalizeApiOrigin (it is not the API origin and must not have `/api` stripped). If a downstream renamed WEB_PORT/WEB_URL, adapt to the local names; if it has no WEB_URL key, this part is not-applicable."
+  - "PIR-203 (API_URL error code): use the canonical `string.apiOrigin` code + `.messages()`. Two downstream projects already patched this line independently with different codes — biztobiz used `string.originOnly` and cashcast used `string.apiOrigin`. Reconcile any local variant TO `string.apiOrigin` so all nine match the template exactly; do not invent a third name. Assert the rendered message in a spec rather than assuming the Joi mechanism fires."
   - Keep the checkout no-plan-resolved path NON-FATAL (return 200) but loud (ALERT log); do not switch it to throw, or Stripe retries a genuinely unmappable price forever.
   - If a downstream doctor.ts still auto-commits in cleanDownstreamAgentsMd(), remove the git add/commit and use a string-scan section removal that treats end-of-file as a valid terminator — and re-add the trailing newline when the removed section was last, since the marker swallows the preceding `\n\n` (.editorconfig sets insert_final_newline).
   - |

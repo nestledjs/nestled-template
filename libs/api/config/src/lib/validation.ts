@@ -1,5 +1,5 @@
 import * as Joi from 'joi'
-import { defaultApiOrigin, isHttpOrigin, normalizeApiOrigin } from './api-url'
+import { defaultApiOrigin, defaultOrigin, isHttpOrigin, normalizeApiOrigin } from './api-url'
 
 export const validationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test'),
@@ -11,9 +11,11 @@ export const validationSchema = Joi.object({
     .default('localhost'),
   PORT: Joi.number().default(3000),
   WEB_PORT: Joi.number().default(4200),
-  WEB_URL: Joi.string().default(
-    `http://${process.env['HOST'] || 'localhost'}:${process.env['WEB_PORT']}`,
-  ),
+  // A Joi `.default()` is evaluated against process.env directly and CANNOT see WEB_PORT's Joi
+  // default above, so an unset WEB_PORT previously interpolated `undefined` and yielded
+  // `http://localhost:undefined`. Supply the 4200 fallback here — same defect (and same fix) as the
+  // API_URL default below.
+  WEB_URL: Joi.string().default(defaultOrigin(process.env['HOST'], process.env['WEB_PORT'], 4200)),
   API_COOKIE_DOMAIN: Joi.string().default('localhost'),
   VITE_COOKIE_NAME: Joi.string().default('__session'),
   // API_URL is the origin only, WITHOUT the `/api` global prefix. The prefix is appended by the
@@ -22,6 +24,9 @@ export const validationSchema = Joi.object({
   // Normalize (trim, strip trailing slash + `/api`) so a misconfigured env self-heals, and fail
   // fast when the value is not an http(s) origin. The default interpolates PORT with a 3000 fallback
   // so an unset PORT never yields `http://localhost:undefined`.
+  // On failure raise a dedicated `string.apiOrigin` code rather than the generic `any.invalid`
+  // ("contains an invalid value"): this fails fast at STARTUP, so the boot log must say what shape
+  // was expected and what was received, or the misconfiguration is undiagnosable from the crash.
   API_URL: Joi.string()
     .default(defaultApiOrigin(process.env['HOST'], process.env['PORT']))
     .custom((value, helpers) => {
@@ -29,8 +34,16 @@ export const validationSchema = Joi.object({
         host: process.env['HOST'],
         port: process.env['PORT'],
       })
-      return isHttpOrigin(normalized) ? normalized : helpers.error('any.invalid')
-    }, 'origin-only API_URL'),
+      // No local context needed: `{:#value}` in the message below already resolves to the received
+      // value from Joi's built-in context. Passing `{ value }` here would shadow it for no gain.
+      return isHttpOrigin(normalized) ? normalized : helpers.error('string.apiOrigin')
+    }, 'origin-only API_URL')
+    .messages({
+      'string.apiOrigin':
+        '{{#label}} must be an http(s) origin only — scheme + host + optional port, with no path, ' +
+        'query, or hash (e.g. "http://localhost:3000" or "https://api.example.com"). Do NOT include ' +
+        'the `/api` global prefix; URL-building code appends it. Received {{:#value}}.',
+    }),
   APP_NAME: Joi.string().default('BizToBiz'), // Made optional with default
   APP_EMAIL: Joi.string().email().default('admin@example.com'), // Made optional with default
   APP_SUPPORT_EMAIL: Joi.string().email().default('support@example.com'), // Made optional with default
