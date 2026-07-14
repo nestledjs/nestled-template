@@ -11,10 +11,10 @@ export const validationSchema = Joi.object({
     .default('localhost'),
   PORT: Joi.number().default(3000),
   WEB_PORT: Joi.number().default(4200),
-  // A Joi `.default()` is evaluated against process.env directly and CANNOT see WEB_PORT's Joi
-  // default above, so an unset WEB_PORT previously interpolated `undefined` and yielded
-  // `http://localhost:undefined`. Supply the 4200 fallback here — same defect (and same fix) as the
-  // API_URL default below.
+  // This default is computed from process.env when THIS MODULE IS IMPORTED — the value handed to
+  // `.default()` is already a concrete string, so WEB_PORT's Joi default above cannot influence it.
+  // An unset WEB_PORT therefore interpolated `undefined` and yielded `http://localhost:undefined`.
+  // Supply the 4200 fallback here — same defect (and same fix) as the API_URL default below.
   WEB_URL: Joi.string().default(defaultOrigin(process.env['HOST'], process.env['WEB_PORT'], 4200)),
   API_COOKIE_DOMAIN: Joi.string().default('localhost'),
   VITE_COOKIE_NAME: Joi.string().default('__session'),
@@ -44,7 +44,7 @@ export const validationSchema = Joi.object({
         'query, or hash (e.g. "http://localhost:3000" or "https://api.example.com"). Do NOT include ' +
         'the `/api` global prefix; URL-building code appends it. Received {{:#value}}.',
     }),
-  APP_NAME: Joi.string().default('BizToBiz'), // Made optional with default
+  APP_NAME: Joi.string().default('nestled-template'), // Made optional with default
   APP_EMAIL: Joi.string().email().default('admin@example.com'), // Made optional with default
   APP_SUPPORT_EMAIL: Joi.string().email().default('support@example.com'), // Made optional with default
   APP_ADMIN_EMAILS: Joi.string().default('admin@example.com'), // Made optional with default

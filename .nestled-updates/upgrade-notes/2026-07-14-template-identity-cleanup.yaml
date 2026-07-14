@@ -1,0 +1,63 @@
+id: 2026-07-14-template-identity-cleanup
+title: Template identity cleanup — BizToBiz leftovers replaced with the nestled-template token
+priority: ignore
+area: infra
+type: cleanup
+delivery: code-patch
+
+intent: >
+  Record the removal of BizToBiz's identity from the template's product surface. This is a
+  TEMPLATE-ONLY change and deliberately carries priority: ignore, because the correct downstream
+  value differs per project — propagating the template's literal would be wrong everywhere.
+  (1) APP_NAME's Joi default was 'BizToBiz'. clone-identity never rewrote it, because that rename
+  substitutes the `nestled-template` token and cannot see an unrelated product name. The leak was
+  live in the template and in 8 of the 9 downstream projects (only mi-core had set its own by hand),
+  so any deployment not setting APP_NAME in env called itself BizToBiz. The template now uses
+  `nestled-template`, which clone-identity rewrites per clone.
+  (2) contact-mailer hardcoded admin addresses that clone-identity DID rewrite — into domains that
+  do not exist, because the token sat inside the domain: `jennifer@nestled-templatenow.com` became
+  `jennifer@cashcastnow.com` in a cashcast clone, and so on. Contact-form notifications went nowhere
+  and failed silently. A real address (justin@pirateandfox.com) also shipped to every clone. The
+  list is now a single ['test@test.com'] placeholder; real recipients belong in APP_ADMIN_EMAILS.
+  (3) The `now` in those domains is BizToBiz leftover: the original was `biztobiznow.com`, and the
+  find/replace that created the template swapped the token but left `now` welded on. Dropped from
+  the API fallback (libs/shared/utils/src/lib/api-url.ts) and the robots.txt sitemap, so the
+  template reads `nestled-template.com` and a clone reads `<project>.com`.
+  User-facing contact-mailer copy now uses the `nestled-template` token for the same reason.
+
+why: >
+  clone-identity only rewrites the `nestled-template` token. Any OTHER real string baked into the
+  template is invisible to it and ships to every clone unchanged — and worse, a real string that
+  merely CONTAINS the token gets rewritten into a plausible-but-wrong value that nobody notices,
+  which is exactly how nine projects ended up mailing contact-form notifications to nonexistent
+  domains. Keeping the template's identity strings on the token is what makes the rename correct.
+
+affectedPaths:
+  - libs/api/config/src/lib/validation.ts
+  - libs/api/custom/src/lib/plugins/contact-mailer/contact-mailer.service.ts
+  - libs/api/custom/src/lib/plugins/contact-mailer/contact-mailer.service.spec.ts
+  - libs/shared/utils/src/lib/api-url.ts
+  - apps/web/public/robots.txt
+
+skipIf:
+  - Always skip. This is a template-identity decision record, not a downstream upgrade. Each project
+    needs its OWN APP_NAME (not `nestled-template`), and the 2026-07-14 downstream branches already
+    carry their own per-project APP_NAME, ['test@test.com'] admin list, and de-`now`ed domains,
+    applied directly. biztobiz is deliberately excluded — its @biztobiznow.com addresses are the
+    real originals and still deliver.
+
+verification:
+  - grep -rn "BizToBiz" libs apps
+
+agentHints:
+  - Do NOT propagate this note downstream. The template's literal `nestled-template` is correct only
+    for the template; a clone must end up with its own name via clone-identity, and an existing
+    project must keep the name it already has.
+  - When adding any product-identity string to the template, use the `nestled-template` token so the
+    rename catches it — never a real project name, and never a real domain or address.
+  - Known remaining follow-up, deliberately not fixed here — travel-outlook still has
+    `@nestled-template/source` in package.json and the raw template token in its api-url fallback,
+    i.e. its clone-identity never completed; and qalatra.com's token is `qalatracom` (dots stripped),
+    so its fallback reads `api.qalatracom.com` while the real domain is `qalatra.com`.
+
+sourceRepo: nestled-dev-template

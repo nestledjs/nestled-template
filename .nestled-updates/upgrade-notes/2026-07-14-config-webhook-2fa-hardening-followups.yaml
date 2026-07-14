@@ -43,6 +43,12 @@ intent: >
   registered message instead of the generic `any.invalid` ("contains an invalid value"). This check
   fails fast at STARTUP, so the boot log must state the expected shape, the `/api`-prefix trap, and
   the received value — otherwise the misconfiguration is undiagnosable from the crash alone.
+  (PIR-204) `defaultOrigin` brackets IPv6 hosts. It built `http://${host}:${port}` unbracketed while
+  HOST accepts `Joi.string().ip()` — which includes IPv6 — so `HOST=::1` produced `http://::1:3000`,
+  which is unparseable, fails isHttpOrigin(), and (given PIR-203's fail-fast) takes down startup.
+  RFC 3986 requires IPv6 literals bracketed in the authority: `http://[::1]:3000`. A hostname or
+  IPv4 address never contains a colon, so a colon alone identifies IPv6; already-bracketed values
+  are left alone. api-url.spec.ts pins all four cases.
 
 why: >
   The 2026-07-13 OAuth note made API_URL origin-only and removed per-consumer `/api` strips, but
@@ -87,6 +93,7 @@ verification:
   - grep -n "updatedAt\" = NOW" libs/api/custom/src/lib/plugins/auth/auth.service.ts
   - grep -n "defaultOrigin(process.env\['HOST'\], process.env\['WEB_PORT'\], 4200)" libs/api/config/src/lib/validation.ts
   - grep -n "string.apiOrigin" libs/api/config/src/lib/validation.ts
+  - grep -n "formatHost" libs/api/config/src/lib/api-url.ts
   - pnpm nx test config
   - pnpm nx test api-custom
 

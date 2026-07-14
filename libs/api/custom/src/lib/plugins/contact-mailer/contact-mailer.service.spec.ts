@@ -31,31 +31,16 @@ describe('ContactMailerService', () => {
         lastName: 'Doe',
         email: 'john@example.com',
         phone: '555-1234',
-        questions: 'I am interested in joining BizToBiz',
+        questions: 'I am interested in joining nestled-template',
       }
       await service.sendContactFormNotification(formData)
-      // Should send to all 4 admin emails
-      expect(mockEmailService.send).toHaveBeenCalledTimes(4)
-      // Verify each admin email received the notification
+      // One placeholder recipient. Real recipients belong in APP_ADMIN_EMAILS per deployment —
+      // addresses hardcoded here get mangled by clone-identity in every clone.
+      expect(mockEmailService.send).toHaveBeenCalledTimes(1)
       expect(mockEmailService.send).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: 'jennifer@nestled-templatenow.com',
+          to: 'test@test.com',
           subject: 'New Contact Form Submission - John Doe',
-        }),
-      )
-      expect(mockEmailService.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: 'tami@nestled-templatenow.com',
-        }),
-      )
-      expect(mockEmailService.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: 'justin@pirateandfox.com',
-        }),
-      )
-      expect(mockEmailService.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: 'memberservices@nestled-templatenow.com',
         }),
       )
     })
@@ -128,6 +113,11 @@ describe('ContactMailerService', () => {
         phone: '555-0002',
         questions: 'Testing parallel sending',
       }
+      // Drive several recipients so this actually exercises the parallel-send contract. The
+      // default list is a single placeholder, against which a timing assertion would pass even if
+      // sends were sequential — i.e. it would prove nothing.
+      const recipients = ['a@test.com', 'b@test.com', 'c@test.com', 'd@test.com']
+      ;(service as unknown as { adminEmails: string[] }).adminEmails = recipients
       mockEmailService.send.mockImplementation(async () => {
         // Simulate 100ms send time
         await new Promise(resolve => setTimeout(resolve, 100))
@@ -143,7 +133,7 @@ describe('ContactMailerService', () => {
       const totalTime = Date.now() - startTime
       // If sent in parallel, total time should be ~100ms, not 400ms (4 emails × 100ms)
       expect(totalTime).toBeLessThan(300)
-      expect(mockEmailService.send).toHaveBeenCalledTimes(4)
+      expect(mockEmailService.send).toHaveBeenCalledTimes(recipients.length)
     })
   })
   describe('sendGuestConfirmationEmail', () => {
@@ -160,7 +150,7 @@ describe('ContactMailerService', () => {
       expect(mockEmailService.send).toHaveBeenCalledWith(
         expect.objectContaining({
           to: 'sarah@example.com',
-          subject: 'Thank you for your interest in BizToBiz!',
+          subject: 'Thank you for your interest in nestled-template!',
         }),
       )
     })
