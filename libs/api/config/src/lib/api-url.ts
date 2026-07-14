@@ -6,12 +6,23 @@
 
 const API_PREFIX_SUFFIX = '/api'
 
-/** Build the local-dev default origin, defaulting PORT to 3000 (never `:undefined`). */
-export function defaultApiOrigin(host?: string, port?: string | number): string {
+/**
+ * Build a local-dev origin, defaulting the port when it is unset/blank (never `:undefined`).
+ *
+ * Generic over the port fallback so every `*_URL` default can share one implementation: a Joi
+ * `.default()` is evaluated against `process.env` directly, so it cannot see a sibling key's Joi
+ * default (e.g. `WEB_PORT: Joi.number().default(4200)`) and must supply its own fallback here.
+ */
+export function defaultOrigin(host?: string, port?: string | number, fallbackPort = 3000): string {
   // Trim the port too — a stray `PORT=" 3000 "` must not yield `http://localhost: 3000 `.
   const trimmedPort = `${port ?? ''}`.trim()
-  const resolvedPort = trimmedPort === '' ? 3000 : trimmedPort
+  const resolvedPort = trimmedPort === '' ? fallbackPort : trimmedPort
   return `http://${host?.trim() || 'localhost'}:${resolvedPort}`
+}
+
+/** Build the local-dev default API origin, defaulting PORT to 3000 (never `:undefined`). */
+export function defaultApiOrigin(host?: string, port?: string | number): string {
+  return defaultOrigin(host, port, 3000)
 }
 
 function stripTrailingSlashes(value: string): string {

@@ -1,4 +1,4 @@
-import { defaultApiOrigin, isHttpOrigin, normalizeApiOrigin } from './api-url'
+import { defaultApiOrigin, defaultOrigin, isHttpOrigin, normalizeApiOrigin } from './api-url'
 
 describe('defaultApiOrigin', () => {
   it('defaults host to localhost and port to 3000', () => {
@@ -60,5 +60,22 @@ describe('isHttpOrigin', () => {
     expect(isHttpOrigin('https://api.example.com?x=1')).toBe(false)
     expect(isHttpOrigin('https://api.example.com#frag')).toBe(false)
     expect(isHttpOrigin('http://user:pass@api.example.com')).toBe(false)
+  })
+})
+
+describe('defaultOrigin', () => {
+  it('applies the caller-supplied port fallback when the port is unset or blank', () => {
+    // A Joi `.default()` reads process.env directly and cannot see a sibling key's Joi default,
+    // so each *_URL default must pass its own fallback. WEB_URL previously omitted this and
+    // rendered `http://localhost:undefined`.
+    expect(defaultOrigin(undefined, undefined, 4200)).toBe('http://localhost:4200')
+    expect(defaultOrigin('localhost', '', 4200)).toBe('http://localhost:4200')
+    expect(defaultOrigin(undefined, undefined, 4200)).not.toContain('undefined')
+  })
+  it('honours an explicit port over the fallback, and trims it', () => {
+    expect(defaultOrigin('example.com', ' 8080 ', 4200)).toBe('http://example.com:8080')
+  })
+  it('defaults the fallback port to 3000 to match defaultApiOrigin', () => {
+    expect(defaultOrigin()).toBe(defaultApiOrigin())
   })
 })
