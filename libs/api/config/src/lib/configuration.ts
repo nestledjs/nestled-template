@@ -1,14 +1,29 @@
+import { normalizeApiOrigin } from './api-url'
+
 // Treat unset OR `.env.example` placeholder values (e.g. `your-google-client-id`) as "not
-// configured", so a plain `cp .env.example .env` does not falsely report OAuth as enabled.
-const isConfigured = (value: string | undefined): boolean =>
-  !!value && value.trim().length > 0 && !value.startsWith('your-')
+// configured", so a plain `cp .env.example .env` does not falsely report OAuth as enabled. Trim
+// once and test the TRIMMED value for both conditions — otherwise a copy-pasted value with leading
+// whitespace (` your-google-client-id`) would slip past the placeholder check and falsely enable
+// OAuth with placeholder credentials.
+const isConfigured = (value: string | undefined): boolean => {
+  const trimmed = value?.trim() ?? ''
+  return trimmed.length > 0 && !trimmed.startsWith('your-')
+}
+
+// Origin-only, self-healing API URL (see api-url.ts). configuration() reads process.env directly
+// rather than the Joi-validated value, so normalize here too — not just in validation.ts.
+const apiOrigin = () =>
+  normalizeApiOrigin(process.env['API_URL'], {
+    host: process.env['HOST'],
+    port: process.env['PORT'],
+  })
 
 export const configuration = () => ({
   prefix: 'api',
   environment: process.env['NODE_ENV'],
   host: process.env['HOST'] ?? '0.0.0.0',
   port: Number.parseInt(process.env['PORT'] ?? '3000', 10),
-  apiUrl: process.env['API_URL'],
+  apiUrl: apiOrigin(),
   api: {
     cookie: {
       name: process.env['VITE_COOKIE_NAME'] ?? '__session',
@@ -35,7 +50,7 @@ export const configuration = () => ({
         .filter(o => o.length > 0),
     },
   },
-  siteUrl: process.env['SITE_URL'] ?? process.env['API_URL']?.replace('/api', ''),
+  siteUrl: process.env['SITE_URL'] ?? apiOrigin(),
   app: {
     email: process.env['APP_EMAIL'],
     supportEmail: process.env['APP_SUPPORT_EMAIL'],

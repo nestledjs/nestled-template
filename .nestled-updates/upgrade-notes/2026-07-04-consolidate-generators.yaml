@@ -21,6 +21,7 @@ why: >
 
 affectedPaths:
   - package.json
+  - libs/api/prisma/src/index.ts
   - libs/api/core/models/**
   - libs/api/generated-crud/**
   - libs/shared/sdk/**
@@ -41,6 +42,22 @@ verification:
   - pnpm build:api
 
 agentHints:
+  - |
+    PREREQUISITE (PIR-201) — reconcile the Prisma wrapper BEFORE regenerating. The 1.1.3
+    @nestledjs/generators:models output emits `import type { JsonValue } from '@<scope>/api/prisma'`.
+    A wrapper (libs/api/prisma/src/index.ts) that only does `export * from '.../prisma-generated/client'`
+    does NOT surface the `Prisma.JsonValue` namespace members as bare exports, so `build:api` fails
+    with `TS2305: Module '"@<scope>/api/prisma"' has no exported member 'JsonValue'`. Add the explicit
+    re-export block (additive, low-risk) so the bare imports resolve:
+      import { Prisma as PrismaNamespace } from './lib/prisma-generated/client'
+      export type JsonValue = PrismaNamespace.JsonValue
+      export type JsonObject = PrismaNamespace.JsonObject
+      export type JsonArray = PrismaNamespace.JsonArray
+      export type InputJsonValue = PrismaNamespace.InputJsonValue
+      export type InputJsonObject = PrismaNamespace.InputJsonObject
+      export type InputJsonArray = PrismaNamespace.InputJsonArray
+    Template-current wrappers already have this block; only downstream repos still on a minimal
+    `export *` wrapper need it (mi-core #1459 hit this).
   - Set the @nestledjs/generators dependency to an exact 1.x version and delete the
     pnpm.overrides entries for @nestledjs/api, @nestledjs/shared, and @nestledjs/utils.
   - Rewrite the db-update script to "pnpm prisma:generate && nx g

@@ -1198,23 +1198,24 @@ const cleanDownstreamAgentsMd = () => {
   if (!existsSync(agentsPath)) return
 
   const content = readFileSync(agentsPath, 'utf8')
-  if (!content.includes('\n\n## Downstream Upgrade Notes\n')) return
 
-  const cleaned = content.replace(/\n\n## Downstream Upgrade Notes\n[\s\S]*?(?=\n\n## )/, '')
+  // Locate the section by string scanning rather than a regex — avoids backtracking on large files
+  // and, unlike the previous `(?=\n\n## )` lookahead, correctly handles the case where "Downstream
+  // Upgrade Notes" is the LAST section (no following `## ` header) by falling back to end-of-file.
+  const marker = '\n\n## Downstream Upgrade Notes\n'
+  const start = content.indexOf(marker)
+  if (start === -1) return
+
+  const nextHeader = content.indexOf('\n\n## ', start + marker.length)
+  const end = nextHeader === -1 ? content.length : nextHeader
+  const cleaned = content.slice(0, start) + content.slice(end)
   writeFileSync(agentsPath, cleaned, 'utf8')
 
-  try {
-    execSync(`git add ${agentsPath}`, { stdio: 'ignore' })
-    execSync(
-      'git commit -m "chore: remove template-only upgrade note instructions from AGENTS.md"',
-      { stdio: 'ignore' },
-    )
-    console.log('Removed template-only upgrade note section from AGENTS.md and committed.')
-  } catch {
-    console.log(
-      'Removed template-only upgrade note section from AGENTS.md — stage and commit manually.',
-    )
-  }
+  // Leave the edit UNSTAGED and let the caller commit it. Auto-running `git add`/`git commit` here
+  // is unsafe in CI, on a dirty tree, with no configured git identity, or with pre-commit hooks.
+  console.log(
+    'Removed template-only upgrade note section from AGENTS.md — review and commit the change.',
+  )
 }
 
 if (shouldUpdateGuardBaseline) {

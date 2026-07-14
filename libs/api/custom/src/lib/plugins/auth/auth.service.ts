@@ -1371,9 +1371,13 @@ export class AuthService {
     // post-update value. The affected-row count is therefore 1 for exactly one winner and 0 for any
     // loser — the login only succeeds when this consume removed exactly one code.
     const hashedCode = hashBackupCode(code)
+    // Bump "updatedAt" in the same statement: raw $executeRaw bypasses Prisma's @updatedAt, so
+    // without this a consumed recovery code would leave User.updatedAt stale (breaking anything that
+    // keys off it — audit/debug/cache invalidation).
     const affected = await this.data.$executeRaw`
       UPDATE "User"
-      SET "twoFactorRecoveryCodes" = array_remove("twoFactorRecoveryCodes", ${hashedCode})
+      SET "twoFactorRecoveryCodes" = array_remove("twoFactorRecoveryCodes", ${hashedCode}),
+          "updatedAt" = NOW()
       WHERE "id" = ${userId} AND ${hashedCode} = ANY("twoFactorRecoveryCodes")
     `
 

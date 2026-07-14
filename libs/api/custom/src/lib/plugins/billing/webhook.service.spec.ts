@@ -117,6 +117,8 @@ describe('WebhookService', () => {
         },
       } as any
       mockPrisma.subscription.findUnique.mockResolvedValue(null)
+      // metadata.planId is now validated against a Plan row before it is used as an FK.
+      mockPrisma.plan.findUnique.mockResolvedValue({ id: 'plan-123' } as any)
       mockPrisma.subscription.upsert.mockResolvedValue({
         id: 'sub-123',
         organizationId: 'org-123',
@@ -322,6 +324,73 @@ describe('WebhookService', () => {
           create: expect.objectContaining({ planId: 'plan-from-price' }),
         }),
       )
+    })
+    it('PIR-197: ignores a metadata.planId that matches no Plan row (no FK write)', async () => {
+      const mockEvent = {
+        id: 'evt_stale_plan_123',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test_123',
+            customer: 'cus_test_123',
+            subscription: 'sub_test_123',
+            // Stale/typo'd planId, and no priceId fallback.
+            metadata: { organizationId: 'org-123', planId: 'plan-does-not-exist' },
+          },
+        },
+      } as any
+      mockPrisma.subscription.findUnique.mockResolvedValue(null) // no existing subscription
+      mockPrisma.plan.findUnique.mockResolvedValue(null) // planId matches no Plan row
+      // Treated as unresolved (like the price-id fallback) — never passes the bad id to an FK write.
+      await expect(service.handleWebhookEvent(mockEvent)).resolves.toBeUndefined()
+      expect(mockPrisma.plan.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'plan-does-not-exist' } }),
+      )
+      expect(mockPrisma.subscription.upsert).not.toHaveBeenCalled()
+    })
+    it('PIR-197: falls back to the existing row planId on update when the webhook cannot re-resolve one', async () => {
+      const mockEvent = {
+        id: 'evt_update_no_plan_123',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test_123',
+            customer: 'cus_test_123',
+            subscription: 'sub_test_123',
+            metadata: { organizationId: 'org-123' }, // no planId, no priceId
+          },
+        },
+      } as any
+      // An existing subscription already carries a valid FK — never clobber it with null.
+      mockPrisma.subscription.findUnique.mockResolvedValue({
+        id: 'sub-1',
+        planId: 'plan-existing',
+      } as any)
+      mockPrisma.subscription.upsert.mockResolvedValue({} as any)
+      await service.handleWebhookEvent(mockEvent)
+      expect(mockPrisma.subscription.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ planId: 'plan-existing' }),
+        }),
+      )
+    })
+    it('C25: does not upsert when the Stripe price id resolves no Plan row', async () => {
+      const mockEvent = {
+        id: 'evt_price_missing_123',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test_123',
+            customer: 'cus_test_123',
+            subscription: 'sub_test_123',
+            metadata: { organizationId: 'org-123', priceId: 'price_unknown' },
+          },
+        },
+      } as any
+      mockPrisma.subscription.findUnique.mockResolvedValue(null)
+      mockPrisma.plan.findUnique.mockResolvedValue(null) // price matches no Plan row
+      await expect(service.handleWebhookEvent(mockEvent)).resolves.toBeUndefined()
+      expect(mockPrisma.subscription.upsert).not.toHaveBeenCalled()
     })
     it('should handle subscription with customer object instead of string', async () => {
       const mockEvent = {
@@ -531,6 +600,30 @@ describe('WebhookService', () => {
       expect(mockPrisma.subscription.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { stripeSubscriptionId: 'sub_basil_456' },
+          data: expect.objectContaining({ status: SubscriptionStatus.ACTIVE }),
+        }),
+      )
+    })
+    it('C19: resolves the subscription id from the per-line subscription_item_details on invoice.paid', async () => {
+      const mockEvent = {
+        id: 'evt_invoice_paid_line',
+        type: 'invoice.paid',
+        data: {
+          object: {
+            id: 'in_line_123',
+            // No top-level subscription and no invoice.parent — only the per-line detail carries it.
+            lines: {
+              data: [{ parent: { subscription_item_details: { subscription: 'sub_line_123' } } }],
+            },
+            period_end: 1614729600,
+          },
+        },
+      } as any
+      mockPrisma.subscription.updateMany.mockResolvedValue({ count: 1 } as any)
+      await service.handleWebhookEvent(mockEvent)
+      expect(mockPrisma.subscription.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { stripeSubscriptionId: 'sub_line_123' },
           data: expect.objectContaining({ status: SubscriptionStatus.ACTIVE }),
         }),
       )

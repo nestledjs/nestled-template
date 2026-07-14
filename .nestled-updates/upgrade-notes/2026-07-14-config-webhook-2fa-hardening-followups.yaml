@@ -1,0 +1,77 @@
+id: 2026-07-14-config-webhook-2fa-hardening-followups
+title: Hardening follow-ups — origin-only API_URL, generic webhook error bodies, checkout Plan-FK validation, 2FA updatedAt
+priority: normal
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-ups to the 2026-07-13 OAuth / Stripe-webhook / 2FA hardening, surfaced by Copilot across the
+  downstream PRs (PIR-194..PIR-200).
+  (PIR-194) Normalize API_URL to an origin ONLY at config load: a shared `normalizeApiOrigin` helper
+  (libs/api/config/src/lib/api-url.ts) trims whitespace, strips a trailing slash and a trailing
+  `/api` segment, and falls back to a local-dev origin with a PORT default of 3000 (never
+  `http://localhost:undefined`). configuration.ts uses it for `apiUrl`/`siteUrl` (it reads
+  process.env directly, so normalizing only in Joi is not enough), and validation.ts validates +
+  normalizes and fails fast when the value is not an http(s) origin.
+  (PIR-195) `isConfigured` trims once and tests the TRIMMED value for BOTH the emptiness and the
+  `your-` placeholder checks, so a copy-pasted env with leading whitespace can no longer falsely
+  enable OAuth with placeholder credentials.
+  (PIR-196) The Stripe webhook controller returns GENERIC bodies ("Invalid signature",
+  "Webhook processing error") and logs the internal detail server-side, instead of reflecting the raw
+  error message on a publicly reachable endpoint.
+  (PIR-197) `resolveCheckoutPlanId` confirms a Plan row exists for `metadata.planId` before using it
+  as an FK (an unknown id is treated as unresolved, like the price-id fallback); the checkout handler
+  derives a genuinely non-null `planIdForWrite` (falling back to the existing row's planId on update)
+  and drops the `as string` cast. Unresolvable-on-create stays deliberately NON-FATAL (return 200, not
+  throw, to avoid infinite Stripe retries) but logs a loud ALERT for reconciliation.
+  (PIR-198) The atomic 2FA backup-code consume (`$executeRaw` + `array_remove`) sets
+  `"updatedAt" = NOW()` in the same UPDATE, since raw SQL bypasses Prisma's `@updatedAt`.
+  (PIR-200) Nits: the checkout "Subscription created/updated" log reports the real operation; the
+  `stripe-signature` header is joined (not `[0]`) when it arrives as an array; the 400 comment no
+  longer claims Stripe won't retry; and `scripts/doctor.ts cleanDownstreamAgentsMd()` no longer
+  auto-`git add`/`commit`s (unsafe in CI / dirty tree / pre-commit hooks) and its section removal now
+  handles "Downstream Upgrade Notes" being the last section (end-of-file terminator, string scan
+  instead of a lookahead regex).
+
+why: >
+  The 2026-07-13 OAuth note made API_URL origin-only and removed per-consumer `/api` strips, but
+  nothing enforced the convention — a misconfigured env silently produced `/api/api/...` or
+  `//api/mcp` in OAuth redirect_uri, the MCP base URL, and upload public URLs. Normalizing centrally
+  makes misconfiguration self-heal or fail fast at startup.
+  Reflecting internal error text on a public webhook endpoint leaks DB/stack detail; Stripe only needs
+  a non-2xx to retry, so the body can be generic.
+  A stale/typo'd `metadata.planId` previously passed straight through to `subscription.upsert`, which
+  (after the 2026-07-13 await+500 change) throws a raw Prisma FK error and makes Stripe retry forever.
+  Validating the FK first turns that into a clean, reconcilable non-fatal path.
+  A consumed recovery code left `User.updatedAt` stale, breaking anything keyed off it
+  (audit/debug/cache invalidation).
+
+affectedPaths:
+  - libs/api/config/src/lib/api-url.ts
+  - libs/api/config/src/lib/api-url.spec.ts
+  - libs/api/config/src/lib/configuration.ts
+  - libs/api/config/src/lib/validation.ts
+  - libs/api/config/src/index.ts
+  - apps/api/src/webhooks/stripe-webhook.controller.ts
+  - libs/api/custom/src/lib/plugins/billing/webhook.service.ts
+  - libs/api/custom/src/lib/plugins/billing/webhook.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - scripts/doctor.ts
+
+skipIf:
+  - The downstream project already normalizes API_URL to an origin at config load (trailing slash + `/api` stripped, PORT-defaulted), trims before the `your-` placeholder check, returns generic webhook error bodies, validates the checkout Plan FK before writing, and bumps User.updatedAt in the atomic backup-code UPDATE.
+
+verification:
+  - grep -n "normalizeApiOrigin" libs/api/config/src/lib/configuration.ts libs/api/config/src/lib/validation.ts
+  - grep -n "Webhook processing error'" apps/api/src/webhooks/stripe-webhook.controller.ts
+  - grep -n "matches no Plan row" libs/api/custom/src/lib/plugins/billing/webhook.service.ts
+  - grep -n "updatedAt\" = NOW" libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - pnpm nx test config
+  - pnpm nx test api-custom
+
+agentHints:
+  - Normalize API_URL in BOTH configuration.ts (the load function reads process.env directly) and validation.ts (fail-fast) using the shared api-url.ts helper — do not re-add per-consumer `/api` strips (e.g. in mcp-oauth.service.ts); the origin is already clean.
+  - Keep the checkout no-plan-resolved path NON-FATAL (return 200) but loud (ALERT log); do not switch it to throw, or Stripe retries a genuinely unmappable price forever.
+  - If a downstream doctor.ts still auto-commits in cleanDownstreamAgentsMd(), remove the git add/commit and use a string-scan section removal that treats end-of-file as a valid terminator.

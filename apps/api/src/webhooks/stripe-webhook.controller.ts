@@ -26,9 +26,10 @@ export class StripeWebhookController {
     @Req() request: RawBodyRequest<Request>,
     @Res() response: Response,
   ): Promise<Response> {
-    // `stripe-signature` can arrive as a string[] (repeated header); normalize to one value.
+    // `stripe-signature` can arrive as a string[] (repeated header). Stripe expects a single
+    // comma-separated value, so join the parts rather than dropping all but the first.
     const signatureHeader = request.headers['stripe-signature']
-    const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader
+    const signature = Array.isArray(signatureHeader) ? signatureHeader.join(',') : signatureHeader
 
     if (!signature) {
       this.logger.error('Missing stripe-signature header')
@@ -43,14 +44,16 @@ export class StripeWebhookController {
     }
 
     // Step 1: verify the signature and construct the event. A failure here is a client/config
-    // error (bad signature or secret) — return 400 so Stripe does NOT retry.
+    // error (bad signature or secret). Return 400 — the correct semantics for a signature failure.
+    // (Stripe still retries most non-2xx responses, including 400; the status is about semantics,
+    // not suppressing retries.) Log the detail server-side and return a generic body.
     let event: Awaited<ReturnType<StripeService['constructWebhookEvent']>>
     try {
       event = this.stripe.constructWebhookEvent(rawBody, signature)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.logger.error(`Webhook signature verification failed: ${message}`)
-      return response.status(HttpStatus.BAD_REQUEST).send(`Webhook Error: ${message}`)
+      return response.status(HttpStatus.BAD_REQUEST).send('Invalid signature')
     }
 
     this.logger.log(`Received webhook event: ${event.type} (${event.id})`)
@@ -65,10 +68,11 @@ export class StripeWebhookController {
       return response.status(HttpStatus.OK).json({ received: true })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      // Log the internal detail server-side, but return a GENERIC body. This endpoint is publicly
+      // reachable; reflecting the raw error (DB errors, stack detail) leaks internals. Stripe only
+      // needs a non-2xx status to trigger its retry schedule — the body is irrelevant to it.
       this.logger.error(`Error processing webhook event ${event.id}: ${message}`)
-      return response
-        .status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .send(`Webhook processing error: ${message}`)
+      return response.status(HttpStatus.INTERNAL_SERVER_ERROR).send('Webhook processing error')
     }
   }
 }
