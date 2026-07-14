@@ -183,22 +183,30 @@ export class WebhookService {
     const subscriptionId = typeof subscription === 'string' ? subscription : subscription.id
 
     // Resolve the Plan FK BEFORE writing. `planId` is a required, FK-constrained column, so writing
-    // an empty string (the old `metadata.planId || ''` default) is guaranteed to throw a raw Prisma
-    // P2003 — silently, since the controller used to ack before this ran. Fail fast with a clear log
-    // instead. On create we must have a plan; on update the existing row already has one, so a
-    // missing planId there is non-fatal.
-    const planId = await this.resolveCheckoutPlanId(session, metadata)
+    // an empty string (the old `metadata.planId || ''` default) — or a stale/typo'd id — is
+    // guaranteed to throw a raw Prisma P2003. resolveCheckoutPlanId only returns ids confirmed to
+    // exist, so the FK write is safe.
+    const resolvedPlanId = await this.resolveCheckoutPlanId(session, metadata)
 
     const existing = await this.prisma.subscription.findUnique({
       where: { organizationId },
-      select: { id: true },
+      select: { id: true, planId: true },
     })
 
-    if (!existing && !planId) {
+    // On create we MUST have a plan. On update, fall back to the existing row's (already valid) FK
+    // so a webhook that can't re-resolve the plan never clobbers it with null. Derive a genuinely
+    // non-null value here so the create write needs no unsafe `as string` cast.
+    const planIdForWrite = resolvedPlanId ?? existing?.planId ?? null
+
+    if (!planIdForWrite) {
+      // Deliberately NON-FATAL (return 200, not throw): a genuinely unmappable price would otherwise
+      // make Stripe retry this event forever. But a paid checkout with no local Plan must NOT be
+      // silent — surface it loudly so it can be reconciled. (A production deployment should wire a
+      // real alert/on-call hook here.)
       this.logger.error(
-        `Cannot create subscription for organization ${organizationId}: no resolvable planId ` +
-          `(session ${session.id}). Ensure checkout metadata carries planId, or that a Plan row ` +
-          `exists for the purchased price.`,
+        `ALERT: checkout ${session.id} completed for organization ${organizationId} but no Plan ` +
+          `resolved (metadata.planId / metadata.priceId matched no Plan row). No Subscription ` +
+          `written — manual reconciliation required.`,
       )
       return
     }
@@ -207,31 +215,33 @@ export class WebhookService {
       where: { organizationId },
       create: {
         organizationId,
-        // Non-null here: guarded by the `!existing && !planId` check above.
-        planId: planId as string,
+        planId: planIdForWrite,
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscriptionId,
         status: SubscriptionStatus.ACTIVE,
       },
       update: {
-        // Only overwrite planId when we could resolve one; never clobber an existing FK with null.
-        ...(planId ? { planId } : {}),
+        planId: planIdForWrite,
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscriptionId,
         status: SubscriptionStatus.ACTIVE,
       },
     })
 
-    this.logger.log(`Subscription created for organization: ${organizationId}`)
+    this.logger.log(
+      `Subscription ${existing ? 'updated' : 'created'} for organization: ${organizationId}`,
+    )
   }
 
   /**
    * Resolve the local Plan id for a completed checkout session.
    *
-   * Prefers the explicit `planId` in session metadata. Falls back to looking up a Plan by the
-   * Stripe price id (from metadata) so a checkout for a price present in the Plan table still
-   * resolves even when the caller forgot to set `planId`. Returns null when nothing resolves — the
-   * caller decides whether that is fatal.
+   * Prefers the explicit `planId` in session metadata, but only after confirming a matching Plan
+   * row exists — an unknown id (stale/typo'd) is treated as unresolved rather than passed straight
+   * through to an FK write that would throw P2003. Falls back to looking up a Plan by the Stripe
+   * price id (from metadata) so a checkout for a price present in the Plan table still resolves even
+   * when the caller forgot to set `planId`. Returns null when nothing resolves — the caller decides
+   * whether that is fatal.
    */
   private async resolveCheckoutPlanId(
     session: Stripe.Checkout.Session,
@@ -239,7 +249,17 @@ export class WebhookService {
   ): Promise<string | null> {
     const metadataPlanId = metadata?.['planId']?.trim()
     if (metadataPlanId) {
-      return metadataPlanId
+      const plan = await this.prisma.plan.findUnique({
+        where: { id: metadataPlanId },
+        select: { id: true },
+      })
+      if (plan) {
+        return plan.id
+      }
+      this.logger.warn(
+        `Checkout session ${session.id} metadata.planId ${metadataPlanId} matches no Plan row — ` +
+          `ignoring and trying the Stripe price id`,
+      )
     }
 
     const stripePriceId = metadata?.['priceId']?.trim() || metadata?.['stripePriceId']?.trim()

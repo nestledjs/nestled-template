@@ -1,3 +1,4 @@
+export * from './lib/api-url'
 export * from './lib/config.module'
 export * from './lib/config.service'
 export * from './lib/configuration'

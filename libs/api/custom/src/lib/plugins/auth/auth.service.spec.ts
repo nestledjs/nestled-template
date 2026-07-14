@@ -1346,6 +1346,11 @@ describe('AuthService', () => {
 
       expect(result).toBe(true)
       expect(mockData.$executeRaw).toHaveBeenCalledTimes(1)
+      // PIR-198: the raw UPDATE bypasses Prisma's @updatedAt, so it must bump updatedAt itself.
+      const sqlFragments = mockData.$executeRaw.mock.calls[0][0] as string[]
+      const sql = sqlFragments.join(' ')
+      expect(sql).toContain('array_remove')
+      expect(sql).toContain('"updatedAt" = NOW()')
     })
     it('rejects a backup code that another concurrent login already consumed (0 rows removed)', async () => {
       // C5: the atomic guard removed nothing (code already used / never existed) -> login fails,
