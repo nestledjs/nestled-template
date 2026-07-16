@@ -28,9 +28,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config'
     JwtModule.register({
       secret: process.env['JWT_SECRET'],
     }),
-    // A single named throttler, applied only where GqlThrottlerGuard is declared (register and
-    // resendVerificationEmail). Note for downstream: adding more throttlers here applies them to
-    // those mutations too, since the guard evaluates every configured throttler.
+    // A single named throttler, applied only where GqlThrottlerGuard is declared (register,
+    // resendVerificationEmail, and forgotPassword). Note for downstream: adding more throttlers
+    // here applies them to those mutations too, since the guard evaluates every configured throttler.
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
