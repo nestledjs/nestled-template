@@ -13,7 +13,12 @@ import {
 } from '@nestjs/graphql'
 import { Logger, UseGuards } from '@nestjs/common'
 import { GraphQLResolveInfo } from 'graphql/type'
-import { CtxUser, GqlAuthGuard, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  CtxUser,
+  GqlAuthGuard,
+  GqlAuthAdminGuard,
+  GqlThrottlerGuard,
+} from '@nestled-template/api/utils'
 import type { NestContextType } from '@nestled-template/api/utils'
 import { UserToken } from './models'
 import { User } from '@nestled-template/api/core/models'
@@ -40,6 +45,7 @@ import {
   TransferOwnershipInput,
 } from './dto'
 import { ConfigService } from '@nestjs/config'
+import { normalizeEmail } from './auth.helper'
 
 @Resolver(() => UserToken)
 export class AuthResolver {
@@ -161,7 +167,10 @@ export class AuthResolver {
     return true
   }
 
+  // Unauthenticated and sends mail on every call, so it is rate limited per client IP. See
+  // GqlThrottlerGuard for why this depends on TRUST_PROXY_HOPS being set correctly.
   @Mutation(() => UserToken, { nullable: true })
+  @UseGuards(GqlThrottlerGuard)
   async register(@Context() context: NestContextType, @Args('input') input: RegisterInput) {
     // Extract session info from request
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
@@ -190,13 +199,19 @@ export class AuthResolver {
     return userToken
   }
 
+  // Unauthenticated and mails an attacker-chosen address, exactly like register — same gate.
   @Mutation(() => Boolean, { nullable: true })
+  @UseGuards(GqlThrottlerGuard)
   forgotPassword(
     @Context() context: NestContextType,
     @Args('input') input: ForgotPasswordInput,
   ): Promise<boolean> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
-    return this.service.forgotPassword(input?.email?.trim()?.toLowerCase(), sessionInfo)
+    return this.service.forgotPassword(
+      normalizeEmail(input?.email),
+      sessionInfo,
+      input?.captchaToken,
+    )
   }
 
   @Mutation(() => User, { nullable: true })
@@ -208,9 +223,23 @@ export class AuthResolver {
     return this.service.resetPassword(input.password, input.token, sessionInfo)
   }
 
+  // Public resend for someone who is not signed in. Captcha'd and throttled because it mails an
+  // arbitrary address. Signed-in users should use resendMyVerificationEmail below instead.
   @Mutation(() => Boolean)
-  resendVerificationEmail(@Args('email') email: string) {
-    return this.service.resendVerificationEmail(email)
+  @UseGuards(GqlThrottlerGuard)
+  resendVerificationEmail(
+    @Args('email') email: string,
+    @Args('captchaToken', { nullable: true }) captchaToken?: string,
+  ) {
+    return this.service.resendVerificationEmail(email, captchaToken)
+  }
+
+  // Resend to the signed-in user's own primary address. No captcha and no rate limit: the caller
+  // is authenticated and cannot choose the recipient, so it is not a mail-bombing primitive.
+  @Mutation(() => Boolean)
+  @UseGuards(GqlAuthGuard)
+  resendMyVerificationEmail(@CtxUser() user: User) {
+    return this.service.resendMyVerificationEmail(user.id)
   }
 
   @Mutation(() => User)

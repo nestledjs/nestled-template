@@ -19,6 +19,8 @@ vi.mock('@nestled-template/shared/styles', () => ({
 }))
 
 // Mock the AuthLayout component
+const mockTurnstileSiteKey = vi.fn<() => string | undefined>(() => undefined)
+
 vi.mock('@nestled-template/web', () => ({
   AuthLayout: ({ children, title, subtitle }: any) => (
     <div data-testid="auth-layout">
@@ -26,6 +28,14 @@ vi.mock('@nestled-template/web', () => ({
       {subtitle && <p>{subtitle}</p>}
       {children}
     </div>
+  ),
+  // Turnstile is off by default here, matching a deployment with no VITE_TURNSTILE_SITE_KEY.
+  // The captcha-enabled path is exercised in its own describe block below.
+  turnstileSiteKey: () => mockTurnstileSiteKey(),
+  TurnstileWidget: ({ onToken }: any) => (
+    <button type="button" data-testid="turnstile-solve" onClick={() => onToken('test-token')}>
+      solve captcha
+    </button>
   ),
 }))
 
@@ -437,6 +447,87 @@ describe('Register Component', () => {
 
       // Error should not be visible on success
       expect(screen.queryByText(/something went wrong/i)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('Captcha', () => {
+    const fillForm = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.type(screen.getByLabelText('First Name'), 'Jane')
+      await user.type(screen.getByLabelText('Last Name'), 'Smith')
+      await user.type(screen.getByLabelText('Organization Name'), 'Tech Startup Inc')
+      await user.type(screen.getByLabelText('Email'), 'jane@techstartup.com')
+      await user.type(screen.getByLabelText('Password'), 'VerySecurePass123!')
+    }
+
+    describe('when Turnstile is not configured', () => {
+      it('registers without a captcha token', async () => {
+        const user = userEvent.setup()
+        mockRegisterMutation.mockResolvedValue({ data: { register: { token: 'tok' } } })
+
+        await renderRegister()
+        await fillForm(user)
+        await user.click(screen.getByRole('button', { name: /create account/i }))
+
+        await waitFor(() => expect(mockRegisterMutation).toHaveBeenCalled())
+        expect(mockRegisterMutation.mock.calls[0][0].variables.input.captchaToken).toBeUndefined()
+      })
+    })
+
+    describe('when Turnstile is configured', () => {
+      beforeEach(() => {
+        mockTurnstileSiteKey.mockReturnValue('0x4AAA-test-site-key')
+      })
+
+      afterEach(() => {
+        mockTurnstileSiteKey.mockReturnValue(undefined)
+      })
+
+      it('refuses to submit until the challenge is solved', async () => {
+        const user = userEvent.setup()
+
+        await renderRegister()
+        await fillForm(user)
+        await user.click(screen.getByRole('button', { name: /create account/i }))
+
+        expect(await screen.findByText(/complete the verification challenge/i)).toBeInTheDocument()
+        expect(mockRegisterMutation).not.toHaveBeenCalled()
+      })
+
+      it('sends the token once the challenge is solved', async () => {
+        const user = userEvent.setup()
+        mockRegisterMutation.mockResolvedValue({ data: { register: { token: 'tok' } } })
+
+        await renderRegister()
+        await fillForm(user)
+        await user.click(screen.getByTestId('turnstile-solve'))
+        await user.click(screen.getByRole('button', { name: /create account/i }))
+
+        await waitFor(() => expect(mockRegisterMutation).toHaveBeenCalled())
+        expect(mockRegisterMutation.mock.calls[0][0].variables.input.captchaToken).toBe(
+          'test-token',
+        )
+      })
+
+      it('resets the challenge after a failed attempt so the retry is not blocked', async () => {
+        // A Turnstile token is single-use, so a rejected registration must not leave the burnt
+        // token in state — otherwise the retry fails the captcha instead of surfacing the real
+        // error. The widget is remounted via its key, which drops the stale token.
+        const user = userEvent.setup()
+        mockRegisterMutation.mockRejectedValue(new Error('This email is already in use'))
+
+        await renderRegister()
+        await fillForm(user)
+        await user.click(screen.getByTestId('turnstile-solve'))
+        await user.click(screen.getByRole('button', { name: /create account/i }))
+
+        expect(await screen.findByText(/this email is already in use/i)).toBeInTheDocument()
+
+        // Retrying without re-solving is refused rather than sent with the spent token.
+        await user.click(screen.getByRole('button', { name: /create account/i }))
+
+        expect(await screen.findByText(/complete the verification challenge/i)).toBeInTheDocument()
+        expect(mockRegisterMutation).toHaveBeenCalledTimes(1)
+      })
     })
   })
 })

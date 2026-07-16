@@ -10,6 +10,23 @@ const isConfigured = (value: string | undefined): boolean => {
   return trimmed.length > 0 && !trimmed.startsWith('your-')
 }
 
+// Parse a boolean-ish env var. Unset/empty falls back to the supplied default, so callers can
+// express "on in production, off in test" without every call site re-deriving NODE_ENV.
+const envBool = (value: string | undefined, fallback: boolean): boolean => {
+  const trimmed = value?.trim().toLowerCase() ?? ''
+  if (trimmed.length === 0) return fallback
+  return trimmed === 'true' || trimmed === '1'
+}
+
+// Parse a non-negative integer env var, falling back on anything unparseable. Plain
+// `Number.parseInt` yields NaN for a typo'd value, and NaN survives `??`, so a fat-fingered
+// TRUST_PROXY_HOPS would otherwise reach `app.set('trust proxy', NaN)` and silently misconfigure
+// the client-IP derivation the signup rate limit depends on.
+const envInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(value?.trim() ?? '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
 // Origin-only, self-healing API URL (see api-url.ts). configuration() reads process.env directly
 // rather than the Joi-validated value, so normalize here too — not just in validation.ts.
 const apiOrigin = () =>
@@ -24,6 +41,14 @@ export const configuration = () => ({
   host: process.env['HOST'] ?? '0.0.0.0',
   port: Number.parseInt(process.env['PORT'] ?? '3000', 10),
   apiUrl: apiOrigin(),
+  // Number of reverse proxies in front of the API, handed to Express's `trust proxy`. This decides
+  // how much of `X-Forwarded-For` is believed when computing `req.ip`, which the signup rate limit
+  // keys on — so it is a security setting, not a cosmetic one:
+  //   too low  => every request looks like it came from the proxy, one shared bucket for all users
+  //   too high => clients can forge `X-Forwarded-For` and mint a fresh bucket per request
+  // Defaults to 0 (no proxy, correct for local dev). Railway/Heroku/Fly put exactly one hop in
+  // front, so those deployments want 1. main.ts warns at boot if this is 0 in production.
+  trustProxyHops: envInt(process.env['TRUST_PROXY_HOPS'], 0),
   api: {
     cookie: {
       name: process.env['VITE_COOKIE_NAME'] ?? '__session',
@@ -89,5 +114,27 @@ export const configuration = () => ({
         isConfigured(process.env['GITHUB_OAUTH_CLIENT_ID']) &&
         isConfigured(process.env['GITHUB_OAUTH_CLIENT_SECRET']),
     },
+  },
+  // Abuse controls for the unauthenticated signup surface (register, resendVerificationEmail).
+  // Every check here runs BEFORE any outbound mail: the send is the abuse, so a gate that runs
+  // after it protects nothing.
+  signupProtection: {
+    // Optional, like Stripe: absent secret key => disabled, and register accepts a missing token.
+    turnstile: {
+      secretKey: process.env['TURNSTILE_SECRET_KEY'],
+      enabled: isConfigured(process.env['TURNSTILE_SECRET_KEY']),
+    },
+    throttle: {
+      // Off under test so api-e2e can register many users from one IP without tripping the limit.
+      enabled: envBool(process.env['SIGNUP_THROTTLE_ENABLED'], process.env['NODE_ENV'] !== 'test'),
+      ttlSeconds: envInt(process.env['SIGNUP_THROTTLE_TTL'], 3600),
+      limit: envInt(process.env['SIGNUP_THROTTLE_LIMIT'], 3),
+    },
+    // MX lookup costs a DNS round trip and fails for the fake domains dev/test fixtures use
+    // (example.com publishes no MX record), so it defaults on only in production.
+    requireMx: envBool(process.env['SIGNUP_REQUIRE_MX'], process.env['NODE_ENV'] === 'production'),
+    mxTimeoutMs: envInt(process.env['SIGNUP_MX_TIMEOUT_MS'], 3000),
+    // Static list, no network, no false positives on fixture domains — safe to default on.
+    blockDisposable: envBool(process.env['SIGNUP_BLOCK_DISPOSABLE'], true),
   },
 })

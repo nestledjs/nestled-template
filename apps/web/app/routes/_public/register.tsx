@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
-import { AuthLayout } from '@nestled-template/web'
+import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
 import { RegisterInput, Register, type RegisterMutation } from '@nestled-template/shared/sdk'
 import { formTheme } from '@nestled-template/shared/styles'
 import { useMutation } from '@apollo/client/react'
@@ -14,10 +14,28 @@ interface RegisterFormInput extends RegisterInput {
 export default function RegisterPage() {
   const navigate = useNavigate()
   const [formError, setFormError] = useState<string | null>(null)
+  const [captchaToken, setCaptchaToken] = useState<string | undefined>()
+  // Bumping this remounts the widget for a fresh challenge. A Turnstile token is single-use, so
+  // every failed attempt — including the common "email already in use" — burns it, and without a
+  // reset the retry would fail the captcha instead of showing the real error.
+  const [captchaKey, setCaptchaKey] = useState(0)
   const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register)
+  const captchaRequired = Boolean(turnstileSiteKey())
+
+  function failRegistration(message: string) {
+    setFormError(message)
+    setCaptchaToken(undefined)
+    setCaptchaKey(key => key + 1)
+  }
 
   async function processRegister(input: RegisterFormInput) {
     setFormError(null)
+
+    if (captchaRequired && !captchaToken) {
+      setFormError('Please complete the verification challenge below.')
+      return
+    }
+
     try {
       // Extract organization name from input
       const { organizationName, ...registerInput } = input
@@ -27,6 +45,7 @@ export default function RegisterPage() {
           input: {
             ...registerInput,
             organizationName, // Backend now handles this in register mutation
+            captchaToken,
           },
         },
       })
@@ -37,10 +56,10 @@ export default function RegisterPage() {
         // Email verification can be handled separately if needed
         navigate('/members/dashboard')
       } else {
-        setFormError('Unable to register. Please try again.')
+        failRegistration('Unable to register. Please try again.')
       }
     } catch (error) {
-      setFormError((error as Error)?.message || 'Something went wrong')
+      failRegistration((error as Error)?.message || 'Something went wrong')
     }
   }
 
@@ -85,6 +104,7 @@ export default function RegisterPage() {
           </div>
         )}
         <Form id="register-form" theme={formTheme} fields={fields} submit={processRegister} />
+        <TurnstileWidget key={captchaKey} onToken={setCaptchaToken} />
         <p className="text-xs text-center text-zinc-500">
           By creating an account, you agree to our{' '}
           <Link to="/terms" className="text-emerald-400 hover:text-emerald-300">

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing'
-import { BadRequestException } from '@nestjs/common'
+import { BadRequestException, Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import { AuthService } from './auth.service'
@@ -7,6 +7,7 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
 import { EmailService } from '@nestled-template/api/integrations'
 import { SecurityEventsService } from '../security'
 import { SessionService } from './session.service'
+import { EmailHygieneService, TurnstileService } from './signup-protection'
 import { hashPassword, validatePassword } from './auth.helper'
 // Mock the helper functions
 jest.mock('./auth.helper', () => ({
@@ -38,6 +39,8 @@ describe('AuthService', () => {
   let mockConfigService: jest.Mocked<ConfigService>
   let mockSecurityEvents: jest.Mocked<SecurityEventsService>
   let mockSessionService: jest.Mocked<SessionService>
+  let mockTurnstile: jest.Mocked<TurnstileService>
+  let mockEmailHygiene: jest.Mocked<EmailHygieneService>
   beforeEach(async () => {
     // Create mock Prisma data access service - cast to any to avoid TypeScript strictness
     mockData = {
@@ -52,6 +55,7 @@ describe('AuthService', () => {
         create: jest.fn(),
         findFirst: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUnique: jest.fn(),
       },
       organization: {
@@ -159,6 +163,10 @@ describe('AuthService', () => {
       getUserActiveSessions: jest.fn(),
       invalidateSession: jest.fn(),
     } as any
+    // Signup protection passes by default here; the checks themselves are covered in
+    // signup-protection/*.spec.ts. Individual tests override these to assert the gate is applied.
+    mockTurnstile = { assertValid: jest.fn().mockResolvedValue(undefined), enabled: false } as any
+    mockEmailHygiene = { assertUsableForSignup: jest.fn().mockResolvedValue(undefined) } as any
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -168,12 +176,89 @@ describe('AuthService', () => {
         { provide: ConfigService, useValue: mockConfigService },
         { provide: SecurityEventsService, useValue: mockSecurityEvents },
         { provide: SessionService, useValue: mockSessionService },
+        { provide: TurnstileService, useValue: mockTurnstile },
+        { provide: EmailHygieneService, useValue: mockEmailHygiene },
       ],
     }).compile()
     service = module.get<AuthService>(AuthService)
     // Reset all mocks before each test
     jest.clearAllMocks()
   })
+  describe('signup abuse gate', () => {
+    const input = {
+      email: 'Bot@Mailinator.com',
+      password: 'TestPassword123!',
+      firstName: 'Test',
+      lastName: 'User',
+    } as any
+
+    it('rejects a failed captcha without writing a user or sending mail', async () => {
+      mockTurnstile.assertValid.mockRejectedValue(new BadRequestException('Captcha failed'))
+
+      await expect(service.register(input)).rejects.toThrow(BadRequestException)
+      expect(mockData.user.create).not.toHaveBeenCalled()
+      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
+    })
+
+    it('rejects a disposable address without writing a user or sending mail', async () => {
+      mockEmailHygiene.assertUsableForSignup.mockRejectedValue(
+        new BadRequestException('Disposable email addresses are not accepted.'),
+      )
+
+      await expect(service.register(input)).rejects.toThrow(BadRequestException)
+      expect(mockData.user.create).not.toHaveBeenCalled()
+      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
+    })
+
+    it('checks the captcha before spending a DNS lookup', async () => {
+      mockTurnstile.assertValid.mockRejectedValue(new BadRequestException('Captcha failed'))
+
+      await expect(service.register(input)).rejects.toThrow(BadRequestException)
+      expect(mockEmailHygiene.assertUsableForSignup).not.toHaveBeenCalled()
+    })
+
+    it('hygiene-checks the normalised address, not the raw input', async () => {
+      mockEmailHygiene.assertUsableForSignup.mockRejectedValue(new BadRequestException('nope'))
+
+      await expect(service.register(input)).rejects.toThrow(BadRequestException)
+      expect(mockEmailHygiene.assertUsableForSignup).toHaveBeenCalledWith('bot@mailinator.com')
+    })
+
+    it('passes the captcha token from the input through to verification', async () => {
+      mockEmailHygiene.assertUsableForSignup.mockRejectedValue(new BadRequestException('stop here'))
+
+      await expect(service.register({ ...input, captchaToken: 'tok-123' })).rejects.toThrow()
+      expect(mockTurnstile.assertValid).toHaveBeenCalledWith('tok-123')
+    })
+
+    it('gates resendVerificationEmail on the captcha before looking the user up', async () => {
+      mockTurnstile.assertValid.mockRejectedValue(new BadRequestException('Captcha failed'))
+
+      await expect(service.resendVerificationEmail('victim@example.com', 'bad')).rejects.toThrow(
+        BadRequestException,
+      )
+      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
+    })
+
+    it('resends to the normalized address, not the raw argument', async () => {
+      // Looking up a normalized address but mailing the raw one finds the user and then hands the
+      // mailer a string with stray whitespace.
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1' })
+
+      await service.resendVerificationEmail('  Ada@Example.com  ')
+
+      expect(mockEmailService.sendTemplate).toHaveBeenCalledWith(
+        'ada@example.com',
+        expect.anything(),
+      )
+    })
+  })
+
   describe('User Registration', () => {
     it('should register a new user successfully', async () => {
       const registerInput = {
@@ -875,14 +960,188 @@ describe('AuthService', () => {
       expect(result).toBe(true)
       expect(mockEmailService.sendTemplate).toHaveBeenCalled()
     })
-    it('should reject resend verification for unknown users', async () => {
+    it('reports success for an unknown address without sending anything', async () => {
+      // Previously threw "No user found for email: <address>", which confirmed to any
+      // unauthenticated caller whether an address was registered.
       mockData.user.findFirst.mockResolvedValue(null)
 
-      await expect(service.resendVerificationEmail('missing@example.com')).rejects.toThrow(
-        'No user found for email: missing@example.com',
+      await expect(service.resendVerificationEmail('missing@example.com')).resolves.toBe(true)
+      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
+    })
+
+    it('answers a known and an unknown address identically', async () => {
+      mockData.user.findFirst.mockResolvedValueOnce({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      const known = await service.resendVerificationEmail('ada@example.com')
+
+      mockData.user.findFirst.mockResolvedValueOnce(null)
+      const unknown = await service.resendVerificationEmail('missing@example.com')
+
+      expect(known).toBe(unknown)
+    })
+
+    it('stays neutral for a known address even when the mailer is down', async () => {
+      // See the matching forgotPassword test: a send failure must not become a tell.
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1' })
+      mockEmailService.sendTemplate.mockRejectedValue(new Error('connect ECONNREFUSED :1025'))
+
+      await expect(service.resendVerificationEmail('ada@example.com')).resolves.toBe(true)
+    })
+
+    it('resendMyVerificationEmail still surfaces a send failure to the signed-in user', async () => {
+      // The authenticated path has nothing to hide: the caller owns the account, so a real
+      // delivery failure should be reported rather than swallowed.
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1' })
+      mockEmailService.sendTemplate.mockRejectedValue(new Error('connect ECONNREFUSED :1025'))
+
+      await expect(service.resendMyVerificationEmail('user-1')).rejects.toThrow(/ECONNREFUSED/)
+    })
+
+    it('marks the primary Email row verified alongside the User flag', async () => {
+      // The bug this replaces: verifyEmail set User.emailValidated but left the Email row at
+      // verified:false forever, breaking every query that filters on verified:true.
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        validateEmailToken: 'tok',
+        validateEmailTokenExpires: new Date(Date.now() + 60_000),
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1', emailValidated: true })
+
+      await service.verifyEmail('tok')
+
+      expect(mockData.email.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', primary: true },
+        data: { verified: true },
+      })
+    })
+
+    it('logs an error when there is no primary Email row to verify', async () => {
+      // A 0-row match means the User flag now describes an Email row that does not exist. We
+      // deliberately still commit (verifyEmail cannot repair corrupt data, and failing would only
+      // block a user who cannot fix it) — but it must never pass silently.
+      const logSpy = jest.spyOn(Logger, 'error').mockImplementation(() => undefined)
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        validateEmailToken: 'tok',
+        validateEmailTokenExpires: new Date(Date.now() + 60_000),
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1', emailValidated: true })
+      mockData.email.updateMany.mockResolvedValue({ count: 0 })
+
+      await service.verifyEmail('tok')
+
+      expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/no primary Email row/i))
+      logSpy.mockRestore()
+    })
+
+    it('writes both verification flags in a single transaction', async () => {
+      // They must not be able to diverge — that divergence IS the bug.
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        validateEmailToken: 'tok',
+        validateEmailTokenExpires: new Date(Date.now() + 60_000),
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1', emailValidated: true })
+
+      await service.verifyEmail('tok')
+
+      expect(mockData.$transaction).toHaveBeenCalled()
+    })
+
+    it('resendMyVerificationEmail sends without requiring a captcha', async () => {
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1' })
+
+      await expect(service.resendMyVerificationEmail('user-1')).resolves.toBe(true)
+      expect(mockTurnstile.assertValid).not.toHaveBeenCalled()
+      expect(mockEmailService.sendTemplate).toHaveBeenCalledWith(
+        'ada@example.com',
+        expect.anything(),
       )
     })
+
+    it('resendMyVerificationEmail rejects an account with no primary email', async () => {
+      mockData.user.findUnique.mockResolvedValue({ id: 'user-1', firstName: 'Ada', emails: [] })
+
+      await expect(service.resendMyVerificationEmail('user-1')).rejects.toThrow(BadRequestException)
+    })
   })
+  describe('forgotPassword abuse + enumeration', () => {
+    it('reports success for an unknown address without sending anything', async () => {
+      // Previously threw "<address> is not a user", which the web form rendered verbatim —
+      // an unauthenticated enumeration oracle with a UI attached.
+      mockData.user.findFirst.mockResolvedValue(null)
+
+      await expect(service.forgotPassword('missing@example.com')).resolves.toBe(true)
+      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
+    })
+
+    it('answers a known and an unknown address identically', async () => {
+      mockData.user.findFirst.mockResolvedValueOnce({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1' })
+      const known = await service.forgotPassword('ada@example.com')
+
+      mockData.user.findFirst.mockResolvedValueOnce(null)
+      const unknown = await service.forgotPassword('missing@example.com')
+
+      expect(known).toBe(unknown)
+    })
+
+    it('rejects a failed captcha before looking the address up or sending', async () => {
+      mockTurnstile.assertValid.mockRejectedValue(new BadRequestException('Captcha failed'))
+
+      await expect(service.forgotPassword('ada@example.com', undefined, 'bad')).rejects.toThrow(
+        BadRequestException,
+      )
+      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
+    })
+
+    it('stays neutral for a known address even when the mailer is down', async () => {
+      // Caught end-to-end against a real API with SMTP unreachable: a registered address surfaced
+      // "Email send failed" while an unregistered one returned true — the enumeration oracle,
+      // reopened by a broken mailer. An attacker who can trip the provider's rate limit can bring
+      // that state about deliberately.
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      mockData.user.update.mockResolvedValue({ id: 'user-1' })
+      mockEmailService.sendTemplate.mockRejectedValue(new Error('connect ECONNREFUSED :1025'))
+
+      await expect(service.forgotPassword('ada@example.com')).resolves.toBe(true)
+    })
+
+    it('passes the captcha token through to verification', async () => {
+      mockData.user.findFirst.mockResolvedValue(null)
+
+      await service.forgotPassword('ada@example.com', undefined, 'tok-123')
+
+      expect(mockTurnstile.assertValid).toHaveBeenCalledWith('tok-123')
+    })
+  })
+
   describe('Password Reset Flow', () => {
     it('should reset password with valid token', async () => {
       const token = 'valid-reset-token'

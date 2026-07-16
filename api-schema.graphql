@@ -619,6 +619,7 @@ enum FailureReason {
 }
 
 input ForgotPasswordInput {
+  captchaToken: String
   email: String!
 }
 
@@ -1287,8 +1288,9 @@ type Mutation {
   removeOrganizationLogo: Boolean!
   removeOrganizationMember(input: RemoveOrganizationMemberInput!): Boolean!
   removeUserAvatar: Boolean!
+  resendMyVerificationEmail: Boolean!
   resendOrganizationInvitation(input: ResendInvitationInput!): Boolean!
-  resendVerificationEmail(email: String!): Boolean!
+  resendVerificationEmail(captchaToken: String, email: String!): Boolean!
   resetPassword(input: ResetPasswordInput!): User
   revokeApiToken(tokenId: String!): ApiToken!
   rotateApiToken(input: RotateApiTokenInput!): GenerateApiTokenOutput!
@@ -1547,6 +1549,7 @@ type Query {
 
 input RegisterInput {
   avatarUrl: String
+  captchaToken: String
   email: String!
   firstName: String
   lastName: String

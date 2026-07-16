@@ -34,12 +34,14 @@ import {
   generateUsernameSlug,
   generateUsernameWithSuffix,
   hashPassword,
+  normalizeEmail,
   validatePassword,
 } from './auth.helper'
 import { ConfigService } from '@nestjs/config'
 import { randomInt } from 'node:crypto'
 import { SecurityEventsService } from '../security'
 import { SessionService, SessionInfo } from './session.service'
+import { EmailHygieneService, TurnstileService } from './signup-protection'
 import {
   generate2FASecret,
   verify2FACode,
@@ -66,7 +68,22 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly securityEvents: SecurityEventsService,
     private readonly sessionService: SessionService,
+    private readonly turnstile: TurnstileService,
+    private readonly emailHygiene: EmailHygieneService,
   ) {}
+
+  /**
+   * Every abuse check for the unauthenticated signup surface, in one place.
+   *
+   * Call this before touching the database or the mailer. Ordering is deliberate: the captcha is
+   * the cheapest way to establish there is a human present, and the DNS lookup inside the hygiene
+   * check is the only step that costs a network round trip, so it runs last and only for callers
+   * that already cleared the captcha.
+   */
+  private async assertSignupAllowed(email: string, captchaToken?: string): Promise<void> {
+    await this.turnstile.assertValid(captchaToken)
+    await this.emailHygiene.assertUsableForSignup(email)
+  }
 
   /**
    * Adds a delay to slow down brute force attacks
@@ -206,13 +223,19 @@ export class AuthService {
   }
 
   async register(payload: RegisterInput, sessionInfo?: SessionInfo) {
+    // Normalize once and reuse. ValidationPipe guarantees a non-empty email by the time we get
+    // here, so the gate always receives a real string rather than an optional-chained undefined.
+    const primaryEmail = normalizeEmail(payload.email)
+
+    // Gate first: nothing below this line should run for a bot. Both the user row and the
+    // verification email are side effects we cannot take back.
+    await this.assertSignupAllowed(primaryEmail, payload.captchaToken)
+
     const user = await this.createUser({
       ...payload,
     })
 
     if (user) {
-      const primaryEmail = payload.email?.trim()?.toLowerCase()
-
       // Create default organization for the user
       const trimmedOrgName = payload.organizationName?.trim()
       const orgName =
@@ -554,11 +577,34 @@ export class AuthService {
     return this.signUser(user, input.remember, undefined, sessionInfo)
   }
 
-  async resendVerificationEmail(email: string): Promise<boolean> {
-    const user = await this.findUserByEmail(email)
-    if (!user) {
-      throw new NotFoundException(`No user found for email: ${email}`)
+  /**
+   * Runs a send whose SUCCESS OR FAILURE must not be observable by the caller.
+   *
+   * The neutral responses on forgotPassword/resendVerificationEmail are worthless if a broken
+   * mailer reintroduces the tell: a registered address would surface "Email send failed" while an
+   * unregistered one returns true, which is the enumeration oracle we just closed — and an attacker
+   * who can trip the mail provider's rate limit can bring that state about on purpose.
+   *
+   * The cost is real and accepted: a genuine delivery failure looks like success to the user. It is
+   * logged at error level WITH the stack so it is still fully diagnosable by operators, who are the
+   * ones who can act on it — swallowing the response must not mean swallowing the evidence.
+   */
+  private async sendWithoutRevealing(send: () => Promise<unknown>, context: string): Promise<void> {
+    try {
+      await send()
+    } catch (error) {
+      Logger.error(
+        `${context} failed to send: ${error instanceof Error ? error.message : 'unknown error'}`,
+        error instanceof Error ? error.stack : undefined,
+      )
     }
+  }
+
+  /**
+   * Issues a fresh verification token and mails it. Callers are responsible for authorising the
+   * send — this does no gating of its own.
+   */
+  private async sendVerificationEmail(user: User, email: string): Promise<void> {
     const validateEmailToken = generateToken()
     const validateEmailTokenExpires = generateExpireDate()
     await this.data.user.update({
@@ -578,6 +624,62 @@ export class AuthService {
         expirationHours: 24,
       },
     })
+  }
+
+  /**
+   * Public resend, for someone who never received the original and is not signed in.
+   *
+   * Unauthenticated and mails an arbitrary address, so it is a mail-bombing primitive aimed at any
+   * address an attacker knows. The captcha (plus the rate limit on the resolver) is what makes each
+   * send cost something. No hygiene check: this address already cleared one at registration, and a
+   * flaky DNS lookup should not lock an existing user out of verifying.
+   *
+   * ALWAYS returns true. Reporting "no user found" here would confirm whether any address is
+   * registered, to anyone, unauthenticated.
+   */
+  async resendVerificationEmail(email: string, captchaToken?: string): Promise<boolean> {
+    await this.turnstile.assertValid(captchaToken)
+
+    // findUserByEmail normalizes internally, so a raw address with stray whitespace or mixed case
+    // still finds the user — but the send below must use the SAME normalized value, or we look up
+    // " User@Example.com " successfully and then hand that literal string to the mailer.
+    const normalizedEmail = normalizeEmail(email)
+    const user = await this.findUserByEmail(normalizedEmail)
+
+    if (!user) {
+      Logger.warn(`Verification resend requested for unknown address: ${normalizedEmail}`)
+      // Blunt the timing signal between the two branches. It does not erase it — the real path
+      // waits on SMTP — but closing that gap properly means moving the send off the request path.
+      await this.addBruteForceDelay()
+      return true
+    }
+
+    await this.sendWithoutRevealing(
+      () => this.sendVerificationEmail(user, normalizedEmail),
+      `Verification email to ${normalizedEmail}`,
+    )
+    return true
+  }
+
+  /**
+   * Resend for a signed-in user, to their own primary address.
+   *
+   * No captcha: the caller is authenticated and cannot choose the recipient, so this is not a
+   * bombing primitive. The settings page uses this — making a logged-in user solve a captcha to
+   * re-request their own verification email would be a poor trade.
+   */
+  async resendMyVerificationEmail(userId: string): Promise<boolean> {
+    const user = await this.data.user.findUnique({
+      where: { id: userId },
+      include: authUserRelations,
+    })
+
+    const primaryEmail = user?.emails?.find(entry => entry.primary)?.email
+    if (!user || !primaryEmail) {
+      throw new BadRequestException('No primary email found for this account')
+    }
+
+    await this.sendVerificationEmail(user, normalizeEmail(primaryEmail))
     return true
   }
 
@@ -593,14 +695,45 @@ export class AuthService {
       throw new BadRequestException('Your email verification token has expired')
     }
 
-    const updatedUser = await this.data.user.update({
-      where: { id: user.id },
-      data: {
-        emailValidated: true,
-        validateEmailToken: null,
-        validateEmailTokenExpires: null,
-      },
-    })
+    // Mark the Email row verified alongside the User flag, atomically.
+    //
+    // These two must never disagree: `emailValidated` tracks the PRIMARY email's verified state
+    // (the same invariant admin.service.ts and the OAuth signup path encode). Setting only the
+    // User flag left every password-registered user with `Email.primary = true, verified = false`
+    // forever, which silently breaks the queries that filter on `verified: true` — primary-email
+    // promotion, deletion validation, and admin filtering by verified email.
+    //
+    // verifyEmailChange() already does both; this is the same pairing for the registration path.
+    const [updatedUser, verifiedEmails] = await this.data.$transaction([
+      this.data.user.update({
+        where: { id: user.id },
+        data: {
+          emailValidated: true,
+          validateEmailToken: null,
+          validateEmailTokenExpires: null,
+        },
+      }),
+      this.data.email.updateMany({
+        where: { userId: user.id, primary: true },
+        data: { verified: true },
+      }),
+    ])
+
+    // A zero match means the account has no primary Email row at all — the flag now describes
+    // something that does not exist. validateEmailDeletion refuses to delete a primary without
+    // promoting a replacement, so reaching this needs corrupt data or a delete made through
+    // generated admin CRUD, which bypasses that check.
+    //
+    // Deliberately logged rather than rolled back: verifyEmail neither caused this state nor can
+    // repair it, and failing here would only deny verification to a user who cannot fix their own
+    // data — while a concurrent primary-email change would trip the same assertion for someone
+    // whose request was perfectly legitimate.
+    if (verifiedEmails.count === 0) {
+      Logger.error(
+        `verifyEmail marked user ${user.id} validated but found no primary Email row to verify. ` +
+          `This account's email records are inconsistent and need manual repair.`,
+      )
+    }
 
     // Send welcome email after successful verification
     const appName = this.config.get('app.name')
@@ -915,12 +1048,27 @@ export class AuthService {
     return this.signUser(admin)
   }
 
-  async forgotPassword(email: string, sessionInfo?: SessionInfo): Promise<boolean> {
+  /**
+   * The third unauthenticated mail sender, alongside register and resendVerificationEmail, and the
+   * same two problems: it mails an attacker-chosen address on every call, and it used to answer
+   * `<email> is not a user` — an enumeration oracle that the web form rendered verbatim.
+   *
+   * ALWAYS returns true now, so a caller learns nothing about whether the address is registered.
+   */
+  async forgotPassword(
+    email: string,
+    sessionInfo?: SessionInfo,
+    captchaToken?: string,
+  ): Promise<boolean> {
+    await this.turnstile.assertValid(captchaToken)
+
     const user = await this.findUserByEmail(email)
 
     if (!user) {
-      Logger.warn(`Forgot password reset for non-existing user ${email}`)
-      throw new Error(`${email} is not a user`)
+      Logger.warn(`Password reset requested for non-existing user ${email}`)
+      // See resendVerificationEmail: blunts the timing signal without pretending to erase it.
+      await this.addBruteForceDelay()
+      return true
     }
 
     const passwordResetToken = generateToken()
@@ -941,15 +1089,19 @@ export class AuthService {
     const siteUrl = this.config.get('siteUrl')
     const resetUrl = `${siteUrl}/reset-password?token=${passwordResetToken}`
 
-    await this.emailService.sendTemplate(email, {
-      templateId: 'password-reset',
-      variables: {
-        userName: user?.firstName || 'there',
-        resetUrl,
-        appName,
-        expirationMinutes: 30,
-      },
-    })
+    await this.sendWithoutRevealing(
+      () =>
+        this.emailService.sendTemplate(email, {
+          templateId: 'password-reset',
+          variables: {
+            userName: user?.firstName || 'there',
+            resetUrl,
+            appName,
+            expirationMinutes: 30,
+          },
+        }),
+      `Password reset email to ${email}`,
+    )
     return true
   }
 
