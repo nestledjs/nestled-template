@@ -5,8 +5,8 @@ import { apolloLoader } from '@nestled-template/shared/apollo'
 import {
   Me,
   type MeQuery,
-  ResendVerificationEmail,
-  type ResendVerificationEmailMutation,
+  ResendMyVerificationEmail,
+  type ResendMyVerificationEmailMutation,
 } from '@nestled-template/shared/sdk'
 import { useReadQuery, QueryRef, useMutation } from '@apollo/client/react'
 import { ExportDataSection, TransferOwnershipSection, DangerZoneSection } from './_shared-sections'
@@ -23,8 +23,12 @@ export default function AccountSettings() {
   const [isResendingEmail, setIsResendingEmail] = useState(false)
   const [emailResendSuccess, setEmailResendSuccess] = useState(false)
 
-  const [resendVerificationEmail] =
-    useMutation<ResendVerificationEmailMutation>(ResendVerificationEmail)
+  // The authenticated resend, which needs no captcha: the server derives the recipient from the
+  // session rather than accepting one, so it cannot be pointed at anyone else. The public
+  // resendVerificationEmail requires a Turnstile token and would reject this call outright on a
+  // deployment with Turnstile enabled.
+  const [resendMyVerificationEmail] =
+    useMutation<ResendMyVerificationEmailMutation>(ResendMyVerificationEmail)
 
   const handleResendVerificationEmail = async () => {
     const primaryEmail = user?.emails?.find(e => e.primary)?.email
@@ -37,9 +41,7 @@ export default function AccountSettings() {
     setEmailResendSuccess(false)
 
     try {
-      await resendVerificationEmail({
-        variables: { email: primaryEmail },
-      })
+      await resendMyVerificationEmail()
 
       setEmailResendSuccess(true)
       setTimeout(() => setEmailResendSuccess(false), 5000)

@@ -9,6 +9,16 @@ export const getGravatarUrl = (email = '') => {
   return `${gravatarUrl}${getHash(email)}?s=${gravatarSize}&d=mp`
 }
 
+/**
+ * Canonical form of an email address for storage, lookup, and delivery.
+ *
+ * Use this anywhere an address is both looked up and acted on: normalizing for the lookup but
+ * keeping the raw value for the send finds the right user and then mails a malformed address.
+ */
+export function normalizeEmail(email: string | undefined | null): string {
+  return email?.trim().toLowerCase() ?? ''
+}
+
 export function validatePassword(password: string, hashedPassword: string): boolean {
   return compareSync(password, hashedPassword)
 }

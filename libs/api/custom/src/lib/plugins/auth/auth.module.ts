@@ -13,6 +13,9 @@ import { OAuthController } from './oauth.controller'
 import { EmailIntegrationModule } from '@nestled-template/api/integrations'
 import { SecurityEventsModule } from '../security'
 import { ApiTokensModule } from '../api-tokens/api-tokens.module'
+import { EmailHygieneService, TurnstileService } from './signup-protection'
+import { ThrottlerModule } from '@nestjs/throttler'
+import { ConfigModule, ConfigService } from '@nestjs/config'
 
 @Module({
   imports: [
@@ -25,6 +28,28 @@ import { ApiTokensModule } from '../api-tokens/api-tokens.module'
     JwtModule.register({
       secret: process.env['JWT_SECRET'],
     }),
+    // A single named throttler, applied only where GqlThrottlerGuard is declared (register and
+    // resendVerificationEmail). Note for downstream: adding more throttlers here applies them to
+    // those mutations too, since the guard evaluates every configured throttler.
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const throttle = config.getOrThrow<{ enabled: boolean; ttlSeconds: number; limit: number }>(
+          'signupProtection.throttle',
+        )
+        return {
+          throttlers: [
+            {
+              name: 'signup',
+              ttl: throttle.ttlSeconds * 1000, // config is seconds; throttler wants milliseconds
+              limit: throttle.limit,
+            },
+          ],
+          skipIf: () => !throttle.enabled,
+        }
+      },
+    }),
   ],
   exports: [AuthService, OAuthService, SessionService],
   providers: [
@@ -34,6 +59,8 @@ import { ApiTokensModule } from '../api-tokens/api-tokens.module'
     AuthResolver,
     UserExtensionResolver,
     JwtStrategy,
+    TurnstileService,
+    EmailHygieneService,
   ],
   controllers: [OAuthController],
 })

@@ -14,6 +14,8 @@ vi.mock('@apollo/client/react', () => ({
 // Mock the SDK mutation
 
 // Mock the AuthLayout component
+const mockTurnstileSiteKey = vi.fn<() => string | undefined>(() => undefined)
+
 vi.mock('@nestled-template/web', () => ({
   AuthLayout: ({ children, title, subtitle }: any) => (
     <div data-testid="auth-layout">
@@ -21,6 +23,14 @@ vi.mock('@nestled-template/web', () => ({
       {subtitle && <p>{subtitle}</p>}
       {children}
     </div>
+  ),
+  // Turnstile off by default, matching a deployment with no VITE_TURNSTILE_SITE_KEY. The
+  // captcha-enabled path has its own describe block below.
+  turnstileSiteKey: () => mockTurnstileSiteKey(),
+  TurnstileWidget: ({ onToken }: any) => (
+    <button type="button" data-testid="turnstile-solve" onClick={() => onToken('test-token')}>
+      solve captcha
+    </button>
   ),
 }))
 
@@ -192,15 +202,15 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/password reset email sent/i)).toBeInTheDocument()
+        expect(screen.getByText(/if that email address has an account/i)).toBeInTheDocument()
       })
 
-      expect(
-        screen.getByText(/please check your email and follow the instructions/i),
-      ).toBeInTheDocument()
+      expect(screen.getByText(/password reset link is on its way/i)).toBeInTheDocument()
     })
 
-    it('should display error when forgot password returns false', async () => {
+    it('should display a generic error when the mutation returns false', async () => {
+      // The server now returns true for unknown addresses, so a false here means something
+      // actually broke — not "no such user".
       const user = userEvent.setup()
       mockForgotPasswordMutation.mockResolvedValue({
         data: {
@@ -214,8 +224,9 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/there was an error finding your account/i)).toBeInTheDocument()
+        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument()
       })
+      expect(screen.queryByText(/check that your email is correct/i)).not.toBeInTheDocument()
     })
 
     it('should display error on mutation failure', async () => {
@@ -263,7 +274,7 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/there was an error finding your account/i)).toBeInTheDocument()
+        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument()
       })
 
       // Second submission - success
@@ -272,10 +283,8 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(
-          screen.queryByText(/there was an error finding your account/i),
-        ).not.toBeInTheDocument()
-        expect(screen.getByText(/password reset email sent/i)).toBeInTheDocument()
+        expect(screen.queryByText(/something went wrong/i)).not.toBeInTheDocument()
+        expect(screen.getByText(/if that email address has an account/i)).toBeInTheDocument()
       })
     })
   })
@@ -307,10 +316,13 @@ describe('ForgotPassword Component', () => {
   })
 
   describe('Common Scenarios', () => {
-    it('should handle email not found scenario gracefully', async () => {
+    it('shows an unregistered address exactly what a registered one sees', async () => {
+      // The anti-enumeration property, stated as a test: the server returns true either way, so
+      // the page must not hint at which case it was. Any future copy change that reintroduces a
+      // "no account found" branch fails here.
       const user = userEvent.setup()
       mockForgotPasswordMutation.mockResolvedValue({
-        data: { forgotPassword: false },
+        data: { forgotPassword: true },
       })
 
       renderForgotPassword()
@@ -319,8 +331,11 @@ describe('ForgotPassword Component', () => {
       await user.click(screen.getByRole('button', { name: /request password reset/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/please check that your email is correct/i)).toBeInTheDocument()
+        expect(screen.getByText(/if that email address has an account/i)).toBeInTheDocument()
       })
+      expect(
+        screen.queryByText(/not a user|no account|doesn't exist|check that your email/i),
+      ).toBeNull()
     })
 
     it('should allow multiple submission attempts', async () => {

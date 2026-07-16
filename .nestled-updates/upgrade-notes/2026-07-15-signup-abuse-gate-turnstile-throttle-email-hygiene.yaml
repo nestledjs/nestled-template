@@ -1,0 +1,82 @@
+id: 2026-07-15-signup-abuse-gate-turnstile-throttle-email-hygiene
+title: Gate the signup surface — Turnstile, per-IP rate limit, and email hygiene before any mail is sent
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Put an abuse gate in front of the two unauthenticated mutations that send email — `register` and
+  `resendVerificationEmail` — so neither can be used to burn the project's sender reputation.
+  Four parts, all additive and all running BEFORE the mailer is touched.
+  (1) Cloudflare Turnstile: new `TurnstileService` verifies a `captchaToken` against siteverify.
+  Optional in the Stripe sense — with no `TURNSTILE_SECRET_KEY` the service is disabled and a
+  missing token is accepted, so existing deployments keep working until they opt in. `captchaToken`
+  is a new nullable field on `RegisterInput` and a new nullable arg on `resendVerificationEmail`.
+  (2) `@nestjs/throttler` + a new `GqlThrottlerGuard` (in api/utils), applied to those two
+  mutations only. Defaults to 3 requests/hour/IP; auto-disabled under `NODE_ENV=test`.
+  (3) New `EmailHygieneService`: rejects disposable domains (via the `disposable-email-domains`
+  list) and, in production, domains publishing neither an MX nor an A record.
+  (4) New `TRUST_PROXY_HOPS` config, wired to Express `trust proxy` in main.ts. The rate limit keys
+  on `req.ip`, which is only correct when Express knows how many proxy hops to trust.
+  `RegisterInput` also gains validation on fields that previously had NONE at all: `@IsString` +
+  length caps on username, firstName, lastName, phone and organizationName, and `@IsUrl` +
+  a length cap on avatarUrl.
+
+why: >
+  `register` was an open, unthrottled endpoint that sent an email on every call and returned a live
+  session immediately. Nothing stood between a bot and the project's SMTP sender reputation: no
+  captcha, no rate limit, no disposable-domain blocklist, no MX check — email validation was a
+  single `@IsEmail()` format check. A template project was actively spammed through this path.
+  `resendVerificationEmail` was worse: unauthenticated, unguarded, and it mails an arbitrary
+  attacker-supplied address, making it a mail-bombing primitive aimed at any known address.
+  Every check here runs before the send, because the send IS the abuse — a gate placed after it
+  (including any "verify before creating the user" scheme) protects nothing.
+
+affectedPaths:
+  - apps/api/src/main.ts
+  - libs/api/config/src/lib/configuration.ts
+  - libs/api/config/src/lib/config.service.ts
+  - libs/api/utils/src/index.ts
+  - libs/api/utils/src/lib/guards/gql-throttler.guard.ts
+  - libs/api/utils/src/lib/guards/gql-throttler.guard.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.module.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/dto/register.input.ts
+  - libs/api/custom/src/lib/plugins/auth/signup-protection/index.ts
+  - libs/api/custom/src/lib/plugins/auth/signup-protection/turnstile.service.ts
+  - libs/api/custom/src/lib/plugins/auth/signup-protection/turnstile.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/signup-protection/email-hygiene.service.ts
+  - libs/api/custom/src/lib/plugins/auth/signup-protection/email-hygiene.service.spec.ts
+  - libs/api/custom/src/types/disposable-email-domains.d.ts
+  - libs/shared/sdk/src/graphql/auth/auth-mutations.graphql
+  - libs/web/src/lib/components/index.ts
+  - libs/web/src/lib/components/turnstile-widget.tsx
+  - apps/web/app/routes/_public/register.tsx
+  - apps/web/tests/routes/_public/register.spec.tsx
+  - .env.example
+
+skipIf:
+  - The downstream project already rate limits and captcha-gates both register and resendVerificationEmail before sending mail.
+
+verification:
+  - grep -n "assertSignupAllowed" libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - grep -n "GqlThrottlerGuard" libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - grep -n "trust proxy" apps/api/src/main.ts
+  - pnpm nx test api-custom
+  - pnpm nx test api-utils
+  - pnpm nx test web
+
+agentHints:
+  - Requires two new dependencies -- `pnpm add @nestjs/throttler disposable-email-domains`. The latter ships no types; the ambient declaration in libs/api/custom/src/types/disposable-email-domains.d.ts is required, not optional.
+  - TRUST_PROXY_HOPS is a SECURITY setting and its correct value depends on the child project's deployment topology. Do NOT default it to 1 to "make it work". Too low behind a load balancer means all users share one rate-limit bucket and throttle each other; too high lets clients forge X-Forwarded-For and bypass the limit entirely. Railway/Heroku/Fly = 1, local dev = 0. main.ts warns at boot when it is 0 in production.
+  - The throttler and captcha must be applied at BOTH register and resendVerificationEmail. Gating only register leaves the mail-bombing primitive wide open, which is the more dangerous of the two.
+  - GqlThrottlerGuard MUST track by `req.ip`, never by the X-Forwarded-For header directly. The header is attacker-controlled, so keying off it yields a fresh bucket per forged value and makes the limit decorative. If the child project has its own throttler guard, check this property specifically.
+  - Turnstile and the MX lookup both fail OPEN on transport/resolver errors, by design — a Cloudflare or DNS outage degrades to the remaining controls instead of taking registration down. They fail CLOSED on an actual negative verdict. Preserve that asymmetry.
+  - 'The API bundle grows by roughly 2MB: the disposable-domain list is ~121k entries loaded into a Set at startup. This is expected, not a bundling mistake.'
+  - '`RegisterInput.captchaToken` is nullable and `resendVerificationEmail(captchaToken:)` is a nullable arg, so both are additive schema changes. Regenerating the SDK requires booting the API once (api-schema.graphql is code-first, emitted at bootstrap) — do not hand-edit that file.'
+  - A Turnstile token is single-use. Any custom signup form must reset the widget after a failed attempt (the template remounts it via a React key), or the retry fails the captcha instead of surfacing the real error.
+  - This note does NOT gate access on emailValidated, and does not fix the Email.verified bug in verifyEmail or the user-enumeration messages in register/resendVerificationEmail. Those ship separately.

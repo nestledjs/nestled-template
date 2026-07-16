@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Link } from 'react-router'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
-import { AuthLayout } from '@nestled-template/web'
+import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
 import {
   ForgotPasswordInput,
   ForgotPassword,
@@ -16,21 +16,36 @@ export default function ForgotPasswordPage() {
     type: 'success' | 'error'
     text: string
   } | null>(null)
+  const [captchaToken, setCaptchaToken] = useState<string | undefined>()
+  // A Turnstile token is single-use, so a failed attempt must remount the widget for a fresh
+  // challenge — otherwise the retry fails the captcha instead of surfacing the real error.
+  const [captchaKey, setCaptchaKey] = useState(0)
   const [forgotPasswordMutation, { loading }] = useMutation<ForgotPasswordMutation>(ForgotPassword)
+  const captchaRequired = Boolean(turnstileSiteKey())
 
   async function handleForgotPassword(input: ForgotPasswordInput) {
     setFormMessage(null)
+
+    if (captchaRequired && !captchaToken) {
+      setFormMessage({ type: 'error', text: 'Please complete the verification challenge below.' })
+      return
+    }
+
     try {
-      const { data } = await forgotPasswordMutation({ variables: { input } })
+      const { data } = await forgotPasswordMutation({
+        variables: { input: { ...input, captchaToken } },
+      })
       if (data?.forgotPassword) {
+        // Deliberately the same message whether or not the address is registered — saying "no
+        // account found" here would confirm to anyone whether an address has an account.
         setFormMessage({
           type: 'success',
-          text: 'Password reset email sent. Please check your email and follow the instructions to reset your password.',
+          text: 'If that email address has an account, a password reset link is on its way. Please check your inbox.',
         })
       } else {
         setFormMessage({
           type: 'error',
-          text: 'There was an error finding your account. Please check that your email is correct.',
+          text: 'Something went wrong. Please try again.',
         })
       }
     } catch (error) {
@@ -38,6 +53,9 @@ export default function ForgotPasswordPage() {
         type: 'error',
         text: (error as Error).message || 'Something went wrong',
       })
+    } finally {
+      setCaptchaToken(undefined)
+      setCaptchaKey(key => key + 1)
     }
   }
 
@@ -78,6 +96,7 @@ export default function ForgotPasswordPage() {
           fields={fields}
           submit={handleForgotPassword}
         />
+        <TurnstileWidget key={captchaKey} onToken={setCaptchaToken} />
       </div>
     </AuthLayout>
   )

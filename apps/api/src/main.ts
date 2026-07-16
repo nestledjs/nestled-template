@@ -1,6 +1,7 @@
 import 'dotenv/config' // Load environment variables before anything else
 import { BadRequestException, Logger, ValidationError, ValidationPipe } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
+import { NestExpressApplication } from '@nestjs/platform-express'
 import { ConfigService } from '@nestled-template/api/config'
 import cookieParser from 'cookie-parser'
 import { graphqlUploadExpress } from 'graphql-upload-minimal'
@@ -69,8 +70,31 @@ const earlyRequestFilter = (req: Request, res: Response, next: NextFunction) => 
   return next()
 }
 
+// `req.ip` is only as trustworthy as Express's `trust proxy` setting, and the signup rate limit
+// keys on it. Left at 0 behind a load balancer, every request carries the balancer's address and
+// all users share a single bucket — the limit locks out the whole app after a few signups. Warn
+// loudly rather than let that surface as a mystery outage.
+function configureTrustProxy(app: NestExpressApplication, configService: ConfigService) {
+  const hops = configService.trustProxyHops
+  app.set('trust proxy', hops)
+
+  if (hops > 0) {
+    Logger.log(`[TrustProxy] Trusting ${hops} proxy hop(s) when deriving client IPs`)
+    return
+  }
+
+  if (configService.environment === 'production') {
+    Logger.warn(
+      '[TrustProxy] TRUST_PROXY_HOPS is 0 in production. If the API sits behind a load balancer ' +
+        '(Railway, Heroku, Fly, nginx), every client will appear to share the balancer IP and the ' +
+        'signup rate limit will throttle all users together. Set TRUST_PROXY_HOPS to the number of ' +
+        'proxies in front of the API (Railway/Heroku/Fly: 1).',
+    )
+  }
+}
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // Disable NestJS's default body parser for custom handling
     bodyParser: false,
   })
@@ -98,6 +122,8 @@ async function bootstrap() {
   // Get individual properties with fallbacks
   const port = configService.port || 3000
   const host = configService.host || 'localhost'
+
+  configureTrustProxy(app, configService)
 
   // Add HTTPS redirection middleware first to ensure all requests are properly redirected
   app.use(httpsRedirectMiddleware)

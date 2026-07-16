@@ -36,6 +36,20 @@ export class ConfigService {
     return this.config.getOrThrow<string>('host')
   }
 
+  get trustProxyHops(): number {
+    return this.config.get<number>('trustProxyHops') ?? 0
+  }
+
+  get signupProtection(): {
+    turnstile: { secretKey?: string; enabled: boolean }
+    throttle: { enabled: boolean; ttlSeconds: number; limit: number }
+    requireMx: boolean
+    mxTimeoutMs: number
+    blockDisposable: boolean
+  } {
+    return this.config.getOrThrow('signupProtection')
+  }
+
   get appEmail(): string {
     return this.config.getOrThrow<string>('app.email')
   }

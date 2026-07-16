@@ -1,0 +1,73 @@
+id: 2026-07-15-email-verified-flag-and-auth-enumeration
+title: Fix the Email.verified flag on verifyEmail, close auth enumeration, and gate forgotPassword
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-07-15-signup-abuse-gate-turnstile-throttle-email-hygiene, covering the rest of
+  the unauthenticated auth email surface.
+  (1) BUG: `verifyEmail` set `User.emailValidated = true` but never set `verified = true` on the
+  corresponding `Email` row, which register creates as `primary: true, verified: false`. Both writes
+  now happen in a single `$transaction`. `verifyEmailChange` already did this correctly; this is the
+  same pairing for the registration path.
+  (2) `forgotPassword` is a THIRD unauthenticated mutation that mails an attacker-chosen address on
+  every call. It now carries the same Turnstile check and per-IP rate limit as register and
+  resendVerificationEmail. `ForgotPasswordInput` gains a nullable `captchaToken`, plus `@IsEmail`
+  and a length cap it never had.
+  (3) Enumeration: `forgotPassword` threw `<email> is not a user` and `resendVerificationEmail`
+  threw `No user found for email: <email>`. Both now always return true — including when the
+  MAILER FAILS, via a `sendWithoutRevealing` wrapper that logs the failure at error level instead
+  of propagating it.
+  (4) New authenticated `resendMyVerificationEmail` mutation (GqlAuthGuard, no captcha) that
+  resends to the signed-in user's own primary address. The settings page now uses it.
+
+why: >
+  (1) Every password-registered user was left with `Email.primary = true, verified = false`
+  FOREVER, even after verifying. That silently breaks every query filtering on `verified: true` —
+  primary-email promotion in `ensurePrimaryEmailExists`, deletion validation, and admin filtering
+  by verified email, which misses every password-registered user. `User.emailValidated` tracks the
+  primary email's verified state (the invariant admin.service.ts and the OAuth path already
+  encode), so the two flags must never disagree — hence the transaction.
+  (2) forgotPassword was the same mail-bombing primitive the previous note closed elsewhere:
+  unauthenticated, unthrottled, attacker-chosen recipient. It was missed there because the original
+  analysis only named register and resendVerificationEmail.
+  (3) Both messages let anyone confirm whether an address is registered, and the forgot-password
+  web form rendered the raw message to the page — an enumeration oracle with a UI attached.
+  (4) Without this, the settings-page resend button breaks on any deployment with Turnstile
+  enabled: it calls the now-captcha'd public mutation with no token. Requiring a captcha from an
+  authenticated user re-requesting their own verification email is a bad trade; deriving the
+  recipient from the session removes the bombing risk entirely.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.helper.ts
+  - libs/api/custom/src/lib/plugins/auth/dto/forgot-password.input.ts
+  - libs/shared/sdk/src/graphql/auth/auth-mutations.graphql
+  - apps/web/app/routes/_public/forgot-password.tsx
+  - apps/web/app/routes/settings/account.tsx
+  - apps/web/tests/routes/_public/forgot-password.spec.tsx
+
+skipIf:
+  - The downstream project already marks the Email row verified in verifyEmail, gates forgotPassword, and returns a neutral response from forgotPassword and resendVerificationEmail.
+
+verification:
+  - grep -n "email.updateMany" libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - grep -n "resendMyVerificationEmail" libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - pnpm nx test api-custom
+  - pnpm nx test web
+
+agentHints:
+  - "Depends on the signup-abuse-gate note: this reuses TurnstileService and GqlThrottlerGuard. Apply that one first."
+  - "DATA REPAIR: existing downstream databases already carry the bug's damage — password-registered users who verified have emailValidated=true but Email.verified=false. Code alone does not fix them. Consider a one-off migration: UPDATE \"Email\" e SET verified = true FROM \"User\" u WHERE e.\"userId\" = u.id AND e.primary = true AND u.\"emailValidated\" = true AND e.verified = false. Review before running; it is intentionally NOT included here because the correct scope depends on the project."
+  - The two verification writes must stay in one $transaction. Their divergence IS the bug being fixed; splitting them back into sequential awaits reintroduces it under partial failure.
+  - forgotPassword and resendVerificationEmail must return true for unknown addresses, never throw. A downstream project that "restores" a helpful not-found error reopens the enumeration oracle. The web copy must stay neutral too — the forgot-password page previously rendered the raw server message.
+  - "The sendWithoutRevealing wrapper is load-bearing, not defensive clutter. Found by driving a real API with SMTP unreachable: a registered address returned `Email send failed: ECONNREFUSED` while an unregistered one returned true, so a broken mailer reopened the whole enumeration oracle — and an attacker able to trip the provider's rate limit can induce that state. Unit tests cannot see this; both neutral paths have regression tests that mock a rejecting mailer. Do NOT unwrap it to 'surface errors properly'."
+  - resendMyVerificationEmail deliberately does NOT use sendWithoutRevealing. The caller is authenticated and owns the account, so there is nothing to conceal and a genuine delivery failure should be reported.
+  - Both neutral paths call addBruteForceDelay to blunt the timing difference. It does not eliminate it (the real path awaits SMTP); closing that fully means moving the send off the request path, which is out of scope here.
+  - "register still answers 'This email is already in use'. That is a deliberate product decision, not an oversight: hiding it costs real signup UX, and the captcha + rate limit already make bulk probing expensive. Revisit only with a product owner."
+  - resendMyVerificationEmail is additive. If a downstream project has its own authenticated resend, keep theirs and just ensure it does not route through the captcha'd public mutation.

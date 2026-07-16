@@ -654,6 +654,7 @@ export enum FailureReason {
 }
 
 export type ForgotPasswordInput = {
+  captchaToken?: InputMaybe<Scalars['String']['input']>
   email: Scalars['String']['input']
 }
 
@@ -1317,6 +1318,7 @@ export type Mutation = {
   removeOrganizationLogo: Scalars['Boolean']['output']
   removeOrganizationMember: Scalars['Boolean']['output']
   removeUserAvatar: Scalars['Boolean']['output']
+  resendMyVerificationEmail: Scalars['Boolean']['output']
   resendOrganizationInvitation: Scalars['Boolean']['output']
   resendVerificationEmail: Scalars['Boolean']['output']
   resetPassword?: Maybe<User>
@@ -1663,6 +1665,7 @@ export type MutationResendOrganizationInvitationArgs = {
 }
 
 export type MutationResendVerificationEmailArgs = {
+  captchaToken?: InputMaybe<Scalars['String']['input']>
   email: Scalars['String']['input']
 }
 
@@ -2442,6 +2445,7 @@ export type QueryUsersCountArgs = {
 
 export type RegisterInput = {
   avatarUrl?: InputMaybe<Scalars['String']['input']>
+  captchaToken?: InputMaybe<Scalars['String']['input']>
   email: Scalars['String']['input']
   firstName?: InputMaybe<Scalars['String']['input']>
   lastName?: InputMaybe<Scalars['String']['input']>
@@ -8080,11 +8084,19 @@ export type VerifyEmailMutation = {
 
 export type ResendVerificationEmailMutationVariables = Exact<{
   email: Scalars['String']['input']
+  captchaToken?: InputMaybe<Scalars['String']['input']>
 }>
 
 export type ResendVerificationEmailMutation = {
   __typename?: 'Mutation'
   resendVerificationEmail: boolean
+}
+
+export type ResendMyVerificationEmailMutationVariables = Exact<{ [key: string]: never }>
+
+export type ResendMyVerificationEmailMutation = {
+  __typename?: 'Mutation'
+  resendMyVerificationEmail: boolean
 }
 
 export type EmulateUserMutationVariables = Exact<{
@@ -30264,6 +30276,11 @@ export const ResendVerificationEmail = {
             type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
           },
         },
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'captchaToken' } },
+          type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
+        },
       ],
       selectionSet: {
         kind: 'SelectionSet',
@@ -30277,6 +30294,11 @@ export const ResendVerificationEmail = {
                 name: { kind: 'Name', value: 'email' },
                 value: { kind: 'Variable', name: { kind: 'Name', value: 'email' } },
               },
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'captchaToken' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'captchaToken' } },
+              },
             ],
           },
         ],
@@ -30286,6 +30308,23 @@ export const ResendVerificationEmail = {
 } as unknown as DocumentNode<
   ResendVerificationEmailMutation,
   ResendVerificationEmailMutationVariables
+>
+export const ResendMyVerificationEmail = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'ResendMyVerificationEmail' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [{ kind: 'Field', name: { kind: 'Name', value: 'resendMyVerificationEmail' } }],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  ResendMyVerificationEmailMutation,
+  ResendMyVerificationEmailMutationVariables
 >
 export const EmulateUser = {
   kind: 'Document',
