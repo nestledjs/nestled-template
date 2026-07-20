@@ -112,8 +112,9 @@ describe('Authentication E2E', () => {
       expect(result).toBe(true)
     })
     it('should handle password reset for non-existing email gracefully', async () => {
-      // Should not reveal that email doesn't exist for security
-      await expect(TestHelpers.requestPasswordReset('nonexistent@example.com')).rejects.toThrow()
+      // Anti-enumeration: forgotPassword returns a neutral `true` for an unknown address, exactly as
+      // it does for a real one, so a caller cannot distinguish registered from unregistered emails.
+      await expect(TestHelpers.requestPasswordReset('nonexistent@example.com')).resolves.toBe(true)
     })
     it('should reset password with valid token', async () => {
       const userData = UserFactory.create()
