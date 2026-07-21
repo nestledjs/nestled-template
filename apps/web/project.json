@@ -15,6 +15,16 @@
         "cwd": "apps/web"
       }
     },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["typegen"],
+      "cache": true,
+      "inputs": ["production", "^production", { "externalDependencies": ["typescript"] }],
+      "options": {
+        "command": "tsc -p tsconfig.app.json --noEmit",
+        "cwd": "apps/web"
+      }
+    },
     "clean": {
       "executor": "nx:run-commands",
       "options": {
