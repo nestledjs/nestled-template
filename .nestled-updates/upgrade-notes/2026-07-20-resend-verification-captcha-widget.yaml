@@ -1,0 +1,43 @@
+id: 2026-07-20-resend-verification-captcha-widget
+title: Render the Turnstile widget on the public resend-verification page
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  Fix a gap in the 2026-07-15 signup abuse gate. That change made the API captcha-gate the public
+  `resendVerificationEmail` mutation (TurnstileService.assertValid rejects a missing token when
+  Turnstile is enabled) and added the Turnstile widget to register.tsx and forgot-password.tsx — but
+  NOT to the public `apps/web/app/routes/_public/resend-verification.tsx` page. That page still
+  called the mutation with only `{ email }` and rendered no widget, so in any environment with
+  `TURNSTILE_SECRET_KEY` set, resend-verification fails for every user. This note mirrors the
+  register.tsx pattern into that page: `TurnstileWidget` + `turnstileSiteKey`, a single-use
+  `captchaToken` with reset-on-failure, a guard that blocks submit until the challenge is solved, and
+  passing `captchaToken` in the mutation variables (the SDK operation already accepts it).
+
+why: >
+  The abuse gate's whole purpose is defeated on the resend surface if the page can't produce a token —
+  and worse, legitimate users who need to re-request a verification email are hard-blocked once
+  Turnstile is turned on. The mutation and SDK operation were already captcha-ready; only the page
+  was missed.
+
+affectedPaths:
+  - apps/web/app/routes/_public/resend-verification.tsx
+
+skipIf:
+  - Project has no public resend-verification page, or its resend flow is authenticated (uses
+    resendMyVerificationEmail, which is not captcha-gated).
+
+verification:
+  - Load /resend-verification with VITE_TURNSTILE_SITE_KEY set; the Turnstile widget renders and a
+    resend succeeds (produces a cf-turnstile-response token that the API accepts).
+
+agentHints:
+  - Mirror register.tsx exactly (import TurnstileWidget + turnstileSiteKey; captchaToken state with a
+    remount key for single-use reset; captchaRequired guard; pass captchaToken in the mutation).
+  - The live Turnstile-enabled clones (cashcast, muzebook, flightdesk, silvermouselive) were hand-
+    patched directly rather than waiting for promotion, because their resend page was broken in
+    production; downstream sync of this note will find them already fixed.
+
+sourceRepo: nestled-dev-template

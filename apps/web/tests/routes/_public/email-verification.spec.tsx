@@ -23,7 +23,7 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   }
 })
 
-// Mock the AuthLayout component
+// Mock the AuthLayout component (+ Turnstile helpers the resend page now imports)
 vi.mock('@nestled-template/web', () => ({
   AuthLayout: ({ children, title, subtitle }: any) => (
     <div data-testid="auth-layout">
@@ -32,6 +32,8 @@ vi.mock('@nestled-template/web', () => ({
       {children}
     </div>
   ),
+  TurnstileWidget: () => null,
+  turnstileSiteKey: () => undefined,
 }))
 
 // Mock form theme
