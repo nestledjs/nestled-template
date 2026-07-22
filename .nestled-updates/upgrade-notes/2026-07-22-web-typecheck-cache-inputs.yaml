@@ -1,0 +1,33 @@
+id: 2026-07-22-web-typecheck-cache-inputs
+title: Web Typecheck Cache Inputs
+priority: normal
+area: web
+type: infra
+delivery: code-patch
+
+intent: >
+  Include the React Router toolchain packages in the Nx external dependency hash for
+  the web typecheck target.
+
+why: >
+  The web typecheck target runs React Router type generation before TypeScript. If the
+  target only hashes the TypeScript package version, a React Router package bump can
+  incorrectly reuse a stale cached typecheck result.
+
+affectedPaths:
+  - apps/web/project.json
+
+packageReleases: []
+
+skipIf: []
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm typecheck
+  - pnpm nx run web:build --skip-nx-cache --output-style=stream
+  - pnpm format:check
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Preserve TypeScript and all React Router package names in web:typecheck externalDependencies.
+  - Keep this scoped to the web:typecheck cache key; do not broaden CI to all workspace typecheck targets.
