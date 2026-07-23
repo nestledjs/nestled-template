@@ -3,6 +3,10 @@ import { Prisma, PrismaClient } from '@nestled-template/api/prisma'
 import { CorePagingInput } from './dto/core-paging.input'
 import { PrismaPg } from '@prisma/adapter-pg'
 
+type PrismaClientWithQueryEvents = PrismaClient & {
+  $on(event: 'query', callback: (event: Prisma.QueryEvent) => void): void
+}
+
 function createAdapter() {
   const connectionString = process.env['DATABASE_URL'] || ''
 
@@ -54,17 +58,16 @@ export class ApiCoreDataAccessService
 
   public async onModuleInit(): Promise<void> {
     await this.$connect()
+    const queryEventClient = this as PrismaClientWithQueryEvents
 
     if (process.env['LOG_PRISMA_QUERIES'] == 'true') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(this as any).$on('query', async (e: Prisma.QueryEvent) => {
+      queryEventClient.$on('query', async e => {
         console.log(`QUERY: ${e.query} \n\nPARAMS: ${e.params}\n\n\n`)
       })
     }
 
     if (process.env['COUNT_PRISMA_QUERIES'] == 'true') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(this as any).$on('query', async () => {
+      queryEventClient.$on('query', async () => {
         this.queryCount++
       })
     }
@@ -107,12 +110,13 @@ export class ApiCoreDataAccessService
       andConditions.push(...searchFilters)
     }
 
-    const where = andConditions.length > 0 ? { AND: andConditions } : undefined
+    const whereInput: Record<string, unknown> | undefined =
+      andConditions.length > 0 ? { AND: andConditions } : undefined
 
     return {
       skip,
       take,
-      where: where as unknown as T, // assert type safety for the generic
+      where: whereInput as T | undefined,
       orderBy: { [orderBy]: orderDirection },
     }
   }

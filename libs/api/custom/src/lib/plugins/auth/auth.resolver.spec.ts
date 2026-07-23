@@ -29,6 +29,7 @@ describe('AuthResolver', () => {
       setCookie: jest.fn(),
       clearCookie: jest.fn(),
       getCookieName: jest.fn().mockReturnValue('__session'),
+      decodeToken: jest.fn().mockReturnValue({ sessionId: 'session-1' }),
       register: jest.fn().mockResolvedValue(token),
       registerWithInvitation: jest.fn().mockResolvedValue(token),
       forgotPassword: jest.fn().mockResolvedValue(true),
@@ -52,9 +53,6 @@ describe('AuthResolver', () => {
       exportUserData: jest.fn().mockResolvedValue({ data: '{}' }),
       deleteUserAccount: jest.fn().mockResolvedValue(true),
       transferOrganizationOwnership: jest.fn().mockResolvedValue(true),
-      jwtService: {
-        decode: jest.fn().mockReturnValue({ sessionId: 'session-1' }),
-      },
     } as any
     oauthService = {
       linkOAuthAccount: jest.fn().mockResolvedValue(undefined),
@@ -150,8 +148,8 @@ describe('AuthResolver', () => {
     context.req.headers.authorization = 'Bearer header-token'
     await expect(resolver.logout(context)).resolves.toBe(true)
 
-    expect((authService as any).jwtService.decode).toHaveBeenNthCalledWith(1, 'cookie-token')
-    expect((authService as any).jwtService.decode).toHaveBeenNthCalledWith(2, 'header-token')
+    expect(authService.decodeToken).toHaveBeenNthCalledWith(1, 'cookie-token')
+    expect(authService.decodeToken).toHaveBeenNthCalledWith(2, 'header-token')
     expect(sessionService.invalidateSession).toHaveBeenCalledTimes(2)
     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
   })

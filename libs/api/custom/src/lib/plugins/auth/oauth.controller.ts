@@ -41,19 +41,10 @@ export class OAuthController {
         throw new BadRequestException('No authorization code provided')
       }
 
-      // Exchange code for tokens
-      const googleClient = (this.oauthService as any).googleClient
-      if (!googleClient) {
-        throw new BadRequestException('Google OAuth is not configured')
-      }
-
-      const { tokens } = await googleClient.getToken(code)
-      if (!tokens.id_token) {
-        throw new BadRequestException('No ID token received from Google')
-      }
+      const idToken = await this.oauthService.exchangeGoogleCodeForIdToken(code)
 
       // Verify token and get user profile
-      const profile = await this.oauthService.verifyGoogleToken(tokens.id_token)
+      const profile = await this.oauthService.verifyGoogleToken(idToken)
 
       // Find or create user
       const user = await this.oauthService.findOrCreateUserFromOAuth(profile)
@@ -126,19 +117,9 @@ export class OAuthController {
    */
   @Get('google/authorize')
   async googleAuthorize(@Res() res: Response) {
-    const googleClient = (this.oauthService as any).googleClient
-    if (!googleClient) {
-      throw new BadRequestException('Google OAuth is not configured')
-    }
-
     const apiUrl = this.config.get<string>('apiUrl') || 'http://localhost:3000'
     const redirectUri = `${apiUrl}/api/auth/google/callback`
-
-    const authUrl = googleClient.generateAuthUrl({
-      access_type: 'offline',
-      scope: ['openid', 'email', 'profile'],
-      redirect_uri: redirectUri,
-    })
+    const authUrl = this.oauthService.generateGoogleAuthorizationUrl(redirectUri)
 
     return res.redirect(authUrl)
   }
@@ -149,8 +130,7 @@ export class OAuthController {
    */
   @Get('github/authorize')
   async githubAuthorize(@Res() res: Response) {
-    const githubApp = (this.oauthService as any).githubApp
-    if (!githubApp) {
+    if (!this.oauthService.isGitHubConfigured()) {
       throw new BadRequestException('GitHub OAuth is not configured')
     }
 

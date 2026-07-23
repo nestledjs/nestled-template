@@ -1,7 +1,5 @@
 import { defineConfig, mergeConfig } from 'vitest/config'
-//@ts-ignore
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
-//@ts-ignore
 import { playwright } from '@vitest/browser-playwright'
 import viteConfig from './vite.config'
 import path from 'node:path'

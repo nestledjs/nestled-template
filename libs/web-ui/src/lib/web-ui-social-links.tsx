@@ -6,6 +6,14 @@ interface SocialLinksProps {
   readonly color?: string
 }
 
+type SocialLinkMember = Partial<User> & {
+  facebook?: string | null
+  twitter?: string | null
+  instagram?: string | null
+  linkedin?: string | null
+  youtube?: string | null
+}
+
 const linkedinCompanyProfile: Profile = {
   name: 'linkedin-company',
   matches: [
@@ -54,7 +62,7 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
     }
   }
 
-  const member = props?.member as any
+  const member = props.member as SocialLinkMember
 
   const facebookLink = member?.facebook ? generateLink(member.facebook, 'facebook') : null
   const twitterLink = member?.twitter ? generateLink(member.twitter, 'twitter') : null

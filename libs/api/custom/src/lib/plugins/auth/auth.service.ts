@@ -59,6 +59,18 @@ const authUserRelations = {
   images: true,
 } as const
 
+type AuthTokenPayload = {
+  userId: string
+  isEmulating?: boolean
+  originalAdminId?: string
+  sessionId?: string
+}
+
+type EmulationTokenPayload = AuthTokenPayload & {
+  isEmulating: true
+  originalAdminId: string
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -1013,9 +1025,9 @@ export class AuthService {
 
   async endEmulation(token: string): Promise<UserToken> {
     // Decode the current token to get emulation data
-    const decoded = this.jwtService.decode(token) as any
+    const decoded = this.decodeToken<EmulationTokenPayload>(token)
 
-    if (!decoded?.isEmulating || !decoded?.originalAdminId) {
+    if (!decoded?.isEmulating || !decoded?.originalAdminId || !decoded?.userId) {
       throw new BadRequestException('Not currently emulating a user')
     }
 
@@ -1198,7 +1210,7 @@ export class AuthService {
     // Remember Me: 30 days, otherwise: 7 days
     const expiresIn = rememberMe ? '30d' : '7d'
 
-    const payload: any = { userId: user?.id }
+    const payload: AuthTokenPayload = { userId: user.id }
 
     // If emulating, add emulation data to JWT
     Logger.log(`🔍 signUser called with emulatingAdminId: ${emulatingAdminId}`)
@@ -1271,9 +1283,12 @@ export class AuthService {
     return this.config.getOrThrow<{ name: string }>('api.cookie').name
   }
 
-  public decodeToken(token: string): any {
+  public decodeToken<TPayload extends object = Record<string, unknown>>(
+    token: string,
+  ): TPayload | null {
     try {
-      return this.jwtService.decode(token)
+      const decoded = this.jwtService.decode(token)
+      return decoded && typeof decoded === 'object' ? (decoded as TPayload) : null
     } catch (error) {
       Logger.error('Failed to decode JWT token:', error)
       return null

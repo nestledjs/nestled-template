@@ -121,6 +121,56 @@ describe('OAuthService', () => {
       )
     })
   })
+  describe('OAuth helper methods', () => {
+    it('generates a Google authorization URL with the callback redirect URI', () => {
+      const generateAuthUrl = jest.fn().mockReturnValue('https://accounts.google.com/oauth')
+      ;(service as any).googleClient = { generateAuthUrl }
+
+      const result = service.generateGoogleAuthorizationUrl(
+        'https://api.example.com/api/auth/google/callback',
+      )
+
+      expect(result).toBe('https://accounts.google.com/oauth')
+      expect(generateAuthUrl).toHaveBeenCalledWith({
+        access_type: 'offline',
+        scope: ['openid', 'email', 'profile'],
+        redirect_uri: 'https://api.example.com/api/auth/google/callback',
+      })
+    })
+
+    it('rejects Google authorization URLs when Google OAuth is not configured', () => {
+      ;(service as any).googleClient = null
+
+      expect(() =>
+        service.generateGoogleAuthorizationUrl('https://api.example.com/callback'),
+      ).toThrow(BadRequestException)
+    })
+
+    it('exchanges a Google code for an ID token', async () => {
+      const getToken = jest.fn().mockResolvedValue({ tokens: { id_token: 'google-id-token' } })
+      ;(service as any).googleClient = { getToken }
+
+      await expect(service.exchangeGoogleCodeForIdToken('oauth-code')).resolves.toBe(
+        'google-id-token',
+      )
+      expect(getToken).toHaveBeenCalledWith('oauth-code')
+    })
+
+    it('rejects Google code exchange when no ID token is returned', async () => {
+      ;(service as any).googleClient = { getToken: jest.fn().mockResolvedValue({ tokens: {} }) }
+
+      await expect(service.exchangeGoogleCodeForIdToken('oauth-code')).rejects.toThrow(
+        'No ID token received from Google',
+      )
+    })
+
+    it('reports whether GitHub OAuth is configured', () => {
+      ;(service as any).githubApp = null
+      expect(service.isGitHubConfigured()).toBe(false)
+      ;(service as any).githubApp = { createToken: jest.fn() }
+      expect(service.isGitHubConfigured()).toBe(true)
+    })
+  })
   describe('Link OAuth Account', () => {
     it('should link Google account to existing user', async () => {
       const userId = 'user-123'

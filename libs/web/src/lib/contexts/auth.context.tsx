@@ -5,14 +5,24 @@ import {
   SwitchActiveOrganization,
   type MyOrganizationsWithMembersQuery,
   type SwitchActiveOrganizationMutation,
-  User,
-  Organization,
-  OrganizationMember,
+  type User,
 } from '@nestled-template/shared/sdk'
+
+type OrganizationContextItem = MyOrganizationsWithMembersQuery['myOrganizations'][number]
+type OrganizationMemberContextItem = NonNullable<OrganizationContextItem['members']>[number]
+type PermissionContextItem = NonNullable<
+  NonNullable<OrganizationMemberContextItem['role']>['permissions']
+>[number]
 
 export interface AuthUser extends User {
   activeOrganizationId?: string | null
-  activeOrganization?: Organization | null
+  activeOrganization?: OrganizationContextItem | null
+}
+
+type EmulatedAuthUser = AuthUser & {
+  isEmulating?: boolean | null
+  originalUserId?: string | null
+  originalUser?: AuthUser | null
 }
 
 export interface AuthContextType {
@@ -22,9 +32,9 @@ export interface AuthContextType {
   isLoading: boolean
 
   // Organization state
-  organizations: Organization[]
-  activeOrganization: Organization | null
-  activeOrganizationMember: OrganizationMember | null
+  organizations: OrganizationContextItem[]
+  activeOrganization: OrganizationContextItem | null
+  activeOrganizationMember: OrganizationMemberContextItem | null
 
   // Emulation state
   isEmulating: boolean
@@ -64,14 +74,12 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
   const organizations = orgsData?.myOrganizations || []
   const activeOrganization = user
-    ? organizations.find(org => org.id === (user as any)?.activeOrganizationId) ||
-      organizations[0] ||
-      null
+    ? organizations.find(org => org.id === user.activeOrganizationId) || organizations[0] || null
     : null
 
   // Find the current user's membership in the active organization
   const activeOrganizationMember =
-    (activeOrganization as any)?.members?.find((member: any) => member.userId === user?.id) || null
+    activeOrganization?.members?.find(member => member.userId === user?.id) || null
 
   const isAuthenticated = !!user?.id
   const isLoading = orgsLoading
@@ -122,10 +130,10 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   useEffect(() => {
     if (user) {
       // Check if user object has emulation flags
-      const userAny = user as any
-      if (userAny.isEmulating && userAny.originalUserId) {
+      const emulatedUser = user as EmulatedAuthUser
+      if (emulatedUser.isEmulating && emulatedUser.originalUserId) {
         setIsEmulating(true)
-        setOriginalUser(userAny.originalUser || null)
+        setOriginalUser(emulatedUser.originalUser || null)
       }
     }
   }, [user])
@@ -134,7 +142,7 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   useEffect(() => {
     if (globalThis.window === undefined) return
 
-    const orgId = (user as any)?.activeOrganizationId || activeOrganization?.id
+    const orgId = user?.activeOrganizationId || activeOrganization?.id
     if (orgId) {
       localStorage.setItem('activeOrganizationId', orgId)
     } else {
@@ -147,8 +155,8 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
       user,
       isAuthenticated,
       isLoading,
-      organizations: organizations as any,
-      activeOrganization: activeOrganization as any,
+      organizations,
+      activeOrganization,
       activeOrganizationMember,
       isEmulating,
       originalUser,
@@ -187,9 +195,9 @@ export function useAuth() {
 }
 
 // Helper to check if permissions array contains super admin (all:manage)
-function hasSuperAdminPermission(permissions: any[] | undefined): boolean {
+function hasSuperAdminPermission(permissions: PermissionContextItem[] | undefined): boolean {
   if (!permissions || !Array.isArray(permissions)) return false
-  return permissions.some((p: any) => p.subject === 'all' && p.action === 'manage')
+  return permissions.some(p => p.subject === 'all' && p.action === 'manage')
 }
 
 // Hook to check if user has a specific permission
@@ -209,7 +217,7 @@ export function useHasPermission(permission: string): boolean {
   const [subject, action] = permission.split(':')
 
   return activeOrganizationMember.role.permissions.some(
-    (p: any) => p.subject === subject && p.action === action,
+    p => p.subject === subject && p.action === action,
   )
 }
 
@@ -229,7 +237,7 @@ export function useHasAnyPermission(permissions: string[]): boolean {
   return permissions.some(permission => {
     const [subject, action] = permission.split(':')
     return activeOrganizationMember.role?.permissions?.some(
-      (p: any) => p.subject === subject && p.action === action,
+      p => p.subject === subject && p.action === action,
     )
   })
 }
@@ -250,7 +258,7 @@ export function useHasAllPermissions(permissions: string[]): boolean {
   return permissions.every(permission => {
     const [subject, action] = permission.split(':')
     return activeOrganizationMember.role?.permissions?.some(
-      (p: any) => p.subject === subject && p.action === action,
+      p => p.subject === subject && p.action === action,
     )
   })
 }

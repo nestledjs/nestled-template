@@ -6,9 +6,14 @@ interface RequireAuthProps {
   readonly redirectTo?: string
 }
 
+type RequireAuthLoaderData = {
+  meQueryRef?: unknown
+  user?: unknown
+}
+
 export function RequireAuth({ children, redirectTo = '/login' }: RequireAuthProps) {
   const location = useLocation()
-  const loaderData = useLoaderData() as any
+  const loaderData = useLoaderData() as RequireAuthLoaderData | null
 
   // Check if we have user data from the loader (meQueryRef or similar)
   const isAuthenticated = !!loaderData?.meQueryRef || !!loaderData?.user

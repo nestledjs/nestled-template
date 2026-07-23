@@ -18,7 +18,7 @@ export function EmulationBanner() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   // Check emulation status from user object (set server-side)
-  const isEmulating = !!(user as any)?.isEmulating
+  const isEmulating = !!user?.isEmulating
 
   const [endEmulation, { loading }] = useMutation<EndEmulationMutation>(EndEmulation, {
     onCompleted: () => {

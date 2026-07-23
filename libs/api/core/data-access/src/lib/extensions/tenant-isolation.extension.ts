@@ -137,7 +137,10 @@ export function createTenantClient<T extends object>(client: T, organizationId?:
 
   // Check if client has $extends method (Prisma client)
   if ('$extends' in client && typeof client.$extends === 'function') {
-    return (client as any).$extends(createTenantIsolationExtension(organizationId))
+    const extensibleClient = client as T & {
+      $extends(extension: ReturnType<typeof createTenantIsolationExtension>): T
+    }
+    return extensibleClient.$extends(createTenantIsolationExtension(organizationId))
   }
 
   return client

@@ -1,13 +1,32 @@
 import type { ChildProcess } from 'node:child_process'
 
+type E2EGlobalState = typeof globalThis & {
+  __API_PROCESS__?: ChildProcess | null
+  __WE_STARTED_API__?: boolean
+  __TEARDOWN_MESSAGE__?: string
+}
+
+type ActiveHandle = {
+  constructor?: {
+    name?: string
+  }
+}
+
+type ProcessWithDiagnostics = NodeJS.Process & {
+  _getActiveHandles?: () => ActiveHandle[]
+  _getActiveRequests?: () => unknown[]
+}
+
 module.exports = async function globalTeardown() {
+  const e2eGlobal = globalThis as E2EGlobalState
+
   // Put clean up logic here (e.g. stopping services, docker-compose, etc.).
   // Hint: `globalThis` is shared between setup and teardown.
-  console.log(globalThis.__TEARDOWN_MESSAGE__ || '\n✨ Tearing down E2E tests...\n')
+  console.log(e2eGlobal.__TEARDOWN_MESSAGE__ || '\n✨ Tearing down E2E tests...\n')
 
   // If we started the API server, stop it
-  const weStartedApi = (globalThis as any).__WE_STARTED_API__
-  const apiProcess = (globalThis as any).__API_PROCESS__ as ChildProcess | null
+  const weStartedApi = e2eGlobal.__WE_STARTED_API__
+  const apiProcess = e2eGlobal.__API_PROCESS__
 
   if (weStartedApi && apiProcess?.pid) {
     console.log('🛑 Stopping API server aggressively...')
@@ -50,11 +69,12 @@ module.exports = async function globalTeardown() {
   // Log active handles for debugging (only in CI or if DEBUG env var is set)
   if (process.env.CI || process.env.DEBUG_HANDLES) {
     console.log('\n🔍 Active handles:')
-    const handles = (process as any)._getActiveHandles?.() || []
-    const requests = (process as any)._getActiveRequests?.() || []
+    const diagnosticProcess = process as ProcessWithDiagnostics
+    const handles = diagnosticProcess._getActiveHandles?.() || []
+    const requests = diagnosticProcess._getActiveRequests?.() || []
     console.log(`   Handles: ${handles.length}, Requests: ${requests.length}`)
     if (handles.length > 0) {
-      handles.forEach((h: any, i: number) => {
+      handles.forEach((h, i) => {
         console.log(`   Handle ${i}: ${h.constructor?.name || 'unknown'}`)
       })
     }

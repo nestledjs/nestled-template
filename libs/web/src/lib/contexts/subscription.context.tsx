@@ -1,17 +1,15 @@
 import React, { createContext, useContext, useMemo, ReactNode } from 'react'
 import { useQuery } from '@apollo/client/react'
-import {
-  CurrentSubscription,
-  type CurrentSubscriptionQuery,
-  Subscription,
-  Plan,
-} from '@nestled-template/shared/sdk'
+import { CurrentSubscription, type CurrentSubscriptionQuery } from '@nestled-template/shared/sdk'
 import { useGlobalCtx } from './global.context'
+
+type CurrentSubscriptionItem = NonNullable<CurrentSubscriptionQuery['currentSubscription']>
+type CurrentSubscriptionPlan = NonNullable<CurrentSubscriptionItem['plan']>
 
 export interface SubscriptionContextType {
   // Subscription state
-  subscription: Subscription | null
-  plan: Plan | null
+  subscription: CurrentSubscriptionItem | null
+  plan: CurrentSubscriptionPlan | null
   isLoading: boolean
   error: Error | null
 
@@ -117,8 +115,8 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
   const value = useMemo<SubscriptionContextType>(
     () => ({
-      subscription: subscription as any,
-      plan: plan as any,
+      subscription,
+      plan,
       isLoading: loading,
       error: error || null,
       hasActiveSubscription,

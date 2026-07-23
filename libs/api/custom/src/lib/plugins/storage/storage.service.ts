@@ -32,7 +32,7 @@ export class StorageService {
     options?: {
       folder?: string
       organizationId?: string
-      metadata?: Record<string, any>
+      metadata?: Record<string, unknown>
       isPublic?: boolean
     },
   ): Promise<StoredFile> {
@@ -68,7 +68,7 @@ export class StorageService {
         publicUrl: uploadResult.publicUrl,
         width: uploadResult.width,
         height: uploadResult.height,
-        metadata: uploadResult.metadata as any,
+        metadata: uploadResult.metadata,
         userId,
         organizationId: options?.organizationId,
       },

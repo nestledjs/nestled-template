@@ -2,6 +2,27 @@
  * Detects if an error is caused by Vite development cache issues
  * This typically happens when the browser cache gets out of sync with the Vite dev server
  */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function stringProperty(record: Record<string, unknown>, key: string): string {
+  const value = record[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function graphQLErrorHasAuthCode(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false
+  }
+
+  const msg = stringProperty(error, 'message')
+  const extensions = isRecord(error.extensions) ? error.extensions : {}
+  const code = stringProperty(extensions, 'code')
+
+  return msg.includes('Unauthorized') || msg.includes('UNAUTHORIZED') || code === 'UNAUTHENTICATED'
+}
+
 export function isViteCacheError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false
@@ -56,7 +77,7 @@ export function isNetworkError(error: unknown): boolean {
   const errorObj = error as Error
   const errorMessage = errorObj.message || ''
   const errorName = errorObj.name || ''
-  const anyErr = error as any
+  const errorRecord = isRecord(error) ? error : {}
 
   // Exclude Vite cache errors from network errors
   if (isViteCacheError(error)) {
@@ -65,18 +86,12 @@ export function isNetworkError(error: unknown): boolean {
 
   // If this looks like an ApolloError, prefer structured fields when available
   // Treat explicit Unauthorized/UNAUTHENTICATED as NOT network errors
-  if (anyErr && (anyErr.graphQLErrors || anyErr.networkError)) {
-    if (anyErr.networkError) {
+  if (errorRecord.graphQLErrors || errorRecord.networkError) {
+    if (errorRecord.networkError) {
       return true
     }
-    if (Array.isArray(anyErr.graphQLErrors) && anyErr.graphQLErrors.length > 0) {
-      const hasAuthError = anyErr.graphQLErrors.some((g: any) => {
-        const msg = (g?.message || '').toString()
-        const code = g?.extensions?.code || ''
-        return (
-          msg.includes('Unauthorized') || msg.includes('UNAUTHORIZED') || code === 'UNAUTHENTICATED'
-        )
-      })
+    if (Array.isArray(errorRecord.graphQLErrors) && errorRecord.graphQLErrors.length > 0) {
+      const hasAuthError = errorRecord.graphQLErrors.some(graphQLErrorHasAuthCode)
       if (hasAuthError) return false
     }
   }

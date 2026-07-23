@@ -14,6 +14,7 @@ import type { RenderToPipeableStreamOptions } from 'react-dom/server'
 import { renderToPipeableStream } from 'react-dom/server'
 import { makeClient } from '@nestled-template/shared/apollo'
 import { ApolloProvider } from '@apollo/client/react'
+import { ApolloSearchProvider } from '@nestledjs/forms/apollo'
 import { disableFragmentWarnings } from 'graphql-tag'
 
 disableFragmentWarnings()
@@ -43,7 +44,9 @@ export default function handleRequest(
 
     const { pipe, abort } = renderToPipeableStream(
       <ApolloProvider client={client}>
-        <ServerRouter context={routerContext} url={request.url} />
+        <ApolloSearchProvider>
+          <ServerRouter context={routerContext} url={request.url} />
+        </ApolloSearchProvider>
       </ApolloProvider>,
       {
         [readyOption]() {

@@ -235,17 +235,27 @@ bootstrap().catch(error => {
   process.exit(1)
 })
 
+type GlobalPrismaHandle = typeof globalThis & {
+  prisma?: {
+    $disconnect?: () => Promise<void> | void
+  }
+}
+
+async function disconnectGlobalPrisma(): Promise<void> {
+  await (globalThis as GlobalPrismaHandle).prisma?.$disconnect?.()
+}
+
 // Graceful shutdown for local dev restarts
 process.once('SIGINT', async () => {
   try {
-    await (globalThis as any).prisma?.$disconnect?.()
+    await disconnectGlobalPrisma()
   } finally {
     process.exit(0)
   }
 })
 process.once('SIGTERM', async () => {
   try {
-    await (globalThis as any).prisma?.$disconnect?.()
+    await disconnectGlobalPrisma()
   } finally {
     process.exit(0)
   }

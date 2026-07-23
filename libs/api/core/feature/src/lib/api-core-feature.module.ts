@@ -15,6 +15,12 @@ interface ConnectionParameters {
   headers?: Record<string, string>
 }
 
+type WsContextExtra = {
+  request?: {
+    rawHeaders?: string[]
+  }
+}
+
 function extractTokenFromWsContext(extra: unknown): string {
   if (
     extra &&
@@ -24,7 +30,7 @@ function extractTokenFromWsContext(extra: unknown): string {
     typeof extra.request === 'object' &&
     'rawHeaders' in extra.request
   ) {
-    const rawHeaders = (extra as any).request.rawHeaders as string[] | undefined
+    const rawHeaders = (extra as WsContextExtra).request?.rawHeaders
     const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
     return rawHeaders ? extractTokenFromRawHeaders(rawHeaders, cookieName) : ''
   }

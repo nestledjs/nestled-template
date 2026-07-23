@@ -711,6 +711,7 @@ describe('BillingSettings Component', () => {
 
     it('should show loading state during portal creation', async () => {
       const user = userEvent.setup()
+      let resolvePortalSession!: (value: { data: { createPortalSession: null } }) => void
 
       vi.mocked(useSubscription).mockReturnValue({
         subscription: { id: 'sub-123' },
@@ -723,8 +724,10 @@ describe('BillingSettings Component', () => {
         trialEndsAt: null,
       } as any)
 
-      mockCreatePortalSession.mockImplementation(
-        () => new Promise(resolve => setTimeout(resolve, 1000)),
+      mockCreatePortalSession.mockReturnValue(
+        new Promise(resolve => {
+          resolvePortalSession = resolve
+        }),
       )
 
       renderWithRouter()
@@ -733,6 +736,11 @@ describe('BillingSettings Component', () => {
       await user.click(portalButton)
 
       expect(screen.getByRole('button', { name: 'Loading...' })).toBeInTheDocument()
+
+      resolvePortalSession({ data: { createPortalSession: null } })
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Open Customer Portal' })).toBeInTheDocument()
+      })
     })
   })
 

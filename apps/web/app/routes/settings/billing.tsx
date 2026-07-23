@@ -57,9 +57,10 @@ export default function BillingSettings() {
   const handleManageBilling = async () => {
     setPortalLoading(true)
     try {
-      const { data } = await createPortalSession()
-      if (data?.createPortalSession) {
-        globalThis.location.href = data.createPortalSession
+      const result = await createPortalSession()
+      const portalUrl = result?.data?.createPortalSession
+      if (portalUrl) {
+        globalThis.location.href = portalUrl
       }
     } catch (error) {
       console.error('Failed to create portal session:', error)

@@ -1,0 +1,68 @@
+id: 2026-07-23-typescript-safety-cleanup
+title: Remove unsafe source casts from template TypeScript
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Replace the remaining source-level unsafe TypeScript casts caught by nestled-doctor
+  with small typed globals, payload types, dynamic-response guards, and query-payload
+  context types.
+
+why: >
+  Downstream repositories have already needed a broad TypeScript safety cleanup. The
+  template should carry the same baseline so new projects do not inherit local
+  `as any`, double-cast, or ignore-comment patterns in auth, OAuth, billing sync,
+  Apollo, data-browser, shared error handling, and web context code.
+
+affectedPaths:
+  - apps/api/src/main.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/global-teardown.ts
+  - apps/api-e2e/src/support/test-setup.ts
+  - libs/api/core/data-access/src/lib/api-core-data-access.service.ts
+  - libs/api/core/data-access/src/lib/extensions/tenant-isolation.extension.ts
+  - libs/api/core/feature/src/lib/api-core-feature.module.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+  - libs/api/custom/src/lib/plugins/billing/sync.service.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-server.factory.ts
+  - libs/api/custom/src/lib/plugins/storage/storage.service.ts
+  - libs/api/prisma/src/lib/seed/seed.ts
+  - libs/data-browser/src/lib/hooks/useRelationData.ts
+  - libs/data-browser/src/lib/pages/AdminDataCreatePage.tsx
+  - libs/data-browser/src/lib/pages/AdminDataEditPage.tsx
+  - libs/data-browser/src/lib/pages/AdminDataListPage.tsx
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/cache-config.ts
+  - libs/shared/utils/src/lib/error-detection.ts
+  - libs/shared/utils/src/lib/forms.ts
+  - libs/shared-components/src/lib/error-boundary-ui.tsx
+  - libs/web/src/lib/components/emulation-banner.tsx
+  - libs/web/src/lib/components/require-auth.tsx
+  - libs/web/src/lib/contexts/auth.context.tsx
+  - libs/web/src/lib/contexts/subscription.context.tsx
+  - libs/web-ui/src/lib/web-ui-social-links.tsx
+  - libs/web-ui/vitest.config.mts
+
+packageReleases: []
+
+skipIf:
+  - The downstream project already has no nestled-doctor TypeScript-safety warnings in non-generated source.
+
+verification:
+  - pnpm typecheck
+  - pnpm nx run api-custom:test --skip-nx-cache --output-style=stream
+  - pnpm nx run data-browser:test --skip-nx-cache --output-style=stream
+  - pnpm nx run web:test --skip-nx-cache --output-style=stream
+  - pnpm template:validate-upgrade-notes
+  - pnpm format:check
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Keep dynamic GraphQL and Apollo response reads behind Record<string, unknown> guards.
+  - Prefer query result payload types for React contexts instead of forcing partial query data into full generated model types.
+  - Do not replace the old casts with broader suppressions; the goal is to keep the doctor TypeScript-safety class quiet in source.

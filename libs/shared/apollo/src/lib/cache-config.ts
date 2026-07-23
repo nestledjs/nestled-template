@@ -1,11 +1,13 @@
 import { InMemoryCache } from '@apollo/client'
 
+type CacheOptions = ConstructorParameters<typeof InMemoryCache>[0]
+
 /**
  * Apollo cache configuration
  * This configuration can be customized based on your needs
  */
 
-const cacheOptions = {
+const cacheOptions: CacheOptions = {
   typePolicies: {
     Query: {
       fields: {
@@ -104,11 +106,11 @@ const cacheOptions = {
  * Use this function instead of the singleton to ensure fresh cache for each client
  */
 export function createCache() {
-  return new InMemoryCache(cacheOptions as any)
+  return new InMemoryCache(cacheOptions)
 }
 
 /**
  * @deprecated Use createCache() instead to avoid cache sharing across SSR requests
  * This is kept for backwards compatibility but should not be used on the server
  */
-export const cache = new InMemoryCache(cacheOptions as any)
+export const cache = new InMemoryCache(cacheOptions)

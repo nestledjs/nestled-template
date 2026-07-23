@@ -47,6 +47,15 @@ import {
 import { ConfigService } from '@nestjs/config'
 import { normalizeEmail } from './auth.helper'
 
+type EmulatedUser = User & {
+  isEmulating?: boolean | null
+  originalAdminId?: string | null
+}
+
+type SessionTokenPayload = {
+  sessionId?: string | null
+}
+
 @Resolver(() => UserToken)
 export class AuthResolver {
   constructor(
@@ -63,7 +72,7 @@ export class AuthResolver {
 
     // The user object from @CtxUser() already has emulation fields attached by JwtStrategy
     // Preserve them in the validated user
-    const userWithEmulation = user as any
+    const userWithEmulation = user as EmulatedUser
     if (userWithEmulation.isEmulating && userWithEmulation.originalAdminId) {
       Logger.log(
         `[ME Query] 🎭 Emulation detected: admin ${userWithEmulation.originalAdminId} emulating user ${user.id}`,
@@ -155,8 +164,7 @@ export class AuthResolver {
     }
 
     if (token) {
-      const decoded = (this.service as any).jwtService.decode(token)
-      const sessionId = decoded?.sessionId
+      const sessionId = this.getSessionIdFromToken(token)
       if (sessionId) {
         await this.sessionService.invalidateSession(sessionId)
         Logger.log(`Session ${sessionId} invalidated during logout`)
@@ -287,8 +295,7 @@ export class AuthResolver {
   ): Promise<boolean> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
     const token = context.req.cookies?.[this.service.getCookieName()]
-    const decoded = token ? (this.service as any).jwtService.decode(token) : null
-    const currentSessionId = decoded?.sessionId
+    const currentSessionId = this.getSessionIdFromToken(token)
 
     return this.service.changePassword(user.id, input, sessionInfo, currentSessionId)
   }
@@ -300,7 +307,7 @@ export class AuthResolver {
     @Context() context: NestContextType,
   ): Promise<UserToken> {
     // Check if current session is actually an emulation
-    const userWithEmulation = user as any
+    const userWithEmulation = user as EmulatedUser
     if (!userWithEmulation.isEmulating || !userWithEmulation.originalAdminId) {
       throw new Error('Not currently emulating a user')
     }
@@ -428,8 +435,7 @@ export class AuthResolver {
   ): Promise<UserSessionOutput[]> {
     // Get current session ID from JWT
     const token = context.req.cookies?.[this.service.getCookieName()]
-    const decoded = token ? (this.service as any).jwtService.decode(token) : null
-    const currentSessionId = decoded?.sessionId
+    const currentSessionId = this.getSessionIdFromToken(token)
 
     return this.service.getUserSessions(user.id, currentSessionId)
   }
@@ -451,8 +457,7 @@ export class AuthResolver {
   ): Promise<number> {
     // Get current session ID from JWT to exclude it
     const token = context.req.cookies?.[this.service.getCookieName()]
-    const decoded = token ? (this.service as any).jwtService.decode(token) : null
-    const currentSessionId = decoded?.sessionId
+    const currentSessionId = this.getSessionIdFromToken(token)
 
     return this.service.invalidateAllSessions(user.id, currentSessionId)
   }
@@ -493,5 +498,14 @@ export class AuthResolver {
       input.organizationId,
       input.newOwnerUserId,
     )
+  }
+
+  private getSessionIdFromToken(token?: string): string | undefined {
+    if (!token) {
+      return undefined
+    }
+
+    const decoded = this.service.decodeToken<SessionTokenPayload>(token)
+    return decoded?.sessionId ?? undefined
   }
 }

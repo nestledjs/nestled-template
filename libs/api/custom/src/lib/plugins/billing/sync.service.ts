@@ -1,7 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { StripeService } from '@nestled-template/api/integrations'
+import { SubscriptionStatus } from '@nestled-template/api/prisma'
 import type { Stripe } from 'stripe/cjs/stripe.core'
+
+type StripeSubscriptionWithPeriods = Stripe.Subscription & {
+  current_period_end: number
+  trial_start?: number | null
+  trial_end?: number | null
+  cancel_at?: number | null
+  canceled_at?: number | null
+  cancel_at_period_end: boolean
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -258,26 +268,28 @@ export class SyncService {
       }
 
       // Map status
-      const statusMap: Record<Stripe.Subscription.Status, any> = {
-        active: 'ACTIVE',
-        canceled: 'CANCELED',
-        incomplete: 'INCOMPLETE',
-        incomplete_expired: 'INCOMPLETE_EXPIRED',
-        past_due: 'PAST_DUE',
-        trialing: 'TRIALING',
-        unpaid: 'PAST_DUE',
-        paused: 'PAST_DUE',
+      const statusMap: Record<Stripe.Subscription.Status, SubscriptionStatus> = {
+        active: SubscriptionStatus.ACTIVE,
+        canceled: SubscriptionStatus.CANCELED,
+        incomplete: SubscriptionStatus.INCOMPLETE,
+        incomplete_expired: SubscriptionStatus.INCOMPLETE_EXPIRED,
+        past_due: SubscriptionStatus.PAST_DUE,
+        trialing: SubscriptionStatus.TRIALING,
+        unpaid: SubscriptionStatus.PAST_DUE,
+        paused: SubscriptionStatus.PAST_DUE,
       }
 
-      const status = statusMap[stripeSubscription.status] || 'INCOMPLETE'
+      const status = statusMap[stripeSubscription.status] || SubscriptionStatus.INCOMPLETE
 
       // Extract properties to avoid type confusion
-      const currentPeriodEnd = (stripeSubscription as any).current_period_end
-      const trialStart = (stripeSubscription as any).trial_start
-      const trialEnd = (stripeSubscription as any).trial_end
-      const cancelAt = (stripeSubscription as any).cancel_at
-      const canceledAt = (stripeSubscription as any).canceled_at
-      const cancelAtPeriodEnd = (stripeSubscription as any).cancel_at_period_end
+      const {
+        current_period_end: currentPeriodEnd,
+        trial_start: trialStart,
+        trial_end: trialEnd,
+        cancel_at: cancelAt,
+        canceled_at: canceledAt,
+        cancel_at_period_end: cancelAtPeriodEnd,
+      } = stripeSubscription as StripeSubscriptionWithPeriods
 
       // Update subscription
       await this.prisma.subscription.update({

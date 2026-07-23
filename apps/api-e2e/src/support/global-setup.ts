@@ -2,6 +2,15 @@ import { waitForPortOpen } from '@nx/node/utils'
 import { execSync, spawn, type ChildProcess } from 'node:child_process'
 import { createConnection } from 'node:net'
 
+type E2EGlobalState = typeof globalThis & {
+  __API_PROCESS__?: ChildProcess | null
+  __WE_STARTED_API__?: boolean
+  __SKIP_E2E_TESTS__?: boolean
+  __TEARDOWN_MESSAGE__?: string
+}
+
+const e2eGlobal = globalThis as E2EGlobalState
+
 /**
  * Check if database is accessible
  */
@@ -137,13 +146,13 @@ module.exports = async function globalSetup() {
 
   // Track if we started the API (so teardown knows to stop it)
   let apiProcess: ChildProcess | null = null
-  globalThis.__API_PROCESS__ = null
-  globalThis.__WE_STARTED_API__ = false
+  e2eGlobal.__API_PROCESS__ = null
+  e2eGlobal.__WE_STARTED_API__ = false
 
   if (skipApiCheck) {
     console.log('⏭️  Skipping E2E tests (SKIP_API_CHECK=true)')
-    globalThis.__SKIP_E2E_TESTS__ = true
-    globalThis.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
+    e2eGlobal.__SKIP_E2E_TESTS__ = true
+    e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
     return
   }
 
@@ -196,8 +205,8 @@ module.exports = async function globalSetup() {
   if (apiAlreadyRunning) {
     console.log(`⚠️  API is already running on ${host}:${port}`)
     console.log("   Using existing API server (make sure it's using the test database!)")
-    globalThis.__WE_STARTED_API__ = false
-    globalThis.__SKIP_E2E_TESTS__ = false
+    e2eGlobal.__WE_STARTED_API__ = false
+    e2eGlobal.__SKIP_E2E_TESTS__ = false
   } else {
     // Start the API server with the test database
     console.log(`🚀 Starting API server with test database on ${host}:${port}...`)
@@ -206,9 +215,9 @@ module.exports = async function globalSetup() {
       apiProcess = await startApiServer(projectRoot, testDatabaseUrl, port, host)
 
       // Store process reference for teardown
-      globalThis.__API_PROCESS__ = apiProcess
-      globalThis.__WE_STARTED_API__ = true
-      globalThis.__SKIP_E2E_TESTS__ = false
+      e2eGlobal.__API_PROCESS__ = apiProcess
+      e2eGlobal.__WE_STARTED_API__ = true
+      e2eGlobal.__SKIP_E2E_TESTS__ = false
     } catch (error) {
       console.error('❌ Failed to start API server')
       try {
@@ -221,13 +230,13 @@ module.exports = async function globalSetup() {
   }
 
   // Hint: Use `globalThis` to pass variables to global teardown.
-  globalThis.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
+  e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
 
   // Register cleanup on exit to kill API if globalTeardown doesn't run
   // This is a fallback - the API should be automatically killed when test process exits
   // since we're not using detached mode
   process.on('exit', () => {
-    const apiProcess = (globalThis as any).__API_PROCESS__ as ChildProcess | null
+    const apiProcess = e2eGlobal.__API_PROCESS__
     if (apiProcess?.pid && !apiProcess.killed) {
       try {
         apiProcess.kill('SIGKILL')

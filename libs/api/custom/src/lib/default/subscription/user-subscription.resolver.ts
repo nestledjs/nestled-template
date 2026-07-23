@@ -4,8 +4,9 @@ import { GqlAuthGuard, CtxUser } from '@nestled-template/api/utils'
 import { Subscription, User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { StripeService } from '@nestled-template/api/integrations'
-import { UsageService } from '@nestled-template/api/custom'
 import { ConfigService } from '@nestled-template/api/config'
+import { UsageService } from '../../plugins/billing/usage.service'
+import { recordBillingAuditLog } from '../../plugins/billing/audit-log'
 
 /**
  * User Subscription Resolver
@@ -67,7 +68,7 @@ export class UserSubscriptionResolver {
 
     if (!customerId) {
       const customer = await this.stripe.createCustomer({
-        email: organization.emails[0]?.email || user.emails[0]?.email || 'unknown@example.com',
+        email: organization.emails?.[0]?.email ?? user.emails?.[0]?.email ?? 'unknown@example.com',
         name: organization.name,
         metadata: {
           organizationId: organization.id,
@@ -93,6 +94,19 @@ export class UserSubscriptionResolver {
       metadata: {
         organizationId: organization.id,
         planId: plan?.id || '',
+      },
+    })
+
+    await recordBillingAuditLog(this.prisma, {
+      actorUserId: user.id,
+      organizationId: organization.id,
+      entityId: organization.id,
+      entityType: 'Organization',
+      action: 'BILLING_CHECKOUT_SESSION_CREATED',
+      changes: {
+        priceId,
+        planId: plan?.id ?? null,
+        checkoutSessionId: session.id ?? null,
       },
     })
 
@@ -123,6 +137,17 @@ export class UserSubscriptionResolver {
       returnUrl: `${siteUrl}/settings/billing`,
     })
 
+    await recordBillingAuditLog(this.prisma, {
+      actorUserId: user.id,
+      organizationId: user.activeOrganizationId,
+      entityId: subscription.id,
+      entityType: 'Subscription',
+      action: 'BILLING_PORTAL_SESSION_CREATED',
+      changes: {
+        portalSessionId: session.id ?? null,
+      },
+    })
+
     return session.url
   }
 
@@ -147,12 +172,25 @@ export class UserSubscriptionResolver {
     await this.stripe.cancelSubscription(subscription.stripeSubscriptionId, false)
 
     // Update local record
-    return this.prisma.subscription.update({
+    const updatedSubscription = await this.prisma.subscription.update({
       where: { id: subscription.id },
       data: {
         cancelAtPeriodEnd: true,
       },
     })
+
+    await recordBillingAuditLog(this.prisma, {
+      actorUserId: user.id,
+      organizationId: user.activeOrganizationId,
+      entityId: subscription.id,
+      entityType: 'Subscription',
+      action: 'SUBSCRIPTION_CANCEL_AT_PERIOD_END',
+      changes: {
+        stripeSubscriptionId: subscription.stripeSubscriptionId,
+      },
+    })
+
+    return updatedSubscription
   }
 
   /**

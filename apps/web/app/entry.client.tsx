@@ -8,6 +8,7 @@ import { startTransition, StrictMode } from 'react'
 import { hydrateRoot } from 'react-dom/client'
 import { makeClient } from '@nestled-template/shared/apollo'
 import { ApolloProvider } from '@apollo/client/react'
+import { ApolloSearchProvider } from '@nestledjs/forms/apollo'
 import { disableFragmentWarnings } from 'graphql-tag'
 
 disableFragmentWarnings()
@@ -20,7 +21,9 @@ startTransition(() => {
     document,
     <StrictMode>
       <ApolloProvider client={client}>
-        <HydratedRouter />
+        <ApolloSearchProvider>
+          <HydratedRouter />
+        </ApolloSearchProvider>
       </ApolloProvider>
     </StrictMode>,
   )

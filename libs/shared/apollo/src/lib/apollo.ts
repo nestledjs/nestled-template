@@ -1,7 +1,7 @@
 // Crypto polyfill for older Node.js environments (like Railway)
 // Note: Using require() instead of import for synchronous polyfill initialization
 if (globalThis !== undefined && globalThis.crypto === undefined) {
-  let cryptoModule
+  let cryptoModule: typeof import('node:crypto')
   try {
     // Try to load Node.js crypto module
     cryptoModule = require('node:crypto')
@@ -21,11 +21,14 @@ if (globalThis !== undefined && globalThis.crypto === undefined) {
     // First preference: Use webcrypto if available (Node.js 16+)
     if (cryptoModule.webcrypto) {
       console.log('[Apollo] Using Node.js webcrypto for crypto polyfill (Node.js 16+)')
-      globalThis.crypto = cryptoModule.webcrypto
+      Object.defineProperty(globalThis, 'crypto', {
+        value: cryptoModule.webcrypto,
+        configurable: true,
+      })
     } else {
       // Fallback: Create Web Crypto API interface using crypto.randomBytes (Node.js 12+)
       console.log('[Apollo] Using crypto.randomBytes() polyfill for Web Crypto API (Node.js 12-15)')
-      globalThis.crypto = {
+      const cryptoPolyfill = {
         randomUUID: () => {
           // Generate cryptographically secure UUID v4 using Node.js crypto
           const bytes = cryptoModule.randomBytes(16)
@@ -42,19 +45,19 @@ if (globalThis !== undefined && globalThis.crypto === undefined) {
         },
         getRandomValues: <T extends ArrayBufferView>(array: T): T => {
           // Generate cryptographically secure random values using Node.js crypto
-          const byteLength = (array as any).byteLength || (array as any).length || 0
+          const byteLength = array.byteLength
           const bytes = cryptoModule.randomBytes(byteLength)
-          const uint8Array = new Uint8Array(
-            (array as any).buffer || array,
-            (array as any).byteOffset || 0,
-            byteLength,
-          )
+          const uint8Array = new Uint8Array(array.buffer, array.byteOffset, byteLength)
           for (let i = 0; i < uint8Array.length; i++) {
             uint8Array[i] = bytes[i]
           }
           return array
         },
       } as Crypto
+      Object.defineProperty(globalThis, 'crypto', {
+        value: cryptoPolyfill,
+        configurable: true,
+      })
     }
   }
 }
@@ -259,6 +262,10 @@ function isNetworkConnectivityError(networkError: Error): boolean {
   const errorMessage = networkError.message || ''
   const errorName = networkError.name || ''
   const constructorName = networkError.constructor?.name || ''
+  const enrichedError = networkError as Error & {
+    statusCode?: number
+    code?: string
+  }
 
   return (
     errorName === 'NetworkError' ||
@@ -273,8 +280,8 @@ function isNetworkConnectivityError(networkError: Error): boolean {
     errorMessage.includes('ERR_CONNECTION_REFUSED') ||
     errorMessage.includes('net::ERR_') ||
     errorMessage.includes('Redacted for security concerns') ||
-    (networkError as unknown as { statusCode?: number }).statusCode === 0 ||
-    (networkError as unknown as { code?: string }).code === 'NETWORK_ERROR'
+    enrichedError.statusCode === 0 ||
+    enrichedError.code === 'NETWORK_ERROR'
   )
 }
 

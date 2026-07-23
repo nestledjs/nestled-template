@@ -52,6 +52,35 @@ export class OAuthService {
     }
   }
 
+  generateGoogleAuthorizationUrl(redirectUri: string): string {
+    if (!this.googleClient) {
+      throw new BadRequestException('Google OAuth is not configured')
+    }
+
+    return this.googleClient.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['openid', 'email', 'profile'],
+      redirect_uri: redirectUri,
+    })
+  }
+
+  async exchangeGoogleCodeForIdToken(code: string): Promise<string> {
+    if (!this.googleClient) {
+      throw new BadRequestException('Google OAuth is not configured')
+    }
+
+    const { tokens } = await this.googleClient.getToken(code)
+    if (!tokens.id_token) {
+      throw new BadRequestException('No ID token received from Google')
+    }
+
+    return tokens.id_token
+  }
+
+  isGitHubConfigured(): boolean {
+    return this.githubApp !== null
+  }
+
   /**
    * Verify Google OAuth token and return user profile
    */

@@ -1,7 +1,28 @@
 import { Maybe } from 'graphql/jsutils/Maybe'
 import { FormField } from '@nestledjs/forms-core'
 
-function isValidDate(d: any) {
+type SelectOption = {
+  value?: unknown
+}
+
+type RelationItem = {
+  id: string
+  name?: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isSelectOption(value: unknown): value is SelectOption {
+  return isRecord(value) && 'value' in value
+}
+
+function isRelationItem(value: unknown): value is RelationItem {
+  return isRecord(value) && typeof value['id'] === 'string'
+}
+
+function isValidDate(d: unknown): d is Date {
   return d instanceof Date && !Number.isNaN(d.getTime())
 }
 
@@ -11,10 +32,6 @@ function normalizeDateValue(v: unknown): string {
   if (typeof v === 'string') {
     return v.includes('T') ? v.split('T')[0] : v
   }
-  try {
-    const d = new Date(v as any)
-    if (!Number.isNaN(d.getTime())) return d.toISOString().split('T')[0]
-  } catch {}
   return ''
 }
 
@@ -67,11 +84,16 @@ export function cleanFormInput(
         }
         // Return array of values for multiselect fields
         if (multiSelectFields?.includes(k)) {
-          return [k, (v as any)?.map?.((item: any) => ({ id: item?.value }))]
+          return [
+            k,
+            Array.isArray(v)
+              ? v.map(item => ({ id: isSelectOption(item) ? item.value : undefined }))
+              : undefined,
+          ]
         }
         // Return value only for select fields
         if (selectFields?.includes(k)) {
-          return [k, (v as any)?.['value']]
+          return [k, isSelectOption(v) ? v.value : undefined]
         }
         return [k, v]
       }),
@@ -124,31 +146,38 @@ export function cleanDatabaseOutput(
 
         // Return array of values for multiselect fields
         if (multiSelectFields?.includes(k)) {
-          return [k, defaultMultiMap(v as any)]
+          return [k, defaultMultiMap(v)]
         }
         // Return value for single select fields
         if (selectFields?.includes(`${k}Id`)) {
           const field = fields?.find(f => f.key.slice(0, -2) === k)
-          return [field?.key, defaultSingleMap(v as any)]
+          return [field?.key, defaultSingleMap(v)]
         }
         return [k, v]
       }),
   )
 }
 
-function defaultMultiMap(
-  items: { id: string; name?: string }[],
-): { value: string; label: string }[] {
-  return items?.map?.((option: { id: string; name?: string }) => ({
+function defaultMultiMap(items: unknown): { value: string; label: string }[] {
+  if (!Array.isArray(items)) return []
+
+  return items.filter(isRelationItem).map(option => ({
     value: `${option.id}`,
     label: `${option?.name ?? option.id}`,
   }))
 }
 
-export function defaultSingleMap(item: { id: string; name?: string }): {
+export function defaultSingleMap(item: unknown): {
   value: Maybe<string> | undefined
   label: string
 } {
+  if (!isRelationItem(item)) {
+    return {
+      value: undefined,
+      label: '',
+    }
+  }
+
   return {
     value: item.id,
     label: `${item?.name ?? item.id}`,
