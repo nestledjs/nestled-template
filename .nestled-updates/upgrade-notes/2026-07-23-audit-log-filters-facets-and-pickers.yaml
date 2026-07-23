@@ -1,0 +1,76 @@
+id: 2026-07-23-audit-log-filters-facets-and-pickers
+title: Make admin audit-log filters usable — user/org pickers, facet dropdowns, and dark-mode fixes
+priority: normal
+area: admin
+type: feature
+delivery: code-patch
+
+intent: >
+  Overhaul the admin Audit Logs filter UI (apps/web/app/routes/admin/audit-logs) and the API that
+  backs it (adminAuditLogs).
+  (1) The free-text "User ID" and "Organization ID" inputs are replaced with searchable comboboxes
+  that query real users and organizations by name / email / id and store the selected entity's id as
+  the filter value. These use dedicated lightweight picker queries (AdminUserPicker /
+  AdminOrganizationPicker in admin-pickers.graphql) that select only id/name/email, not the full
+  admin records, to avoid overfetching on every keystroke. New shared component:
+  apps/web/app/components/audit-log-entity-filters.tsx.
+  (2) The free-text "Action" and "Entity Type" inputs become <select> dropdowns populated from real
+  values. A dedicated `adminAuditLogFacets` query returns `actions` and `entityTypes` as
+  `SELECT DISTINCT` over the whole AuditLog table (AdminService.getAuditLogFacets); the web UI fetches
+  it once (cache-first) rather than recomputing the DISTINCT scans on every paged adminAuditLogs
+  request. Every existing value is always offered regardless of the active filter.
+  (3) AdminService.getAuditLogs now trims the userId/organizationId filters before the exact-match
+  where clause.
+  (4) Data-browser relation filter (libs/data-browser/.../filters/RelationComponents.tsx) gets the
+  dark-mode text/background variants it was missing, and the audit-log filter labels are brightened
+  for contrast on the default dark theme.
+
+why: >
+  (1) The old inputs matched AuditLog.userId (the ACTOR) exactly, while each row prominently shows
+  entityId (the TARGET). Admins naturally copied the visible entity id into "User ID" and always got
+  zero results. A picker that resolves to a real user/org id removes the guesswork and the
+  exact-string-paste fragility.
+  (2) `action` and `entityType` are intentionally free-form String columns so new audit coverage can
+  be added over time, but that makes them undiscoverable in a text box. A distinct-values facet keeps
+  the dropdown correct as the template (or a downstream project) adds new AuditLog actions without
+  any hardcoded enum to maintain.
+  (4) The data-browser relation dropdown hardcoded `bg-white` with no text color, so in the default
+  dark theme it rendered white-on-white and was unreadable until hover.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.service.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.service.spec.ts
+  - libs/shared/sdk/src/graphql/admin/admin-security-events.graphql
+  - libs/shared/sdk/src/graphql/admin/admin-pickers.graphql
+  - apps/web/app/routes/admin/audit-logs/_index.tsx
+  - apps/web/app/components/audit-log-entity-filters.tsx
+  - apps/web/tests/routes/admin/audit-logs/_index.spec.tsx
+  - libs/data-browser/src/lib/components/filters/RelationComponents.tsx
+
+skipIf:
+  - The downstream project already exposes an adminAuditLogFacets query and uses entity pickers for
+    the user/organization audit-log filters.
+
+verification:
+  - grep -n "getAuditLogFacets" libs/api/custom/src/lib/plugins/admin/admin.service.ts
+  - grep -n "actions" libs/shared/sdk/src/graphql/admin/admin-security-events.graphql
+  - pnpm sdk
+  - pnpm nx test api-custom
+  - pnpm nx test web
+
+agentHints:
+  - "Facets are their own adminAuditLogFacets query/type, deliberately NOT fields on
+    AdminAuditLogsResponse — that split is the whole point (the paged list query must not recompute
+    DISTINCT scans on every page/filter change; the web UI fetches facets once, cache-first).
+    api-schema.graphql is auto-generated on API boot (autoSchemaFile); this change hand-edits it to
+    match so `pnpm sdk` (which reads ./api-schema.graphql, not a live server) regenerates the SDK.
+    After applying, boot the API once, confirm api-schema.graphql is unchanged, then re-run pnpm sdk."
+  - "getAuditLogFacets runs SELECT DISTINCT over the WHOLE table on purpose — it is deliberately
+    independent of the current where clause so the dropdown never hides a value just because the
+    active filter excludes it. Do not fold it into the filtered query."
+  - "The user/org comboboxes filter AuditLog.userId / organizationId (the actor / owning org), which
+    is the actor, not the entityId shown on each row. There is still no entityId filter; that was a
+    considered omission, not a miss. Add one only if a downstream project needs to filter by target."
+  - "audit-log-entity-filters.tsx lives under apps/web/app/components (NOT under routes/) so the
+    nestled-doctor route-registration check does not treat it as an unregistered route."

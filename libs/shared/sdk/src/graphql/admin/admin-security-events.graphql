@@ -50,6 +50,13 @@ query AdminPlatformAuditLogs($filters: AdminAuditLogFiltersInput) {
   }
 }
 
+query AdminPlatformAuditLogFacets {
+  adminAuditLogFacets {
+    actions
+    entityTypes
+  }
+}
+
 query AdminDashboardStats {
   adminDashboardStats {
     totalUsers

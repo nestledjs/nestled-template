@@ -421,6 +421,35 @@ describe('AdminService', () => {
         }),
       )
     })
+    it('should trim the userId and organizationId filters', async () => {
+      mockData.auditLog.findMany.mockResolvedValue([])
+      mockData.auditLog.count.mockResolvedValue(0)
+      await service.getAuditLogs({ userId: '  user-123  ', organizationId: '  org-9  ' })
+      expect(mockData.auditLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'user-123', organizationId: 'org-9' },
+        }),
+      )
+    })
+  })
+  describe('getAuditLogFacets', () => {
+    it('should return distinct action and entityType values over the whole table', async () => {
+      mockData.auditLog.findMany.mockImplementation((args: any) => {
+        if (args?.distinct?.includes('action')) {
+          return Promise.resolve([{ action: 'CREATE' }, { action: 'UPDATE' }])
+        }
+        if (args?.distinct?.includes('entityType')) {
+          return Promise.resolve([{ entityType: 'Organization' }, { entityType: 'User' }])
+        }
+        return Promise.resolve([])
+      })
+      const result = await service.getAuditLogFacets()
+      expect(result.actions).toEqual(['CREATE', 'UPDATE'])
+      expect(result.entityTypes).toEqual(['Organization', 'User'])
+      expect(mockData.auditLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ distinct: ['action'], orderBy: { action: 'asc' } }),
+      )
+    })
   })
   describe('getDashboardStats', () => {
     it('should return platform-wide dashboard statistics', async () => {

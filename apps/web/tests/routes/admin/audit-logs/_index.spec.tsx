@@ -73,6 +73,12 @@ describe('Admin Audit Logs Page', () => {
       ],
       total: 2,
     },
+    // Facet dropdown values are served by a separate query; the shared useQuery
+    // mock returns this object for that call too.
+    adminAuditLogFacets: {
+      actions: ['create', 'update'],
+      entityTypes: ['User', 'Organization'],
+    },
   }
 
   const renderAuditLogsPage = () => {
@@ -96,8 +102,9 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      expect(screen.getByText('create')).toBeInTheDocument()
-      expect(screen.getByText('update')).toBeInTheDocument()
+      // Action text appears both in the row badge and the facet <select> options.
+      expect(screen.getAllByText('create').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('update').length).toBeGreaterThan(0)
     })
 
     it('should display entity types', () => {
@@ -109,8 +116,9 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      expect(screen.getByText('User')).toBeInTheDocument()
-      expect(screen.getByText('Organization')).toBeInTheDocument()
+      // Entity type appears both in the row and the facet <select> options.
+      expect(screen.getAllByText('User').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Organization').length).toBeGreaterThan(0)
     })
 
     it('should display entity IDs', () => {
@@ -182,7 +190,7 @@ describe('Admin Audit Logs Page', () => {
   })
 
   describe('Search Filters', () => {
-    it('should render action filter input', () => {
+    it('should render action facet dropdown with real values', () => {
       mockUseQuery.mockReturnValue({
         data: mockAuditLogsData,
         loading: false,
@@ -191,10 +199,14 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      expect(screen.getByPlaceholderText(/Search by action/)).toBeInTheDocument()
+      const actionSelect = screen.getByLabelText('Action')
+      expect(actionSelect).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'All actions' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'create' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'update' })).toBeInTheDocument()
     })
 
-    it('should render entity type filter input', () => {
+    it('should render entity type facet dropdown with real values', () => {
       mockUseQuery.mockReturnValue({
         data: mockAuditLogsData,
         loading: false,
@@ -203,10 +215,12 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      expect(screen.getByPlaceholderText(/Search by entity type/)).toBeInTheDocument()
+      const entityTypeSelect = screen.getByLabelText('Entity Type')
+      expect(entityTypeSelect).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'All entity types' })).toBeInTheDocument()
     })
 
-    it('should render user ID filter input', () => {
+    it('should render user filter combobox', () => {
       mockUseQuery.mockReturnValue({
         data: mockAuditLogsData,
         loading: false,
@@ -215,10 +229,10 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      expect(screen.getByPlaceholderText('Search by user ID...')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('Search users by name, email, or ID…')).toBeInTheDocument()
     })
 
-    it('should render organization ID filter input', () => {
+    it('should render organization filter combobox', () => {
       mockUseQuery.mockReturnValue({
         data: mockAuditLogsData,
         loading: false,
@@ -227,10 +241,10 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      expect(screen.getByPlaceholderText(/Search by organization ID/)).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('Search organizations by name or ID…')).toBeInTheDocument()
     })
 
-    it('should update action filter on input', async () => {
+    it('should update action filter on selection', async () => {
       mockUseQuery.mockReturnValue({
         data: mockAuditLogsData,
         loading: false,
@@ -239,13 +253,13 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      const actionInput = screen.getByPlaceholderText(/Search by action/)
-      await user.type(actionInput, 'create')
+      const actionSelect = screen.getByLabelText('Action')
+      await user.selectOptions(actionSelect, 'create')
 
-      expect(actionInput).toHaveValue('create')
+      expect(actionSelect).toHaveValue('create')
     })
 
-    it('should update entity type filter on input', async () => {
+    it('should update entity type filter on selection', async () => {
       mockUseQuery.mockReturnValue({
         data: mockAuditLogsData,
         loading: false,
@@ -254,10 +268,10 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      const entityTypeInput = screen.getByPlaceholderText(/Search by entity type/)
-      await user.type(entityTypeInput, 'User')
+      const entityTypeSelect = screen.getByLabelText('Entity Type')
+      await user.selectOptions(entityTypeSelect, 'User')
 
-      expect(entityTypeInput).toHaveValue('User')
+      expect(entityTypeSelect).toHaveValue('User')
     })
   })
 
@@ -297,8 +311,8 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      const actionInput = screen.getByPlaceholderText(/Search by action/)
-      await user.type(actionInput, 'create')
+      const actionSelect = screen.getByLabelText('Action')
+      await user.selectOptions(actionSelect, 'create')
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /Clear Filters/ })).toBeInTheDocument()
@@ -326,13 +340,13 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      const actionInput = screen.getByPlaceholderText(/Search by action/)
-      await user.type(actionInput, 'create')
+      const actionSelect = screen.getByLabelText('Action')
+      await user.selectOptions(actionSelect, 'create')
 
       const clearButton = await screen.findByRole('button', { name: /Clear Filters/ })
       await user.click(clearButton)
 
-      expect(actionInput).toHaveValue('')
+      expect(actionSelect).toHaveValue('')
     })
   })
 
@@ -537,6 +551,10 @@ describe('Admin Audit Logs Page', () => {
             logs: [],
             total: 0,
           },
+          adminAuditLogFacets: {
+            actions: ['create'],
+            entityTypes: ['User'],
+          },
         },
         loading: false,
         error: null,
@@ -544,8 +562,8 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      const actionInput = screen.getByPlaceholderText(/Search by action/)
-      await user.type(actionInput, 'nonexistent')
+      const actionSelect = screen.getByLabelText('Action')
+      await user.selectOptions(actionSelect, 'create')
 
       await waitFor(() => {
         expect(screen.getByText('No audit logs found matching your filters')).toBeInTheDocument()
@@ -690,8 +708,8 @@ describe('Admin Audit Logs Page', () => {
 
       expect(screen.getByLabelText('Action')).toBeInTheDocument()
       expect(screen.getByLabelText('Entity Type')).toBeInTheDocument()
-      expect(screen.getByLabelText('User ID')).toBeInTheDocument()
-      expect(screen.getByLabelText('Organization ID')).toBeInTheDocument()
+      expect(screen.getByLabelText('User')).toBeInTheDocument()
+      expect(screen.getByLabelText('Organization')).toBeInTheDocument()
     })
   })
 })

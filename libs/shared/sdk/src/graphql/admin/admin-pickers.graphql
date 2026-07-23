@@ -1,0 +1,28 @@
+# Lightweight admin lookups for filter comboboxes (e.g. audit-log user/org
+# pickers). These select only the fields a dropdown row needs, so typing in a
+# picker does not overfetch full admin user/organization records.
+
+query AdminUserPicker($filters: AdminUserFiltersInput) {
+  adminUsers(filters: $filters) {
+    users {
+      id
+      firstName
+      lastName
+      emails {
+        email
+        primary
+      }
+    }
+    total
+  }
+}
+
+query AdminOrganizationPicker($filters: AdminOrganizationFiltersInput) {
+  adminOrganizations(filters: $filters) {
+    organizations {
+      id
+      name
+    }
+    total
+  }
+}
