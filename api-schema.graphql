@@ -68,6 +68,11 @@ type AdminAnalyticsFeature {
   uniqueUsers: Int!
 }
 
+type AdminAuditLogFacets {
+  actions: [String!]!
+  entityTypes: [String!]!
+}
+
 input AdminAuditLogFiltersInput {
   action: String
   endDate: DateTime
@@ -77,11 +82,6 @@ input AdminAuditLogFiltersInput {
   startDate: DateTime
   take: Int
   userId: String
-}
-
-type AdminAuditLogFacets {
-  actions: [String!]!
-  entityTypes: [String!]!
 }
 
 type AdminAuditLogsResponse {

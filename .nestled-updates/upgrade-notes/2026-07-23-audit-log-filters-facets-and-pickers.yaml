@@ -21,9 +21,17 @@ intent: >
   request. Every existing value is always offered regardless of the active filter.
   (3) AdminService.getAuditLogs now trims the userId/organizationId filters before the exact-match
   where clause.
-  (4) Data-browser relation filter (libs/data-browser/.../filters/RelationComponents.tsx) gets the
-  dark-mode text/background variants it was missing, and the audit-log filter labels are brightened
-  for contrast on the default dark theme.
+  (4) The data-browser filter panel (libs/data-browser/.../components/filters/*) gets the dark-mode
+  variants it was missing: RelationComponents.tsx for the relation dropdown surfaces, plus the field
+  labels and helper text in EnumFilter, DateRangeFilter, NumberRangeFilter and RelationFilterField,
+  which were `text-gray-700` / `text-gray-500` with no dark override and rendered near-black on the
+  dark filter panel. The audit-log filter labels are brightened for contrast too.
+  (5) New filters/filter-styles.tsx is the single source of truth for filter-control chrome
+  (filterLabelClasses / filterControlClasses / filterHelpTextClasses / FilterChevron / FilterSelect).
+  All six filter renderers now share it, so every control in the panel has the same height, border,
+  focus ring and chevron placement. This also picks up BooleanFilter and StringFilter, which are
+  declared inline inside components/FilterField.tsx rather than in the filters/ folder and were
+  therefore missed by the (4) sweep — BooleanFilter's label was the last `text-gray-700` left.
 
 why: >
   (1) The old inputs matched AuditLog.userId (the ACTOR) exactly, while each row prominently shows
@@ -35,7 +43,10 @@ why: >
   the dropdown correct as the template (or a downstream project) adds new AuditLog actions without
   any hardcoded enum to maintain.
   (4) The data-browser relation dropdown hardcoded `bg-white` with no text color, so in the default
-  dark theme it rendered white-on-white and was unreadable until hover.
+  dark theme it rendered white-on-white and was unreadable until hover. The filter field labels had
+  the same class of bug in reverse: dark gray text on the dark panel, effectively invisible. The
+  selects/inputs themselves looked fine only because they have no background class and inherit the
+  panel's colors — that is why the labels stood out as the remaining unreadable elements.
 
 affectedPaths:
   - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
@@ -47,6 +58,12 @@ affectedPaths:
   - apps/web/app/components/audit-log-entity-filters.tsx
   - apps/web/tests/routes/admin/audit-logs/_index.spec.tsx
   - libs/data-browser/src/lib/components/filters/RelationComponents.tsx
+  - libs/data-browser/src/lib/components/filters/RelationFilterField.tsx
+  - libs/data-browser/src/lib/components/filters/EnumFilter.tsx
+  - libs/data-browser/src/lib/components/filters/DateRangeFilter.tsx
+  - libs/data-browser/src/lib/components/filters/NumberRangeFilter.tsx
+  - libs/data-browser/src/lib/components/filters/filter-styles.tsx
+  - libs/data-browser/src/lib/components/FilterField.tsx
 
 skipIf:
   - The downstream project already exposes an adminAuditLogFacets query and uses entity pickers for
@@ -58,6 +75,7 @@ verification:
   - pnpm sdk
   - pnpm nx test api-custom
   - pnpm nx test web
+  - pnpm nx test data-browser
 
 agentHints:
   - "Facets are their own adminAuditLogFacets query/type, deliberately NOT fields on
@@ -74,3 +92,9 @@ agentHints:
     considered omission, not a miss. Add one only if a downstream project needs to filter by target."
   - "audit-log-entity-filters.tsx lives under apps/web/app/components (NOT under routes/) so the
     nestled-doctor route-registration check does not treat it as an unregistered route."
+  - "Filter controls must pull their classes from filters/filter-styles.tsx. Do not re-declare
+    padding/border/focus classes on an individual filter — that divergence is exactly what produced
+    three different control heights in one panel row. Note that BooleanFilter and StringFilter are
+    defined inline in components/FilterField.tsx, so a sweep over filters/*.tsx alone will miss them.
+    Selects use `appearance-none` + the shared FilterChevron on purpose: the native <select> arrow is
+    browser-drawn and sits tighter to the right edge than the relation dropdown's chevron."

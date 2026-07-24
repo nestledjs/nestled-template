@@ -92,8 +92,8 @@ importers:
         specifier: ^6.5.0
         version: 6.5.0(@nestjs/common@11.1.19(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.19)(reflect-metadata@0.2.2)
       '@nestledjs/data-browser':
-        specifier: ^1.0.17
-        version: 1.0.17(3c6431eb062004a9269ab43b9548bbd1)
+        specifier: ^1.0.18
+        version: 1.0.18(3c6431eb062004a9269ab43b9548bbd1)
       '@nestledjs/forms':
         specifier: 0.8.0
         version: 0.8.0(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.20)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
@@ -3861,8 +3861,8 @@ packages:
       '@nestjs/core': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0
       reflect-metadata: ^0.1.13 || ^0.2.0
 
-  '@nestledjs/data-browser@1.0.17':
-    resolution: {integrity: sha512-0KIgo7a811qDdL9k7OTrJRTtuCXfg8cIVZHdlhra6i0Aj/BguoSMWBzyMWV7saZl3Sy0tpdNnE39zdO3jiUKrw==}
+  '@nestledjs/data-browser@1.0.18':
+    resolution: {integrity: sha512-MYWOIrX0oSTeDins83le0/xAm2lY23+w6X3rWtqW451xjk6LzP2fljCvRG/kVUGL6t4/Skwf5mEu6CoEG0d/2w==}
     peerDependencies:
       '@apollo/client': ^4.0.0
       '@heroicons/react': ^2.0.0
@@ -18920,7 +18920,7 @@ snapshots:
       '@nestjs/core': 11.1.19(@nestjs/common@11.1.19(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.19)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
 
-  '@nestledjs/data-browser@1.0.17(3c6431eb062004a9269ab43b9548bbd1)':
+  '@nestledjs/data-browser@1.0.18(3c6431eb062004a9269ab43b9548bbd1)':
     dependencies:
       '@apollo/client': 4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2))
       '@heroicons/react': 2.2.0(react@19.1.0)

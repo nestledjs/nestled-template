@@ -100,7 +100,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.19",
     "@nestjs/throttler": "^6.5.0",
-    "@nestledjs/data-browser": "^1.0.17",
+    "@nestledjs/data-browser": "^1.0.18",
     "@nestledjs/forms": "0.8.0",
     "@nestledjs/forms-core": "^0.8.0",
     "@nestledjs/generators": "1.1.3",
