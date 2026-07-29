@@ -1,0 +1,37 @@
+id: 2026-07-25-gate-sonarcloud-on-sonar-token
+title: Gate the SonarCloud CI scan on SONAR_TOKEN so token-less clones pass CI
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Update .github/workflows/ci.yml so the SonarCloud scan stays wired in but only runs when the
+  repository has a SONAR_TOKEN secret. SONAR_TOKEN is surfaced at job `env` scope; a
+  "Skip SonarCloud Scan" step runs (and logs) when it is empty, and the real SonarCloud Scan step is
+  gated behind `if: ${{ env.SONAR_TOKEN != '' }}`.
+
+why: >
+  Clones created from this template inherit the SonarCloud step before the new repo has SonarCloud
+  configured, so CI failed on a missing SONAR_TOKEN. Gating on the secret makes fresh clones pass CI
+  out of the box, while any repo that adds a SONAR_TOKEN secret gets the scan automatically with no
+  workflow edit. The skip step logs clearly when Sonar was bypassed. Reference: Moceanic AI PR #2.
+
+affectedPaths:
+  - .github/workflows/ci.yml
+
+packageReleases: []
+
+skipIf:
+  - >-
+    The SonarCloud Scan step in .github/workflows/ci.yml is already conditional on the SONAR_TOKEN
+    secret being present (an env-based if-guard, or equivalent).
+
+verification:
+  - grep -n "SONAR_TOKEN" .github/workflows/ci.yml
+
+agentHints:
+  - "SONAR_TOKEN must be exposed at job (or step) `env` scope for `if: ${{ env.SONAR_TOKEN != '' }}`
+    to see it — a secret referenced only inside the step's own env is not visible to that step's own
+    `if`. Keep both branches: a skip step (logs when bypassed) and the gated scan step. Do not delete
+    the SonarCloud step outright; the goal is conditional, not removed."

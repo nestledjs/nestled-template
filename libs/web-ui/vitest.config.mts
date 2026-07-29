@@ -34,7 +34,11 @@ export default defineConfig(async () => {
               ...(baseConfig.plugins ?? []),
               storybookTest({
                 configDir: path.join(dirname, '.storybook'),
-                storybookScript: 'nx run web-ui:storybook --ci',
+                // NX_DAEMON=false avoids the Nx daemon inside the Storybook browser-test
+                // spawn (flaky/hangs in CI); STORYBOOK_DISABLE_TELEMETRY silences the
+                // telemetry network call that otherwise fires on every run.
+                storybookScript:
+                  'NX_DAEMON=false STORYBOOK_DISABLE_TELEMETRY=1 nx run web-ui:storybook --ci',
               }),
             ],
             test: {

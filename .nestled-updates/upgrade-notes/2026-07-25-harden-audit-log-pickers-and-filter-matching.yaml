@@ -1,0 +1,59 @@
+id: 2026-07-25-harden-audit-log-pickers-and-filter-matching
+title: Harden audit-log entity pickers (skip empty search, null-safe labels) and exact facet matching
+priority: normal
+area: admin
+type: correctness
+delivery: code-patch
+
+intent: >
+  Three related fixes across the admin audit-log filters:
+
+  (1) apps/web/app/components/audit-log-entity-filters.tsx — the User and Organization pickers ran
+  AdminUserPicker / AdminOrganizationPicker even with an empty search box, fetching a first page on
+  mount and risking stale options after a clear. Both now trim the debounced query, pass `skip: true`
+  to useQuery while the term is empty, and return `options: []` when not searching, so the dropdown
+  shows its "Type to search…" empty state instead. A small `isLoading` derivation keeps "Searching…"
+  visible during the debounce gap rather than flashing "No matches found".
+
+  (2) Same file, `userToOption` — the label was `` `${firstName} ${lastName}`.trim() ``, which renders
+  "undefined Lovelace" / "null null" when a name part is missing. It now builds the label from
+  non-null parts (`[firstName, lastName].filter(Boolean).join(' ')`) and falls back to email, then id.
+
+  (3) libs/api/custom/src/lib/plugins/admin/admin.service.ts (getAuditLogs) — `action` and
+  `entityType` filters used `{ contains, mode: 'insensitive' }`. Now that the UI sends discrete facet
+  values from exact-match <select> dropdowns, they use `{ equals, mode: 'insensitive' }` so selecting
+  "CREATE" no longer also matches "CREATE_USER" etc.
+
+why: >
+  (1) avoids needless queries and stale/confusing option lists; (2) prevents literal "null"/"undefined"
+  text in the picker; (3) is a real filter-precision correctness bug once the client switched to
+  discrete facet values. Found via Copilot review across the forms-0.8.0 rollout PRs (cashcast #42,
+  silvermouse #10, moceanic #34, travel #22, flightdesk #73). Mirrored template code across all clones.
+
+affectedPaths:
+  - apps/web/app/components/audit-log-entity-filters.tsx
+  - apps/web/tests/routes/admin/audit-logs/audit-log-entity-filters.spec.tsx
+  - libs/api/custom/src/lib/plugins/admin/admin.service.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.service.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The pickers already skip the query on an empty term, userToOption already builds names from
+    non-null parts, and getAuditLogs already matches action/entityType with `equals` (not `contains`).
+
+verification:
+  - 'grep -n "skip: searchTerm.length === 0" apps/web/app/components/audit-log-entity-filters.tsx'
+  - grep -n "equals" libs/api/custom/src/lib/plugins/admin/admin.service.ts
+  - pnpm nx test web --testPathPattern="audit-log-entity-filters"
+  - pnpm nx test api-custom --testPathPattern="admin.service"
+
+agentHints:
+  - "Fix all three together — they are one logical hardening pass. The `equals` change is correct ONLY
+    because the client sends exact facet values from the adminAuditLogFacets dropdowns; if a downstream
+    project still uses a free-text action/entityType input, keep `contains` there. Keep `mode:
+    'insensitive'` in both cases. When gating the pickers on a non-empty term, preserve the
+    'Searching…' state during the debounce window so the UI does not flash 'No matches found' before
+    the query fires. Update both spec files: the web picker spec must type a term before asserting
+    options (they no longer render on empty), and the admin.service spec expects `equals` not
+    `contains`."

@@ -44,10 +44,55 @@ describe('Audit log entity filter comboboxes', () => {
       withUser()
       render(<UserFilterCombobox value={null} onChange={vi.fn()} />)
 
-      await user.click(screen.getByPlaceholderText('Search users by name, email, or ID…'))
+      const input = screen.getByPlaceholderText('Search users by name, email, or ID…')
+      await user.click(input)
+      await user.type(input, 'ada')
 
       expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument()
       expect(screen.getByText(/ada@example.com · user-1/)).toBeInTheDocument()
+    })
+
+    it('does not query or render options until a search term is entered', async () => {
+      withUser()
+      render(<UserFilterCombobox value={null} onChange={vi.fn()} />)
+
+      await user.click(screen.getByPlaceholderText('Search users by name, email, or ID…'))
+
+      // Empty search term → the picker prompts to search and shows no options.
+      expect(await screen.findByText('Type to search…')).toBeInTheDocument()
+      expect(screen.queryByText('Ada Lovelace')).not.toBeInTheDocument()
+      // The Apollo hook must be skipped while the term is empty.
+      expect(mockUseQuery).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ skip: true }),
+      )
+    })
+
+    it('labels a user with no name using their email, never "null null"', async () => {
+      mockUseQuery.mockReturnValue({
+        data: {
+          adminUsers: {
+            users: [
+              {
+                id: 'user-2',
+                firstName: null,
+                lastName: null,
+                emails: [{ email: 'noname@example.com', primary: true }],
+              },
+            ],
+            total: 1,
+          },
+        },
+        loading: false,
+      })
+      render(<UserFilterCombobox value={null} onChange={vi.fn()} />)
+
+      const input = screen.getByPlaceholderText('Search users by name, email, or ID…')
+      await user.click(input)
+      await user.type(input, 'noname')
+
+      expect(await screen.findByText('noname@example.com')).toBeInTheDocument()
+      expect(screen.queryByText(/null/)).not.toBeInTheDocument()
     })
 
     it('calls onChange with the selected user option', async () => {
@@ -55,7 +100,9 @@ describe('Audit log entity filter comboboxes', () => {
       const onChange = vi.fn()
       render(<UserFilterCombobox value={null} onChange={onChange} />)
 
-      await user.click(screen.getByPlaceholderText('Search users by name, email, or ID…'))
+      const input = screen.getByPlaceholderText('Search users by name, email, or ID…')
+      await user.click(input)
+      await user.type(input, 'ada')
       await user.click(await screen.findByText('Ada Lovelace'))
 
       expect(onChange).toHaveBeenCalledWith(
@@ -90,7 +137,9 @@ describe('Audit log entity filter comboboxes', () => {
       })
       render(<OrganizationFilterCombobox value={null} onChange={vi.fn()} />)
 
-      await user.click(screen.getByPlaceholderText('Search organizations by name or ID…'))
+      const input = screen.getByPlaceholderText('Search organizations by name or ID…')
+      await user.click(input)
+      await user.type(input, 'acme')
 
       expect(await screen.findByText('Acme Corp')).toBeInTheDocument()
     })

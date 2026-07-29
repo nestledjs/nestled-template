@@ -19,6 +19,8 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       NX_DAEMON: false
+      # Surfaced at job scope so the SonarCloud steps below can gate on its presence.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     services:
       postgres:
@@ -87,8 +89,16 @@ jobs:
       - name: Normalize coverage paths
         run: pnpm coverage:normalize-lcov
 
+      # SonarCloud stays wired in but only runs when the repo has a SONAR_TOKEN secret.
+      # Clones created from this template pass CI without configuring SonarCloud; adding a
+      # SONAR_TOKEN secret enables the scan automatically with no workflow edit.
+      - name: Skip SonarCloud Scan (no SONAR_TOKEN)
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: echo "SONAR_TOKEN is not configured; skipping SonarCloud scan."
+
       - name: SonarCloud Scan
+        if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarcloud-github-action@383f7e52eae3ab0510c3cb0e7d9d150bbaeab838 # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}

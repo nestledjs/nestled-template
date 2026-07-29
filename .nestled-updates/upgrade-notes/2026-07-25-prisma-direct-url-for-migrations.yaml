@@ -1,0 +1,54 @@
+id: 2026-07-25-prisma-direct-url-for-migrations
+title: Prisma CLI prefers DIRECT_URL so migrations need no DATABASE_URL swap
+priority: low
+area: database
+type: infra
+delivery: code-patch
+
+intent: >
+  Let `prisma migrate deploy` (and other Prisma CLI commands) use a direct, non-pooled Postgres
+  connection without manually swapping DATABASE_URL on every deploy. On Railway, DATABASE_URL is the
+  pgbouncer/pooled URL (port 6432) which migrations cannot use; the direct URL had to be pasted in by
+  hand each time.
+
+  IMPORTANT — architecture note: this template is Prisma 7 with the driver-adapter setup. The
+  datasource block in libs/api/prisma/src/lib/schemas/schema.prisma has NO `url` field (it is
+  `datasource db { provider = "postgresql" }`); the runtime app connects via
+  `PrismaPg({ connectionString: process.env.DATABASE_URL })`, and the Prisma CLI's connection comes
+  from `prisma.config.ts` → `datasource.url`. So the original PIR-91 instruction ("add directUrl to
+  the schema.prisma datasource") does NOT apply here — that block has no url to pair a directUrl with.
+  The correct fix is in prisma.config.ts: resolve the CLI datasource url as
+  `process.env.DIRECT_URL || process.env.DATABASE_URL || <placeholder>`, and validate that resolved
+  url in the existing migrate-dev/reset localhost safety guard. Also document DIRECT_URL in
+  .env.example.
+
+why: >
+  DIRECT_URL is empty by default, so behavior is unchanged for local and single-host deploys (it
+  falls back to DATABASE_URL exactly as before). Only when an operator sets DIRECT_URL (Railway) does
+  the CLI use the direct connection — removing the error-prone manual swap from every migration.
+  The runtime app keeps using DATABASE_URL (pooled) via the driver adapter, so query pooling is
+  unaffected.
+
+affectedPaths:
+  - prisma.config.ts
+  - .env.example
+
+packageReleases: []
+
+skipIf:
+  - prisma.config.ts already resolves its datasource url from DIRECT_URL with a DATABASE_URL
+    fallback.
+  - The project is still on the classic Prisma engine with a `url`/`directUrl` datasource block in
+    schema.prisma (in that case add `directUrl = env("DIRECT_URL")` to that block instead, per the
+    original PIR-91 wording).
+
+verification:
+  - grep -n "DIRECT_URL" prisma.config.ts .env.example
+  - pnpm prisma validate
+
+agentHints:
+  - 'Do NOT edit libs/api/prisma/src/lib/schemas/schema.prisma — under Prisma 7 + driver adapters its
+    datasource has no url, and adding directUrl there is invalid. The CLI datasource lives in the
+    repo-root prisma.config.ts. Keep the migrate dev/reset localhost guard pointed at the SAME
+    resolved url you feed the datasource (DIRECT_URL preferred) so the safety check validates the host
+    those destructive commands would actually hit.'

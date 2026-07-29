@@ -149,7 +149,9 @@ function useResetQueryOnClear(value: EntityOption | null, setQuery: (query: stri
 }
 
 function userToOption(user: AdminUser): EntityOption {
-  const name = `${user.firstName} ${user.lastName}`.trim()
+  // Build the name from non-null parts so a missing firstName/lastName does not
+  // render "undefined Lovelace" / "null null"; fall back to email, then id.
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ')
   const email = user.emails?.find(e => e.primary)?.email ?? user.emails?.[0]?.email
   return {
     id: user.id,
@@ -164,11 +166,16 @@ export function UserFilterCombobox({ value, onChange }: FilterProps) {
   const debouncedQuery = useDebouncedValue(query, 250)
   useResetQueryOnClear(value, setQuery)
 
+  const searchTerm = debouncedQuery.trim()
   const { data, loading } = useQuery<AdminUserPickerQuery>(AdminUserPicker, {
-    variables: { filters: { search: debouncedQuery || undefined, take: 20 } },
+    variables: { filters: { search: searchTerm, take: 20 } },
+    skip: searchTerm.length === 0,
   })
 
-  const options = (data?.adminUsers?.users ?? []).map(userToOption)
+  const options = searchTerm ? (data?.adminUsers?.users ?? []).map(userToOption) : []
+  // Treat the debounce gap (typed but not yet queried) as loading so the dropdown
+  // shows "Searching…" rather than flashing "No matches found".
+  const isLoading = loading || (query.trim().length > 0 && query.trim() !== searchTerm)
 
   return (
     <EntityFilterCombobox
@@ -178,7 +185,7 @@ export function UserFilterCombobox({ value, onChange }: FilterProps) {
       value={value}
       onChange={onChange}
       options={options}
-      loading={loading}
+      loading={isLoading}
       query={query}
       onQueryChange={setQuery}
     />
@@ -195,11 +202,18 @@ export function OrganizationFilterCombobox({ value, onChange }: FilterProps) {
   const debouncedQuery = useDebouncedValue(query, 250)
   useResetQueryOnClear(value, setQuery)
 
+  const searchTerm = debouncedQuery.trim()
   const { data, loading } = useQuery<AdminOrganizationPickerQuery>(AdminOrganizationPicker, {
-    variables: { filters: { search: debouncedQuery || undefined, take: 20 } },
+    variables: { filters: { search: searchTerm, take: 20 } },
+    skip: searchTerm.length === 0,
   })
 
-  const options = (data?.adminOrganizations?.organizations ?? []).map(organizationToOption)
+  const options = searchTerm
+    ? (data?.adminOrganizations?.organizations ?? []).map(organizationToOption)
+    : []
+  // Treat the debounce gap (typed but not yet queried) as loading so the dropdown
+  // shows "Searching…" rather than flashing "No matches found".
+  const isLoading = loading || (query.trim().length > 0 && query.trim() !== searchTerm)
 
   return (
     <EntityFilterCombobox
@@ -209,7 +223,7 @@ export function OrganizationFilterCombobox({ value, onChange }: FilterProps) {
       value={value}
       onChange={onChange}
       options={options}
-      loading={loading}
+      loading={isLoading}
       query={query}
       onQueryChange={setQuery}
     />

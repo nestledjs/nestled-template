@@ -328,8 +328,10 @@ export class AdminService {
 
     if (userId?.trim()) where.userId = userId.trim()
     if (organizationId?.trim()) where.organizationId = organizationId.trim()
-    if (action) where.action = { contains: action, mode: 'insensitive' }
-    if (entityType) where.entityType = { contains: entityType, mode: 'insensitive' }
+    // The UI sends discrete facet values from exact-match <select> dropdowns, so match
+    // exactly — `contains` would over-match (e.g. "CREATE" also matching "CREATE_USER").
+    if (action) where.action = { equals: action, mode: 'insensitive' }
+    if (entityType) where.entityType = { equals: entityType, mode: 'insensitive' }
     if (startDate || endDate) {
       where.createdAt = {}
       if (startDate) where.createdAt.gte = startDate

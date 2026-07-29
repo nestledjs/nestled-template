@@ -21,7 +21,7 @@ export default defineConfig({
     testTimeout: 10000,
     watch: false,
 
-    reporters: ['default', 'verbose'],
+    reporters: ['default'],
     coverage: {
       provider: 'v8',
       reportsDirectory: '../../coverage/libs/web-ui',

@@ -37,6 +37,27 @@ describe('form utilities', () => {
     })
   })
 
+  it('drops invalid multi-select options instead of emitting { id: undefined }', () => {
+    expect(
+      cleanFormInput(
+        {
+          id: 'record-1',
+          tags: [
+            { value: 'tag-1', label: 'One' },
+            { label: 'missing-value' }, // not a valid option → dropped
+            null, // not an option → dropped
+            { value: { nested: true }, label: 'Object' }, // non-string/number value → dropped
+            { value: true, label: 'Boolean' }, // non-string/number value → dropped
+            { value: 42, label: 'Numeric' }, // coerced to a string id
+          ],
+        },
+        fields,
+      ),
+    ).toEqual({
+      tags: [{ id: 'tag-1' }, { id: '42' }],
+    })
+  })
+
   it('can preserve ids and drops invalid dates while cleaning input', () => {
     expect(
       cleanFormInput({ id: 'record-1', startDate: new Date('invalid') }, fields, true),
