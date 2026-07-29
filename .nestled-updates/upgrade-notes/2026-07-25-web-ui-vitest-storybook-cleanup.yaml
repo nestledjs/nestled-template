@@ -1,0 +1,51 @@
+id: 2026-07-25-web-ui-vitest-storybook-cleanup
+title: web-ui test cleanup — quiet Storybook browser runs, drop duplicate reporter, fix act() warning
+priority: low
+area: ui
+type: cleanup
+delivery: code-patch
+
+intent: >
+  Apply the FlightDesk web-ui Storybook/Vitest hygiene fixes to the template:
+  (1) libs/web-ui/vitest.config.mts — the Storybook browser-test project's `storybookScript` now runs
+  `NX_DAEMON=false STORYBOOK_DISABLE_TELEMETRY=1 nx run web-ui:storybook --ci`, so the browser test
+  spawn does not start the Nx daemon (flaky/hangs in CI) and does not fire Storybook telemetry.
+  (2) libs/web-ui/vite.config.ts — `reporters: ['default', 'verbose']` reduced to `['default']`; the
+  two reporters printed every test result twice (two summary blocks per run).
+  (3) libs/web-ui/setupTests.ts — removed the leftover `console.log('Test setup complete!')` debug
+  line that printed once per test file.
+  (4) libs/web-ui/src/lib/web-ui-data-table.spec.tsx — the "Copy ID" interaction awaits
+  navigator.clipboard.writeText and then sets state, so React logged "An update to WebUiDataTable
+  inside a test was not wrapped in act(...)". The click is now flushed inside `await act(async () =>
+  {...})` (test made async, `act` imported from @testing-library/react).
+
+why: >
+  Pure test-tooling hygiene: quieter, more deterministic CI output and no stray act() warning or
+  debug log. No production code changes. Not all FlightDesk items applied literally — see agentHints.
+
+affectedPaths:
+  - libs/web-ui/vitest.config.mts
+  - libs/web-ui/vite.config.ts
+  - libs/web-ui/setupTests.ts
+  - libs/web-ui/src/lib/web-ui-data-table.spec.tsx
+
+packageReleases: []
+
+skipIf:
+  - web-ui setupTests.ts has no "Test setup complete!" log, vite.config.ts reporters is not
+    ['default','verbose'], the data-table Copy ID interaction is already wrapped in act(), and
+    vitest.config.mts storybookScript already sets NX_DAEMON=false / STORYBOOK_DISABLE_TELEMETRY.
+
+verification:
+  - grep -n "reporters" libs/web-ui/vite.config.ts
+  - grep -n "NX_DAEMON\|STORYBOOK_DISABLE_TELEMETRY" libs/web-ui/vitest.config.mts
+  - pnpm nx test web-ui
+
+agentHints:
+  - "The 'Storybook Vitest browser config path' the original ticket mentions is
+    libs/web-ui/vitest.config.mts (the vitest project that uses @storybook/addon-vitest with a
+    playwright/chromium browser), NOT the plain libs/web-ui/vite.config.ts. Set the env vars inside
+    that project's `storybookScript` string. Note ci.yml already sets NX_DAEMON=false at the job
+    level; the storybookScript env is specifically for the storybook spawn the browser test starts.
+    Confirm the act() fix by checking the run has no 'not wrapped in act' warning, not just that tests
+    pass."

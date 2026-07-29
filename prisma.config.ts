@@ -2,14 +2,24 @@ import 'dotenv/config'
 import * as path from 'node:path'
 import { defineConfig } from 'prisma/config'
 
-// Use process.env with fallback for CI where DATABASE_URL may not be set during prisma generate
-// The fallback URL is only used for schema parsing, not actual database connections
+// The Prisma CLI (generate, db push, migrate, studio) connects through this datasource.
+// Prefer DIRECT_URL when set — on Railway, DATABASE_URL is the pgbouncer/pooled URL and
+// DIRECT_URL is the direct Postgres URL that migrations require — falling back to
+// DATABASE_URL for local/single-host setups. This removes the manual DATABASE_URL swap
+// that `prisma migrate deploy` used to need. The runtime app connects separately via the
+// PrismaPg driver adapter using DATABASE_URL, so the pooled URL is still used for queries.
+// The fallback placeholder is only for CI where no URL is set during `prisma generate`
+// (schema parsing only, never an actual connection).
 const databaseUrl =
-  process.env.DATABASE_URL || 'postgresql://placeholder:placeholder@localhost:5432/placeholder'
+  process.env.DIRECT_URL ||
+  process.env.DATABASE_URL ||
+  'postgresql://placeholder:placeholder@localhost:5432/placeholder'
 
 // Safety guard: `migrate dev` and `migrate reset` are destructive development-only
 // commands — they can drop and recreate the database — so they may only ever run
-// against a local database, no matter what DATABASE_URL happens to be set to.
+// against a local database, no matter what DIRECT_URL/DATABASE_URL happen to be set to.
+// The guard validates the resolved connection above (DIRECT_URL preferred), which is the
+// host these commands would actually connect to.
 // `prisma migrate deploy` is the supported path for remote environments and is unaffected.
 // This file executes on every Prisma CLI invocation, so the guard cannot be bypassed
 // by ambient env vars, agent error, or a typo.
@@ -21,7 +31,9 @@ if (migrateSubcommand === 'dev' || migrateSubcommand === 'reset') {
   try {
     hostname = new URL(databaseUrl).hostname
   } catch {
-    throw new Error(`BLOCKED: prisma migrate ${migrateSubcommand} — DATABASE_URL is not a parseable URL.`)
+    throw new Error(
+      `BLOCKED: prisma migrate ${migrateSubcommand} — the resolved database URL (DIRECT_URL or DATABASE_URL) is not a parseable URL.`,
+    )
   }
   if (!LOCAL_HOSTS.has(hostname)) {
     throw new Error(

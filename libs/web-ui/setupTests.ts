@@ -30,5 +30,3 @@ globalThis.ResizeObserver = class ResizeObserver {
 }
 
 Object.defineProperty(globalThis, 'scrollTo', { value: vi.fn(), writable: true })
-
-console.log('Test setup complete!')

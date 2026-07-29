@@ -1,0 +1,46 @@
+id: 2026-07-25-cleanforminput-multiselect-invalid-options
+title: 'cleanFormInput drops invalid multi-select options instead of emitting { id: undefined }'
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  In libs/shared/utils/src/lib/forms.ts, the `cleanFormInput` multi-select branch mapped every array
+  item to `{ id: isSelectOption(item) ? item.value : undefined }`. For any array entry that is not a
+  valid select option (or whose value is nullish), this emitted `{ id: undefined }`, which can
+  propagate into Prisma relation connect/set inputs as an invalid relation. The fix filters to items
+  that are select options carrying a non-nullish value and coerces the id to a string:
+  `v.filter(isSelectOptionWithValue).map(item => ({ id: String(item.value) }))`, via a new
+  `isSelectOptionWithValue` guard. Valid string-valued options are unchanged; numeric values now
+  coerce to string ids; invalid entries are dropped entirely.
+
+why: >
+  `{ id: undefined }` in a multi-select relation payload is silently malformed — Prisma either
+  rejects it or connects nothing, depending on the operation, and the failure is hard to trace back
+  to a stray non-option array item. Dropping invalid entries and guaranteeing string ids keeps the
+  relation input well-formed. Latent (normal form flow rarely produces malformed multi-select items),
+  hence Medium not Urgent. Found via Copilot review on silvermouselive PR #10; byte-identical across
+  all clones.
+
+affectedPaths:
+  - libs/shared/utils/src/lib/forms.ts
+  - libs/shared/utils/src/lib/forms.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - >-
+    The cleanFormInput multi-select branch already filters non-option entries and coerces ids to
+    string (no bare item.value id and no undefined id), e.g. it uses a guard like
+    isSelectOptionWithValue before mapping.
+
+verification:
+  - grep -n "isSelectOptionWithValue" libs/shared/utils/src/lib/forms.ts
+  - pnpm nx test utils
+
+agentHints:
+  - "Only the SearchSelectMulti* branch of cleanFormInput is in scope. Do not change the single-select
+    branch (`selectFields`) or cleanDatabaseOutput's defaultMultiMap, which have different, correct
+    shapes. The new guard must require BOTH that the item is a select option AND that its value is
+    non-nullish, so `{ value: undefined }` is dropped rather than becoming `{ id: 'undefined' }`."

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebUiDataTable } from './web-ui-data-table'
 
@@ -19,7 +19,7 @@ describe('WebUiDataTable', () => {
     })
   })
 
-  it('renders rows, sorting, id controls, filters, and pagination', () => {
+  it('renders rows, sorting, id controls, filters, and pagination', async () => {
     const setSort = vi.fn()
     const setSkip = vi.fn()
 
@@ -51,6 +51,10 @@ describe('WebUiDataTable', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy ID' }))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('user-1')
+    // copyToClipboard awaits navigator.clipboard.writeText and then sets state, so the
+    // update lands on a later microtask. Flush it inside act() to avoid a "not wrapped in
+    // act(...)" warning — the click itself already self-flushes, so it stays outside act().
+    await act(async () => {})
 
     fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))

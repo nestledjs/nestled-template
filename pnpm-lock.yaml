@@ -92,13 +92,13 @@ importers:
         specifier: ^6.5.0
         version: 6.5.0(@nestjs/common@11.1.19(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.19)(reflect-metadata@0.2.2)
       '@nestledjs/data-browser':
-        specifier: ^1.0.18
-        version: 1.0.18(3c6431eb062004a9269ab43b9548bbd1)
+        specifier: ^1.0.19
+        version: 1.0.19(47b14f5ccebebb643a308e3911138aba)
       '@nestledjs/forms':
-        specifier: 0.8.0
-        version: 0.8.0(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.20)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
+        specifier: 0.8.2
+        version: 0.8.2(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.20)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
       '@nestledjs/forms-core':
-        specifier: ^0.8.0
+        specifier: 0.8.0
         version: 0.8.0(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(dayjs@1.11.20)(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
       '@nestledjs/generators':
         specifier: 1.1.3
@@ -742,10 +742,10 @@ importers:
         specifier: ^1.2.3
         version: 1.2.3(@types/react@19.1.0)(react@19.1.0)
       '@react-router/node':
-        specifier: ^7.2.0
+        specifier: 7.14.2
         version: 7.14.2(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3)
       '@react-router/serve':
-        specifier: ^7.2.0
+        specifier: 7.14.2
         version: 7.14.2(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3)
       '@sindresorhus/slugify':
         specifier: ^2.2.1
@@ -775,7 +775,7 @@ importers:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.1.0)(react@19.1.0)
       react-router:
-        specifier: ^7.2.0
+        specifier: 7.14.2
         version: 7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       rehype-raw:
         specifier: ^7.0.0
@@ -797,7 +797,89 @@ importers:
         version: 8.20.0
     devDependencies:
       '@react-router/dev':
-        specifier: ^7.2.0
+        specifier: 7.14.2
+        version: 7.14.2(@react-router/serve@7.14.2(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3))(@types/node@20.19.4)(babel-plugin-macros@3.1.0)(jiti@2.6.1)(less@4.1.3)(lightningcss@1.30.1)(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.21.0)(typescript@5.9.3)(vite@7.3.1(@types/node@20.19.4)(jiti@2.6.1)(less@4.1.3)(lightningcss@1.30.1)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.21.0)(yaml@2.8.3))(yaml@2.8.3)
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.4
+      '@types/react':
+        specifier: 19.1.0
+        version: 19.1.0
+      '@types/react-dom':
+        specifier: 19.1.0
+        version: 19.1.0(@types/react@19.1.0)
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+
+  apps/web/build/server:
+    dependencies:
+      '@mdx-js/react':
+        specifier: ^3.1.0
+        version: 3.1.1(@types/react@19.1.0)(react@19.1.0)
+      '@mdx-js/rollup':
+        specifier: ^3.1.0
+        version: 3.1.1(acorn@8.16.0)(rollup@4.44.0)
+      '@radix-ui/react-slot':
+        specifier: ^1.2.3
+        version: 1.2.3(@types/react@19.1.0)(react@19.1.0)
+      '@react-router/node':
+        specifier: 7.14.2
+        version: 7.14.2(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3)
+      '@react-router/serve':
+        specifier: 7.14.2
+        version: 7.14.2(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3)
+      '@sindresorhus/slugify':
+        specifier: ^2.2.1
+        version: 2.2.1
+      '@tanstack/react-table':
+        specifier: ^8.21.3
+        version: 8.21.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@types/mdx':
+        specifier: ^2.0.13
+        version: 2.0.13
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      isbot:
+        specifier: ^4.4.0
+        version: 4.4.0
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.1.1
+      react:
+        specifier: 19.1.0
+        version: 19.1.0
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.1.0)(react@19.1.0)
+      react-router:
+        specifier: 7.14.2
+        version: 7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      rehype-raw:
+        specifier: ^7.0.0
+        version: 7.0.0
+      remark-frontmatter:
+        specifier: ^5.0.0
+        version: 5.0.0
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+      remark-mdx-frontmatter:
+        specifier: ^5.2.0
+        version: 5.2.0
+      tailwind-merge:
+        specifier: ^3.3.1
+        version: 3.3.1
+      ws:
+        specifier: ^8.18.3
+        version: 8.20.0
+    devDependencies:
+      '@react-router/dev':
+        specifier: 7.14.2
         version: 7.14.2(@react-router/serve@7.14.2(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3))(@types/node@20.19.4)(babel-plugin-macros@3.1.0)(jiti@2.6.1)(less@4.1.3)(lightningcss@1.30.1)(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.21.0)(typescript@5.9.3)(vite@7.3.1(@types/node@20.19.4)(jiti@2.6.1)(less@4.1.3)(lightningcss@1.30.1)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.21.0)(yaml@2.8.3))(yaml@2.8.3)
       '@types/node':
         specifier: ^20.0.0
@@ -3861,12 +3943,12 @@ packages:
       '@nestjs/core': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0
       reflect-metadata: ^0.1.13 || ^0.2.0
 
-  '@nestledjs/data-browser@1.0.18':
-    resolution: {integrity: sha512-MYWOIrX0oSTeDins83le0/xAm2lY23+w6X3rWtqW451xjk6LzP2fljCvRG/kVUGL6t4/Skwf5mEu6CoEG0d/2w==}
+  '@nestledjs/data-browser@1.0.19':
+    resolution: {integrity: sha512-7zZ/rRb3HWUksiKgpTVp/Q9XDXy0agXv21GHFype7Zmr4i5AFrXpeM5KFRiaAbtI7Mr15StI3uM3m2zhTTlikQ==}
     peerDependencies:
       '@apollo/client': ^4.0.0
       '@heroicons/react': ^2.0.0
-      '@nestledjs/forms': 0.8.0
+      '@nestledjs/forms': ^0.8.0
       '@nestledjs/forms-core': 0.8.0
       '@nestledjs/shared-components': ^1.0.14
       react: ^19.0.0
@@ -3887,8 +3969,8 @@ packages:
       dayjs:
         optional: true
 
-  '@nestledjs/forms@0.8.0':
-    resolution: {integrity: sha512-CDT52n4+wfF2sjc9Uh0yTcot+T/oOkmEXpAUA3whB4rURMlAAMkbBbSRwxGuBiX09nUsqbBy/zRq7lFpgOZZtQ==}
+  '@nestledjs/forms@0.8.2':
+    resolution: {integrity: sha512-Mootdkk65twonNLxXpA/0T2lop/lGy8XLi0Mqx0Oej1nlH1+p5bwM3SSW/ITHumDbrUSWM7++q/C6W1Jlu0CmQ==}
     peerDependencies:
       '@apollo/client': ^3.0.0 || ^4.0.0
       '@hookform/resolvers': ^3.0.0
@@ -18920,11 +19002,11 @@ snapshots:
       '@nestjs/core': 11.1.19(@nestjs/common@11.1.19(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.19)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
 
-  '@nestledjs/data-browser@1.0.18(3c6431eb062004a9269ab43b9548bbd1)':
+  '@nestledjs/data-browser@1.0.19(47b14f5ccebebb643a308e3911138aba)':
     dependencies:
       '@apollo/client': 4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2))
       '@heroicons/react': 2.2.0(react@19.1.0)
-      '@nestledjs/forms': 0.8.0(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.20)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
+      '@nestledjs/forms': 0.8.2(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.20)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
       '@nestledjs/forms-core': 0.8.0(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(dayjs@1.11.20)(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
       '@nestledjs/shared-components': 1.0.15(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
       react: 19.1.0
@@ -18942,7 +19024,7 @@ snapshots:
       '@apollo/client': 4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2))
       dayjs: 1.11.20
 
-  '@nestledjs/forms@0.8.0(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.20)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)':
+  '@nestledjs/forms@0.8.2(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.20)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)':
     dependencies:
       '@hookform/resolvers': 3.10.0(react-hook-form@7.73.1(react@19.1.0))
       '@nestledjs/forms-core': 0.8.0(@apollo/client@4.1.8(graphql-ws@6.0.8(graphql@16.13.2)(ws@8.20.0))(graphql@16.13.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.13.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(dayjs@1.11.20)(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)

@@ -253,7 +253,7 @@ export default function AdminBillingOverview() {
       {/* Quick Links */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         <Link
-          to="/settings/admin/billing/plans"
+          to="/admin/billing/plans"
           className="relative block bg-white rounded-lg border-2 border-gray-300 border-dashed p-8 text-center hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
         >
           <CreditCardIcon className="mx-auto h-12 w-12 text-gray-400" />
@@ -262,7 +262,7 @@ export default function AdminBillingOverview() {
         </Link>
 
         <Link
-          to="/settings/admin/billing/subscriptions"
+          to="/admin/billing/subscriptions"
           className="relative block bg-white rounded-lg border-2 border-gray-300 border-dashed p-8 text-center hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
         >
           <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
@@ -277,7 +277,7 @@ export default function AdminBillingOverview() {
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium text-gray-900">Recent Subscriptions</h2>
             <Link
-              to="/settings/admin/billing/subscriptions"
+              to="/admin/billing/subscriptions"
               className="text-sm font-medium text-blue-600 hover:text-blue-500"
             >
               View all

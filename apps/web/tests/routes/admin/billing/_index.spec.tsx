@@ -197,11 +197,11 @@ describe('Admin Billing Overview Page', () => {
         Component: AdminBillingOverview,
       },
       {
-        path: '/settings/admin/billing/plans',
+        path: '/admin/billing/plans',
         Component: () => <div>Plans Page</div>,
       },
       {
-        path: '/settings/admin/billing/subscriptions',
+        path: '/admin/billing/subscriptions',
         Component: () => <div>Subscriptions Page</div>,
       },
     ])
@@ -278,7 +278,7 @@ describe('Admin Billing Overview Page', () => {
 
       const plansLink = screen.getByRole('link', { name: /Manage Plans/ })
       expect(plansLink).toBeInTheDocument()
-      expect(plansLink).toHaveAttribute('href', '/settings/admin/billing/plans')
+      expect(plansLink).toHaveAttribute('href', '/admin/billing/plans')
     })
 
     it('should render view subscriptions link', () => {
@@ -286,7 +286,7 @@ describe('Admin Billing Overview Page', () => {
 
       const subsLink = screen.getByRole('link', { name: /View Subscriptions/ })
       expect(subsLink).toBeInTheDocument()
-      expect(subsLink).toHaveAttribute('href', '/settings/admin/billing/subscriptions')
+      expect(subsLink).toHaveAttribute('href', '/admin/billing/subscriptions')
     })
 
     it('should display link descriptions', () => {
@@ -363,7 +363,7 @@ describe('Admin Billing Overview Page', () => {
       renderBillingPage()
 
       const viewAllLink = screen.getByRole('link', { name: 'View all' })
-      expect(viewAllLink).toHaveAttribute('href', '/settings/admin/billing/subscriptions')
+      expect(viewAllLink).toHaveAttribute('href', '/admin/billing/subscriptions')
     })
 
     it('should show empty state when no subscriptions', () => {

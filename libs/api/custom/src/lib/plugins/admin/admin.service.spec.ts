@@ -391,15 +391,15 @@ describe('AdminService', () => {
         }),
       )
     })
-    it('should filter by action and entity type', async () => {
+    it('should filter by action and entity type using exact (case-insensitive) match', async () => {
       mockData.auditLog.findMany.mockResolvedValue([])
       mockData.auditLog.count.mockResolvedValue(0)
       await service.getAuditLogs({ action: 'CREATE', entityType: 'User' })
       expect(mockData.auditLog.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            action: { contains: 'CREATE', mode: 'insensitive' },
-            entityType: { contains: 'User', mode: 'insensitive' },
+            action: { equals: 'CREATE', mode: 'insensitive' },
+            entityType: { equals: 'User', mode: 'insensitive' },
           },
         }),
       )
