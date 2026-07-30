@@ -1,7 +1,7 @@
 import { Controller, Get, Query, Res, BadRequestException, Req } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { Request, Response } from 'express'
-import { OAuthService } from './oauth.service'
+import { OAuthService, type OAuthUserProfile } from './oauth.service'
 import { AuthService } from './auth.service'
 import { SessionService } from './session.service'
 
@@ -30,40 +30,10 @@ export class OAuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const siteUrl = this.config.get<string>('siteUrl') || 'http://localhost:4200'
-
-    try {
-      if (error) {
-        return res.redirect(`${siteUrl}/auth/oauth-error?provider=google&error=${error}`)
-      }
-
-      if (!code) {
-        throw new BadRequestException('No authorization code provided')
-      }
-
+    return this.handleCallback(res, req, 'google', error, code, async () => {
       const idToken = await this.oauthService.exchangeGoogleCodeForIdToken(code)
-
-      // Verify token and get user profile
-      const profile = await this.oauthService.verifyGoogleToken(idToken)
-
-      // Find or create user
-      const user = await this.oauthService.findOrCreateUserFromOAuth(profile)
-
-      // Extract session info from request
-      const sessionInfo = this.sessionService.extractSessionInfo(req)
-
-      // Create session (sign JWT token)
-      const authPayload = await this.authService.signUser(user, false, undefined, sessionInfo)
-
-      // Set auth cookie
-      this.authService.setCookie(res, authPayload.token)
-
-      // Redirect to frontend
-      return res.redirect(`${siteUrl}/auth/oauth-success`)
-    } catch (err) {
-      console.error('Google OAuth error:', err)
-      return res.redirect(`${siteUrl}/auth/oauth-error?provider=google&error=authentication_failed`)
-    }
+      return this.oauthService.verifyGoogleToken(idToken)
+    })
   }
 
   /**
@@ -77,22 +47,58 @@ export class OAuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    return this.handleCallback(res, req, 'github', error, code, () =>
+      this.oauthService.verifyGitHubCode(code),
+    )
+  }
+
+  /**
+   * Shared provider-callback flow. Both providers run the identical post-profile sequence, so it
+   * lives here — in particular the 2FA gate below, which must not be possible to apply to one
+   * provider and forget on the other.
+   */
+  private async handleCallback(
+    res: Response,
+    req: Request,
+    provider: 'google' | 'github',
+    error: string,
+    code: string,
+    resolveProfile: () => Promise<OAuthUserProfile>,
+  ) {
     const siteUrl = this.config.get<string>('siteUrl') || 'http://localhost:4200'
+
+    // `error` arrives from the provider redirect and is attacker-influenceable. Build the query
+    // string with URLSearchParams so an `&`, `#` or `?` in it cannot append or truncate
+    // parameters on the URL we hand back to the browser.
+    const errorRedirect = (reason: string) =>
+      res.redirect(
+        `${siteUrl}/auth/oauth-error?${new URLSearchParams({ provider, error: reason })}`,
+      )
 
     try {
       if (error) {
-        return res.redirect(`${siteUrl}/auth/oauth-error?provider=github&error=${error}`)
+        return errorRedirect(error)
       }
 
       if (!code) {
         throw new BadRequestException('No authorization code provided')
       }
 
-      // Verify code and get user profile
-      const profile = await this.oauthService.verifyGitHubCode(code)
+      const profile = await resolveProfile()
 
       // Find or create user
       const user = await this.oauthService.findOrCreateUserFromOAuth(profile)
+
+      // A verified OAuth identity is only the FIRST factor. Users who enabled 2FA must still be
+      // challenged for it, exactly as in the password login path — otherwise anyone holding the
+      // provider account (or a provider session on a shared machine) gets in with the second
+      // factor skipped. Mint the short-lived hand-off token and bounce to the login page's 2FA
+      // step; no session row and no auth cookie exist until complete2FALogin succeeds.
+      if (user.twoFactorEnabled) {
+        const tempToken = this.authService.createTemp2FAToken(user.id)
+        const params = new URLSearchParams({ oauth_2fa: tempToken, provider })
+        return res.redirect(`${siteUrl}/login?${params.toString()}`)
+      }
 
       // Extract session info from request
       const sessionInfo = this.sessionService.extractSessionInfo(req)
@@ -100,14 +106,18 @@ export class OAuthController {
       // Create session (sign JWT token)
       const authPayload = await this.authService.signUser(user, false, undefined, sessionInfo)
 
+      if (!authPayload.token) {
+        throw new BadRequestException('Failed to issue session token')
+      }
+
       // Set auth cookie
       this.authService.setCookie(res, authPayload.token)
 
       // Redirect to frontend
       return res.redirect(`${siteUrl}/auth/oauth-success`)
     } catch (err) {
-      console.error('GitHub OAuth error:', err)
-      return res.redirect(`${siteUrl}/auth/oauth-error?provider=github&error=authentication_failed`)
+      console.error(`${provider} OAuth error:`, err)
+      return errorRedirect('authentication_failed')
     }
   }
 

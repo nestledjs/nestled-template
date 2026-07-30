@@ -1,0 +1,88 @@
+id: 2026-07-29-nestled-forms-090
+title: Nestled Forms 0.9.0 across forms and forms-core, data-browser peers moved to ^0.9.0
+priority: normal
+area: web
+type: deps
+delivery: hybrid
+
+intent: >
+  Move @nestledjs/forms and @nestledjs/forms-core together from the 0.8.x line to 0.9.0, and
+  publish @nestledjs/data-browser 1.0.20 with both forms peers set to ^0.9.0. Go directly from
+  whatever 0.8.x a project is on to 0.9.0; there is no reason to stop at 0.8.1 or 0.8.2.
+
+why: >
+  0.9.0 is the whole 0.8.x line plus a new reactive-read API, so it supersedes the intermediate
+  patches entirely. @nestledjs/forms 0.9.0 has no runtime change at all from 0.8.2 — it drops
+  lib/fields/storybookTestUtils.d.ts from the type surface and bumps its forms-core dependency.
+  Everything that shipped in the 0.8.x patches is carried forward: the read-only stale-value fix in
+  PhoneField and MarkdownEditor (they read through useWatch rather than a one-shot
+  form.getValues()), and the corrected type declarations, which in 0.8.1 wrongly imported from
+  '../../../../forms-core/src/index.ts' — a relative path escaping the package into the publisher's
+  own source tree.
+
+  The substance is in @nestledjs/forms-core 0.9.0, which adds useFormValue(name) and
+  useFormValues() and re-exports useWatch and the UseFormReturn type. These exist because
+  form.watch(name) is a silent footgun when read during render from a component inside <Form>:
+  watch() re-renders only the component that owns useForm(), which is <Form> itself, and <Form>
+  passes children straight through, so React reuses that element reference and skips reconciling
+  the subtree. The value is correct on first render and then never updates — no error, no warning,
+  no type-level signal. useFormValue subscribes the calling component instead.
+
+  On the peers: @nestledjs/data-browser 1.0.19 set "@nestledjs/forms": "^0.8.0" and left
+  "@nestledjs/forms-core" pinned exact at "0.8.0". Both block 0.9.0. This trips people up, so be
+  precise about it — for 0.x versions npm's caret only moves the patch, so ^0.8.0 means
+  >=0.8.0 <0.9.0. Widening forms-core to ^0.8.0 would NOT have admitted 0.9.0 either. Both peers
+  must move to ^0.9.0, which then admits future 0.9.x patches without another data-browser release.
+
+  This note replaces two earlier ones that were removed rather than superseded in place, because
+  neither ever reached a live project — only the template. 2026-07-28-nestled-forms-081-readonly-usewatch
+  described the 0.8.1/0.8.2 hop, which is now a pointless detour. 2026-07-25-pin-forms-core-exact-080
+  instructed downstream to pin forms-core to exact 0.8.0, which is now actively wrong.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - libs/data-browser/package.json
+
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.20
+    versionRange: '>=1.0.20'
+
+skipIf:
+  - The downstream project does not use @nestledjs/forms.
+  - The downstream project already runs @nestledjs/forms and @nestledjs/forms-core at 0.9.x and,
+    if it consumes @nestledjs/data-browser from npm, is on >=1.0.20.
+
+verification:
+  - pnpm install
+  - pnpm typecheck
+  - pnpm nx run web:build --skip-nx-cache --output-style=stream
+  - pnpm nx run web:test --skip-nx-cache --output-style=stream
+  - pnpm nx run data-browser:typecheck --skip-nx-cache --output-style=stream
+  - pnpm nx run data-browser:test --skip-nx-cache --output-style=stream
+  - pnpm template:validate-upgrade-notes
+  - pnpm format:check
+  - pnpm run nestled-doctor
+
+agentHints:
+  - 'Bump @nestledjs/forms AND @nestledjs/forms-core to 0.9.0 together. Unlike the 0.8.x line —
+    where forms had patches but forms-core never moved off 0.8.0 — forms 0.9.0 declares a hard
+    dependency on forms-core exactly 0.9.0, so a mismatched pair will not install cleanly.'
+  - 'If the project also uses @nestledjs/forms-native, it has a 0.9.0 too; bump it in the same
+    change so the three stay aligned.'
+  - 'Do not write ^0.8.0 anywhere expecting it to admit 0.9.0. npm caret ranges on 0.x versions
+    only move the patch component: ^0.8.0 is >=0.8.0 <0.9.0. Use ^0.9.0.'
+  - 'Downstream projects consuming @nestledjs/data-browser must move to >=1.0.20 in the same
+    change. Earlier versions pin forms-core to exact 0.8.0 or cap forms
+    below 0.9.0, so they conflict with this upgrade and will warn or fail depending on strictness.'
+  - 'No application source changes are required. The template needed none: it has no form.watch()
+    or form.getValues() call sites outside the library.'
+  - 'Adopting useFormValue is optional, not part of this upgrade. If a project does read form
+    values during render from a component nested inside <Form>, that code is already silently
+    broken and this is the release that gives it a fix — replace form.watch(name) with
+    useFormValue(name). Note form.watch(callback) is fine; the callback form is a real
+    subscription. getValues, setValue and register are unaffected.'
+
+sourceRepo: nestled-dev-template

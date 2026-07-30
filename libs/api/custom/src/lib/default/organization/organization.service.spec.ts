@@ -897,6 +897,27 @@ describe('OrganizationService', () => {
       const result = await service.getInvitationDetails(token)
       expect(result.inviterName).toBe('JohnDoe123')
     })
+    it('should fall back to a generic name when the inviter has no name at all', async () => {
+      // firstName, lastName and displayName are all optional on User. Returning null here would
+      // fail the non-null GraphQL field and break the whole invitation page for the invitee.
+      const token = 'valid-token'
+      data.invite.findUnique.mockResolvedValue({
+        id: 'invite-123',
+        email: 'invited@example.com',
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 10000),
+        organization: { name: 'Test Org' },
+        role: { name: 'Member' },
+        inviter: {
+          id: 'inviter-1',
+          firstName: null,
+          lastName: null,
+          displayName: null,
+        },
+      } as any)
+      const result = await service.getInvitationDetails(token)
+      expect(result.inviterName).toBe('A team member')
+    })
     it('should throw NotFoundException when invitation not found', async () => {
       const token = 'invalid-token'
       data.invite.findUnique.mockResolvedValue(null)

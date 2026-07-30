@@ -11,37 +11,37 @@ registerEnumType(StorageProvider, {
 @ObjectType()
 export class UploadedFile {
   @Field()
-  id: string
+  id!: string
 
   @Field()
-  createdAt: Date
+  createdAt!: Date
 
   @Field()
-  updatedAt: Date
+  updatedAt!: Date
 
   @Field(() => StorageProvider)
-  provider: StorageProvider
+  provider!: StorageProvider
 
   @Field()
-  providerFileId: string
+  providerFileId!: string
 
   @Field({ nullable: true })
   folder?: string
 
   @Field()
-  filename: string
+  filename!: string
 
   @Field()
-  originalName: string
+  originalName!: string
 
   @Field()
-  mimeType: string
+  mimeType!: string
 
   @Field(() => Int)
-  size: number
+  size!: number
 
   @Field()
-  url: string
+  url!: string
 
   @Field({ nullable: true })
   publicUrl?: string

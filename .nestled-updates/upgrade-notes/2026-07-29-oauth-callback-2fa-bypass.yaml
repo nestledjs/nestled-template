@@ -1,0 +1,83 @@
+id: 2026-07-29-oauth-callback-2fa-bypass
+title: Close 2FA bypass in the Google/GitHub OAuth callbacks
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  The OAuth provider callbacks completed a login by calling `authService.signUser()` directly and
+  setting the session cookie, with no check on `user.twoFactorEnabled`. The password login path in
+  `AuthService.login()` does check it, and returns `{ requires2FA: true, tempToken }` instead of a
+  session. Add the same gate to the OAuth path: when the resolved user has 2FA enabled, mint the
+  short-lived hand-off token and redirect to `/login?oauth_2fa=<token>&provider=<provider>` rather
+  than signing a session — no session row and no auth cookie until `complete2FALogin` succeeds.
+  The temp-token minting moved out of `login()` into a new shared
+  `AuthService.createTemp2FAToken(userId, rememberMe)` so both entry points build the identical
+  payload. The two near-identical provider callbacks were also collapsed onto one private
+  `handleCallback()` helper, so the gate cannot be applied to one provider and forgotten on the
+  other. On the web side, `login.tsx` reads `oauth_2fa` from the query string, opens directly into
+  its existing 2FA step, and strips the parameter from the address bar via `setSearchParams(...,
+  { replace: true })`.
+  Two further fixes in the same flow. The `error` query value from the provider redirect was
+  interpolated straight into the oauth-error URL, letting an `&`, `#` or `?` in it append or
+  truncate parameters on the URL handed back to the browser; it now goes through URLSearchParams.
+  And the two callback landing routes the API has always redirected to were never registered in
+  apps/web/app/routes.tsx — `/auth/oauth-success` (a loader that checks the session cookie and
+  bounces to the dashboard, or back to login if the sign-in did not actually complete) and
+  `/auth/oauth-error` (maps provider and error codes to friendly copy through a known-value
+  lookup, never echoing the raw values). Without them a non-2FA OAuth login landed on a 404 with a
+  valid session cookie already set.
+
+why: >
+  Any user who had enabled 2FA could skip their second factor entirely by signing in with Google
+  or GitHub instead of a password. Whoever controls the linked provider account — or is sitting at
+  a machine with a live Google session — got a full authenticated session cookie. That voids the
+  protection for exactly the accounts that opted into the strongest protection, and 2FA on the
+  password path gives users a false belief that the account is covered. The OAuth account is a
+  first factor, not both factors.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.controller.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/auth/oauth-success.tsx
+  - apps/web/app/routes/auth/oauth-error.tsx
+  - apps/web/tests/routes/auth/oauth-success.spec.tsx
+  - apps/web/tests/routes/auth/oauth-error.spec.tsx
+  - apps/web/app/routes.tsx
+
+skipIf:
+  - The project does not enable Google or GitHub OAuth login.
+  - The project's OAuth callbacks already check `twoFactorEnabled` before issuing a session cookie.
+
+verification:
+  - grep -n "twoFactorEnabled" libs/api/custom/src/lib/plugins/auth/oauth.controller.ts
+  - grep -n "createTemp2FAToken" libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - grep -n "oauth_2fa" apps/web/app/routes/_public/login.tsx
+  - pnpm nx test api-custom
+  - pnpm nx run web:typecheck
+
+agentHints:
+  - The 2FA branch must return BEFORE `signUser()` is reached. `signUser` creates a session row when
+    passed `sessionInfo`, so calling it first and discarding the result would still leave a session
+    behind — check `twoFactorEnabled` before it, not after.
+  - A downstream project that diverged on the OAuth callbacks (added providers, changed the redirect
+    contract) should apply the gate to every provider callback it has, not just Google and GitHub.
+    Collapsing them onto a shared helper first is the cheapest way to guarantee that.
+  - The OAuthUserProfile interface in oauth.service.ts had to be exported for the shared helper's
+    signature. It was previously module-private.
+  - The hand-off token travels as a query parameter. It is 5-minute, single-purpose, and still
+    requires a valid TOTP or backup code, but if a project is stricter about credentials in URLs,
+    the alternative is a short-lived HttpOnly cookie read by a dedicated mutation — a larger change
+    to the complete2FALogin contract, which takes the token as an argument today.
+  - Routes in this app are not filesystem-discovered. Both new pages must be registered in
+    apps/web/app/routes.tsx or they 404 even though the files exist. A downstream project that
+    already built its own OAuth landing pages should keep them and take only the controller-side
+    changes.
+  - Keep the oauth-error page's provider and error lookups as known-value maps. Both values arrive
+    from an untrusted redirect, so an unrecognised code must fall back to generic copy rather than
+    be rendered.

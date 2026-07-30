@@ -1,0 +1,92 @@
+id: 2026-07-29-api-strict-and-typecheck-target
+title: Strictly typecheck the API app without changing emitted decorator metadata
+priority: high
+area: api
+type: infra
+delivery: code-patch
+
+intent: >
+  Two independent gaps meant API source was effectively never type-checked.
+  (1) `apps/api/tsconfig.json` set only `esModuleInterop` and inherited tsconfig.base.json, which
+  sets no strict flags — while every lib under libs/api sets `strict: true`. The app is what
+  actually compiles those libs (their sources come in through the tsconfig.base.json path
+  mappings, under the app's config), so the one compilation unit covering the whole API was the
+  laxest one, and strict lib code was only checked incidentally via whatever a spec imported. Do
+  not fix that by putting `strict: true` in `apps/api/tsconfig.json`: the API webpack build uses
+  that file for emit, and `strictNullChecks` changes emitted `emitDecoratorMetadata` for optional
+  nullable GraphQL fields such as `token?: string | null` from `String` to `Object`. Nest GraphQL
+  reads that metadata at bootstrap, so the API compiles and then refuses to start with
+  `UndefinedTypeError`. Added `apps/api/tsconfig.typecheck.json` instead, extending the app config
+  with `strict: true`, `noEmit: true`, and `resolveJsonModule: true`. The JSON module option is
+  required by the source as it already stands (email-hygiene.service.ts imports
+  disposable-email-domains/wildcard.json; webpack resolves it natively).
+  (2) No `typecheck` target existed for apps/api and CI ran only `nx run web:typecheck`.
+  `nx affected -t build` does cover the API, but through webpack, which does not enforce strict —
+  a passing build was never a passing typecheck. Added a typecheck target mirroring web's
+  (dependsOn api-prisma:generate, cached, tsc against the no-emit config), pointed the root
+  `typecheck` script at `nx run-many -t typecheck -p api,web`, and updated the CI step.
+
+why: >
+  Strict checking without a target that runs it changes nothing in CI, and adding a typecheck
+  target without strict checks almost nothing. Both are needed for either to matter, but the
+  strictness must run in a no-emit config so the API's runtime GraphQL metadata remains unchanged.
+  Together they surfaced 20 real type errors in libs/api/custom that had been invisible, including
+  one live defect: getInvitationDetails returned `inviterName: null` for an inviter with no
+  firstName and no displayName, against a non-null GraphQL field — failing the entire public
+  invitation query for the invitee. The other 19 were unannotated GraphQL DTO fields.
+  Also mark api-e2e:test with `parallelism: false`: its setup runs prisma db push, and Prisma 7
+  does not support --skip-generate there, so parallel test runs can rewrite the generated client
+  while other suites are compiling or executing.
+
+affectedPaths:
+  - apps/api/tsconfig.json
+  - apps/api/tsconfig.typecheck.json
+  - apps/api/project.json
+  - apps/api-e2e/project.json
+  - package.json
+  - .github/workflows/ci.yml
+  - libs/api/custom/src/lib/default/organization/organization.service.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+  - libs/api/custom/src/lib/default/organization/dto/invitation-details.output.ts
+  - libs/api/custom/src/lib/plugins/storage/models/upload.model.ts
+  - libs/api/custom/src/lib/plugins/storage/dto/upload-file.input.ts
+  - libs/api/custom/src/lib/plugins/admin/dto/admin-users-response.output.ts
+  - libs/api/custom/src/lib/default/user-preference/dto/secure-create-user-preference.input.ts
+
+skipIf:
+  - The project already has a strict no-emit API typecheck config and CI already runs a real
+    typecheck for the API.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm nx run api:typecheck --skip-nx-cache
+  - pnpm typecheck
+  - pnpm nx test api-custom
+  - pnpm nx build api --skip-nx-cache
+  - pnpm format:check
+
+agentHints:
+  - Expect this to surface errors rather than pass cleanly on first run — that is the point. A
+    downstream project with more custom API code will have more than the 20 seen here. Most are
+    TS2564 on GraphQL DTO fields; the correct fix is a `!` definite-assignment assertion, since
+    Nest builds these from object literals and never calls a constructor. Do not "fix" them by
+    making fields optional — that changes the GraphQL contract.
+  - Read every TS2322/TS2345 individually before annotating it away. Those are where the real bugs
+    hide. In this template the single TS2322 was a genuine non-null-field violation, and the two
+    TS2345s pointed at the OAuth 2FA bypass (see 2026-07-29-oauth-callback-2fa-bypass).
+  - The inviterName fix follows the fallback the invitation emails in the same service already use
+    (`firstName || displayName || 'A team member'`); the query path was simply the one place that
+    omitted the final fallback. Prefer matching that existing convention over making the GraphQL
+    field nullable, which would force an SDK regeneration and frontend null handling.
+  - >
+    Do not add `strict`, `strictNullChecks`, or `strict: true` to `apps/api/tsconfig.json`. That is
+    the emit config consumed by the webpack build. Put strictness in `apps/api/tsconfig.typecheck.json`
+    with `noEmit: true`, and point the API typecheck target there.
+  - resolveJsonModule is not optional cleanup — without it the strict typecheck config fails
+    immediately on the .json import and the whole target is useless.
+  - Keep api-e2e:test non-parallel if its setup runs prisma db push. Prisma 7 regenerates the
+    client during db push, and parallel runs can race on files under prisma-generated/internal.
+  - The root script is scoped `-p api,web` deliberately. Nx also infers typecheck targets for
+    several libs from their tsconfig.lib.json which have never been run and fail on pre-existing
+    issues; a downstream project should check what `nx run-many -t typecheck` covers in its own
+    workspace before dropping the scope. Superseded by 2026-07-29-typecheck-remaining-lib-targets.

@@ -18,6 +18,7 @@
     },
     "test": {
       "executor": "nx:run-commands",
+      "parallelism": false,
       "outputs": [
         "{workspaceRoot}/coverage/{e2eProjectRoot}",
         "{workspaceRoot}/test-results/{e2eProjectRoot}"

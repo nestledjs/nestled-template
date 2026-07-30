@@ -3,9 +3,14 @@
   "compilerOptions": {
     "outDir": "../../../dist/out-tsc",
     "declaration": true,
-    "types": ["node"]
+    // apollo.ts reads `import.meta.env` on the client-side path. tsconfig.json here overrides the
+    // workspace default of `module: esnext` down to commonjs, under which `import.meta` is a
+    // syntax error, and `vite/client` supplies the ImportMeta.env typing. Mirrors what
+    // libs/shared/utils already does; scoped to this config so spec/build behavior is unchanged.
+    "module": "esnext",
+    "types": ["node", "vite/client"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "../../../vite-env.d.ts"],
   "exclude": [
     "vite.config.ts",
     "vite.config.mts",

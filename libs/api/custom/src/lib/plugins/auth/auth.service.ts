@@ -551,13 +551,7 @@ export class AuthService {
 
     // Check if 2FA is enabled
     if (user.twoFactorEnabled) {
-      // Generate temporary token for 2FA verification (short-lived, 5 minutes)
-      const tempPayload = {
-        userId: user.id,
-        temp2FA: true,
-        remember: input.remember || false,
-      }
-      const tempToken = this.jwtService.sign(tempPayload, { expiresIn: '5m' })
+      const tempToken = this.createTemp2FAToken(user.id, input.remember || false)
 
       Logger.log(`2FA required for login: ${email}`)
 
@@ -1199,6 +1193,21 @@ export class AuthService {
     }
 
     return updatedUser
+  }
+
+  /**
+   * Mint the short-lived (5 minute) token that stands in for a completed first factor while the
+   * user is challenged for 2FA. It is NOT a session token: it carries no session id, and no
+   * session row is created until `complete2FALogin` verifies the second factor.
+   *
+   * Every login path that authenticates a first factor (password, OAuth, ...) must route
+   * 2FA-enabled users through this instead of `signUser`, otherwise the second factor is skipped.
+   */
+  createTemp2FAToken(userId: string, rememberMe = false): string {
+    return this.jwtService.sign(
+      { userId, temp2FA: true, remember: rememberMe },
+      { expiresIn: '5m' },
+    )
   }
 
   async signUser(

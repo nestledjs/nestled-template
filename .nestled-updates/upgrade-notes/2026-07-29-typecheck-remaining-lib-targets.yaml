@@ -1,0 +1,61 @@
+id: 2026-07-29-typecheck-remaining-lib-targets
+title: Fix the never-run library typecheck targets and unscope the typecheck run
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Nx infers a `typecheck` target from tsconfig.lib.json for several libs in addition to the
+  explicitly declared app targets. Three of them had never been run by any script or CI step, and
+  all three failed the first time they were.
+  (1) libs/shared/apollo — tsconfig.json overrides the workspace default of `module: esnext` down
+  to commonjs, under which the `import.meta.env` read in apollo.ts is a syntax error (TS1343), and
+  `vite/client` was missing so ImportMeta had no `env` (TS2339). Fixed in tsconfig.lib.json only,
+  so spec and build behavior are untouched.
+  (2) libs/web-ui and libs/web — both compile libs/shared/utils sources through the path mappings,
+  and those read `import.meta.env`. libs/shared/utils already carries `vite/client` in its own
+  config, but the CONSUMER's config governs, so both needed it added.
+  (3) libs/web additionally listed `./src/lib/image-upload/cloudinary-react.d.ts` in
+  compilerOptions.types. That file has never existed in this repo — no such file, no deletion in
+  git history, nothing under libs/web referencing cloudinary. A missing `types` entry is a hard
+  TS2688, so this target could never have run at all.
+  With all three green, the root `typecheck` script and the CI step drop their `-p api,web` scope
+  and run every typecheck target in the workspace.
+
+why: >
+  This is the same class of gap as 2026-07-29-api-strict-and-typecheck-target, in different
+  projects. A target that nothing invokes accumulates breakage silently and gives a false sense of
+  coverage — worse than having no target, because the workspace looks configured. Scoping the run
+  to a hand-written project list has the same failure mode over time, since new projects are simply
+  never added to it.
+
+affectedPaths:
+  - libs/shared/apollo/tsconfig.lib.json
+  - libs/web-ui/tsconfig.lib.json
+  - libs/web/tsconfig.lib.json
+  - package.json
+  - .github/workflows/ci.yml
+
+skipIf:
+  - The project already runs an unscoped `nx run-many -t typecheck` in CI with every target passing.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm typecheck
+  - pnpm exec nx run-many -t build -p apollo,web-components,web-ui
+  - pnpm build:web
+  - pnpm format:check
+
+agentHints:
+  - Run `nx show projects --with-target typecheck` first. Which targets Nx infers depends on the
+    plugins configured in nx.json, so a downstream workspace may have a different set than the ten
+    seen here. Fix what its own run-many surfaces rather than assuming these three files.
+  - Prefer adding `vite/client` to the CONSUMER's tsconfig.lib.json types over restructuring the
+    shared lib. The error surfaces in libs/shared/utils sources but the cause is the config
+    compiling them, which is why libs/shared/utils looked correct in isolation the whole time.
+  - Check `compilerOptions.types` entries against the filesystem before anything else. A stale
+    entry is a hard error that masks every other error in the project, so it must be cleared first
+    or the real state of the target stays hidden.
+  - Do not restore a `-p` scope to make a red target pass. Fix the target or, if it genuinely
+    cannot be fixed yet, leave the scope with a comment naming what is excluded and why.
