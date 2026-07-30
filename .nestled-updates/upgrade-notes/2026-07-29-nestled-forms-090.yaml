@@ -77,6 +77,12 @@ agentHints:
   - 'Downstream projects consuming @nestledjs/data-browser must move to >=1.0.20 in the same
     change. Earlier versions pin forms-core to exact 0.8.0 or cap forms
     below 0.9.0, so they conflict with this upgrade and will warn or fail depending on strictness.'
+  - "Bump @nestledjs/data-browser as a published package only. Do NOT copy libs/data-browser source
+    into the downstream project. That directory exists solely in nestled-dev-template, where the
+    library is embedded and published from; nestled-template and every clone of it consume it from
+    npm and have no libs/data-browser at all. The libs/data-browser/package.json in affectedPaths
+    and the packageReleases sourcePath both describe dev-template's own layout — they are provenance
+    for where the release is cut, not paths to edit downstream."
   - 'No application source changes are required. The template needed none: it has no form.watch()
     or form.getValues() call sites outside the library.'
   - 'Adopting useFormValue is optional, not part of this upgrade. If a project does read form
