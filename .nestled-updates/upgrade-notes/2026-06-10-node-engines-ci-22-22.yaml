@@ -1,5 +1,5 @@
 id: 2026-06-10-node-engines-ci-22-22
-title: "Widen engines.node to ^22.14.0; pin CI to Node 22.22.1 (Qalatra box alignment)"
+title: 'Widen engines.node to ^22.14.0; pin CI to Node 22.22.1 (Qalatra box alignment)'
 priority: high
 area: infra
 type: infra
@@ -27,9 +27,9 @@ skipIf:
   - engines.node is already a range accepting 22.22.1 and CI already runs node-version 22.22.1.
 
 agentHints:
-  - "Replace every exact engines.node 22.14.0 with ^22.14.0 across root and app package.json files."
-  - "In .github/workflows, replace node-version 22.14.0 pins with 22.22.1."
-  - "Apply 2026-06-10-vitest-configs-mts BEFORE this note. Never bump CI Node while .ts vitest configs remain."
+  - 'Replace every exact engines.node 22.14.0 with ^22.14.0 across root and app package.json files.'
+  - 'In .github/workflows, replace node-version 22.14.0 pins with 22.22.1.'
+  - 'Apply 2026-06-10-vitest-configs-mts BEFORE this note. Never bump CI Node while .ts vitest configs remain.'
 
 verification:
   - npx nx show projects

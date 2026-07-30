@@ -53,7 +53,11 @@ describe('registerOrganizationTools', () => {
     })
 
     expect(handlers.has('list_organizations')).toBe(true)
-    const result = await handlers.get('list_organizations')?.({ search: 'ac', limit: 10, offset: 0 })
+    const result = await handlers.get('list_organizations')?.({
+      search: 'ac',
+      limit: 10,
+      offset: 0,
+    })
 
     expect(prisma.organizationMember.findMany).toHaveBeenCalledWith({
       where: { userId: 'user-1', organization: { name: { contains: 'ac', mode: 'insensitive' } } },

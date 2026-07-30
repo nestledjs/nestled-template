@@ -47,6 +47,6 @@ agentHints:
   - If a project carries a local generate-models.ts fork that hardcoded GraphQLJSON to work
     around the old behavior, this bump makes that fork unnecessary — consolidate onto the
     package (see 2026-07-04-consolidate-generators) as part of the same change.
-  - "Keep hand-written custom SDK operations OUT of any folder named after a @skipCrud model
+  - 'Keep hand-written custom SDK operations OUT of any folder named after a @skipCrud model
     (e.g. graphql/transfer-route/ for a skipped TransferRoute model) — the sdk generator
-    deletes graphql/<kebab-model-name>/ for skipped models. Put them in a non-model folder."
+    deletes graphql/<kebab-model-name>/ for skipped models. Put them in a non-model folder.'

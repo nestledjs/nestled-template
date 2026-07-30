@@ -130,7 +130,9 @@ export default function ApiTokensSettings() {
           {activeTokens.length === 0 ? (
             <div className="p-8 text-center">
               <KeyIcon className="mx-auto mb-3 h-10 w-10 text-zinc-400" />
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">No active personal API tokens.</p>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                No active personal API tokens.
+              </p>
             </div>
           ) : (
             activeTokens.map(token => (

@@ -37,7 +37,9 @@ vi.mock('../../../app/routes/settings/_mcp-shared', async importOriginal => {
     ...actual,
     MCP_SERVER_URL: 'http://localhost:3000/api/mcp',
     buildClaudeConfig: (token: string) =>
-      JSON.stringify({ mcpServers: { nestled: { headers: { Authorization: `Bearer ${token}` } } } }),
+      JSON.stringify({
+        mcpServers: { nestled: { headers: { Authorization: `Bearer ${token}` } } },
+      }),
     TokenMeta: ({ token }: any) => <span data-testid="token-meta">{token.createdAt}</span>,
     NewTokenDisplay: ({ name, onDismiss }: any) => (
       <div data-testid="new-token-display">
@@ -98,7 +100,15 @@ describe('ApiTokensSettings', () => {
     mockUseReadQuery.mockReturnValue({
       data: {
         listApiTokens: [
-          { id: 'tok-1', name: 'My Token', organizationId: null, revoked: false, createdAt: null, lastUsedAt: null, expiresAt: null },
+          {
+            id: 'tok-1',
+            name: 'My Token',
+            organizationId: null,
+            revoked: false,
+            createdAt: null,
+            lastUsedAt: null,
+            expiresAt: null,
+          },
         ],
       },
     })
@@ -110,7 +120,9 @@ describe('ApiTokensSettings', () => {
     renderPage()
     await userEvent.click(screen.getByRole('button', { name: /create token/i }))
     expect(screen.getByPlaceholderText('MacBook Pro CLI')).toBeInTheDocument()
-    expect(screen.getByText('This token authenticates as your personal user account.')).toBeInTheDocument()
+    expect(
+      screen.getByText('This token authenticates as your personal user account.'),
+    ).toBeInTheDocument()
   })
 
   it('shows inline token display after successful creation', async () => {
@@ -134,7 +146,15 @@ describe('ApiTokensSettings', () => {
     mockUseReadQuery.mockReturnValue({
       data: {
         listApiTokens: [
-          { id: 'tok-2', name: 'Old Token', organizationId: null, revoked: true, createdAt: null, lastUsedAt: null, expiresAt: null },
+          {
+            id: 'tok-2',
+            name: 'Old Token',
+            organizationId: null,
+            revoked: true,
+            createdAt: null,
+            lastUsedAt: null,
+            expiresAt: null,
+          },
         ],
       },
     })

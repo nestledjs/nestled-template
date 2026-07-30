@@ -1,5 +1,5 @@
 id: 2026-05-27-skip-crud-graphql-type-filtering
-title: "@skipCrud models excluded from generated GraphQL ObjectTypes"
+title: '@skipCrud models excluded from generated GraphQL ObjectTypes'
 priority: high
 area: api
 type: security
@@ -36,9 +36,9 @@ agentHints:
   - If any @skipCrud model folders still exist under libs/api/custom/src/lib/default/ after db-update, delete them manually — they are stale from before the fix.
 
 verification:
-  - "pnpm install"
-  - "pnpm db-update"
-  - "pnpm nx build api"
+  - 'pnpm install'
+  - 'pnpm db-update'
+  - 'pnpm nx build api'
   - Confirm no @ObjectType class exists in libs/api/core/models/src/lib/models/models.ts for any @skipCrud model (e.g. PasswordHistory).
   - Confirm no resolver, module, or SDK operation files exist for any @skipCrud model.
   - Confirm @skipCrud models are absent from apps/api/src/app.module.ts defaultModules.

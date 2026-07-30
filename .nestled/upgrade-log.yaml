@@ -5,81 +5,81 @@ template:
 upgrades:
   2026-05-17-public-landing-cleanup:
     status: applied
-    reviewedAt: "2026-05-18T01:02:27.361Z"
+    reviewedAt: '2026-05-18T01:02:27.361Z'
     branch: nestled-upgrade/2026-05-17-public-landing-cleanup
     notes: Patch applied cleanly.
   2026-05-17-ci-toolchain-lock:
     status: adapted
-    reviewedAt: "2026-05-18T01:14:34.750Z"
+    reviewedAt: '2026-05-18T01:14:34.750Z'
     branch: nestled-upgrade/2026-05-17-ci-toolchain-lock
     notes: Patch applied cleanly. Verification skipped — CI-only check not runnable locally; real validation is CI passing after PR merge.
   2026-05-17-auth-delay-csprng:
     status: applied
-    reviewedAt: "2026-05-18T02:36:41.149Z"
+    reviewedAt: '2026-05-18T02:36:41.149Z'
     branch: nestled-upgrade/2026-05-17-auth-delay-csprng
     notes: Patch applied cleanly.
   2026-05-25-api-token-mcp-settings:
     status: applied
-    reviewedAt: "2026-05-25T18:28:01.915Z"
+    reviewedAt: '2026-05-25T18:28:01.915Z'
     branch: nestled-upgrade/2026-05-25-api-token-mcp-settings
     notes: Patch applied cleanly.
   2026-05-25-api-tokens-mcp-setup-and-rbac:
     status: adapted
-    reviewedAt: "2026-05-26T01:52:32Z"
+    reviewedAt: '2026-05-26T01:52:32Z'
     branch: nestled-upgrade/2026-05-25-api-tokens-mcp-setup-and-rbac
     notes: Adapted from nestled-dev-template by applying the RBAC/MCP setup files and tests directly, preserving already-applied earlier API-token and cookie fixes. Verification passed.
   2026-05-27-skip-crud-graphql-type-filtering:
     status: applied
-    reviewedAt: "2026-05-27T00:00:00.000Z"
+    reviewedAt: '2026-05-27T00:00:00.000Z'
     branch: nestled-upgrade/2026-05-27-skip-crud-graphql-type-filtering
     notes: Patch applied via git apply --3way --exclude=package.json --exclude=pnpm-lock.yaml. Three files (organization.ts, organization.spec.ts, seed.ts) were already at the post-patch state from the PR All 23 files applied. PasswordHistory CRUD surface fully removed.
   2026-05-28-59c84d0-to-ad422ef:
     status: superseded
-    reviewedAt: "2026-05-29T12:23:10.426Z"
+    reviewedAt: '2026-05-29T12:23:10.426Z'
     branch: nestled-upgrade/2026-05-28-59c84d0-to-ad422ef
     notes: Patch appears to already be present in this project.
   2026-05-28-bump-generators-296:
     status: applied
-    reviewedAt: "2026-05-29T12:23:15.156Z"
+    reviewedAt: '2026-05-29T12:23:15.156Z'
     branch: nestled-upgrade/2026-05-28-bump-generators-296
     notes: Patch applied cleanly.
   2026-06-10-prisma-migrate-localhost-guard:
     status: adapted
-    reviewedAt: "2026-06-10T15:51:03.059Z"
+    reviewedAt: '2026-06-10T15:51:03.059Z'
     branch: nestled-upgrade/2026-06-10-prisma-migrate-localhost-guard
-    notes: "Patch applied cleanly; nx build api passed. Original blocked outcome was a false negative — verification entries were prose, not executable commands (fixed in the note, dev-template 582aebf). Manually verified: remote migrate dev blocked with BLOCKED error, migrate status not gated."
+    notes: 'Patch applied cleanly; nx build api passed. Original blocked outcome was a false negative — verification entries were prose, not executable commands (fixed in the note, dev-template 582aebf). Manually verified: remote migrate dev blocked with BLOCKED error, migrate status not gated.'
   2026-06-10-compose-project-name:
     status: superseded
-    reviewedAt: "2026-06-10T17:27:17.448Z"
+    reviewedAt: '2026-06-10T17:27:17.448Z'
     branch: nestled-upgrade/2026-06-10-compose-project-name
     notes: Compose project name was pushed directly to develop (4520adf) before promotion ran; note copies synced from dev-template. No further action.
   2026-06-10-bump-api-2-10-0-clone-identity:
     status: adapted
-    reviewedAt: "2026-06-10T18:05:00.000Z"
+    reviewedAt: '2026-06-10T18:05:00.000Z'
     notes: Applied manually (package manifests are excluded from raw promotion). pnpm.overrides @nestledjs/api -> 2.10.0, generators -> ^0.2.31. .nestled-updates kept — template tooling belongs here.
   2026-06-10-node-engines-ci-22-22:
     status: superseded
-    reviewedAt: "2026-07-05T13:20:00.000Z"
+    reviewedAt: '2026-07-05T13:20:00.000Z'
     notes: Already satisfied — engines.node is ^22.14.0 and CI runs node-version 22.22.1 (applied earlier in commit 065178b). skipIf met.
   2026-06-10-vitest-configs-mts:
     status: superseded
-    reviewedAt: "2026-07-05T13:20:00.000Z"
+    reviewedAt: '2026-07-05T13:20:00.000Z'
     notes: Already satisfied — all vitest configs are .mts and no vitest.config.ts references remain (applied earlier in commit 065178b). skipIf met.
   2026-06-21-auth-redirect-loop-circuit-breaker:
     status: adapted
-    reviewedAt: "2026-07-05T13:20:00.000Z"
-    notes: "Bundled tree-diff patch did not git-apply; implemented per intent: expired=1 circuit breaker in login loader + root loader + force-logout, null-user routed through /force-logout, .env.example cookie-domain docs. Verified: npx nx test web green (677 tests)."
+    reviewedAt: '2026-07-05T13:20:00.000Z'
+    notes: 'Bundled tree-diff patch did not git-apply; implemented per intent: expired=1 circuit breaker in login loader + root loader + force-logout, null-user routed through /force-logout, .env.example cookie-domain docs. Verified: npx nx test web green (677 tests).'
   2026-06-22-data-browser-email-field-overmatch:
     status: applied
-    reviewedAt: "2026-07-05T13:20:00.000Z"
+    reviewedAt: '2026-07-05T13:20:00.000Z'
     notes: Package-release. Bumped @nestledjs/data-browser ^1.0.15 -> ^1.0.16 (published 2026-07-05); pnpm install resolved to 1.0.16, lockfile churn scoped to data-browser. Word-boundary email/textarea input inference fix ships in the package; no source copied.
   2026-07-04-consolidate-generators:
     status: applied
-    reviewedAt: "2026-07-05T13:20:00.000Z"
-    notes: "@nestledjs/generators pinned to 1.0.0; pnpm.overrides for retired @nestledjs/api/shared/utils removed (no source imports them); db-update + generate:models rewritten onto the four generators; local generate-models.ts deleted. pnpm db-update regenerated byte-identical output. Verified: pnpm build:api, nestled-doctor, nx show projects (21)."
+    reviewedAt: '2026-07-05T13:20:00.000Z'
+    notes: '@nestledjs/generators pinned to 1.0.0; pnpm.overrides for retired @nestledjs/api/shared/utils removed (no source imports them); db-update + generate:models rewritten onto the four generators; local generate-models.ts deleted. pnpm db-update regenerated byte-identical output. Verified: pnpm build:api, nestled-doctor, nx show projects (21).'
   2026-07-05-generators-json-scalar:
     status: blocked
-    reviewedAt: "2026-07-05T15:21:35.573Z"
+    reviewedAt: '2026-07-05T15:21:35.573Z'
     branch: nestled-upgrade/2026-07-05-generators-json-scalar
     reason: Direct patch did not apply cleanly; agent adaptation is required.
     notes: "error: patch failed: AGENTS.md:128\nerror: AGENTS.md: patch does not apply\nerror: patch failed: scripts/doctor.ts:1095\nerror: scripts/doctor.ts: patch does not apply\n"

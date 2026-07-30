@@ -20,7 +20,8 @@ describe('validationSchema', () => {
   })
 
   describe('API_URL', () => {
-    const validate = (API_URL: string) => validationSchema.validate({ API_URL }, { allowUnknown: true })
+    const validate = (API_URL: string) =>
+      validationSchema.validate({ API_URL }, { allowUnknown: true })
 
     it('reports a concrete, diagnosable message instead of the generic any.invalid text', () => {
       // Regression (PIR-203): this previously raised `any.invalid`, rendering only

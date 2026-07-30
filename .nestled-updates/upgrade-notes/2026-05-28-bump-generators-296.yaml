@@ -1,5 +1,5 @@
 id: 2026-05-28-bump-generators-296
-title: "Upgrade @nestledjs/api@2.9.6 and @nestledjs/shared@1.0.3 generators"
+title: 'Upgrade @nestledjs/api@2.9.6 and @nestledjs/shared@1.0.3 generators'
 priority: normal
 area: infra
 type: deps
@@ -27,10 +27,10 @@ skipIf:
   - The downstream project is already running @nestledjs/api>=2.9.6 and @nestledjs/shared>=1.0.3.
 
 verification:
-  - "pnpm install"
-  - "pnpm db-update"
-  - "pnpm nx build api"
-  - "pnpm nx build web"
+  - 'pnpm install'
+  - 'pnpm db-update'
+  - 'pnpm nx build api'
+  - 'pnpm nx build web'
 
 agentHints:
   - In package.json under pnpm.overrides, set "@nestledjs/api" to "2.9.6" and "@nestledjs/shared" to "1.0.3", then run pnpm install.

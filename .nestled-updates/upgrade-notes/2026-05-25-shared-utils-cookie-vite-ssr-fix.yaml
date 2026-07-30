@@ -31,7 +31,7 @@ verification:
 
 agentHints:
   - In getSessionCookieName, locate the client-side Vite block.
-  - "Before: if (import.meta?.env?.VITE_COOKIE_NAME) { return import.meta.env.VITE_COOKIE_NAME }"
-  - "After: const viteEnvName = import.meta?.env?.VITE_COOKIE_NAME as string | undefined; if (viteEnvName) { return viteEnvName }"
+  - 'Before: if (import.meta?.env?.VITE_COOKIE_NAME) { return import.meta.env.VITE_COOKIE_NAME }'
+  - 'After: const viteEnvName = import.meta?.env?.VITE_COOKIE_NAME as string | undefined; if (viteEnvName) { return viteEnvName }'
   - The server-side process.env block above it is fine and should not be changed.
   - All three cookie tests should pass after the change.
