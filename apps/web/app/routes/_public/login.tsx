@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   Link,
   LoaderFunctionArgs,
@@ -89,11 +89,26 @@ export const ForgotPasswordWrapper = (children: React.ReactNode) => (
 export default function LoginPage() {
   const isRemembered = useLoaderData()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [formError, setFormError] = useState<string | null>(null)
-  const [requires2FA, setRequires2FA] = useState(false)
-  const [tempToken, setTempToken] = useState<string | null>(null)
+
+  // OAuth hand-off: a 2FA-enabled user who authenticated with Google/GitHub is redirected here
+  // by the provider callback with a short-lived temp token instead of a session cookie, so the
+  // second factor is collected before any session exists. Open straight into the 2FA step.
+  const oauth2FAToken = searchParams.get('oauth_2fa')
+  const [requires2FA, setRequires2FA] = useState(!!oauth2FAToken)
+  const [tempToken, setTempToken] = useState<string | null>(oauth2FAToken)
   const [twoFACode, setTwoFACode] = useState('')
+
+  // Once the token is held in component state, strip it from the address bar. It is a
+  // credential — short-lived and still gated on the second factor, but it should not persist in
+  // browser history, bookmarks, or a Referer header sent to a third party.
+  useEffect(() => {
+    if (!oauth2FAToken) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('oauth_2fa')
+    setSearchParams(next, { replace: true })
+  }, [oauth2FAToken, searchParams, setSearchParams])
 
   // Accept `return_url` (standard) or the legacy/absolute `redirect` param; both go
   // through the same open-redirect guard.

@@ -10,7 +10,7 @@ import { OAuthApp } from '@octokit/oauth-app'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { OAuthProvider } from './dto'
 
-interface OAuthUserProfile {
+export interface OAuthUserProfile {
   provider: OAuthProvider
   providerUserId: string
   email: string

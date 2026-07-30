@@ -135,13 +135,31 @@ const getChangedFiles = (): string[] => {
   return Array.from(files).sort((left, right) => left.localeCompare(right))
 }
 
+const safeReadDir = (dir: string): string[] => {
+  try {
+    return readdirSync(dir)
+  } catch {
+    return []
+  }
+}
+
+const safeStat = (path: string) => {
+  try {
+    return statSync(path)
+  } catch {
+    return undefined
+  }
+}
+
 const walkFiles = (dir: string, predicate: (path: string) => boolean): string[] => {
   if (!existsSync(dir)) return []
 
   const files: string[] = []
-  for (const entry of readdirSync(dir)) {
+  for (const entry of safeReadDir(dir)) {
     const path = join(dir, entry)
-    const stat = statSync(path)
+    const stat = safeStat(path)
+    if (!stat) continue
+
     if (stat.isDirectory()) {
       if (
         entry === 'node_modules' ||
@@ -164,9 +182,9 @@ const walkFiles = (dir: string, predicate: (path: string) => boolean): string[] 
 const directFiles = (dir: string, predicate: (path: string) => boolean): string[] => {
   if (!existsSync(dir)) return []
 
-  return readdirSync(dir)
+  return safeReadDir(dir)
     .map(entry => join(dir, entry))
-    .filter(path => statSync(path).isFile() && predicate(path))
+    .filter(path => safeStat(path)?.isFile() === true && predicate(path))
 }
 
 const getRegexMatches = (pattern: RegExp, source: string): RegExpExecArray[] => {

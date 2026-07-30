@@ -2,7 +2,15 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "../../dist/out-tsc",
-    "types": ["node", "@nx/react/typings/cssmodule.d.ts", "@nx/react/typings/image.d.ts"]
+    // vite/client is needed because this config compiles libs/shared/utils sources through the
+    // path mappings, and those read `import.meta.env`. The consumer's config governs, so having
+    // it in libs/shared/utils alone is not enough.
+    "types": [
+      "node",
+      "vite/client",
+      "@nx/react/typings/cssmodule.d.ts",
+      "@nx/react/typings/image.d.ts"
+    ]
   },
   "exclude": [
     "**/*.spec.ts",

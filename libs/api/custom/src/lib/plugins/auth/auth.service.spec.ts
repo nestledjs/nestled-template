@@ -660,6 +660,34 @@ describe('AuthService', () => {
     })
   })
 
+  describe('createTemp2FAToken', () => {
+    // Shared by the password login path and the OAuth callbacks. The payload shape is what
+    // complete2FALogin verifies, so it is asserted directly rather than only through login().
+    it('signs a 5-minute temp2FA payload', () => {
+      mockJwtService.sign.mockReturnValue('temp-2fa-token')
+
+      const token = service.createTemp2FAToken('user-123', true)
+
+      expect(token).toBe('temp-2fa-token')
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        { userId: 'user-123', temp2FA: true, remember: true },
+        { expiresIn: '5m' },
+      )
+    })
+
+    it('defaults remember to false when not supplied', () => {
+      // The OAuth callbacks call this with the user id only.
+      mockJwtService.sign.mockReturnValue('temp-2fa-token')
+
+      service.createTemp2FAToken('user-123')
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        { userId: 'user-123', temp2FA: true, remember: false },
+        { expiresIn: '5m' },
+      )
+    })
+  })
+
   describe('Authenticated user hydration', () => {
     const expectedAuthUserInclude = {
       emails: true,

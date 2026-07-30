@@ -29,6 +29,10 @@ export default [
     route('force-logout', './routes/force-logout.tsx'),
     // Accept organization invitation route
     route('accept-invitation', './routes/accept-invitation.tsx'),
+    // OAuth callback landing pages. The API's /api/auth/{google,github}/callback redirect here;
+    // without these registered the provider redirect 404s with a session cookie already set.
+    route('auth/oauth-success', './routes/auth/oauth-success.tsx'),
+    route('auth/oauth-error', './routes/auth/oauth-error.tsx'),
     // Checkout routes
     route('checkout/success', './routes/checkout/success.tsx'),
     route('checkout/cancel', './routes/checkout/cancel.tsx'),

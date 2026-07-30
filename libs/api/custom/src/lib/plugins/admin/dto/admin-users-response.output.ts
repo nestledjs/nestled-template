@@ -4,14 +4,14 @@ import { User } from '@nestled-template/api/core/models'
 @ObjectType()
 export class AdminUsersResponse {
   @Field(() => [User])
-  users: User[]
+  users!: User[]
 
   @Field(() => Int)
-  total: number
+  total!: number
 
   @Field(() => Int)
-  skip: number
+  skip!: number
 
   @Field(() => Int)
-  take: number
+  take!: number
 }

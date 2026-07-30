@@ -16,6 +16,21 @@
         }
       }
     },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["api-prisma:generate"],
+      "cache": true,
+      "inputs": [
+        "production",
+        "^production",
+        {
+          "externalDependencies": ["typescript", "prisma", "@prisma/client"]
+        }
+      ],
+      "options": {
+        "command": "tsc -p apps/api/tsconfig.typecheck.json"
+      }
+    },
     "serve": {
       "continuous": true,
       "executor": "@nx/js:node",

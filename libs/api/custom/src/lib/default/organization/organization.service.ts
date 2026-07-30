@@ -616,9 +616,12 @@ export class OrganizationService {
       email: invite.email,
       organizationName: invite.organization.name,
       roleName: invite.role?.name || 'Member',
+      // firstName, lastName and displayName are all optional on User, so this needs the same
+      // final fallback the invitation emails use. Without it an inviter with none of them set
+      // returns null for a non-null GraphQL field, failing the whole query for the invitee.
       inviterName: invite.inviter.firstName
         ? `${invite.inviter.firstName} ${invite.inviter.lastName || ''}`.trim()
-        : invite.inviter.displayName,
+        : invite.inviter.displayName || 'A team member',
       expiresAt: invite.expiresAt,
     }
   }
