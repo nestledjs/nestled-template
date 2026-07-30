@@ -1,5 +1,5 @@
 id: 2026-06-22-data-browser-email-field-overmatch
-title: "data-browser: email/textarea input inference matches whole words, not substrings"
+title: 'data-browser: email/textarea input inference matches whole words, not substrings'
 priority: high
 area: admin
 type: correctness
@@ -21,18 +21,18 @@ why: >
   blocking all edits to affected models (found editing a User in moceanic-ai, 2026-06-22).
 
 packageReleases:
-  - name: "@nestledjs/data-browser"
+  - name: '@nestledjs/data-browser'
     sourcePath: libs/data-browser
     targetVersion: 1.0.16
-    versionRange: ">=1.0.16"
+    versionRange: '>=1.0.16'
 
 skipIf:
   - The project does not use @nestledjs/data-browser auto-generated admin forms.
   - The project already runs @nestledjs/data-browser>=1.0.16.
 
 agentHints:
-  - "Downstream: bump @nestledjs/data-browser to >=1.0.16 (do not copy libs/data-browser source)."
-  - "The fix is in buildRegularFormField() in graphql-utils.ts — input-type heuristics now match the last camelCase/snake word, not a substring."
+  - 'Downstream: bump @nestledjs/data-browser to >=1.0.16 (do not copy libs/data-browser source).'
+  - 'The fix is in buildRegularFormField() in graphql-utils.ts — input-type heuristics now match the last camelCase/snake word, not a substring.'
 
 verification:
   - pnpm template:validate-upgrade-notes

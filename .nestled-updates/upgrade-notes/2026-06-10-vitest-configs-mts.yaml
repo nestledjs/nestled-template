@@ -1,5 +1,5 @@
 id: 2026-06-10-vitest-configs-mts
-title: "Vitest configs as .mts — eliminate require(esm) race during Nx graph construction"
+title: 'Vitest configs as .mts — eliminate require(esm) race during Nx graph construction'
 priority: high
 area: infra
 type: correctness
@@ -31,9 +31,9 @@ skipIf:
   - The project has no vitest.config.ts files (all already .mts).
 
 agentHints:
-  - "git mv each vitest.config.ts to vitest.config.mts (do not change file content)."
-  - "Update every textual reference: project.json vitest --config commands, tsconfig include arrays, any shell scripts. Grep for vitest.config.ts afterwards — zero references may remain outside node_modules."
-  - "Verify with a cold graph build: npx nx reset, then NX_DAEMON=false CI=true npx nx show projects must list all projects."
+  - 'git mv each vitest.config.ts to vitest.config.mts (do not change file content).'
+  - 'Update every textual reference: project.json vitest --config commands, tsconfig include arrays, any shell scripts. Grep for vitest.config.ts afterwards — zero references may remain outside node_modules.'
+  - 'Verify with a cold graph build: npx nx reset, then NX_DAEMON=false CI=true npx nx show projects must list all projects.'
 
 verification:
   - npx nx show projects

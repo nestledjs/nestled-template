@@ -184,7 +184,7 @@ npx @nestledjs/upgrades apply    # apply them on a branch, run your lint/test, a
 
 Most updates apply automatically. But if a change touches code you've customized
 and can't be applied cleanly — or if your tests fail after applying — `apply`
-**rolls the change back** and reports it as *blocked* with a description of the
+**rolls the change back** and reports it as _blocked_ with a description of the
 intent. That's your cue to make the equivalent change by hand (or hand it to a
 coding agent). Nothing half-applied is ever left behind.
 

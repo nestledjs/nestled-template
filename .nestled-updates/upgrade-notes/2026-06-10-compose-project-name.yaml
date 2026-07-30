@@ -1,5 +1,5 @@
 id: 2026-06-10-compose-project-name
-title: "Explicit compose project name in .dev/docker-compose.yml"
+title: 'Explicit compose project name in .dev/docker-compose.yml'
 priority: ignore
 area: infra
 type: infra

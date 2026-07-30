@@ -1,5 +1,5 @@
 id: 2026-06-10-prisma-migrate-localhost-guard
-title: "prisma.config.ts guard blocks migrate dev/reset against non-local databases"
+title: 'prisma.config.ts guard blocks migrate dev/reset against non-local databases'
 priority: high
 area: api
 type: security
@@ -36,7 +36,7 @@ agentHints:
     databaseUrl with new URL(...) and throw unless the hostname is one of localhost, 127.0.0.1,
     ::1, or [::1].
   - Throw on unparseable DATABASE_URL too when the command is migrate dev/reset — do not let a malformed URL fall through to Prisma.
-  - "Do not gate any other Prisma command: generate, db pull/push, migrate deploy, migrate status must behave exactly as before."
+  - 'Do not gate any other Prisma command: generate, db pull/push, migrate deploy, migrate status must behave exactly as before.'
   - >
     Some projects have small local edits to prisma.config.ts (e.g. mi-core orders the migrations
     block differently and includes a seed entry). Apply the guard block around the existing

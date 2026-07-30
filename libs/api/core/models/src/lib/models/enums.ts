@@ -1,26 +1,47 @@
 // Generated from Prisma schema
 
-import { registerEnumType } from '@nestjs/graphql';
-import { AddressType, EmailType, FailureReason, ImageType, InviteStatus, PhoneType, SecurityEventType, StorageProvider, SubscriptionStatus, TwoFactorMethod } from '@nestled-template/api/prisma';
-export { AddressType, EmailType, FailureReason, ImageType, InviteStatus, PhoneType, SecurityEventType, StorageProvider, SubscriptionStatus, TwoFactorMethod };
+import { registerEnumType } from '@nestjs/graphql'
+import {
+  AddressType,
+  EmailType,
+  FailureReason,
+  ImageType,
+  InviteStatus,
+  PhoneType,
+  SecurityEventType,
+  StorageProvider,
+  SubscriptionStatus,
+  TwoFactorMethod,
+} from '@nestled-template/api/prisma'
+export {
+  AddressType,
+  EmailType,
+  FailureReason,
+  ImageType,
+  InviteStatus,
+  PhoneType,
+  SecurityEventType,
+  StorageProvider,
+  SubscriptionStatus,
+  TwoFactorMethod,
+}
 
-registerEnumType(AddressType, { name: 'AddressType' });
+registerEnumType(AddressType, { name: 'AddressType' })
 
-registerEnumType(EmailType, { name: 'EmailType' });
+registerEnumType(EmailType, { name: 'EmailType' })
 
-registerEnumType(FailureReason, { name: 'FailureReason' });
+registerEnumType(FailureReason, { name: 'FailureReason' })
 
-registerEnumType(ImageType, { name: 'ImageType' });
+registerEnumType(ImageType, { name: 'ImageType' })
 
-registerEnumType(InviteStatus, { name: 'InviteStatus' });
+registerEnumType(InviteStatus, { name: 'InviteStatus' })
 
-registerEnumType(PhoneType, { name: 'PhoneType' });
+registerEnumType(PhoneType, { name: 'PhoneType' })
 
-registerEnumType(SecurityEventType, { name: 'SecurityEventType' });
+registerEnumType(SecurityEventType, { name: 'SecurityEventType' })
 
-registerEnumType(StorageProvider, { name: 'StorageProvider' });
+registerEnumType(StorageProvider, { name: 'StorageProvider' })
 
-registerEnumType(SubscriptionStatus, { name: 'SubscriptionStatus' });
+registerEnumType(SubscriptionStatus, { name: 'SubscriptionStatus' })
 
-registerEnumType(TwoFactorMethod, { name: 'TwoFactorMethod' });
-
+registerEnumType(TwoFactorMethod, { name: 'TwoFactorMethod' })

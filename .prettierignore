@@ -5,6 +5,7 @@ tmp/
 coverage/
 api-schema.graphql
 pnpm-lock.yaml
+apps/web/.react-router/
 
 .nx/self-healing
 .yalc/

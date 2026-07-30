@@ -78,20 +78,20 @@ verification:
   - pnpm nx test data-browser
 
 agentHints:
-  - "Facets are their own adminAuditLogFacets query/type, deliberately NOT fields on
+  - 'Facets are their own adminAuditLogFacets query/type, deliberately NOT fields on
     AdminAuditLogsResponse — that split is the whole point (the paged list query must not recompute
     DISTINCT scans on every page/filter change; the web UI fetches facets once, cache-first).
     api-schema.graphql is auto-generated on API boot (autoSchemaFile); this change hand-edits it to
     match so `pnpm sdk` (which reads ./api-schema.graphql, not a live server) regenerates the SDK.
-    After applying, boot the API once, confirm api-schema.graphql is unchanged, then re-run pnpm sdk."
-  - "getAuditLogFacets runs SELECT DISTINCT over the WHOLE table on purpose — it is deliberately
+    After applying, boot the API once, confirm api-schema.graphql is unchanged, then re-run pnpm sdk.'
+  - 'getAuditLogFacets runs SELECT DISTINCT over the WHOLE table on purpose — it is deliberately
     independent of the current where clause so the dropdown never hides a value just because the
-    active filter excludes it. Do not fold it into the filtered query."
-  - "The user/org comboboxes filter AuditLog.userId / organizationId (the actor / owning org), which
+    active filter excludes it. Do not fold it into the filtered query.'
+  - 'The user/org comboboxes filter AuditLog.userId / organizationId (the actor / owning org), which
     is the actor, not the entityId shown on each row. There is still no entityId filter; that was a
-    considered omission, not a miss. Add one only if a downstream project needs to filter by target."
-  - "audit-log-entity-filters.tsx lives under apps/web/app/components (NOT under routes/) so the
-    nestled-doctor route-registration check does not treat it as an unregistered route."
+    considered omission, not a miss. Add one only if a downstream project needs to filter by target.'
+  - 'audit-log-entity-filters.tsx lives under apps/web/app/components (NOT under routes/) so the
+    nestled-doctor route-registration check does not treat it as an unregistered route.'
   - "Filter controls must pull their classes from filters/filter-styles.tsx. Do not re-declare
     padding/border/focus classes on an individual filter — that divergence is exactly what produced
     three different control heights in one panel row. Note that BooleanFilter and StringFilter are
