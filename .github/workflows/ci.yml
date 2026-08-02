@@ -67,6 +67,12 @@ jobs:
 
       - uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4
 
+      - name: Use pushed commit range as Nx base
+        if: ${{ github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' }}
+        run: |
+          echo "NX_BASE=${{ github.event.before }}" >> "$GITHUB_ENV"
+          echo "NX_HEAD=${{ github.sha }}" >> "$GITHUB_ENV"
+
       - run: pnpm template:validate-upgrade-notes
 
       - run: pnpm run nestled-doctor
