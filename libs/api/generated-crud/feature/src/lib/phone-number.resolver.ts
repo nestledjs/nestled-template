@@ -9,13 +9,14 @@ import {
   ListPhoneNumberInput,
   UpdatePhoneNumberInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => PhoneNumber)
 export class GeneratedPhoneNumberResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [PhoneNumber], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   phoneNumbers(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedPhoneNumberResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   phoneNumbersCount(
     @Args({ name: 'input', type: () => ListPhoneNumberInput, nullable: true })
@@ -35,12 +37,14 @@ export class GeneratedPhoneNumberResolver {
   }
 
   @Query(() => PhoneNumber, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   phoneNumber(@Info() info: GraphQLResolveInfo, @Args('phoneNumberId') phoneNumberId: string) {
     return this.generatedService.phoneNumber(info, phoneNumberId)
   }
 
   @Mutation(() => PhoneNumber, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createPhoneNumber(
     @Info() info: GraphQLResolveInfo,
@@ -50,6 +54,7 @@ export class GeneratedPhoneNumberResolver {
   }
 
   @Mutation(() => PhoneNumber, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updatePhoneNumber(
     @Info() info: GraphQLResolveInfo,
@@ -60,6 +65,7 @@ export class GeneratedPhoneNumberResolver {
   }
 
   @Mutation(() => PhoneNumber, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deletePhoneNumber(@Args('phoneNumberId') phoneNumberId: string) {
     return this.generatedService.deletePhoneNumber(phoneNumberId)

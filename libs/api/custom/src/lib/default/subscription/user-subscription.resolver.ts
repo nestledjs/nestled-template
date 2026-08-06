@@ -1,6 +1,6 @@
 import { Resolver, Query, Mutation, Args } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { GqlAuthGuard, CtxUser } from '@nestled-template/api/utils'
+import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
 import { Subscription, User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { StripeService } from '@nestled-template/api/integrations'
@@ -14,6 +14,7 @@ import { recordBillingAuditLog } from '../../plugins/billing/audit-log'
  * Provides user-facing queries and mutations for managing subscriptions.
  * This is separate from the generated admin Subscription resolver.
  */
+@Authenticated()
 @Resolver(() => Subscription)
 @UseGuards(GqlAuthGuard)
 export class UserSubscriptionResolver {

@@ -17,11 +17,16 @@ const routeConfigPath = 'apps/web/app/routes.tsx'
 const schemaPath = 'libs/api/prisma/src/lib/schemas/schema.prisma'
 const notesDir = '.nestled-updates/upgrade-notes'
 const guardBaselinePath = '.nestled-updates/security/guard-baseline.json'
+const publicOperationsPath = '.nestled-updates/security/public-operations.json'
+const resolverSourceRoots = ['libs/api', 'apps/api/src']
 const gitBaseRef = process.env.NX_BASE || process.env.GITHUB_BASE_REF || 'develop'
 const shouldUpdateGuardBaseline = process.argv.includes('--update-guard-baseline')
 const sourceTemplateRemotePattern = /github\.com[:/]nestledjs\/nestled-(?:dev-)?template(?:\.git)?$/
 
 type GuardBaseline = Record<string, Record<string, string[]>>
+
+// file -> operation name -> reason the operation is intentionally reachable without a guard.
+type PublicOperationAllowlist = Record<string, Record<string, string>>
 
 const fail = (check: string, message: string, file?: string, line?: number) => {
   failures.push({ check, message, file, line })
@@ -504,7 +509,7 @@ const getGraphqlOperationMethods = (
   for (const line of lines) {
     const methodMatch = /^\s{2}(?:override\s+)?(?:async\s+)?(\w+)\s*\(/.exec(line)
     if (methodMatch && decorators.includes('@')) {
-      if (/@(?:Query|Mutation|Subscription)\b/.test(decorators)) {
+      if (/@(?:Query|Mutation|Subscription|ResolveField)\b/.test(decorators)) {
         const lineIndex = source.indexOf(line, offset)
         const openingBraceIndex = source.indexOf('{', lineIndex)
         methods.push({
@@ -959,6 +964,122 @@ const checkGuardRegressions = () => {
   }
 }
 
+// `getClassGuardNames` only inspects the first class in a file, which is not safe here: a second
+// resolver class further down would silently inherit the first class's guards and an unguarded
+// operation inside it would go unreported. Collect every resolver class with its own guards and the
+// line it starts on, so each operation can be matched to the class that actually encloses it.
+type ResolverClassRegion = { guards: string[]; declaresAuthLevel: boolean; startLine: number }
+
+const getResolverClassRegions = (source: string): ResolverClassRegion[] => {
+  const regions: ResolverClassRegion[] = []
+  let decorators: string[] = []
+
+  source.split('\n').forEach((rawLine, index) => {
+    const line = rawLine.trim()
+    if (line.startsWith('@')) {
+      decorators.push(line)
+      return
+    }
+
+    if (line.startsWith('export class ') || line.startsWith('class ')) {
+      if (decorators.some(decorator => decorator.startsWith('@Resolver'))) {
+        regions.push({
+          guards: getGuardNames(decorators.join('\n')),
+          declaresAuthLevel: decorators.some(decorator => AUTH_LEVEL_DECORATOR.test(decorator)),
+          startLine: index + 1,
+        })
+      }
+      decorators = []
+      return
+    }
+
+    if (line !== '') decorators = []
+  })
+
+  return regions
+}
+
+const getEnclosingClassGuards = (regions: ResolverClassRegion[], line: number): string[] => {
+  let guards: string[] = []
+  for (const region of regions) {
+    if (region.startLine > line) break
+    guards = region.guards
+  }
+  return guards
+}
+
+// Rate limiting is not authentication. `getGuardNames` returns every `*Guard`, so without this an
+// operation carrying only `@UseGuards(GqlThrottlerGuard)` would read as protected while still being
+// reachable by anyone. Unknown/custom guard names stay trusted so downstream auth guards don't trip.
+const nonAuthGuardPattern = /Throttler|RateLimit/
+
+const hasAuthGuard = (guards: string[]): boolean =>
+  guards.some(guard => !nonAuthGuardPattern.test(guard))
+
+const readPublicOperationAllowlist = (): PublicOperationAllowlist => {
+  if (!existsSync(publicOperationsPath)) {
+    fail(
+      'unguarded-operation',
+      'Public operation allowlist is missing; every intentionally public root operation must be declared there',
+      publicOperationsPath,
+    )
+    return {}
+  }
+
+  return JSON.parse(readFileSync(publicOperationsPath, 'utf8')) as PublicOperationAllowlist
+}
+
+const reportStalePublicOperations = (
+  allowlist: PublicOperationAllowlist,
+  unguarded: Set<string>,
+) => {
+  for (const [file, operations] of Object.entries(allowlist)) {
+    for (const name of Object.keys(operations)) {
+      if (unguarded.has(`${file}::${name}`)) continue
+      warn(
+        'unguarded-operation',
+        `Allowlisted public operation ${name} is now guarded or no longer exists; remove the stale entry`,
+        publicOperationsPath,
+      )
+    }
+  }
+}
+
+// `checkGuardRegressions` only walks the baseline, so it can catch a guard being *downgraded* but
+// never a brand-new operation that shipped with no guard at all. NestJS registers no global guard,
+// so an undecorated resolver method is fully public. Fail closed instead: every root operation must
+// either carry a guard or be declared public on purpose.
+const checkUnguardedRootOperations = () => {
+  const allowlist = readPublicOperationAllowlist()
+  const unguarded = new Set<string>()
+  const resolverFiles = resolverSourceRoots.flatMap(root =>
+    walkFiles(root, path => path.endsWith('.resolver.ts') && !path.endsWith('.spec.ts')),
+  )
+
+  for (const file of resolverFiles) {
+    const source = stripComments(readFileSync(file, 'utf8'))
+    const regions = getResolverClassRegions(source)
+
+    for (const operation of getGraphqlOperationMethods(source)) {
+      const methodGuards = getGuardNames(operation.decorators)
+      const classGuards = getEnclosingClassGuards(regions, operation.line)
+      if (hasAuthGuard(methodGuards) || hasAuthGuard(classGuards)) continue
+
+      unguarded.add(`${file}::${operation.name}`)
+      if (allowlist[file]?.[operation.name]) continue
+
+      fail(
+        'unguarded-operation',
+        `Root operation ${operation.name} has no auth guard and is reachable unauthenticated; add @UseGuards(...) or declare it in ${publicOperationsPath} with a reason`,
+        file,
+        operation.line,
+      )
+    }
+  }
+
+  reportStalePublicOperations(allowlist, unguarded)
+}
+
 const updateGuardBaseline = () => {
   mkdirSync(dirname(guardBaselinePath), { recursive: true })
   writeFileSync(guardBaselinePath, `${JSON.stringify(getResolverGuardMap(), null, 2)}\n`)
@@ -1192,6 +1313,80 @@ const checkCookieDomainConfig = () => {
   }
 }
 
+const AUTH_LEVEL_DECORATOR = /@(?:Public|Authenticated|AdminOnly)\s*\(\s*\)/
+
+// `GlobalAuthGuard` refuses any operation that has not declared an access level, and since
+// generators 1.1.6 it has no fallback — declaration is the only way through. Generated CRUD is
+// therefore covered here too rather than exempted: if a regeneration ever emitted an operation
+// without a decorator, the runtime would start refusing it, and catching that at review time is
+// considerably cheaper than catching it in production.
+const checkAuthLevelDeclarations = () => {
+  const resolverFiles = resolverSourceRoots.flatMap(root =>
+    walkFiles(root, path => path.endsWith('.resolver.ts') && !path.endsWith('.spec.ts')),
+  )
+
+  for (const file of resolverFiles) {
+    const source = stripComments(readFileSync(file, 'utf8'))
+    const classRegions = getResolverClassRegions(source)
+
+    for (const operation of getGraphqlOperationMethods(source)) {
+      if (AUTH_LEVEL_DECORATOR.test(operation.decorators)) continue
+
+      // A class-level declaration covers every operation inside it.
+      const enclosing = classRegions.filter(region => region.startLine <= operation.line).pop()
+      if (enclosing?.declaresAuthLevel) continue
+
+      fail(
+        'auth-level',
+        `Root operation ${operation.name} does not declare an access level; add @Public(), @Authenticated(), or @AdminOnly() so intent is explicit rather than inferred from the guards attached`,
+        file,
+        operation.line,
+      )
+    }
+  }
+}
+
+// A concurrent `prisma generate` — typically `db-update` running while a dev server triggers its
+// own generate — can truncate the client to an empty file while still reporting success. Nx cannot
+// see it: `api-prisma:generate` declares this directory as an output, but Nx hashes inputs, so an
+// unchanged schema yields an unchanged cache key no matter what the generator actually wrote. The
+// directory is also gitignored, so nothing else notices either.
+//
+// The resulting failure is three hops from its cause. `client.ts` re-exports this file, so every
+// enum becomes undefined at runtime, `registerEnumType(undefined, ...)` stores an undefined ref, and
+// the API dies during GraphQL schema build with "Cannot convert undefined or null to object" —
+// naming neither Prisma nor this file.
+const checkPrismaGeneratedEnums = () => {
+  const generatedDir = 'libs/api/prisma/src/lib/prisma-generated'
+  // Nothing generated yet is a legitimate state, e.g. a fresh clone before the first generate.
+  if (!existsSync(generatedDir) || !existsSync(schemaPath)) return
+
+  const declaredEnums = getRegexMatches(/^enum\s+(\w+)/gm, readFileSync(schemaPath, 'utf8')).map(
+    match => match[1],
+  )
+  if (declaredEnums.length === 0) return
+
+  const enumsPath = join(generatedDir, 'enums.ts')
+  if (!existsSync(enumsPath)) {
+    fail(
+      'prisma-generated',
+      `${schemaPath} declares ${declaredEnums.length} enum(s) but the generated enums file is missing; re-run pnpm prisma:generate`,
+      enumsPath,
+    )
+    return
+  }
+
+  const source = readFileSync(enumsPath, 'utf8')
+  const missing = declaredEnums.filter(name => !source.includes(`export const ${name} =`))
+  if (missing.length === 0) return
+
+  fail(
+    'prisma-generated',
+    `Generated Prisma enums are incomplete (missing ${missing.join(', ')}). The client was written truncated, so these are undefined at runtime and the API will fail during GraphQL schema build. Re-run pnpm prisma:generate, then rebuild with --skip-nx-cache because Nx will otherwise reuse the stale bundle`,
+    enumsPath,
+  )
+}
+
 const printFindings = (label: string, items: Finding[]) => {
   if (items.length === 0) return
 
@@ -1261,6 +1456,9 @@ checkPublishedPackageVersions()
 checkUpgradeNoteImpactGate()
 checkCookieDomainConfig()
 checkGuardRegressions()
+checkUnguardedRootOperations()
+checkAuthLevelDeclarations()
+checkPrismaGeneratedEnums()
 checkUnsafeTypeScriptCasts()
 checkResolverScopeAnchoring()
 checkAuditCoverageHeuristic()

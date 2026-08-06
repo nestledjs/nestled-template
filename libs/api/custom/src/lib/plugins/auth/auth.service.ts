@@ -8,6 +8,9 @@ import {
 import { JwtService } from '@nestjs/jwt'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { EmailType, User } from '@nestled-template/api/core/models'
+// Credential fields carry @graphqlOmit, so they are absent from the GraphQL User ObjectType by
+// design. Server-side code that needs them must use the Prisma row type, which still has them.
+import type { User as PrismaUser } from '@nestled-template/api/prisma'
 import {
   ChangePasswordInput,
   EmulateUserInput,
@@ -440,7 +443,9 @@ export class AuthService {
       throw new BadRequestException(genericError)
     }
 
-    const user: User = authUser
+    // Must stay the Prisma row type: the login path reads user.password, which is @graphqlOmit and
+    // therefore absent from the GraphQL User ObjectType.
+    const user: PrismaUser = authUser
 
     // Check if account is locked
     if (user.lockedUntil && user.lockedUntil > new Date()) {
@@ -1261,7 +1266,7 @@ export class AuthService {
     })
   }
 
-  findUserByEmail(email: string): Promise<User | null> {
+  findUserByEmail(email: string): Promise<PrismaUser | null> {
     const cleanEmail = email?.trim()?.toLowerCase()
     return this.data.user.findFirst({
       where: {

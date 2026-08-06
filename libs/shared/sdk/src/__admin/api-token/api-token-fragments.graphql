@@ -3,7 +3,6 @@ fragment __AdminApiTokenSummary on ApiToken {
   createdAt
   updatedAt
   userId
-  tokenHash
   name
   expiresAt
   lastUsedAt

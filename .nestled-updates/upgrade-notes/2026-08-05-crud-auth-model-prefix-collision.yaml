@@ -1,0 +1,93 @@
+id: 2026-08-05-crud-auth-model-prefix-collision
+title: Fix @crudAuth model prefix collision and require a guard on every root operation
+priority: critical
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Two independent changes that together close a privilege-escalation path in generated CRUD. They
+  fix different things and neither catches the other, so both are needed.
+
+  First, upgrade `@nestledjs/generators` to 1.1.4 and regenerate with `pnpm db-update`. The CRUD
+  generator resolved a model's `@crudAuth` annotation by scanning the raw schema text for a line
+  starting with `model <Name>`, with no word boundary. Looking up `User` also matched
+  `model UserSessionProgress`, `model UserAddress`, or any model whose name merely starts with those
+  characters. The scan stopped at the first such match and returned that unrelated model's
+  annotation. 1.1.4 reads the annotation from the Prisma DMMF model documentation instead, which
+  Prisma already binds to the correct model. 1.1.4 also preserves interior casing on custom levels,
+  so a level of `billingAdmin` now resolves to `GqlAuthBillingAdminGuard` rather than the
+  unresolvable `GqlAuthBillingadminGuard` that projects have been aliasing around.
+
+  Second, the doctor gained an `unguarded-operation` check. NestJS registers no global guard in this
+  workspace, so a resolver method with no `@UseGuards` decorator is reachable by an anonymous
+  request. The existing `guard-regression` check only iterates the guard baseline, so it catches a
+  guard being downgraded on a known method but never a brand-new operation that shipped with no
+  guard at all. Every root operation must now carry an auth guard or be declared in
+  `.nestled-updates/security/public-operations.json` with a written reason. Guards are attributed per
+  resolver class, and a throttler guard no longer counts as authentication.
+
+why: >
+  The prefix collision silently escalates privileges, and it escalates in the dangerous direction: a
+  model that should default to admin inherits a `user` or `public` level from an unrelated
+  neighbour. Operations absent from the hijacked annotation still fall back to admin, producing a
+  characteristic mixed shape of five user-level operations with `delete` left on admin.
+
+  This is not theoretical. In one project, `model User` inherited from `model UserSessionProgress`
+  and `model Program` inherited from `model ProgramApplication`, leaving every authenticated user
+  able to list, read, create, and update every user and program record. `Program` carried an
+  explicit admin-only annotation that was silently overridden, so writing the annotation correctly
+  was not enough to be safe.
+
+  Short model names are the vulnerable ones, and only in one direction: `User` can be hijacked by
+  `UserSessionProgress` but never the reverse. A schema split across several files makes it far more
+  likely, because the files are concatenated alphabetically and the hijacking model only has to sort
+  earlier. A pair that is safe today becomes live the moment a model is renamed, reordered, or added.
+
+  The doctor check covers the other half. Generated CRUD was never the weak point; hand-written
+  resolvers were, because a missing guard there is invisible and fully public.
+
+affectedPaths:
+  - package.json
+  - scripts/doctor.ts
+  - .nestled-updates/security/public-operations.json
+  - docs/security/auth-invariants.md
+
+skipIf:
+  - Both halves are already in place, meaning the project runs @nestledjs/generators 1.1.4 or newer
+    and has regenerated since, and its doctor already fails an unguarded root operation.
+
+verification:
+  - node -p "require('./node_modules/@nestledjs/generators/package.json').version"
+  - pnpm db-update
+  - git diff --stat libs/api/generated-crud
+  - pnpm run nestled-doctor
+
+agentHints:
+  - The two halves are independent and a version check does not cover both. A project already on
+    1.1.4 still needs the doctor check, and a project that already has the doctor check still needs
+    the generator bump. Skip a half only when that specific half is verified present.
+  - Audit before regenerating, so the blast radius is known. List every model name in declaration
+    order across all schema files sorted alphabetically by filename, then flag any model whose name
+    is a strict prefix of an earlier-declared model. Each flag is a model whose guards may be wrong
+    today. Also record models that are safe only because of current ordering, since those are latent.
+  - Regenerating flips escalated models back to admin, which is a behaviour change, not just a
+    security fix. Before deploying, grep the SDK operation files for root-level calls to the affected
+    generated queries and mutations. A non-admin caller of a generated operation that is about to
+    become admin-only will start receiving errors. Nested field selections inside fragments are not
+    affected; only root-level calls matter.
+  - A model whose guards were wrong may have had application behaviour built on the accidental
+    permissiveness. Decide per model whether the correct fix is the restored admin default, an
+    explicit @crudAuth annotation matching real intent, or a purpose-built user-facing resolver.
+    Do not assume regeneration alone is the whole remediation.
+  - Projects that use a custom level whose name has interior capitals will see the generated guard
+    name change. If the project aliased its real guard to the previously mangled name to make
+    generated code compile, that alias is now redundant and can be removed after regenerating.
+  - The doctor check will fail on first run for any project that intentionally exposes public
+    operations, including generated CRUD produced by a public @crudAuth level. That is the check
+    working. Add one allowlist entry per operation with a real reason. Do not silence it by adding a
+    guard that does not authenticate, and note that a throttler guard is deliberately not accepted.
+  - The allowlist file is required. Doctor fails when it is missing rather than defaulting to empty,
+    so create it even if the project has no public operations.
+  - Guard attribution is per resolver class. A file holding more than one resolver class is the case
+    the older baseline logic got wrong, so re-check those files by hand if the project has diverged.

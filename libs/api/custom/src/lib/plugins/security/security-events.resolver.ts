@@ -1,7 +1,7 @@
 import { Args, Query, Resolver, ObjectType, Field, Int } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
 import { SecurityEventsService } from './security-events.service'
-import { CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
+import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
 import { SecurityEvent, SecurityEventType, User } from '@nestled-template/api/core/models'
 import { ListSecurityEventInput } from '@nestled-template/api/generated-crud/data-access'
 
@@ -11,6 +11,7 @@ export class SecurityEventsResolver {
 
   @Query(() => [SecurityEvent])
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async userSecurityEvents(
     @CtxUser() user: User,
     @Args('limit', { type: () => Number, nullable: true }) limit?: number,
@@ -20,6 +21,7 @@ export class SecurityEventsResolver {
 
   @Query(() => [SecurityEvent])
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async mySecurityEvents(
     @CtxUser() user: User,
     @Args({ name: 'input', type: () => ListSecurityEventInput, nullable: true })
@@ -30,6 +32,7 @@ export class SecurityEventsResolver {
 
   @Query(() => [SecurityEvent])
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async securityEventsByType(
     @CtxUser() user: User,
     @Args('eventType', { type: () => SecurityEventType }) eventType: SecurityEventType,
@@ -40,6 +43,7 @@ export class SecurityEventsResolver {
 
   @Query(() => SecuritySummary)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async securitySummary(@CtxUser() user: User): Promise<any> {
     return this.securityEventsService.getSecuritySummary(user.id)
   }

@@ -9,13 +9,14 @@ import {
   ListStoredFileInput,
   UpdateStoredFileInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => StoredFile)
 export class GeneratedStoredFileResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [StoredFile], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   storedFiles(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedStoredFileResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   storedFilesCount(
     @Args({ name: 'input', type: () => ListStoredFileInput, nullable: true })
@@ -35,18 +37,21 @@ export class GeneratedStoredFileResolver {
   }
 
   @Query(() => StoredFile, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   storedFile(@Info() info: GraphQLResolveInfo, @Args('storedFileId') storedFileId: string) {
     return this.generatedService.storedFile(info, storedFileId)
   }
 
   @Mutation(() => StoredFile, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createStoredFile(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateStoredFileInput) {
     return this.generatedService.createStoredFile(info, input)
   }
 
   @Mutation(() => StoredFile, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateStoredFile(
     @Info() info: GraphQLResolveInfo,
@@ -57,6 +62,7 @@ export class GeneratedStoredFileResolver {
   }
 
   @Mutation(() => StoredFile, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteStoredFile(@Args('storedFileId') storedFileId: string) {
     return this.generatedService.deleteStoredFile(storedFileId)

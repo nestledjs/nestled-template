@@ -2,6 +2,7 @@ import { Controller, Post, Req, Res, HttpStatus, Logger, RawBodyRequest } from '
 import { Request, Response } from 'express'
 import { StripeService } from '@nestled-template/api/integrations'
 import { WebhookService } from '@nestled-template/api/custom'
+import { Public } from '@nestled-template/api/utils'
 
 /**
  * Stripe Webhook Controller
@@ -12,6 +13,8 @@ import { WebhookService } from '@nestled-template/api/custom'
  * IMPORTANT: This endpoint requires raw body parsing for signature verification.
  * See app.module.ts for middleware configuration.
  */
+// Authenticates by Stripe signature verification, not a session.
+@Public()
 @Controller('webhooks')
 export class StripeWebhookController {
   private readonly logger = new Logger(StripeWebhookController.name)

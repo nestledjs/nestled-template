@@ -1,0 +1,82 @@
+id: 2026-08-05-filter-injection-prisma-where
+title: Replace the untyped filters blob with typed filter inputs, and bound take and orderBy
+priority: critical
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  Upgrade `@nestledjs/generators` to 1.1.5, regenerate, and take the three matching template
+  changes. Together they close an arbitrary Prisma `where` injection reachable through every
+  generated list query.
+
+  `CorePagingInput` declared `filters` as an untyped `GraphQLJSONObject` that the core data-access
+  service merged into Prisma's `where` clause verbatim. Every generated `List<Model>Input` inherits
+  from that class, so every list query accepted arbitrary filter expressions. 1.1.5 generates a
+  typed `<Model>FilterInput` per model instead, built from the same field list that `@graphqlOmit`
+  already strips, with operators chosen per scalar type and typed relation filters. Each nesting
+  level gets its own generated type so depth is bounded by the schema rather than left open.
+
+  On the template side, `filters` is removed from `CorePagingInput` entirely, so a hand-written
+  input that extends it must opt into filtering explicitly rather than inherit an open one. `take`
+  is clamped to a server maximum, and `orderBy` is validated against the field names in
+  DATABASE_MODELS before it reaches Prisma.
+
+why: >
+  Because the blob was opaque, GraphQL could not validate it. Because it reached `where` verbatim,
+  the caller controlled the full Prisma filter grammar including relation filters at arbitrary
+  depth. And because Prisma builds `where` from the database model rather than the GraphQL model,
+  every column was filterable whether or not it was queryable.
+
+  That last point is the important one. Removing a field with `@graphqlOmit` does not make it
+  unfilterable, so credential columns stayed reachable as a boolean oracle. A caller could recover a
+  password hash, a password-reset token, or an invite token one character at a time using result
+  presence as the signal, at roughly sixty requests per character, without ever selecting the field.
+  Reset and invite tokens are directly usable for account takeover, with no cracking step.
+
+  Only one reachable list query on a model with a relation path to the target is needed. Any model
+  listable without authentication makes the whole transitive relation graph reachable anonymously.
+
+  Unbounded `take` turned the same query into bulk extraction rather than a one-bit oracle, and
+  query complexity analysis does not help, because it scores document shape and an oracle query is
+  tiny.
+
+affectedPaths:
+  - package.json
+  - libs/api/core/data-access/src/lib/dto/core-paging.input.ts
+  - libs/api/core/data-access/src/lib/api-core-data-access.service.ts
+  - libs/api/core/data-access/src/lib/api-core-data-access.service.spec.ts
+
+skipIf:
+  - The project does not use the Nestled CRUD generator and has no generated list queries.
+
+verification:
+  - node -p "require('./node_modules/@nestledjs/generators/package.json').version"
+  - pnpm db-update
+  - pnpm nx test api-core-data-access
+  - pnpm nx build api
+
+agentHints:
+  - Verify the emitted schema, not just the generated source. The security property depends on the
+    generated List input's typed filters field overriding the inherited one in the built schema, and
+    that is decided by NestJS at bootstrap rather than by TypeScript. Restart the API, introspect a
+    List input, and confirm its filters field reports the typed model filter input rather than
+    JSONObject. Generated code that compiles proves nothing here.
+  - Then run the exploit against the fix. Send a filter naming a credential column with a startsWith
+    operator and confirm a GraphQL validation error rather than a result. That is the actual check.
+  - Public SDK operations are preserved rather than regenerated, so any operation passing raw filters
+    JSON keeps its old shape and codegen fails against the new schema. Hand-edit those operations to
+    the typed shape. The admin SDK directory rebuilds itself and needs no manual step.
+  - The take ceiling is set by the largest legitimate page the API serves, which in the template is
+    the admin data browser's export limit. A project whose export limit differs must adjust the
+    constant, or exports silently truncate.
+  - orderBy now falls back to the id column when the requested field is not in DATABASE_MODELS,
+    rather than throwing. A client that sorted by a column since removed from the GraphQL schema
+    will quietly change ordering rather than error, so check for callers that depend on it.
+  - The generator emits a transitional index signature on depth-one filter inputs so generated code
+    compiles against a template that still declares the old filters field. Once this note is applied
+    the field is gone and that shim is redundant, but it is type-level only and does not widen what
+    a caller can send.
+  - This does not address relation traversal on selection, which is a separate open issue. A guard
+    protects an entry point, and nested selections are resolved in one compiled Prisma query with no
+    second guard check. Do not treat this note as closing that.

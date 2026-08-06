@@ -9,13 +9,14 @@ import {
   ListLoginAttemptInput,
   UpdateLoginAttemptInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => LoginAttempt)
 export class GeneratedLoginAttemptResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [LoginAttempt], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   loginAttempts(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   loginAttemptsCount(
     @Args({ name: 'input', type: () => ListLoginAttemptInput, nullable: true })
@@ -35,12 +37,14 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Query(() => LoginAttempt, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   loginAttempt(@Info() info: GraphQLResolveInfo, @Args('loginAttemptId') loginAttemptId: string) {
     return this.generatedService.loginAttempt(info, loginAttemptId)
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createLoginAttempt(
     @Info() info: GraphQLResolveInfo,
@@ -50,6 +54,7 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateLoginAttempt(
     @Info() info: GraphQLResolveInfo,
@@ -60,6 +65,7 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteLoginAttempt(@Args('loginAttemptId') loginAttemptId: string) {
     return this.generatedService.deleteLoginAttempt(loginAttemptId)

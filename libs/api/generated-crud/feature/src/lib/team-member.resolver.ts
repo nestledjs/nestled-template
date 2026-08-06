@@ -9,13 +9,14 @@ import {
   ListTeamMemberInput,
   UpdateTeamMemberInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => TeamMember)
 export class GeneratedTeamMemberResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [TeamMember], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   teamMembers(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedTeamMemberResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   teamMembersCount(
     @Args({ name: 'input', type: () => ListTeamMemberInput, nullable: true })
@@ -35,18 +37,21 @@ export class GeneratedTeamMemberResolver {
   }
 
   @Query(() => TeamMember, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   teamMember(@Info() info: GraphQLResolveInfo, @Args('teamMemberId') teamMemberId: string) {
     return this.generatedService.teamMember(info, teamMemberId)
   }
 
   @Mutation(() => TeamMember, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createTeamMember(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateTeamMemberInput) {
     return this.generatedService.createTeamMember(info, input)
   }
 
   @Mutation(() => TeamMember, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateTeamMember(
     @Info() info: GraphQLResolveInfo,
@@ -57,6 +62,7 @@ export class GeneratedTeamMemberResolver {
   }
 
   @Mutation(() => TeamMember, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteTeamMember(@Args('teamMemberId') teamMemberId: string) {
     return this.generatedService.deleteTeamMember(teamMemberId)

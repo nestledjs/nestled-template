@@ -4,12 +4,15 @@ import { Request, Response } from 'express'
 import { OAuthService, type OAuthUserProfile } from './oauth.service'
 import { AuthService } from './auth.service'
 import { SessionService } from './session.service'
+import { Public } from '@nestled-template/api/utils'
 
 // NOTE: the app sets a global prefix of `api` (see apps/api/src/main.ts). This controller must
 // therefore be mounted at `auth` (NOT `api/auth`) so its routes register at `/api/auth/...` —
 // matching the redirect_uri-building code below, the `.env.example` callback URLs, and the
 // `/api/auth` entry in main.ts's VALID_API_PREFIXES whitelist. Using `api/auth` here double-prefixes
 // every route to `/api/api/auth/...`, which 404s and breaks all OAuth logins.
+// Provider redirects arrive before a session exists.
+@Public()
 @Controller('auth')
 export class OAuthController {
   constructor(

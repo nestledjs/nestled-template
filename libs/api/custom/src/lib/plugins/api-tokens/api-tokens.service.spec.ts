@@ -162,8 +162,8 @@ describe('ApiTokensService', () => {
         tokenHash: 'stored-hash',
       } as any)
       const result = await service.generateApiToken(userId, input)
-      // The stored hash should not match the plaintext token
-      expect(result.apiToken.tokenHash).not.toEqual(result.token)
+      // tokenHash carries @graphqlOmit, so it is not in the GraphQL schema and cannot be queried.
+      // The stored value is still asserted here, since that is the property that matters.
       // Verify that create was called with a hash, not the plaintext token
       const createCall = mockData.apiToken.create.mock.calls[0][0]
       expect(createCall.data.tokenHash).not.toEqual(result.token)

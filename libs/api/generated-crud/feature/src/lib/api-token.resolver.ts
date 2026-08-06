@@ -9,13 +9,14 @@ import {
   ListApiTokenInput,
   UpdateApiTokenInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => ApiToken)
 export class GeneratedApiTokenResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [ApiToken], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   apiTokens(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedApiTokenResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   apiTokensCount(
     @Args({ name: 'input', type: () => ListApiTokenInput, nullable: true })
@@ -35,18 +37,21 @@ export class GeneratedApiTokenResolver {
   }
 
   @Query(() => ApiToken, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   apiToken(@Info() info: GraphQLResolveInfo, @Args('apiTokenId') apiTokenId: string) {
     return this.generatedService.apiToken(info, apiTokenId)
   }
 
   @Mutation(() => ApiToken, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createApiToken(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateApiTokenInput) {
     return this.generatedService.createApiToken(info, input)
   }
 
   @Mutation(() => ApiToken, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateApiToken(
     @Info() info: GraphQLResolveInfo,
@@ -57,6 +62,7 @@ export class GeneratedApiTokenResolver {
   }
 
   @Mutation(() => ApiToken, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteApiToken(@Args('apiTokenId') apiTokenId: string) {
     return this.generatedService.deleteApiToken(apiTokenId)

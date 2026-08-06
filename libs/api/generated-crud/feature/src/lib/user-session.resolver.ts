@@ -9,13 +9,14 @@ import {
   ListUserSessionInput,
   UpdateUserSessionInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => UserSession)
 export class GeneratedUserSessionResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [UserSession], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   userSessions(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedUserSessionResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   userSessionsCount(
     @Args({ name: 'input', type: () => ListUserSessionInput, nullable: true })
@@ -35,12 +37,14 @@ export class GeneratedUserSessionResolver {
   }
 
   @Query(() => UserSession, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   userSession(@Info() info: GraphQLResolveInfo, @Args('userSessionId') userSessionId: string) {
     return this.generatedService.userSession(info, userSessionId)
   }
 
   @Mutation(() => UserSession, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createUserSession(
     @Info() info: GraphQLResolveInfo,
@@ -50,6 +54,7 @@ export class GeneratedUserSessionResolver {
   }
 
   @Mutation(() => UserSession, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateUserSession(
     @Info() info: GraphQLResolveInfo,
@@ -60,6 +65,7 @@ export class GeneratedUserSessionResolver {
   }
 
   @Mutation(() => UserSession, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteUserSession(@Args('userSessionId') userSessionId: string) {
     return this.generatedService.deleteUserSession(userSessionId)

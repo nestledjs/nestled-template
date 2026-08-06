@@ -9,13 +9,14 @@ import {
   ListCountryInput,
   UpdateCountryInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Country)
 export class GeneratedCountryResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Country], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   countries(
     @Info() info: GraphQLResolveInfo,
@@ -25,6 +26,7 @@ export class GeneratedCountryResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   countriesCount(
     @Args({ name: 'input', type: () => ListCountryInput, nullable: true }) input?: ListCountryInput,
@@ -33,18 +35,21 @@ export class GeneratedCountryResolver {
   }
 
   @Query(() => Country, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   country(@Info() info: GraphQLResolveInfo, @Args('countryId') countryId: string) {
     return this.generatedService.country(info, countryId)
   }
 
   @Mutation(() => Country, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createCountry(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateCountryInput) {
     return this.generatedService.createCountry(info, input)
   }
 
   @Mutation(() => Country, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateCountry(
     @Info() info: GraphQLResolveInfo,
@@ -55,6 +60,7 @@ export class GeneratedCountryResolver {
   }
 
   @Mutation(() => Country, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteCountry(@Args('countryId') countryId: string) {
     return this.generatedService.deleteCountry(countryId)

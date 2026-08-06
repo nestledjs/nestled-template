@@ -9,13 +9,14 @@ import {
   ListSubscriptionInput,
   UpdateSubscriptionInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Subscription)
 export class GeneratedSubscriptionResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Subscription], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   subscriptions(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   subscriptionsCount(
     @Args({ name: 'input', type: () => ListSubscriptionInput, nullable: true })
@@ -35,12 +37,14 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Query(() => Subscription, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   subscription(@Info() info: GraphQLResolveInfo, @Args('subscriptionId') subscriptionId: string) {
     return this.generatedService.subscription(info, subscriptionId)
   }
 
   @Mutation(() => Subscription, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createSubscription(
     @Info() info: GraphQLResolveInfo,
@@ -50,6 +54,7 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Mutation(() => Subscription, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateSubscription(
     @Info() info: GraphQLResolveInfo,
@@ -60,6 +65,7 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Mutation(() => Subscription, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteSubscription(@Args('subscriptionId') subscriptionId: string) {
     return this.generatedService.deleteSubscription(subscriptionId)

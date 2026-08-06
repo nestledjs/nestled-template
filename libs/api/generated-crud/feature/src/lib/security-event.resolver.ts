@@ -9,13 +9,14 @@ import {
   ListSecurityEventInput,
   UpdateSecurityEventInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => SecurityEvent)
 export class GeneratedSecurityEventResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [SecurityEvent], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   securityEvents(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   securityEventsCount(
     @Args({ name: 'input', type: () => ListSecurityEventInput, nullable: true })
@@ -35,6 +37,7 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Query(() => SecurityEvent, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   securityEvent(
     @Info() info: GraphQLResolveInfo,
@@ -44,6 +47,7 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Mutation(() => SecurityEvent, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createSecurityEvent(
     @Info() info: GraphQLResolveInfo,
@@ -53,6 +57,7 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Mutation(() => SecurityEvent, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateSecurityEvent(
     @Info() info: GraphQLResolveInfo,
@@ -63,6 +68,7 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Mutation(() => SecurityEvent, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteSecurityEvent(@Args('securityEventId') securityEventId: string) {
     return this.generatedService.deleteSecurityEvent(securityEventId)

@@ -7,16 +7,10 @@ fragment __AdminUserSummary on User {
   isSuperAdmin
   bio
   displayName
-  password
-  passwordResetToken
-  passwordResetExpires
   emailValidated
-  validateEmailToken
-  validateEmailTokenExpires
   avatarId
   activeOrganizationId
   twoFactorEnabled
-  twoFactorSecret
   twoFactorMethod
   lastSuccessfulLogin
   lastFailedLogin

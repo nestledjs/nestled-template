@@ -20,6 +20,7 @@ backlog item, not optional behavior.
 | Emulation          | Ending emulation only works for a session that carries emulation metadata.                                                 | Session confusion or forced account switching.                    | `auth.resolver.spec.ts` end emulation cases                  |
 | RBAC               | User-facing organization operations require membership/role verification before using supplied organization or member IDs. | Cross-tenant access or org privilege escalation.                  | `organization.service.spec.ts`, Doctor scope warnings        |
 | Audit              | Successful security-sensitive auth state changes emit audit logs or security events.                                       | Missing forensic trail for account takeover or privilege changes. | Existing audit/security event tests plus TBD coverage matrix |
+| Resolver Exposure  | Every GraphQL root operation carries an auth guard unless it is declared in the public-operations allowlist with a reason. | Anonymous access to any resolver added without a guard.           | Doctor `unguarded-operation` check                           |
 
 ## Safe Modification Checklist
 
@@ -27,6 +28,10 @@ backlog item, not optional behavior.
 - Add or update a focused refusal test for malformed, expired, replayed, or cross-user input.
 - Keep generated CRUD admin-only unless the Prisma schema explicitly documents a different
   `@crudAuth` level.
+- NestJS registers no global guard, so a root operation with no `@UseGuards` is reachable by anyone.
+  New resolvers must add a guard; making one public is a deliberate edit to
+  `.nestled-updates/security/public-operations.json` with a stated reason. Note that
+  `GqlThrottlerGuard` rate limits but does not authenticate, so it does not satisfy this invariant.
 - Keep scope derived from `@CtxUser()` and verified memberships rather than trusting GraphQL input
   IDs.
 - Run `pnpm run nestled-doctor`, `pnpm template:validate-upgrade-notes`, and the focused auth or
