@@ -1,0 +1,31 @@
+id: 2026-08-05-security-batch-sonar-cleanups
+title: 'Cosmetic cleanups to the August 2026 security batch'
+priority: ignore
+area: api
+type: chore
+delivery: code-patch
+
+intent: >
+  Merge the two @nestled-template/api/utils import statements in app.module.ts into one, and
+  reuse a single getEnclosingRegion helper in doctor.ts instead of a second .filter(...).pop()
+  implementation of the same lookup.
+
+why: >
+  SonarCloud flagged three minor code smells on the promotion of the August 2026 authorization
+  batch (nestled-template PR #30): typescript:S3863 twice for the duplicated import, and
+  typescript:S7750 once for .filter(...).pop(). Both were introduced by that batch. No behaviour
+  changes: the import merge is textual, and getEnclosingRegion is the loop getEnclosingClassGuards
+  already used, extracted so both callers share it. Sonar's suggested .findLast() was not used —
+  it is ES2023 and this workspace's lib is es2021, and tsconfig.base.json is excluded from the
+  promotion mirror, so raising lib upstream would not reach nestled-template.
+
+  priority: ignore because nothing downstream needs to act. Downstream projects receive the
+  security batch itself through the 2026-08-05 notes; these edits are tidy-up inside
+  template-owned files and carry no intent a product repo has to adapt.
+
+affectedPaths:
+  - apps/api/src/app.module.ts
+  - scripts/doctor.ts
+
+skipIf:
+  - Always. This is a record of a cosmetic change, not a downstream action.

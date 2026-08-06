@@ -37,12 +37,11 @@ import {
   UserSessionModule,
 } from '@nestled-template/api/custom'
 import { StripeModule } from '@nestled-template/api/integrations'
-import { GuardsModule } from '@nestled-template/api/utils'
+import { GlobalAuthGuard, GuardsModule } from '@nestled-template/api/utils'
 import { ApiCoreFeatureModule } from '@nestled-template/api/core/feature'
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common'
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core'
 import { ViewerContextInterceptor } from '@nestled-template/api/core/helpers'
-import { GlobalAuthGuard } from '@nestled-template/api/utils'
 import { LoggerMiddleware } from './applogger.middleware'
 import { ConfigModule } from '@nestjs/config'
 import {

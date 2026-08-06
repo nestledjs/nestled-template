@@ -999,14 +999,22 @@ const getResolverClassRegions = (source: string): ResolverClassRegion[] => {
   return regions
 }
 
-const getEnclosingClassGuards = (regions: ResolverClassRegion[], line: number): string[] => {
-  let guards: string[] = []
+// Regions arrive in source order, so the last one starting at or before the line is the class that
+// encloses it.
+const getEnclosingRegion = (
+  regions: ResolverClassRegion[],
+  line: number,
+): ResolverClassRegion | undefined => {
+  let enclosing: ResolverClassRegion | undefined
   for (const region of regions) {
     if (region.startLine > line) break
-    guards = region.guards
+    enclosing = region
   }
-  return guards
+  return enclosing
 }
+
+const getEnclosingClassGuards = (regions: ResolverClassRegion[], line: number): string[] =>
+  getEnclosingRegion(regions, line)?.guards ?? []
 
 // Rate limiting is not authentication. `getGuardNames` returns every `*Guard`, so without this an
 // operation carrying only `@UseGuards(GqlThrottlerGuard)` would read as protected while still being
@@ -1333,8 +1341,7 @@ const checkAuthLevelDeclarations = () => {
       if (AUTH_LEVEL_DECORATOR.test(operation.decorators)) continue
 
       // A class-level declaration covers every operation inside it.
-      const enclosing = classRegions.filter(region => region.startLine <= operation.line).pop()
-      if (enclosing?.declaresAuthLevel) continue
+      if (getEnclosingRegion(classRegions, operation.line)?.declaresAuthLevel) continue
 
       fail(
         'auth-level',
