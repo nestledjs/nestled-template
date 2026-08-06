@@ -45,6 +45,17 @@ export class ViewerContextInterceptor implements NestInterceptor {
       GqlExecutionContext.create(context).getContext()?.req ??
       context.switchToHttp?.().getRequest?.()
 
-    return runWithViewer(toViewer(request?.user), () => next.handle())
+    const viewer = toViewer(request?.user)
+
+    // The store has to be active around the *subscription*, not merely around the call to
+    // `next.handle()`. A cold observable downstream runs its producer when subscribed, which
+    // happens after `handle()` has already returned — outside the store, so the viewer would be
+    // gone in exactly the place that reads it. NestJS's interceptor chain happens to start its
+    // async work eagerly inside `handle()`, so wrapping only that call does work today; this does
+    // not depend on that. Note `defer(() => runWithViewer(...))` is not sufficient either: its
+    // factory returns before rxjs subscribes to the result.
+    return new Observable(subscriber =>
+      runWithViewer(viewer, () => next.handle().subscribe(subscriber)),
+    )
   }
 }

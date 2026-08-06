@@ -62,6 +62,16 @@ agentHints:
     relations its clients select and check the related model's level. Where a traversal is
     legitimate, the fix is to give the related model an accurate @crudAuth level or to build a
     purpose-specific resolver, not to widen the check.
+  - Scope the AsyncLocalStorage to the subscription, not to the `next.handle()` call. Writing
+    `runWithViewer(viewer, () => next.handle())` establishes the store only while the observable is
+    being constructed; a cold observable downstream runs its producer at subscribe time, after that
+    callback has returned, and the builder then sees no viewer and denies every traversal in the
+    request. `defer(() => runWithViewer(...))` does not fix it either, because rxjs subscribes to
+    the factory's result after the factory returns. Wrap the subscribe itself —
+    `new Observable(sub => runWithViewer(viewer, () => next.handle().subscribe(sub)))`. NestJS's own
+    interceptor chain happens to start its async work eagerly inside `handle()`, so the weaker form
+    passes today and in tests that call `handle()` synchronously; do not rely on that. Cover it with
+    a handler built from `defer()`, which fails against the weaker form.
   - A custom auth level cannot be evaluated here, since only the guard itself knows what it means.
     Custom levels rank above user and below admin, so a plain authenticated caller cannot traverse
     into a model behind a custom guard. If a project relies on that traversal, it needs a resolver

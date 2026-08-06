@@ -29,8 +29,16 @@ const clampTake = (take: number): number => {
 }
 
 // Falls back to `id` rather than throwing: an unknown column is far more likely to be a stale
-// client than an attack, and Prisma would reject it anyway. The point is that a rejected value
-// never reaches Prisma, so it cannot be used to probe a column that is not in the schema.
+// client than an attack, and Prisma would reject it anyway. The point is that a name absent from
+// every model never reaches Prisma, so it cannot be used to probe for columns outside the schema.
+//
+// Known gap: the allow-list is the union across all models, not the model being queried, because
+// `filter()` is called from generated code that does not pass its model name. So a name that is
+// real on some *other* model (`emailValidated` while listing ApiToken) still reaches Prisma and
+// throws instead of falling back. That is a 500 on a stale client rather than a leak — GraphQL
+// introspection already publishes which fields each type has, so it is no oracle — but it does not
+// match the fallback this function otherwise promises. Closing it means threading the model name
+// in from the generator; tracked in nestledjs/nestled.
 const resolveOrderBy = (orderBy: string): string =>
   getSortableFieldNames().has(orderBy) ? orderBy : 'id'
 

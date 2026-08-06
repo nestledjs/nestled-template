@@ -1,5 +1,5 @@
 import { CallHandler, ExecutionContext } from '@nestjs/common'
-import { of } from 'rxjs'
+import { defer, of } from 'rxjs'
 import { getViewer, runWithViewer, ViewerContextInterceptor } from './viewer-context'
 
 // GqlExecutionContext reads the resolver argument tuple, where index 2 is the GraphQL context.
@@ -21,6 +21,19 @@ const capturingHandler = (sink: { seen?: ReturnType<typeof getViewer> }): CallHa
     sink.seen = getViewer()
     return of(null)
   },
+})
+
+// The handler above reads the viewer while `handle()` is still on the stack, which an interceptor
+// that only wraps the `handle()` call would satisfy without the store surviving any further. A real
+// resolver is reached through a cold observable instead: nothing runs until something subscribes,
+// and that happens after `handle()` has returned. This is the shape that distinguishes a store
+// scoped to the subscription from one scoped to the call.
+const coldCapturingHandler = (sink: { seen?: ReturnType<typeof getViewer> }): CallHandler => ({
+  handle: () =>
+    defer(() => {
+      sink.seen = getViewer()
+      return of(null)
+    }),
 })
 
 describe('runWithViewer', () => {
@@ -92,5 +105,26 @@ describe('ViewerContextInterceptor', () => {
       .subscribe()
 
     expect(sink.seen).toBeDefined()
+  })
+
+  it('keeps the viewer visible to a cold handler that only runs on subscribe', () => {
+    // Regression guard for the store being scoped to the `handle()` call instead of the
+    // subscription. With `runWithViewer(viewer, () => next.handle())` this sees undefined, and
+    // every relation traversal in the request would deny by default.
+    const sink: { seen?: ReturnType<typeof getViewer> } = {}
+    new ViewerContextInterceptor()
+      .intercept(gqlContextFor({ id: 'u1', isSuperAdmin: true }), coldCapturingHandler(sink))
+      .subscribe()
+
+    expect(sink.seen).toEqual({ isAuthenticated: true, isSuperAdmin: true })
+  })
+
+  it('does not leak the viewer past the subscription', () => {
+    const sink: { seen?: ReturnType<typeof getViewer> } = {}
+    new ViewerContextInterceptor()
+      .intercept(gqlContextFor({ id: 'u1', isSuperAdmin: true }), coldCapturingHandler(sink))
+      .subscribe()
+
+    expect(getViewer()).toBeUndefined()
   })
 })
