@@ -2,7 +2,7 @@ id: 2026-08-05-security-batch-sonar-cleanups
 title: 'Cosmetic cleanups to the August 2026 security batch'
 priority: ignore
 area: api
-type: chore
+type: cleanup
 delivery: code-patch
 
 intent: >
