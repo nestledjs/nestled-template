@@ -722,10 +722,18 @@ const checkGeneratedCrudModuleRegistration = () => {
     /import\s*\{\s*ApiGeneratedCrudFeatureModule\s*\}\s*from\s*['"]@[^'"]+\/api\/generated-crud\/feature['"]/.test(
       appModuleSource,
     )
-  const hasFeatureRegistration =
-    /coreModules\s*=\s*\[[\s\S]*?\bApiGeneratedCrudFeatureModule\s*,?[\s\S]*?\]/.test(
-      appModuleSource,
-    )
+  // Scanned rather than matched with a regex: two lazy [\s\S]*? either side of the module name
+  // backtracks super-linearly on any file that declares coreModules without registering it, which
+  // is exactly the failing case this check exists to report.
+  const hasFeatureRegistration = (() => {
+    const declaration = appModuleSource.indexOf('coreModules')
+    if (declaration === -1) return false
+    const open = appModuleSource.indexOf('[', declaration)
+    if (open === -1) return false
+    const close = appModuleSource.indexOf(']', open)
+    if (close === -1) return false
+    return /\bApiGeneratedCrudFeatureModule\b/.test(appModuleSource.slice(open + 1, close))
+  })()
   if (!hasFeatureImport || !hasFeatureRegistration) {
     fail(
       'crud-registration',
@@ -1308,7 +1316,7 @@ const readEnvValue = (env: string, key: string): string => {
   // value: drop a dotenv-style inline ` # comment` so the parsed value matches
   // what dotenv actually loads. (String ops, not regex — avoids backtracking.)
   const quote = raw[0]
-  if ((quote === '"' || quote === "'") && raw.length >= 2 && raw[raw.length - 1] === quote) {
+  if ((quote === '"' || quote === "'") && raw.length >= 2 && raw.endsWith(quote)) {
     return raw.slice(1, -1)
   }
   const commentAt = raw.indexOf(' #')
