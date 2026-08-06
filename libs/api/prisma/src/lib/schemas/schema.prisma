@@ -35,6 +35,7 @@ model ApiToken {
   updatedAt      DateTime      @updatedAt
   userId         String
   user           User          @relation("User_hasMany_APITokens", fields: [userId], references: [id])
+  /// @graphqlOmit
   tokenHash      String        @unique
   name           String
   expiresAt      DateTime?
@@ -84,6 +85,7 @@ model Email {
   public         Boolean       @default(false)
   primary        Boolean       @default(false)
   verified       Boolean       @default(false)
+  /// @graphqlOmit
   verifyToken    String?
   verifyExpires  DateTime?
   userId         String?
@@ -348,11 +350,16 @@ model User {
   isSuperAdmin              Boolean              @default(false)
   bio                       String?
   displayName               String?              @unique
+  /// @graphqlOmit
   password                  String?
+  /// @graphqlOmit
   passwordResetToken        String?
+  /// @graphqlOmit
   passwordResetExpires      DateTime?
   emailValidated            Boolean              @default(false)
+  /// @graphqlOmit
   validateEmailToken        String?              @unique
+  /// @graphqlOmit
   validateEmailTokenExpires DateTime?
   emails                    Email[]              @relation("Email_belongsTo_User")
   links                     Link[]               @relation("Link_belongsTo_User")
@@ -365,7 +372,9 @@ model User {
   addresses                 Address[]            @relation("Address_belongsTo_User")
   invitesSent               Invite[]             @relation("Invite_sentBy_User")
   twoFactorEnabled          Boolean              @default(false)
+  /// @graphqlOmit
   twoFactorSecret           String?
+  /// @graphqlOmit
   twoFactorRecoveryCodes    String[]
   twoFactorMethod           TwoFactorMethod      @default(NONE)
   activeSessions            UserSession[]

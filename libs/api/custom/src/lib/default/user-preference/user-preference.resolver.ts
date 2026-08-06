@@ -1,7 +1,7 @@
 import { Injectable, UseGuards } from '@nestjs/common'
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql'
 import { User, UserPreference } from '@nestled-template/api/core/models'
-import { CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
+import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
 import { SecureCreateUserPreferenceInput, SecureUpdateUserPreferenceInput } from './dto'
 import { ApiCrudDataAccessService } from '@nestled-template/api/generated-crud/data-access'
 import { GeneratedUserPreferenceResolver } from '@nestled-template/api/generated-crud/feature'
@@ -22,6 +22,7 @@ export class UserPreferenceResolver extends GeneratedUserPreferenceResolver {
   // Create with userId from context (no client-provided userId)
   @Mutation(() => UserPreference, { nullable: true })
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async userCreateUserPreference(
     @Args('input') input: SecureCreateUserPreferenceInput,
     @CtxUser() user: User,
@@ -32,6 +33,7 @@ export class UserPreferenceResolver extends GeneratedUserPreferenceResolver {
   // Update - ensure user can only update their own preferences
   @Mutation(() => UserPreference, { nullable: true })
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async userUpdateUserPreference(
     @Args('userPreferenceId') userPreferenceId: string,
     @Args('input') input: SecureUpdateUserPreferenceInput,
@@ -43,6 +45,7 @@ export class UserPreferenceResolver extends GeneratedUserPreferenceResolver {
   // Delete - ensure user can only delete their own preferences
   @Mutation(() => UserPreference, { nullable: true })
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async userDeleteUserPreference(
     @Args('userPreferenceId') userPreferenceId: string,
     @CtxUser() user: User,
@@ -53,6 +56,7 @@ export class UserPreferenceResolver extends GeneratedUserPreferenceResolver {
   // Read one - ensure user can only read their own preferences
   @Query(() => UserPreference, { nullable: true })
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async userGetUserPreference(
     @Args('userPreferenceId') userPreferenceId: string,
     @CtxUser() user: User,
@@ -63,6 +67,7 @@ export class UserPreferenceResolver extends GeneratedUserPreferenceResolver {
   // Read many - automatically filter to user's own preferences
   @Query(() => [UserPreference], { nullable: true })
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async userGetUserPreferences(@CtxUser() user: User): Promise<UserPreference[]> {
     return this.customService.userGetUserPreferences(user.id)
   }

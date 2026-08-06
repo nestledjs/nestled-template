@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Request, Response } from 'express'
 import { ConfigService } from '@nestjs/config'
 import { McpOAuthService } from './mcp-oauth.service'
+import { Public } from '@nestled-template/api/utils'
 
 interface AuthorizeQuery {
   client_id: string
@@ -14,6 +15,8 @@ interface AuthorizeQuery {
   org?: string
 }
 
+// OAuth discovery and token exchange, by definition pre-auth.
+@Public()
 @Controller('mcp')
 export class McpOAuthController {
   private readonly logger = new Logger(McpOAuthController.name)

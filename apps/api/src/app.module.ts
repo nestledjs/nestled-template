@@ -37,9 +37,11 @@ import {
   UserSessionModule,
 } from '@nestled-template/api/custom'
 import { StripeModule } from '@nestled-template/api/integrations'
-import { GuardsModule } from '@nestled-template/api/utils'
+import { GlobalAuthGuard, GuardsModule } from '@nestled-template/api/utils'
 import { ApiCoreFeatureModule } from '@nestled-template/api/core/feature'
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common'
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core'
+import { ViewerContextInterceptor } from '@nestled-template/api/core/helpers'
 import { LoggerMiddleware } from './applogger.middleware'
 import { ConfigModule } from '@nestjs/config'
 import {
@@ -115,6 +117,16 @@ export const appModules = [...coreModules, ...defaultModules, ...pluginModules]
     ...appModules,
   ],
   controllers: [StripeWebhookController],
+  providers: [
+    // Fail-closed default. NestJS applies no guard unless one is asked for, so without this an
+    // operation that forgets `@UseGuards` is reachable anonymously. Refuses anything that has not
+    // declared an access level; the declared guards still perform the actual check.
+    { provide: APP_GUARD, useClass: GlobalAuthGuard },
+    // Publishes the authenticated user for the duration of each request so the nested-select
+    // builder can authorize relation traversal. Interceptors run after guards, so req.user is
+    // already populated. Registered globally because generated resolvers cannot be edited.
+    { provide: APP_INTERCEPTOR, useClass: ViewerContextInterceptor },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

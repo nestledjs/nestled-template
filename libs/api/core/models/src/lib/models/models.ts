@@ -85,9 +85,6 @@ export class ApiToken {
   user?: Partial<User> | null
 
   @Field(() => String)
-  tokenHash!: string
-
-  @Field(() => String)
   name!: string
 
   @Field(() => GraphQLISODateTime, { nullable: true })
@@ -212,9 +209,6 @@ export class Email {
 
   @Field(() => Boolean)
   verified!: boolean
-
-  @Field(() => String, { nullable: true })
-  verifyToken?: string | null
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   verifyExpires?: Date | null
@@ -813,23 +807,8 @@ export class User {
   @Field(() => String, { nullable: true })
   displayName?: string | null
 
-  @Field(() => String, { nullable: true })
-  password?: string | null
-
-  @Field(() => String, { nullable: true })
-  passwordResetToken?: string | null
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  passwordResetExpires?: Date | null
-
   @Field(() => Boolean)
   emailValidated!: boolean
-
-  @Field(() => String, { nullable: true })
-  validateEmailToken?: string | null
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  validateEmailTokenExpires?: Date | null
 
   @Field(() => [Email], { nullable: true })
   emails?: Partial<Email>[] | null
@@ -863,12 +842,6 @@ export class User {
 
   @Field(() => Boolean)
   twoFactorEnabled!: boolean
-
-  @Field(() => String, { nullable: true })
-  twoFactorSecret?: string | null
-
-  @Field(() => [String])
-  twoFactorRecoveryCodes!: string[]
 
   @Field(() => TwoFactorMethod)
   twoFactorMethod!: TwoFactorMethod

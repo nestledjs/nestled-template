@@ -1,6 +1,6 @@
 import { Resolver, Mutation, Args } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { GqlAuthAdminGuard, CtxUser } from '@nestled-template/api/utils'
+import { AdminOnly, CtxUser, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 import { SyncService } from './sync.service'
 import { User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
@@ -12,6 +12,7 @@ import { recordBillingAuditLog } from './audit-log'
  * Provides admin mutations for managing billing infrastructure.
  * All operations require super admin permissions.
  */
+@AdminOnly()
 @Resolver()
 @UseGuards(GqlAuthAdminGuard)
 export class BillingResolver {

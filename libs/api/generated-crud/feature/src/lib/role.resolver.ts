@@ -9,13 +9,14 @@ import {
   ListRoleInput,
   UpdateRoleInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Role)
 export class GeneratedRoleResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Role], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   roles(
     @Info() info: GraphQLResolveInfo,
@@ -25,6 +26,7 @@ export class GeneratedRoleResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   rolesCount(
     @Args({ name: 'input', type: () => ListRoleInput, nullable: true }) input?: ListRoleInput,
@@ -33,18 +35,21 @@ export class GeneratedRoleResolver {
   }
 
   @Query(() => Role, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   role(@Info() info: GraphQLResolveInfo, @Args('roleId') roleId: string) {
     return this.generatedService.role(info, roleId)
   }
 
   @Mutation(() => Role, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createRole(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateRoleInput) {
     return this.generatedService.createRole(info, input)
   }
 
   @Mutation(() => Role, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateRole(
     @Info() info: GraphQLResolveInfo,
@@ -55,6 +60,7 @@ export class GeneratedRoleResolver {
   }
 
   @Mutation(() => Role, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteRole(@Args('roleId') roleId: string) {
     return this.generatedService.deleteRole(roleId)

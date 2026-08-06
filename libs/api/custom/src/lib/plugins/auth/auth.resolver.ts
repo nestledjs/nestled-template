@@ -14,10 +14,13 @@ import {
 import { Logger, UseGuards } from '@nestjs/common'
 import { GraphQLResolveInfo } from 'graphql/type'
 import {
+  AdminOnly,
+  Authenticated,
   CtxUser,
-  GqlAuthGuard,
   GqlAuthAdminGuard,
+  GqlAuthGuard,
   GqlThrottlerGuard,
+  Public,
 } from '@nestled-template/api/utils'
 import type { NestContextType } from '@nestled-template/api/utils'
 import { UserToken } from './models'
@@ -67,6 +70,7 @@ export class AuthResolver {
 
   @Query(() => User, { nullable: true })
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async me(@CtxUser() user: User, @Info() info: GraphQLResolveInfo) {
     const validatedUser = await this.service.validateUser(user.id)
 
@@ -88,6 +92,7 @@ export class AuthResolver {
   }
 
   @Mutation(() => UserToken, { nullable: true })
+  @Public()
   async login(
     @Context() context: NestContextType,
     @Args('input') input: LoginInput,
@@ -122,6 +127,7 @@ export class AuthResolver {
   }
 
   @Mutation(() => UserToken, { nullable: true })
+  @Public()
   async complete2FALogin(
     @Context() context: NestContextType,
     @Args('tempToken') tempToken: string,
@@ -148,6 +154,7 @@ export class AuthResolver {
   }
 
   @Mutation(() => Boolean, { nullable: true })
+  @Public()
   async logout(@Context() context: NestContextType) {
     Logger.log('LOGOUT ++++++++')
 
@@ -179,6 +186,7 @@ export class AuthResolver {
   // GqlThrottlerGuard for why this depends on TRUST_PROXY_HOPS being set correctly.
   @Mutation(() => UserToken, { nullable: true })
   @UseGuards(GqlThrottlerGuard)
+  @Public()
   async register(@Context() context: NestContextType, @Args('input') input: RegisterInput) {
     // Extract session info from request
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
@@ -192,6 +200,7 @@ export class AuthResolver {
   }
 
   @Mutation(() => UserToken, { nullable: true })
+  @Public()
   async registerWithInvitation(
     @Context() context: NestContextType,
     @Args('input') input: RegisterWithInvitationInput,
@@ -210,6 +219,7 @@ export class AuthResolver {
   // Unauthenticated and mails an attacker-chosen address, exactly like register — same gate.
   @Mutation(() => Boolean, { nullable: true })
   @UseGuards(GqlThrottlerGuard)
+  @Public()
   forgotPassword(
     @Context() context: NestContextType,
     @Args('input') input: ForgotPasswordInput,
@@ -223,6 +233,7 @@ export class AuthResolver {
   }
 
   @Mutation(() => User, { nullable: true })
+  @Public()
   resetPassword(
     @Context() context: NestContextType,
     @Args('input') input: ResetPasswordInput,
@@ -235,6 +246,7 @@ export class AuthResolver {
   // arbitrary address. Signed-in users should use resendMyVerificationEmail below instead.
   @Mutation(() => Boolean)
   @UseGuards(GqlThrottlerGuard)
+  @Public()
   resendVerificationEmail(
     @Args('email') email: string,
     @Args('captchaToken', { nullable: true }) captchaToken?: string,
@@ -246,17 +258,20 @@ export class AuthResolver {
   // is authenticated and cannot choose the recipient, so it is not a mail-bombing primitive.
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   resendMyVerificationEmail(@CtxUser() user: User) {
     return this.service.resendMyVerificationEmail(user.id)
   }
 
   @Mutation(() => User)
+  @Public()
   verifyEmail(@Args('input') input: VerifyEmailInput) {
     return this.service.verifyEmail(input.token)
   }
 
   @Mutation(() => UserToken, { nullable: true })
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async emulateUser(
     @Context() context: NestContextType,
     @CtxUser() admin: User,
@@ -272,6 +287,7 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async changeEmail(
     @Context() context: NestContextType,
     @CtxUser() user: User,
@@ -282,12 +298,14 @@ export class AuthResolver {
   }
 
   @Mutation(() => User)
+  @Public()
   async verifyEmailChange(@Args('token') token: string): Promise<User> {
     return this.service.verifyEmailChange(token)
   }
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async changePassword(
     @Context() context: NestContextType,
     @CtxUser() user: User,
@@ -302,6 +320,7 @@ export class AuthResolver {
 
   @Mutation(() => UserToken, { nullable: true })
   @UseGuards(GqlAuthGuard) // Changed from GqlAuthAdminGuard - we need to check JWT payload instead
+  @Authenticated()
   async endEmulation(
     @CtxUser() user: User,
     @Context() context: NestContextType,
@@ -334,6 +353,7 @@ export class AuthResolver {
 
   @Mutation(() => User)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async unlockAccount(
     @Context() context: NestContextType,
     @CtxUser() user: User,
@@ -349,12 +369,14 @@ export class AuthResolver {
 
   @Mutation(() => Setup2FAOutput)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async setup2FA(@CtxUser() user: User): Promise<Setup2FAOutput> {
     return this.service.setup2FA(user.id)
   }
 
   @Mutation(() => Enable2FAOutput)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async enable2FA(
     @Context() context: NestContextType,
     @CtxUser() user: User,
@@ -366,6 +388,7 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async disable2FA(
     @Context() context: NestContextType,
     @CtxUser() user: User,
@@ -377,6 +400,7 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async verify2FACode(
     @CtxUser() user: User,
     @Args('input') input: Verify2FAInput,
@@ -385,6 +409,7 @@ export class AuthResolver {
   }
 
   @Query(() => [OAuthProviderInfo])
+  @Public()
   availableOAuthProviders(): OAuthProviderInfo[] {
     const providers: OAuthProviderInfo[] = []
 
@@ -409,6 +434,7 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async linkOAuthAccount(
     @CtxUser() user: User,
     @Args('input') input: LinkOAuthInput,
@@ -419,6 +445,7 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async unlinkOAuthAccount(
     @CtxUser() user: User,
     @Args('input') input: UnlinkOAuthInput,
@@ -429,6 +456,7 @@ export class AuthResolver {
 
   @Query(() => [UserSessionOutput])
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async getUserSessions(
     @Context() context: NestContextType,
     @CtxUser() user: User,
@@ -442,6 +470,7 @@ export class AuthResolver {
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async invalidateSession(
     @CtxUser() user: User,
     @Args('sessionId') sessionId: string,
@@ -451,6 +480,7 @@ export class AuthResolver {
 
   @Mutation(() => Number)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async invalidateAllSessions(
     @Context() context: NestContextType,
     @CtxUser() user: User,
@@ -462,7 +492,10 @@ export class AuthResolver {
     return this.service.invalidateAllSessions(user.id, currentSessionId)
   }
 
+  // Resolved as part of the login response, which is itself public. Reaching this field at all
+  // requires already holding the UserToken that a successful login just issued.
   @ResolveField('user')
+  @Public()
   user(@Parent() auth: UserToken) {
     // If 2FA is required, user field should be null until 2FA is completed
     if (auth?.requires2FA && !auth?.token) {
@@ -477,18 +510,21 @@ export class AuthResolver {
 
   @Query(() => ExportUserDataOutput)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async exportUserData(@CtxUser() user: User): Promise<ExportUserDataOutput> {
     return this.service.exportUserData(user.id)
   }
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async deleteUserAccount(@CtxUser() user: User): Promise<boolean> {
     return this.service.deleteUserAccount(user.id)
   }
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async transferOrganizationOwnership(
     @CtxUser() user: User,
     @Args('input') input: TransferOwnershipInput,

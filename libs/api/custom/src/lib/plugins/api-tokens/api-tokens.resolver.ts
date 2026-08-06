@@ -1,6 +1,6 @@
 import { Resolver, Query, Mutation, Args } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { GqlAuthGuard, CtxUser } from '@nestled-template/api/utils'
+import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
 import { User, ApiToken } from '@nestled-template/api/core/models'
 import { ApiTokensService } from './api-tokens.service'
 import { GenerateApiTokenInput, RotateApiTokenInput, GenerateApiTokenOutput } from './dto'
@@ -11,6 +11,7 @@ export class ApiTokensResolver {
 
   @Mutation(() => GenerateApiTokenOutput)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async generateApiToken(
     @CtxUser() user: User,
     @Args('input') input: GenerateApiTokenInput,
@@ -20,18 +21,21 @@ export class ApiTokensResolver {
 
   @Query(() => [ApiToken])
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async listApiTokens(@CtxUser() user: User): Promise<ApiToken[]> {
     return this.service.listApiTokens(user.id)
   }
 
   @Mutation(() => ApiToken)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async revokeApiToken(@CtxUser() user: User, @Args('tokenId') tokenId: string): Promise<ApiToken> {
     return this.service.revokeApiToken(user.id, tokenId)
   }
 
   @Mutation(() => GenerateApiTokenOutput)
   @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async rotateApiToken(
     @CtxUser() user: User,
     @Args('input') input: RotateApiTokenInput,

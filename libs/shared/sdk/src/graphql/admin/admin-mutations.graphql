@@ -30,7 +30,5 @@ mutation AdminVerifyEmail($userId: String!, $emailId: String!) {
 mutation AdminForcePasswordReset($userId: String!) {
   adminForcePasswordReset(userId: $userId) {
     id
-    passwordResetToken
-    passwordResetExpires
   }
 }

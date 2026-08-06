@@ -6,7 +6,6 @@ fragment __AdminEmailSummary on Email {
   public
   primary
   verified
-  verifyToken
   verifyExpires
   userId
   emailType

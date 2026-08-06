@@ -1,6 +1,6 @@
 import { Args, Field, InputType, Int, ObjectType, Query, Resolver, Mutation } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 import {
   SecurityEvent,
   AuditLog,
@@ -231,6 +231,7 @@ export class AdminResolver {
    */
   @Query(() => AdminUsersResponse)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminUsers(
     @Args('filters', { type: () => AdminUserFiltersInput, nullable: true })
     filters?: AdminUserFiltersInput,
@@ -244,6 +245,7 @@ export class AdminResolver {
    */
   @Query(() => User)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminUserDetails(@Args('userId', { type: () => String }) userId: string): Promise<any> {
     return this.service.getUserDetails(userId)
   }
@@ -254,6 +256,7 @@ export class AdminResolver {
    */
   @Query(() => AdminOrganizationsResponse)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminOrganizations(
     @Args('filters', { type: () => AdminOrganizationFiltersInput, nullable: true })
     filters?: AdminOrganizationFiltersInput,
@@ -267,6 +270,7 @@ export class AdminResolver {
    */
   @Query(() => AdminSecurityEventsResponse)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminSecurityEvents(
     @Args('filters', { type: () => AdminSecurityEventFiltersInput, nullable: true })
     filters?: AdminSecurityEventFiltersInput,
@@ -280,6 +284,7 @@ export class AdminResolver {
    */
   @Query(() => AdminAuditLogsResponse)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminAuditLogs(
     @Args('filters', { type: () => AdminAuditLogFiltersInput, nullable: true })
     filters?: AdminAuditLogFiltersInput,
@@ -295,6 +300,7 @@ export class AdminResolver {
    */
   @Query(() => AdminAuditLogFacets)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminAuditLogFacets(): Promise<AdminAuditLogFacets> {
     return this.service.getAuditLogFacets()
   }
@@ -305,6 +311,7 @@ export class AdminResolver {
    */
   @Query(() => AdminDashboardStats)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminDashboardStats(): Promise<AdminDashboardStats> {
     return this.service.getDashboardStats()
   }
@@ -315,6 +322,7 @@ export class AdminResolver {
    */
   @Query(() => AdminAnalytics)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminAnalytics(): Promise<AdminAnalytics> {
     return this.service.getAnalytics()
   }
@@ -325,6 +333,7 @@ export class AdminResolver {
    */
   @Mutation(() => User)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminDeactivateUser(@Args('userId', { type: () => String }) userId: string): Promise<User> {
     return this.service.deactivateUser(userId)
   }
@@ -335,6 +344,7 @@ export class AdminResolver {
    */
   @Mutation(() => User)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminActivateUser(@Args('userId', { type: () => String }) userId: string): Promise<User> {
     return this.service.activateUser(userId)
   }
@@ -345,6 +355,7 @@ export class AdminResolver {
    */
   @Mutation(() => User)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminVerifyEmail(
     @Args('userId', { type: () => String }) userId: string,
     @Args('emailId', { type: () => String }) emailId: string,
@@ -358,6 +369,7 @@ export class AdminResolver {
    */
   @Mutation(() => User)
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async adminForcePasswordReset(
     @Args('userId', { type: () => String }) userId: string,
   ): Promise<User> {

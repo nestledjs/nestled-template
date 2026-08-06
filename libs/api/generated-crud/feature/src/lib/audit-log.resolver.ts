@@ -9,13 +9,14 @@ import {
   ListAuditLogInput,
   UpdateAuditLogInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => AuditLog)
 export class GeneratedAuditLogResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [AuditLog], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   auditLogs(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedAuditLogResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   auditLogsCount(
     @Args({ name: 'input', type: () => ListAuditLogInput, nullable: true })
@@ -35,18 +37,21 @@ export class GeneratedAuditLogResolver {
   }
 
   @Query(() => AuditLog, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   auditLog(@Info() info: GraphQLResolveInfo, @Args('auditLogId') auditLogId: string) {
     return this.generatedService.auditLog(info, auditLogId)
   }
 
   @Mutation(() => AuditLog, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createAuditLog(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateAuditLogInput) {
     return this.generatedService.createAuditLog(info, input)
   }
 
   @Mutation(() => AuditLog, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateAuditLog(
     @Info() info: GraphQLResolveInfo,
@@ -57,6 +62,7 @@ export class GeneratedAuditLogResolver {
   }
 
   @Mutation(() => AuditLog, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteAuditLog(@Args('auditLogId') auditLogId: string) {
     return this.generatedService.deleteAuditLog(auditLogId)

@@ -1,6 +1,6 @@
 import { Resolver, Query } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { GqlAuthGuard, CtxUser } from '@nestled-template/api/utils'
+import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
 import { Plan, User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 
@@ -10,6 +10,7 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
  * Provides user-facing queries for viewing available plans.
  * This is separate from the generated admin Plan resolver.
  */
+@Authenticated()
 @Resolver(() => Plan)
 @UseGuards(GqlAuthGuard)
 export class UserPlanResolver {

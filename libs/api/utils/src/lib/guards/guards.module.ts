@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common'
 import { ApiCoreDataAccessModule } from '@nestled-template/api/core/data-access'
 import { AuthCacheService } from '../services/auth-cache.service'
 import { OrganizationContextService } from '../services/organization-context.service'
+import { GlobalAuthGuard } from './global-auth.guard'
 import { GqlAuthAdminGuard } from './gql-auth-admin.guard'
 import { GqlAuthGuard } from './gql-auth.guard'
 import { GqlOrganizationScopedGuard } from './gql-organization-scoped.guard'
@@ -16,6 +17,7 @@ import { SubscriptionGuard } from './subscription.guard'
     OrganizationContextService,
     GqlAuthGuard,
     GqlAuthAdminGuard,
+    GlobalAuthGuard,
     GqlOrganizationScopedGuard,
     PermissionsGuard,
     SubscriptionGuard,
@@ -25,6 +27,7 @@ import { SubscriptionGuard } from './subscription.guard'
     OrganizationContextService,
     GqlAuthGuard,
     GqlAuthAdminGuard,
+    GlobalAuthGuard,
     GqlOrganizationScopedGuard,
     PermissionsGuard,
     SubscriptionGuard,

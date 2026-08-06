@@ -1,0 +1,22 @@
+{
+  "libs/api/core/feature/src/lib/api-core-feature.resolver.ts": {
+    "uptime": "Liveness probe. Returns process uptime only, no application data."
+  },
+  "libs/api/custom/src/lib/plugins/auth/auth.resolver.ts": {
+    "login": "Credential entry point. Cannot require an authenticated caller.",
+    "complete2FALogin": "Second leg of login. Authorized by the short-lived 2FA challenge token in the input.",
+    "logout": "Clears the caller's own session cookie. Nothing to read or escalate.",
+    "register": "Public signup. Rate limited by GqlThrottlerGuard.",
+    "registerWithInvitation": "Public signup. Authorized by the single-use invitation token in the input.",
+    "forgotPassword": "Pre-authentication recovery. Rate limited by GqlThrottlerGuard.",
+    "resetPassword": "Pre-authentication recovery. Authorized by the single-use reset token in the input.",
+    "resendVerificationEmail": "Pre-authentication recovery. Rate limited by GqlThrottlerGuard.",
+    "verifyEmail": "Reached from an emailed link before a session exists. Authorized by the token in the input.",
+    "verifyEmailChange": "Reached from an emailed link. Authorized by the single-use token argument.",
+    "availableOAuthProviders": "Renders the login screen's provider buttons. Returns static configuration, no user data.",
+    "user": "Field resolver on UserToken, which only a successful login issues. Resolved as part of the public login response; reaching it requires already holding that token."
+  },
+  "libs/api/custom/src/lib/default/organization/organization.resolver.ts": {
+    "getInvitationDetails": "Renders the invitation acceptance screen before the invitee has an account. Authorized by the invitation token argument."
+  }
+}

@@ -5,6 +5,7 @@ import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { JSONRPCMessage, isJSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
 import { McpServerFactory } from './mcp-server.factory'
 import { McpAuthContext } from './mcp-auth'
+import { Public } from '@nestled-template/api/utils'
 
 interface UnrefableTimer {
   unref: () => void
@@ -105,6 +106,8 @@ class JsonRequestTransport implements Transport {
   }
 }
 
+// Authenticates via the MCP bearer token, not a session.
+@Public()
 @Controller('mcp')
 export class McpController {
   private readonly logger = new Logger(McpController.name)

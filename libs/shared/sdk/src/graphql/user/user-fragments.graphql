@@ -6,14 +6,8 @@ fragment UserList on User {
   lastName
   bio
   displayName
-  password
-  passwordResetToken
-  passwordResetExpires
   emailValidated
-  validateEmailToken
-  validateEmailTokenExpires
   twoFactorEnabled
-  twoFactorSecret
   lastSuccessfulLogin
   lastFailedLogin
   failedLoginCount

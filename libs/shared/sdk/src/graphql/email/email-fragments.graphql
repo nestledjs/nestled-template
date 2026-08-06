@@ -6,7 +6,6 @@ fragment EmailList on Email {
   public
   primary
   verified
-  verifyToken
   verifyExpires
 }
 

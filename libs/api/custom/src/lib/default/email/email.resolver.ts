@@ -8,7 +8,7 @@ import { Args, Info, Mutation, Resolver } from '@nestjs/graphql'
 import { Email } from '@nestled-template/api/core/models'
 import { EmailService } from './email.service'
 import { GraphQLResolveInfo } from 'graphql'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Email)
 @Injectable()
@@ -22,6 +22,7 @@ export class EmailResolver extends GeneratedEmailResolver {
 
   @Mutation(() => Email, { nullable: true })
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async staffUpdateEmail(
     @Info() info: GraphQLResolveInfo,
     @Args('emailId') emailId: string,
@@ -36,6 +37,7 @@ export class EmailResolver extends GeneratedEmailResolver {
 
   @Mutation(() => Email, { nullable: true })
   @UseGuards(GqlAuthAdminGuard)
+  @AdminOnly()
   async staffDeleteEmail(@Args('emailId') emailId: string) {
     // Validate that we're not deleting the only email or primary without a replacement
     await this.customService.validateEmailDeletion(emailId)

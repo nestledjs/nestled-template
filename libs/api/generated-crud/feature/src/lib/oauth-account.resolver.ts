@@ -9,13 +9,14 @@ import {
   ListOAuthAccountInput,
   UpdateOAuthAccountInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => OAuthAccount)
 export class GeneratedOAuthAccountResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [OAuthAccount], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   oAuthAccounts(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   oAuthAccountsCount(
     @Args({ name: 'input', type: () => ListOAuthAccountInput, nullable: true })
@@ -35,12 +37,14 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Query(() => OAuthAccount, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   oAuthAccount(@Info() info: GraphQLResolveInfo, @Args('oAuthAccountId') oAuthAccountId: string) {
     return this.generatedService.oAuthAccount(info, oAuthAccountId)
   }
 
   @Mutation(() => OAuthAccount, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createOAuthAccount(
     @Info() info: GraphQLResolveInfo,
@@ -50,6 +54,7 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Mutation(() => OAuthAccount, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateOAuthAccount(
     @Info() info: GraphQLResolveInfo,
@@ -60,6 +65,7 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Mutation(() => OAuthAccount, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteOAuthAccount(@Args('oAuthAccountId') oAuthAccountId: string) {
     return this.generatedService.deleteOAuthAccount(oAuthAccountId)

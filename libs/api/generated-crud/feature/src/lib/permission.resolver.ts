@@ -9,13 +9,14 @@ import {
   ListPermissionInput,
   UpdatePermissionInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Permission)
 export class GeneratedPermissionResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Permission], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   permissions(
     @Info() info: GraphQLResolveInfo,
@@ -26,6 +27,7 @@ export class GeneratedPermissionResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   permissionsCount(
     @Args({ name: 'input', type: () => ListPermissionInput, nullable: true })
@@ -35,18 +37,21 @@ export class GeneratedPermissionResolver {
   }
 
   @Query(() => Permission, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   permission(@Info() info: GraphQLResolveInfo, @Args('permissionId') permissionId: string) {
     return this.generatedService.permission(info, permissionId)
   }
 
   @Mutation(() => Permission, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createPermission(@Info() info: GraphQLResolveInfo, @Args('input') input: CreatePermissionInput) {
     return this.generatedService.createPermission(info, input)
   }
 
   @Mutation(() => Permission, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updatePermission(
     @Info() info: GraphQLResolveInfo,
@@ -57,6 +62,7 @@ export class GeneratedPermissionResolver {
   }
 
   @Mutation(() => Permission, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deletePermission(@Args('permissionId') permissionId: string) {
     return this.generatedService.deletePermission(permissionId)

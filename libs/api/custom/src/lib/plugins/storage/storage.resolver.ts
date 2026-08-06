@@ -1,6 +1,7 @@
 import { Resolver, Mutation, Query, Args, Int } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
 import {
+  Authenticated,
   CtxOrganizationId,
   CtxUser,
   GqlAuthGuard,
@@ -15,6 +16,7 @@ import { GraphQLUpload, FileUpload } from 'graphql-upload-minimal'
  * Storage GraphQL Resolver
  * Provides mutations and queries for file uploads
  */
+@Authenticated()
 @Resolver(() => UploadedFile)
 @UseGuards(GqlAuthGuard)
 export class StorageResolver {
@@ -48,6 +50,7 @@ export class StorageResolver {
    */
   @Mutation(() => UploadedFile)
   @UseGuards(GqlOrganizationScopedGuard)
+  @Authenticated()
   async uploadOrganizationLogo(
     @Args({ name: 'file', type: () => GraphQLUpload }) file: FileUpload,
     @CtxOrganizationId() organizationId: string,
@@ -82,6 +85,7 @@ export class StorageResolver {
    */
   @Mutation(() => Boolean)
   @UseGuards(GqlOrganizationScopedGuard)
+  @Authenticated()
   async removeOrganizationLogo(
     @CtxOrganizationId() organizationId: string,
     @CtxUser() user: User,

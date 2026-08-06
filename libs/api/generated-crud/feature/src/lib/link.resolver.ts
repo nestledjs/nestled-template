@@ -9,13 +9,14 @@ import {
   ListLinkInput,
   UpdateLinkInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Link)
 export class GeneratedLinkResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Link], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   links(
     @Info() info: GraphQLResolveInfo,
@@ -25,6 +26,7 @@ export class GeneratedLinkResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   linksCount(
     @Args({ name: 'input', type: () => ListLinkInput, nullable: true }) input?: ListLinkInput,
@@ -33,18 +35,21 @@ export class GeneratedLinkResolver {
   }
 
   @Query(() => Link, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   link(@Info() info: GraphQLResolveInfo, @Args('linkId') linkId: string) {
     return this.generatedService.link(info, linkId)
   }
 
   @Mutation(() => Link, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createLink(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateLinkInput) {
     return this.generatedService.createLink(info, input)
   }
 
   @Mutation(() => Link, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateLink(
     @Info() info: GraphQLResolveInfo,
@@ -55,6 +60,7 @@ export class GeneratedLinkResolver {
   }
 
   @Mutation(() => Link, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteLink(@Args('linkId') linkId: string) {
     return this.generatedService.deleteLink(linkId)

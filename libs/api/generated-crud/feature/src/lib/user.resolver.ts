@@ -9,13 +9,14 @@ import {
   ListUserInput,
   UpdateUserInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => User)
 export class GeneratedUserResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [User], { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   users(
     @Info() info: GraphQLResolveInfo,
@@ -25,6 +26,7 @@ export class GeneratedUserResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   usersCount(
     @Args({ name: 'input', type: () => ListUserInput, nullable: true }) input?: ListUserInput,
@@ -33,18 +35,21 @@ export class GeneratedUserResolver {
   }
 
   @Query(() => User, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   user(@Info() info: GraphQLResolveInfo, @Args('userId') userId: string) {
     return this.generatedService.user(info, userId)
   }
 
   @Mutation(() => User, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   createUser(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateUserInput) {
     return this.generatedService.createUser(info, input)
   }
 
   @Mutation(() => User, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   updateUser(
     @Info() info: GraphQLResolveInfo,
@@ -55,6 +60,7 @@ export class GeneratedUserResolver {
   }
 
   @Mutation(() => User, { nullable: true })
+  @AdminOnly()
   @UseGuards(GqlAuthAdminGuard)
   deleteUser(@Args('userId') userId: string) {
     return this.generatedService.deleteUser(userId)

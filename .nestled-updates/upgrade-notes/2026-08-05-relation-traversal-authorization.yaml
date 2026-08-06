@@ -1,0 +1,84 @@
+id: 2026-08-05-relation-traversal-authorization
+title: Authorize relation traversal in the nested select builder
+priority: critical
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  `createSelect` compiles an entire GraphQL selection set into one nested Prisma `select`, recursing
+  into any field carrying a relation at unbounded depth. Nested data therefore arrives as extra
+  columns on the root query's result set rather than through a second resolver call, and there are
+  no field resolvers on generated models.
+
+  Authorize the traversal inside the select builder, since nothing else can. Each relation now
+  requires the viewer to satisfy the level the related model declares for itself, taken from the
+  `auth` block that `@nestledjs/generators` 1.1.5 emits into DATABASE_MODELS. A model with no
+  `@crudAuth` annotation defaults to admin, matching its generated resolvers.
+
+  The viewer reaches the builder out of band, because `createSelect` receives only
+  `GraphQLResolveInfo` — which carries no request context — and the generated data-access service is
+  a plain singleton. A globally registered interceptor publishes the authenticated user into an
+  AsyncLocalStorage for the duration of the request. Interceptors run after guards, so the user is
+  already resolved. An absent viewer is treated as anonymous rather than trusted, so a misconfigured
+  interceptor fails closed.
+
+why: >
+  A guard protects an entry point. A traversal is not an entry point, so no second guard runs for a
+  nested relation, and a guard on a model's own root query has nothing to do with reaching that
+  model's rows through a relation from somewhere else.
+
+  The practical effect is that one reachable list query exposes the transitive closure of the
+  relation graph from it. A model readable by any authenticated user, related to an admin-only
+  model, hands every authenticated user the admin-only rows. Where a model is listable without
+  authentication, the same holds anonymously.
+
+affectedPaths:
+  - package.json
+  - libs/api/core/helpers/src/lib/viewer-context.ts
+  - libs/api/core/helpers/src/lib/viewer-context.spec.ts
+  - libs/api/core/helpers/src/lib/graphql-select.ts
+  - libs/api/core/helpers/src/lib/graphql-select.spec.ts
+  - libs/api/core/helpers/src/index.ts
+  - apps/api/src/app.module.ts
+
+skipIf:
+  - The project does not use createSelect and builds its Prisma selects by hand.
+
+verification:
+  - pnpm nx test api-core-helpers
+  - pnpm nx build api
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Register the interceptor globally, not per module. Generated resolvers cannot be edited, so a
+    per-module registration would leave generated CRUD unprotected while appearing to work.
+  - Confirm the auth block is actually present in the SDK copy of DATABASE_MODELS before relying on
+    this. Two generated copies exist and only the generated-crud one carried auth before 1.1.5,
+    while createSelect reads the shared SDK copy. If the auth block is missing, every model reads as
+    admin-default and authenticated users lose traversals they legitimately had.
+  - Expect this to deny traversals that previously worked, because they were never authorized. Audit
+    before deploying rather than after. For each model reachable by a non-admin caller, list the
+    relations its clients select and check the related model's level. Where a traversal is
+    legitimate, the fix is to give the related model an accurate @crudAuth level or to build a
+    purpose-specific resolver, not to widen the check.
+  - Scope the AsyncLocalStorage to the subscription, not to the `next.handle()` call. Writing
+    `runWithViewer(viewer, () => next.handle())` establishes the store only while the observable is
+    being constructed; a cold observable downstream runs its producer at subscribe time, after that
+    callback has returned, and the builder then sees no viewer and denies every traversal in the
+    request. `defer(() => runWithViewer(...))` does not fix it either, because rxjs subscribes to
+    the factory's result after the factory returns. Wrap the subscribe itself —
+    `new Observable(sub => runWithViewer(viewer, () => next.handle().subscribe(sub)))`. NestJS's own
+    interceptor chain happens to start its async work eagerly inside `handle()`, so the weaker form
+    passes today and in tests that call `handle()` synchronously; do not rely on that. Cover it with
+    a handler built from `defer()`, which fails against the weaker form.
+  - A custom auth level cannot be evaluated here, since only the guard itself knows what it means.
+    Custom levels rank above user and below admin, so a plain authenticated caller cannot traverse
+    into a model behind a custom guard. If a project relies on that traversal, it needs a resolver
+    that applies the real guard rather than a relaxation of this rule.
+  - The refusal is thrown, not silently dropped, and names both the relation and the related model.
+    Silently omitting the branch would return partial data that looks like an empty relation, which
+    hides both bugs and probing.
+  - This is the last of the authorization findings, but it does not replace the others. Guards still
+    protect entry points, typed filter inputs still bound the where clause, and @graphqlOmit still
+    keeps credential columns out of the schema. Each covers a path the others do not.
