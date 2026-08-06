@@ -21,8 +21,9 @@ COMPOSE="$SCRIPT_DIR/dev-docker.sh"
 read_env() {
   [ -f "$ROOT/.env" ] || return 0
 
+  local key="$1"
   local raw
-  raw="$(grep -m1 "^$1=" "$ROOT/.env" | cut -d= -f2-)"
+  raw="$(grep -m1 "^$key=" "$ROOT/.env" | cut -d= -f2-)"
   raw="${raw#"${raw%%[![:space:]]*}"}"
   raw="${raw%"${raw##*[![:space:]]}"}"
 
