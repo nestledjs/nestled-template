@@ -1,4 +1,4 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common'
+import { ExecutionContext, ForbiddenException, Logger } from '@nestjs/common'
 import { GUARDS_METADATA } from '@nestjs/common/constants'
 import { Reflector } from '@nestjs/core'
 import { AUTH_LEVEL_KEY } from './auth-level.decorator'
@@ -34,14 +34,36 @@ const guardWith = (metadata: { level?: string; handlerGuards?: unknown[] }) => {
 }
 
 describe('GlobalAuthGuard', () => {
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'error').mockImplementation()
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
   it('refuses an operation that declares nothing', () => {
     // The whole point: a new resolver with no decorator must not ship reachable.
     expect(() => guardWith({}).canActivate(contextFor())).toThrow(ForbiddenException)
   })
 
-  it('names the operation and the remedy when it refuses', () => {
-    expect(() => guardWith({}).canActivate(contextFor())).toThrow(
-      /SomeResolver\.operation[\s\S]*@Public\(\)[\s\S]*@Authenticated\(\)[\s\S]*@AdminOnly\(\)/,
+  it('logs the internal target without exposing it in the response', () => {
+    let thrown: unknown
+
+    try {
+      guardWith({}).canActivate(contextFor())
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(ForbiddenException)
+    expect((thrown as ForbiddenException).message).toBe(
+      'Access level is not configured. Add @Public(), @Authenticated(), or @AdminOnly().',
+    )
+    expect((thrown as ForbiddenException).message).not.toContain('SomeResolver')
+    expect((thrown as ForbiddenException).message).not.toContain('operation')
+    expect(Logger.prototype.error).toHaveBeenCalledWith(
+      'SomeResolver.operation declares no access level; add @Public(), @Authenticated(), or @AdminOnly().',
     )
   })
 

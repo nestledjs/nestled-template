@@ -1,6 +1,18 @@
 {
+  "apps/api/src/webhooks/stripe-webhook.controller.ts": {
+    "handleStripeWebhook": "Public Stripe delivery endpoint. Authenticates each request by verifying the Stripe signature against the raw body."
+  },
+  "libs/api/core/feature/src/lib/api-core-feature.controller.ts": {
+    "uptime": "Liveness probe. Returns process uptime only, no application data."
+  },
   "libs/api/core/feature/src/lib/api-core-feature.resolver.ts": {
     "uptime": "Liveness probe. Returns process uptime only, no application data."
+  },
+  "libs/api/custom/src/lib/plugins/auth/oauth.controller.ts": {
+    "googleCallback": "Pre-authentication OAuth callback. Authorized by provider response and state validation.",
+    "githubCallback": "Pre-authentication OAuth callback. Authorized by provider response and state validation.",
+    "googleAuthorize": "Starts the public Google OAuth login flow and returns no application data.",
+    "githubAuthorize": "Starts the public GitHub OAuth login flow and returns no application data."
   },
   "libs/api/custom/src/lib/plugins/auth/auth.resolver.ts": {
     "login": "Credential entry point. Cannot require an authenticated caller.",
@@ -15,6 +27,18 @@
     "verifyEmailChange": "Reached from an emailed link. Authorized by the single-use token argument.",
     "availableOAuthProviders": "Renders the login screen's provider buttons. Returns static configuration, no user data.",
     "user": "Field resolver on UserToken, which only a successful login issues. Resolved as part of the public login response; reaching it requires already holding that token."
+  },
+  "libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts": {
+    "getOidcConfig": "Public OAuth discovery metadata required before a client can authenticate.",
+    "getOAuthServerMetadata": "Public OAuth authorization-server metadata required before a client can authenticate.",
+    "getProtectedResourceMetadata": "Public OAuth protected-resource metadata required before a client can authenticate.",
+    "getJwks": "Public OAuth key-discovery endpoint; returns public verification material only.",
+    "register": "Public RFC 7591 dynamic client registration endpoint.",
+    "authorize": "Pre-authentication OAuth authorization endpoint. Validates the client, redirect URI, session cookie, organization membership, and PKCE challenge internally.",
+    "token": "Pre-authentication OAuth token exchange. Authorized by a single-use authorization code and PKCE verifier."
+  },
+  "libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts": {
+    "handle": "MCP protocol endpoint. Authentication is performed by bearer-token middleware rather than the session guard."
   },
   "libs/api/custom/src/lib/default/organization/organization.resolver.ts": {
     "getInvitationDetails": "Renders the invitation acceptance screen before the invitee has an account. Authorized by the invitation token argument."

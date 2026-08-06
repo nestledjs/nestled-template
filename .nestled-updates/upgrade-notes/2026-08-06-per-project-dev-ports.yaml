@@ -1,0 +1,135 @@
+id: 2026-08-06-per-project-dev-ports
+title: 'Make local dev ports assignable per project'
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Every local dev port becomes settable from the repo-root .env alone, so several nestled apps
+  (and several docker stacks) can run side by side. Vite reads WEB_PORT / WEB_PREVIEW_PORT /
+  VITE_HOST; the compose host-port bindings become ${VAR:-default}; a new scripts/dev-docker.sh
+  passes the root .env to compose with --env-file (compose would otherwise read .dev/.env) and
+  owns the compose project name; test-db.sh, run-e2e-tests.sh, and apps/api-e2e/run-tests.sh
+  honor POSTGRES_TEST_PORT / TEST_DATABASE_URL; and an empty ALLOWED_ORIGINS now falls back to
+  WEB_URL, and failing that to http://localhost:${WEB_PORT}, instead of yielding [].
+
+  That CORS fallback engages only when ALLOWED_ORIGINS is empty or absent. .env.example ships it
+  SET, so for anyone who runs `cp .env.example .env` the explicit list always wins and WEB_PORT
+  and ALLOWED_ORIGINS must be moved together by hand — the doctor's dev-ports check is the guard
+  there, not the fallback.
+
+  When the fallback does run it honours WEB_URL only if the environment genuinely supplied it,
+  and otherwise derives from WEB_PORT alone. configuration.ts records `'WEB_URL' in process.env`
+  at MODULE SCOPE to tell those apart: validation.ts defaults WEB_URL to
+  defaultOrigin(HOST, WEB_PORT, 4200), and ConfigModule writes validated defaults into
+  process.env BEFORE resolving the load factories, so by the time the factory runs an injected
+  value is indistinguishable from a real one. app.module.ts resolves its `import { configuration }`
+  before the ConfigModule.forRoot({...}) argument is evaluated, so the constant is initialised
+  first.
+
+  A WEB_URL that IS supplied is collapsed to a bare origin before use, because main.ts matches it
+  against the browser's Origin header with exact string equality — a trailing slash, path, query,
+  fragment, or credentials would otherwise become an allow-list entry nothing can match. A value
+  that cannot be an origin at all (scheme-less like `localhost:4200`, a non-http(s) scheme, or a
+  wildcard bind address) is ignored in favour of the WEB_PORT-derived origin. This is NOT
+  normalizeApiOrigin — that also strips a trailing `/api`, which is meaningless for a web URL.
+
+  Without this, HOST leaks into the CORS origin for EVERY value it can take — http://0.0.0.0:4200,
+  http://127.0.0.1:4200 (a different origin to a browser on localhost:4200), or the incoherent
+  http://api.internal:4200, which pairs the API's bind host with the WEB port. Each silently
+  rejects browser requests that the previous default allowed.
+
+  Defaults are unchanged everywhere. With an untouched .env every port, URL, and CORS origin is
+  byte-identical to before — libs/api/config/src/lib/configuration.spec.ts pins the no-vars-set
+  CORS case at ['http://localhost:4200'] specifically to guard that.
+
+  BEFORE APPLYING: if this repo's docker:* scripts passed a `-p <name>` that differed from the
+  `name:` in .dev/docker-compose.yml, run `docker compose -f .dev/docker-compose.yml -p <old-name>
+  down` first — this note drops `-p` and the compose file's `name:` takes over, so containers
+  started under the old project name would otherwise be orphaned. (qalatra.com used
+  `-p qalatracom`.)
+
+  AFTER APPLYING: claim a port block in docs/dev/dev-ports.md and paste it into the local,
+  gitignored .env. A repo staying on block 0 (the defaults) needs no .env change at all.
+
+why: >
+  Six things had to move together to relocate an app's dev ports, and three of them failed
+  SILENTLY — the app booted clean and was broken only in the browser. Moving WEB_PORT without
+  ALLOWED_ORIGINS produced a CORS rejection on every request with nothing in the server log;
+  moving PORT without VITE_API_URL left the client calling a dead port; and worst, moving
+  POSTGRES_PORT without DATABASE_URL silently connected the app to ANOTHER repo's database on
+  5432, with no error anywhere.
+
+  Two of the six could not be moved from .env at all: apps/web/vite.config.ts hardcoded 4200/4300,
+  and the compose host ports were literals. The compose invocation also could not see the root
+  .env, because --project-directory defaults to the compose file's directory, so ${POSTGRES_PORT}
+  would have interpolated from .dev/.env.
+
+  Alongside that, scripts/test-db.sh called `docker-compose` (v1), which is not installed on
+  current boxes, and passed no -p, so it used the compose file's `name:` while package.json's
+  docker scripts passed `-p nestled-template` — two compose projects for one repo. Both are fixed
+  here by routing every compose call through scripts/dev-docker.sh.
+
+  The .env pairs are now documented in .env.example with their failure modes named, listed in
+  docs/dev/dev-ports.md, and checked by a warn-only `dev-ports` check in nestled-doctor —
+  documentation alone does not catch a half-edited .env. The check never fails: .env is
+  developer-local and CI has none.
+
+  libs/api/core/feature/src/lib/config/configuration.ts was deleted as part of this. It was a dead
+  duplicate — not exported from the lib's index.ts and imported nowhere; the API loads
+  libs/api/config/src/lib/configuration.ts. Its one distinct idea, CORS derived from WEB_URL, was
+  folded into the live config first, so the deletion loses nothing.
+
+affectedPaths:
+  - apps/web/vite.config.ts
+  - .env.example
+  - .dev/docker-compose.yml
+  - scripts/dev-docker.sh
+  - scripts/test-db.sh
+  - scripts/run-e2e-tests.sh
+  - apps/api-e2e/run-tests.sh
+  - package.json
+  - libs/api/config/src/lib/configuration.ts
+  - libs/api/config/src/lib/configuration.spec.ts
+  - libs/api/core/feature/src/lib/config/configuration.ts
+  - scripts/doctor.ts
+  - docs/dev/dev-ports.md
+  - docs/dev/doctor.md
+  - docs/dev/README.md
+  - docs/template/README.md
+  - AGENTS.md
+
+skipIf:
+  - Vite server/preview ports, the compose host ports, and the e2e test-database port are already
+    env-driven, and compose already receives the repo-root .env.
+  - The repo's docker:* scripts already pass no -p, or pass one equal to the compose file's
+    `name:`, and ALLOWED_ORIGINS already falls back to a WEB_PORT-derived origin.
+
+verification:
+  - pnpm nestled-doctor
+  - pnpm nx test config
+  - pnpm docker:up && docker compose ls
+  - pnpm test:db:start && pnpm test:db:stop
+
+agentHints:
+  - Do NOT add --project-directory to any compose invocation. The bind mounts (./tmp/postgres,
+    ./tmp/redis) are relative to .dev/, and --project-directory would silently relocate them to
+    the repo root.
+  - Do not `source` .env from a shell script; grep the single key (scripts/test-db.sh shows the
+    pattern).
+  - The CORS fallback derives from WEB_PORT only, never HOST, for EVERY value of HOST — not just
+    wildcards. Because ConfigModule injects validation.ts's HOST-derived WEB_URL default into
+    process.env before the load factory runs, enforcing this means distinguishing a supplied
+    WEB_URL from an injected one, which can only be done by capturing `'WEB_URL' in process.env`
+    at module scope. Filtering the VALUE cannot work — an injected `http://127.0.0.1:4200` is
+    indistinguishable from one somebody typed.
+  - Anything fed into api.cors.origin must be a bare origin. main.ts compares it to the browser's
+    Origin header with `origins.includes(origin)`, so a trailing slash or path silently blocks
+    every request. Collapse with `new URL(value).origin`, not normalizeApiOrigin — the latter
+    strips a trailing `/api`, which is API-prefix semantics a web URL does not have.
+  - Test this through the real startup order (validate, assign validated values into process.env,
+    then call configuration()). Calling configuration() directly makes WEB_URL look unset, which
+    silently passes a guard that production would fail.
+  - Do not derive VITE_API_URL from PORT. vite.config.ts also runs at build time, where a
+    platform-set PORT belongs to the web service, not the API.

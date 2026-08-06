@@ -17,11 +17,9 @@ import {
 } from '@nestled-template/api/core/models'
 import { OrganizationService } from './organization.service'
 import {
-  ApiCrudDataAccessService,
   CreateOrganizationInput,
   UpdateOrganizationInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GeneratedOrganizationResolver } from '@nestled-template/api/generated-crud/feature'
 import {
   AddOrganizationMemberInput,
   RemoveOrganizationMemberInput,
@@ -38,13 +36,8 @@ import {
 
 @Resolver(() => Organization)
 @Injectable()
-export class OrganizationResolver extends GeneratedOrganizationResolver {
-  constructor(
-    private readonly customService: OrganizationService,
-    generatedService: ApiCrudDataAccessService,
-  ) {
-    super(generatedService)
-  }
+export class OrganizationResolver {
+  constructor(private readonly customService: OrganizationService) {}
 
   // Custom user-specific Organization operations
 

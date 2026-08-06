@@ -1,6 +1,13 @@
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
+import {
+  declaresAuthLevel,
+  getAuthOperations,
+  getGuardRank,
+  getOperationGuardNames,
+  hasAuthenticationGuard,
+} from './doctor-auth-analysis'
 
 type Finding = {
   check: string
@@ -126,6 +133,7 @@ const getChangedFiles = (): string[] => {
     `git diff --name-only ${gitBaseRef}...HEAD`,
     'git diff --cached --name-only',
     'git diff --name-only',
+    'git ls-files --others --exclude-standard',
   ]
 
   for (const command of commands) {
@@ -492,6 +500,33 @@ const checkApiControllerRoutesAllowed = () => {
   }
 }
 
+const controllerSourceRoots = ['apps/api', 'libs/api']
+
+const getControllerSourceFiles = (): string[] => {
+  const files = controllerSourceRoots.flatMap(root =>
+    walkFiles(root, path => isControllerCandidateFile(path) && path.endsWith('.controller.ts')),
+  )
+  return [...new Set(files)].sort((left, right) => left.localeCompare(right))
+}
+
+const getAuthSourceFiles = (): string[] => {
+  const files = resolverSourceRoots.flatMap(root =>
+    walkFiles(root, path => path.endsWith('.resolver.ts') && !path.endsWith('.spec.ts')),
+  )
+  return [...new Set([...files, ...getControllerSourceFiles()])].sort((left, right) =>
+    left.localeCompare(right),
+  )
+}
+
+const getGuardBaselineSourceFiles = (): string[] => {
+  const customResolverFiles = walkFiles('libs/api/custom/src/lib', path =>
+    path.endsWith('.resolver.ts'),
+  )
+  return [...new Set([...customResolverFiles, ...getControllerSourceFiles()])].sort((left, right) =>
+    left.localeCompare(right),
+  )
+}
+
 const getGraphqlResolverMethods = (source: string): string[] =>
   getRegexMatches(/^\s{2}(?:override\s+)?(?:async\s+)?(\w+)\s*\(/gm, source)
     .map(match => match[1])
@@ -547,32 +582,6 @@ const getBlockSource = (source: string, openingBraceIndex: number): string => {
   return source.slice(openingBraceIndex)
 }
 
-const getGuardNames = (source: string): string[] => {
-  const guards = new Set<string>()
-  for (const match of getRegexMatches(/@UseGuards\s*\(([^)]*)\)/g, source)) {
-    for (const guard of getRegexMatches(/\b[A-Z]\w*Guard\b/g, match[1])) {
-      guards.add(guard[0])
-    }
-  }
-  return [...guards].sort((left, right) => left.localeCompare(right))
-}
-
-const getClassGuardNames = (source: string): string[] => {
-  const classIndex = source.indexOf('export class ')
-  if (classIndex === -1) return []
-
-  const decoratorLines: string[] = []
-  const lines = source.slice(0, classIndex).split('\n')
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]
-    if (line.trim() === '') continue
-    if (!line.trimStart().startsWith('@')) break
-    decoratorLines.unshift(line)
-  }
-
-  return getGuardNames(decoratorLines.join('\n'))
-}
-
 const getLineNumber = (source: string, index: number): number =>
   source.slice(0, index).split('\n').length
 
@@ -592,18 +601,12 @@ const getGeneratedCrudMethodNames = (): Set<string> => {
   return methodNames
 }
 
-const getCanonicalDefaultResolverPath = (file: string): string => {
-  const folderName = basename(dirname(file))
-  return join(dirname(file), `${folderName}.resolver.ts`)
-}
-
-const checkDefaultResolverInheritance = (file: string, source: string) => {
-  if (file !== getCanonicalDefaultResolverPath(file)) return
-  if (source.includes('extends Generated')) return
+const checkDefaultResolverComposition = (file: string, source: string) => {
+  if (!/\bextends\s+Generated\w+Resolver\b/.test(source)) return
 
   fail(
     'api-names',
-    'Default model resolver must extend its generated resolver to keep admin CRUD registered',
+    'Custom model resolvers must be additive and must not extend generated CRUD resolvers',
     file,
   )
 }
@@ -632,10 +635,103 @@ const checkResolverMethodName = (
 
 const checkDefaultResolverFile = (file: string, generatedMethodNames: Set<string>) => {
   const source = stripComments(readFileSync(file, 'utf8'))
-  checkDefaultResolverInheritance(file, source)
+  checkDefaultResolverComposition(file, source)
 
   for (const methodName of getGraphqlResolverMethods(source)) {
     checkResolverMethodName(file, methodName, generatedMethodNames)
+  }
+}
+
+const getGeneratedResolverClassNames = (): string[] => {
+  const resolverFiles = walkFiles('libs/api/generated-crud/feature/src/lib', path =>
+    path.endsWith('.resolver.ts'),
+  )
+  const classNames: string[] = []
+
+  for (const file of resolverFiles) {
+    const source = stripComments(readFileSync(file, 'utf8'))
+    const classMatch = /export\s+class\s+(Generated\w+Resolver)\b/.exec(source)
+    if (classMatch) classNames.push(classMatch[1])
+  }
+
+  return classNames.sort((left, right) => left.localeCompare(right))
+}
+
+const checkGeneratedCrudModuleRegistration = () => {
+  const featureRoot = 'libs/api/generated-crud/feature/src'
+  const canonicalModulePath = join(featureRoot, 'lib/api-generated-crud-feature.module.ts')
+  const featureIndexPath = join(featureRoot, 'index.ts')
+  const appModulePath = 'apps/api/src/app.module.ts'
+  const moduleFiles = walkFiles(join(featureRoot, 'lib'), path => path.endsWith('.module.ts'))
+  const moduleDeclarations = moduleFiles.filter(file =>
+    readFileSync(file, 'utf8').includes('export class ApiGeneratedCrudFeatureModule'),
+  )
+
+  if (moduleDeclarations.length !== 1 || moduleDeclarations[0] !== canonicalModulePath) {
+    fail(
+      'crud-registration',
+      'Generated CRUD must declare exactly one ApiGeneratedCrudFeatureModule at the canonical path',
+      canonicalModulePath,
+    )
+    return
+  }
+
+  const moduleSource = stripComments(readFileSync(canonicalModulePath, 'utf8'))
+  const providerBlock = /providers\s*:\s*\[([\s\S]*?)\]/.exec(moduleSource)?.[1] ?? ''
+  const registeredProviders = new Set(
+    getRegexMatches(/\bGenerated\w+Resolver\b/g, providerBlock).map(match => match[0]),
+  )
+  const resolverClasses = getGeneratedResolverClassNames()
+
+  for (const resolverClass of resolverClasses) {
+    if (!registeredProviders.has(resolverClass)) {
+      fail(
+        'crud-registration',
+        `Generated resolver provider "${resolverClass}" is missing from ApiGeneratedCrudFeatureModule`,
+        canonicalModulePath,
+      )
+    }
+  }
+  if (registeredProviders.size !== resolverClasses.length) {
+    fail(
+      'crud-registration',
+      'Generated CRUD provider count does not match the generated resolver files',
+      canonicalModulePath,
+    )
+  }
+
+  if (!existsSync(featureIndexPath)) {
+    fail('crud-registration', 'Generated CRUD feature barrel is missing', featureIndexPath)
+  } else {
+    const indexSource = stripComments(readFileSync(featureIndexPath, 'utf8'))
+    if (!indexSource.includes("'./lib/api-generated-crud-feature.module'")) {
+      fail(
+        'crud-registration',
+        'Generated CRUD feature barrel must export the canonical feature module',
+        featureIndexPath,
+      )
+    }
+  }
+
+  if (!existsSync(appModulePath)) {
+    fail('crud-registration', 'API app module is missing', appModulePath)
+    return
+  }
+  const appModuleSource = stripComments(readFileSync(appModulePath, 'utf8'))
+  const hasFeatureImport =
+    /import\s*\{\s*ApiGeneratedCrudFeatureModule\s*\}\s*from\s*['"]@[^'"]+\/api\/generated-crud\/feature['"]/.test(
+      appModuleSource,
+    )
+  const hasFeatureRegistration =
+    /coreModules\s*=\s*\[[\s\S]*?\bApiGeneratedCrudFeatureModule\s*,?[\s\S]*?\]/.test(
+      appModuleSource,
+    )
+  if (!hasFeatureImport || !hasFeatureRegistration) {
+    fail(
+      'crud-registration',
+      'ApiGeneratedCrudFeatureModule must be imported and registered in coreModules',
+      appModulePath,
+    )
   }
 }
 
@@ -899,7 +995,7 @@ const readGuardBaseline = (): GuardBaseline | null => {
   if (!existsSync(guardBaselinePath)) {
     fail(
       'guard-regression',
-      'Guard baseline is missing; regenerate it from the current trusted resolver surface',
+      'Guard baseline is missing; regenerate it from the current trusted API surface',
       guardBaselinePath,
     )
     return null
@@ -908,32 +1004,21 @@ const readGuardBaseline = (): GuardBaseline | null => {
   return JSON.parse(readFileSync(guardBaselinePath, 'utf8')) as GuardBaseline
 }
 
-const getResolverGuardMap = (): GuardBaseline => {
-  const resolverFiles = walkFiles('libs/api/custom/src/lib', path => path.endsWith('.resolver.ts'))
+const getApiGuardMap = (): GuardBaseline => {
   const guardMap: GuardBaseline = {}
 
-  for (const file of resolverFiles) {
+  for (const file of getGuardBaselineSourceFiles()) {
     const source = stripComments(readFileSync(file, 'utf8'))
-    const classGuards = getClassGuardNames(source)
-    const operations = getGraphqlOperationMethods(source)
+    const operations = getAuthOperations(source, file)
     if (operations.length === 0) continue
 
     guardMap[file] = {}
     for (const operation of operations) {
-      const methodGuards = getGuardNames(operation.decorators)
-      const effectiveGuards = methodGuards.length > 0 ? methodGuards : classGuards
-      guardMap[file][operation.name] = effectiveGuards
+      guardMap[file][operation.name] = getOperationGuardNames(operation)
     }
   }
 
   return guardMap
-}
-
-const guardRank = (guards: string[]): number => {
-  if (guards.includes('GqlAuthAdminGuard')) return 3
-  if (guards.some(guard => guard.includes('Scoped') || guard.includes('Owner'))) return 2
-  if (guards.includes('GqlAuthGuard')) return 1
-  return 0
 }
 
 const formatGuardList = (guards: string[]): string =>
@@ -943,7 +1028,7 @@ const checkGuardRegressions = () => {
   const baseline = readGuardBaseline()
   if (!baseline) return
 
-  const current = getResolverGuardMap()
+  const current = getApiGuardMap()
   for (const [file, methods] of Object.entries(baseline)) {
     if (!existsSync(file)) continue
 
@@ -951,10 +1036,10 @@ const checkGuardRegressions = () => {
       const actualGuards = current[file]?.[method]
       if (!actualGuards) continue
 
-      if (guardRank(actualGuards) < guardRank(expectedGuards)) {
+      if (getGuardRank(actualGuards) < getGuardRank(expectedGuards)) {
         fail(
           'guard-regression',
-          `Resolver guard for ${method} was downgraded from ${formatGuardList(
+          `API operation guard for ${method} was downgraded from ${formatGuardList(
             expectedGuards,
           )} to ${formatGuardList(actualGuards)}`,
           file,
@@ -963,66 +1048,6 @@ const checkGuardRegressions = () => {
     }
   }
 }
-
-// `getClassGuardNames` only inspects the first class in a file, which is not safe here: a second
-// resolver class further down would silently inherit the first class's guards and an unguarded
-// operation inside it would go unreported. Collect every resolver class with its own guards and the
-// line it starts on, so each operation can be matched to the class that actually encloses it.
-type ResolverClassRegion = { guards: string[]; declaresAuthLevel: boolean; startLine: number }
-
-const getResolverClassRegions = (source: string): ResolverClassRegion[] => {
-  const regions: ResolverClassRegion[] = []
-  let decorators: string[] = []
-
-  source.split('\n').forEach((rawLine, index) => {
-    const line = rawLine.trim()
-    if (line.startsWith('@')) {
-      decorators.push(line)
-      return
-    }
-
-    if (line.startsWith('export class ') || line.startsWith('class ')) {
-      if (decorators.some(decorator => decorator.startsWith('@Resolver'))) {
-        regions.push({
-          guards: getGuardNames(decorators.join('\n')),
-          declaresAuthLevel: decorators.some(decorator => AUTH_LEVEL_DECORATOR.test(decorator)),
-          startLine: index + 1,
-        })
-      }
-      decorators = []
-      return
-    }
-
-    if (line !== '') decorators = []
-  })
-
-  return regions
-}
-
-// Regions arrive in source order, so the last one starting at or before the line is the class that
-// encloses it.
-const getEnclosingRegion = (
-  regions: ResolverClassRegion[],
-  line: number,
-): ResolverClassRegion | undefined => {
-  let enclosing: ResolverClassRegion | undefined
-  for (const region of regions) {
-    if (region.startLine > line) break
-    enclosing = region
-  }
-  return enclosing
-}
-
-const getEnclosingClassGuards = (regions: ResolverClassRegion[], line: number): string[] =>
-  getEnclosingRegion(regions, line)?.guards ?? []
-
-// Rate limiting is not authentication. `getGuardNames` returns every `*Guard`, so without this an
-// operation carrying only `@UseGuards(GqlThrottlerGuard)` would read as protected while still being
-// reachable by anyone. Unknown/custom guard names stay trusted so downstream auth guards don't trip.
-const nonAuthGuardPattern = /Throttler|RateLimit/
-
-const hasAuthGuard = (guards: string[]): boolean =>
-  guards.some(guard => !nonAuthGuardPattern.test(guard))
 
 const readPublicOperationAllowlist = (): PublicOperationAllowlist => {
   if (!existsSync(publicOperationsPath)) {
@@ -1054,31 +1079,24 @@ const reportStalePublicOperations = (
 }
 
 // `checkGuardRegressions` only walks the baseline, so it can catch a guard being *downgraded* but
-// never a brand-new operation that shipped with no guard at all. NestJS registers no global guard,
-// so an undecorated resolver method is fully public. Fail closed instead: every root operation must
-// either carry a guard or be declared public on purpose.
+// never a brand-new operation that shipped with no guard at all. Check GraphQL resolvers and REST
+// controllers together: every API operation must carry an auth guard or be allowlisted as public.
 const checkUnguardedRootOperations = () => {
   const allowlist = readPublicOperationAllowlist()
   const unguarded = new Set<string>()
-  const resolverFiles = resolverSourceRoots.flatMap(root =>
-    walkFiles(root, path => path.endsWith('.resolver.ts') && !path.endsWith('.spec.ts')),
-  )
 
-  for (const file of resolverFiles) {
+  for (const file of getAuthSourceFiles()) {
     const source = stripComments(readFileSync(file, 'utf8'))
-    const regions = getResolverClassRegions(source)
 
-    for (const operation of getGraphqlOperationMethods(source)) {
-      const methodGuards = getGuardNames(operation.decorators)
-      const classGuards = getEnclosingClassGuards(regions, operation.line)
-      if (hasAuthGuard(methodGuards) || hasAuthGuard(classGuards)) continue
+    for (const operation of getAuthOperations(source, file)) {
+      if (hasAuthenticationGuard(operation)) continue
 
       unguarded.add(`${file}::${operation.name}`)
       if (allowlist[file]?.[operation.name]) continue
 
       fail(
         'unguarded-operation',
-        `Root operation ${operation.name} has no auth guard and is reachable unauthenticated; add @UseGuards(...) or declare it in ${publicOperationsPath} with a reason`,
+        `API operation ${operation.className}.${operation.name} has no auth guard and is reachable unauthenticated; add @UseGuards(...) or declare it in ${publicOperationsPath} with a reason`,
         file,
         operation.line,
       )
@@ -1090,7 +1108,7 @@ const checkUnguardedRootOperations = () => {
 
 const updateGuardBaseline = () => {
   mkdirSync(dirname(guardBaselinePath), { recursive: true })
-  writeFileSync(guardBaselinePath, `${JSON.stringify(getResolverGuardMap(), null, 2)}\n`)
+  writeFileSync(guardBaselinePath, `${JSON.stringify(getApiGuardMap(), null, 2)}\n`)
   try {
     execSync(`pnpm exec prettier --write ${guardBaselinePath}`, { stdio: 'ignore' })
   } catch {
@@ -1281,22 +1299,26 @@ const checkEmulationPrivilegeCeiling = () => {
   }
 }
 
+// Read one key out of an already-loaded `.env` body. Shared by every check that inspects local
+// env pairings, so the quoting/comment rules stay in one place.
+const readEnvValue = (env: string, key: string): string => {
+  const line = env.split('\n').find(l => l.startsWith(`${key}=`))
+  const raw = line ? line.slice(key.length + 1).trim() : ''
+  // Quoted value: strip the surrounding quotes and keep it verbatim. Unquoted
+  // value: drop a dotenv-style inline ` # comment` so the parsed value matches
+  // what dotenv actually loads. (String ops, not regex — avoids backtracking.)
+  const quote = raw[0]
+  if ((quote === '"' || quote === "'") && raw.length >= 2 && raw[raw.length - 1] === quote) {
+    return raw.slice(1, -1)
+  }
+  const commentAt = raw.indexOf(' #')
+  return (commentAt === -1 ? raw : raw.slice(0, commentAt)).trim()
+}
+
 const checkCookieDomainConfig = () => {
   if (!existsSync('.env')) return
   const env = readFileSync('.env', 'utf8')
-  const read = (key: string) => {
-    const line = env.split('\n').find(l => l.startsWith(`${key}=`))
-    const raw = line ? line.slice(key.length + 1).trim() : ''
-    // Quoted value: strip the surrounding quotes and keep it verbatim. Unquoted
-    // value: drop a dotenv-style inline ` # comment` so the parsed value matches
-    // what dotenv actually loads. (String ops, not regex — avoids backtracking.)
-    const quote = raw[0]
-    if ((quote === '"' || quote === "'") && raw.length >= 2 && raw[raw.length - 1] === quote) {
-      return raw.slice(1, -1)
-    }
-    const commentAt = raw.indexOf(' #')
-    return (commentAt === -1 ? raw : raw.slice(0, commentAt)).trim()
-  }
+  const read = (key: string) => readEnvValue(env, key)
   const apiDomain = read('API_COOKIE_DOMAIN')
   const webDomain = read('VITE_COOKIE_DOMAIN')
   const isLocal = (v: string) => !v || v === 'localhost' || v.startsWith('127.')
@@ -1321,31 +1343,239 @@ const checkCookieDomainConfig = () => {
   }
 }
 
-const AUTH_LEVEL_DECORATOR = /@(?:Public|Authenticated|AdminOnly)\s*\(\s*\)/
+// Local dev ports move in must-move-together pairs: a port var, and the URL that points at it.
+// Moving only one half fails SILENTLY — the process starts clean and is broken only in the
+// browser, or, worse, connects to another repo's database. Documentation alone does not catch a
+// half-edited .env; this does. See docs/dev/dev-ports.md.
+//
+// WARN ONLY, never fail: .env is developer-local, CI has none, and a deliberate local setup must
+// never be able to break a build.
+type EnvReader = (key: string) => string
 
-// `GlobalAuthGuard` refuses any operation that has not declared an access level, and since
-// generators 1.1.6 it has no fallback — declaration is the only way through. Generated CRUD is
-// therefore covered here too rather than exempted: if a regeneration ever emitted an operation
-// without a decorator, the runtime would start refusing it, and catching that at review time is
-// considerably cheaper than catching it in production.
-const checkAuthLevelDeclarations = () => {
-  const resolverFiles = resolverSourceRoots.flatMap(root =>
-    walkFiles(root, path => path.endsWith('.resolver.ts') && !path.endsWith('.spec.ts')),
+const DEV_PORT_DEFAULTS: Record<string, string> = {
+  PORT: '3000',
+  WEB_PORT: '4200',
+  POSTGRES_PORT: '5432',
+  POSTGRES_TEST_PORT: '5433',
+  REDIS_PORT: '6379',
+  MAILHOG_SMTP_PORT: '1025',
+}
+
+// A URL with no explicit port still connects to a concrete one, and that is exactly where the
+// nastiest case hides: `postgresql://prisma:prisma@localhost/prisma` alongside POSTGRES_PORT=5442
+// silently reaches 5432 — a DIFFERENT repo's database. Treating "no port written down" as
+// "unknown, skip it" left that unwarned, so resolve the scheme's implicit port instead.
+const DEFAULT_SCHEME_PORTS: Record<string, string> = {
+  'postgres:': '5432',
+  'postgresql:': '5432',
+  'redis:': '6379',
+  'rediss:': '6380',
+  'http:': '80',
+  'https:': '443',
+}
+
+/**
+ * A URL's effective host port: the explicit one, else the scheme's default. '' only when the value
+ * is unparseable or its scheme has no known default — genuinely unknown, and not this check's
+ * problem. (`new URL` also drops a port that equals the scheme default, so `http://host:80` and
+ * `http://host` both resolve to 80 here.)
+ */
+const urlPort = (value: string): string => {
+  try {
+    const url = new URL(value)
+    return url.port || DEFAULT_SCHEME_PORTS[url.protocol] || ''
+  } catch {
+    return ''
+  }
+}
+
+/** The value of a port var only when it has actually moved off its default; '' otherwise. */
+const movedDevPort = (read: EnvReader, key: string): string => {
+  const value = read(key)
+  return value.length > 0 && value !== DEV_PORT_DEFAULTS[key] ? value : ''
+}
+
+const warnPortMismatch = (options: {
+  portKey: string
+  port: string
+  urlKey: string
+  urlValue: string
+  requireSet: boolean
+  consequence: string
+  fix: string
+}) => {
+  const { portKey, port, urlKey, urlValue, requireSet, consequence, fix } = options
+  if (urlValue.length === 0) {
+    if (requireSet) {
+      warn(
+        'dev-ports',
+        `${portKey}=${port} but ${urlKey} is not set — ${consequence} ${fix}`,
+        '.env',
+      )
+    }
+    return
+  }
+
+  const actual = urlPort(urlValue)
+  if (actual === '' || actual === port) return
+
+  warn(
+    'dev-ports',
+    `${portKey}=${port} but ${urlKey} uses port ${actual} — ${consequence} ${fix}`,
+    '.env',
   )
+}
 
-  for (const file of resolverFiles) {
+const checkApiPortPairing = (read: EnvReader) => {
+  const port = movedDevPort(read, 'PORT')
+  if (!port) return
+
+  for (const urlKey of ['VITE_API_URL', 'API_URL']) {
+    warnPortMismatch({
+      portKey: 'PORT',
+      port,
+      urlKey,
+      urlValue: read(urlKey),
+      requireSet: true,
+      consequence: 'the browser will call the old API port and every request 404s or hangs.',
+      fix: `Set ${urlKey} to http://localhost:${port}.`,
+    })
+  }
+}
+
+const checkWebPortPairing = (read: EnvReader) => {
+  const port = movedDevPort(read, 'WEB_PORT')
+  if (!port) return
+
+  const origins = read('ALLOWED_ORIGINS')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(origin => origin.length > 0)
+
+  if (origins.length > 0 && !origins.some(origin => urlPort(origin) === port)) {
+    warn(
+      'dev-ports',
+      `WEB_PORT=${port} but ALLOWED_ORIGINS does not include http://localhost:${port} — ` +
+        `the API will reject every browser request with a CORS error. Add it to ALLOWED_ORIGINS.`,
+      '.env',
+    )
+  }
+
+  // An unset ALLOWED_ORIGINS is fine: the API derives the origin from WEB_URL, and failing that
+  // from WEB_PORT. Only an explicit WEB_URL on the wrong port defeats that derivation.
+  if (origins.length === 0) {
+    warnPortMismatch({
+      portKey: 'WEB_PORT',
+      port,
+      urlKey: 'WEB_URL',
+      urlValue: read('WEB_URL'),
+      requireSet: false,
+      consequence:
+        'ALLOWED_ORIGINS is empty, so CORS falls back to WEB_URL and the API will reject every ' +
+        'browser request.',
+      fix: `Set WEB_URL to http://localhost:${port}, or list the origin in ALLOWED_ORIGINS.`,
+    })
+  }
+
+  warnPortMismatch({
+    portKey: 'WEB_PORT',
+    port,
+    urlKey: 'SITE_URL',
+    urlValue: read('SITE_URL'),
+    requireSet: false,
+    consequence:
+      'links in verification, password-reset, and invite emails point at the old web port.',
+    fix: `Set SITE_URL to http://localhost:${port}.`,
+  })
+}
+
+const checkDatabasePortPairings = (read: EnvReader) => {
+  const pgPort = movedDevPort(read, 'POSTGRES_PORT')
+  if (pgPort) {
+    for (const urlKey of ['DATABASE_URL', 'DIRECT_URL']) {
+      warnPortMismatch({
+        portKey: 'POSTGRES_PORT',
+        port: pgPort,
+        urlKey,
+        urlValue: read(urlKey),
+        // DIRECT_URL is optional locally; DATABASE_URL is not.
+        requireSet: urlKey === 'DATABASE_URL',
+        consequence:
+          'this connects to whatever Postgres is on the old port, very likely a DIFFERENT ' +
+          'repo database, with no error anywhere.',
+        fix: `Point ${urlKey} at port ${pgPort}.`,
+      })
+    }
+  }
+
+  const testPort = movedDevPort(read, 'POSTGRES_TEST_PORT')
+  if (!testPort) return
+  warnPortMismatch({
+    portKey: 'POSTGRES_TEST_PORT',
+    port: testPort,
+    urlKey: 'TEST_DATABASE_URL',
+    urlValue: read('TEST_DATABASE_URL'),
+    requireSet: true,
+    consequence: 'pnpm test:e2e will run against the wrong database, or none at all.',
+    fix: `Point TEST_DATABASE_URL at port ${testPort}.`,
+  })
+}
+
+const checkServicePortPairings = (read: EnvReader) => {
+  const redisPort = movedDevPort(read, 'REDIS_PORT')
+  if (redisPort) {
+    warnPortMismatch({
+      portKey: 'REDIS_PORT',
+      port: redisPort,
+      urlKey: 'REDIS_URL',
+      urlValue: read('REDIS_URL'),
+      requireSet: false,
+      consequence: 'the API will talk to whatever Redis is on the old port.',
+      fix: `Point REDIS_URL at port ${redisPort}.`,
+    })
+  }
+
+  const mailhogPort = movedDevPort(read, 'MAILHOG_SMTP_PORT')
+  if (!mailhogPort) return
+
+  const smtpHost = read('SMTP_HOST')
+  const isLocalSmtp = !smtpHost || smtpHost === 'localhost' || smtpHost.startsWith('127.')
+  const smtpPort = read('SMTP_PORT')
+  if (!isLocalSmtp || !smtpPort || smtpPort === mailhogPort) return
+
+  warn(
+    'dev-ports',
+    `MAILHOG_SMTP_PORT=${mailhogPort} but SMTP_PORT=${smtpPort} with a local SMTP_HOST — ` +
+      `outbound dev mail will fail to connect. Set SMTP_PORT to ${mailhogPort}.`,
+    '.env',
+  )
+}
+
+const checkDevPortPairings = () => {
+  if (!existsSync('.env')) return
+  const env = readFileSync('.env', 'utf8')
+  const read = (key: string) => readEnvValue(env, key)
+
+  checkApiPortPairing(read)
+  checkWebPortPairing(read)
+  checkDatabasePortPairings(read)
+  checkServicePortPairings(read)
+}
+
+// `GlobalAuthGuard` applies equally to GraphQL resolvers and REST controllers. Declaration is the
+// only way through, so Doctor must inspect both surfaces or a controller can pass review and start
+// returning 403 for every request at runtime. Generated CRUD is covered here too rather than
+// exempted: a regeneration that drops a decorator should fail before deployment.
+const checkAuthLevelDeclarations = () => {
+  for (const file of getAuthSourceFiles()) {
     const source = stripComments(readFileSync(file, 'utf8'))
-    const classRegions = getResolverClassRegions(source)
 
-    for (const operation of getGraphqlOperationMethods(source)) {
-      if (AUTH_LEVEL_DECORATOR.test(operation.decorators)) continue
-
-      // A class-level declaration covers every operation inside it.
-      if (getEnclosingRegion(classRegions, operation.line)?.declaresAuthLevel) continue
+    for (const operation of getAuthOperations(source, file)) {
+      if (declaresAuthLevel(operation)) continue
 
       fail(
         'auth-level',
-        `Root operation ${operation.name} does not declare an access level; add @Public(), @Authenticated(), or @AdminOnly() so intent is explicit rather than inferred from the guards attached`,
+        `API operation ${operation.className}.${operation.name} does not declare an access level; add @Public(), @Authenticated(), or @AdminOnly() at the method or class level so intent is explicit`,
         file,
         operation.line,
       )
@@ -1453,6 +1683,7 @@ checkForbiddenPrismaImports()
 checkStaleConfigNames()
 checkMcpWiring()
 checkApiControllerRoutesAllowed()
+checkGeneratedCrudModuleRegistration()
 checkDefaultResolverGeneratedNameCollisions()
 checkHandwrittenAdminSdkOperations()
 checkPluginExportsAndRegistration()
@@ -1462,6 +1693,7 @@ checkPublishablePackageReadmes()
 checkPublishedPackageVersions()
 checkUpgradeNoteImpactGate()
 checkCookieDomainConfig()
+checkDevPortPairings()
 checkGuardRegressions()
 checkUnguardedRootOperations()
 checkAuthLevelDeclarations()

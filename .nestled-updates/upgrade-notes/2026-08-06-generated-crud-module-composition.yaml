@@ -1,0 +1,68 @@
+id: 2026-08-06-generated-crud-module-composition
+title: Register generated CRUD once and make custom model resolvers additive
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Upgrade @nestledjs/generators to exact version 2.0.0 and migrate generated CRUD registration from
+  inherited custom resolver classes to the populated ApiGeneratedCrudFeatureModule. Register that
+  module in the API coreModules list, run pnpm db-update so the canonical
+  api-generated-crud-feature.module.ts replaces the duplicate legacy module, and remove
+  `extends Generated<Model>Resolver`, generated resolver imports, generated-service constructor
+  injection, and super(...) calls from custom model resolvers. Preserve real custom operations as
+  independent resolvers, using generated data access through composition when a custom workflow
+  intentionally reuses it. Delete default-model resolver/service/module shells that contain no
+  custom behavior.
+
+why: >
+  The old generator produced both an empty api-generated-crud-feature.module.ts and a populated
+  api-admin-crud-feature.module.ts with the same exported class name. The template did not register
+  the populated module and instead relied on one generated subclass per Prisma model to inherit and
+  expose the CRUD methods. Some downstream projects registered the populated module as well, which
+  made Nest scan the same inherited GraphQL methods from two providers and silently choose one
+  callback by discovery order. A single generated provider module is explicit and deterministic;
+  independent custom resolvers can safely target the same GraphQL model when their field names are
+  additive. Generator 2.0.0 also stops creating empty custom shells for every new model and adds the
+  explicit model-extension generator for scaffolding only when custom behavior is needed.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - apps/api/src/app.module.ts
+  - libs/api/generated-crud/feature/**
+  - libs/api/custom/src/lib/default/**
+  - scripts/doctor.ts
+  - AGENTS.md
+  - docs/dev/api-extension-methodology.md
+
+packageReleases: []
+
+skipIf:
+  - The project already uses @nestledjs/generators 2.0.0 or newer, registers exactly one populated
+    ApiGeneratedCrudFeatureModule, and has no custom resolver extending a generated resolver.
+
+verification:
+  - node -p "require('./node_modules/@nestledjs/generators/package.json').version"
+  - pnpm db-update
+  - pnpm run nestled-doctor
+  - pnpm nx run api:typecheck
+  - pnpm nx build api
+
+agentHints:
+  - Apply the generator bump, generated module registration, and inheritance removal atomically.
+    Importing the generated module while inherited custom resolvers remain creates duplicate runtime
+    callbacks; removing inheritance before registering the module removes generated CRUD.
+  - Do not delete a model folder merely because its conventional <model>.resolver.ts is empty.
+    Inspect every sibling resolver, service, DTO, test, and module provider first. Plan and
+    subscription modules commonly contain separately named user-facing resolvers that must remain.
+  - A custom method that previously called super.update<Model> or super.delete<Model> must inject
+    ApiCrudDataAccessService and call it directly. Keep ApiCrudDataAccessModule imported only in
+    modules that still inject that service.
+  - After migration, use
+    `pnpm nx g @nestledjs/generators:model-extension <Model> --no-interactive` when a Prisma model
+    first needs custom model-adjacent behavior. The conventional artifact name defaults to the model;
+    `--name=<FeatureName>` is available when a more specific name is clearer.
+  - Compare the root Query and Mutation fields before and after migration. The intended schema change
+    is none; the change is provider ownership and deterministic runtime wiring.

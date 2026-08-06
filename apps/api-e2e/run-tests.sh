@@ -7,7 +7,7 @@ set +e  # Don't exit on error
 
 # Use tee to show output in real-time AND capture it
 TMPFILE=$(mktemp)
-export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:5433/nestled_template_test}"
+export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${POSTGRES_TEST_PORT:-5433}/nestled_template_test}"
 export DATABASE_URL="$TEST_DATABASE_URL"
 
 TEST_DB_STARTED=false
@@ -21,7 +21,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-if ! PGPASSWORD=postgres psql -U postgres -h localhost -p 5433 -d nestled_template_test -c "SELECT 1" >/dev/null 2>&1; then
+if ! PGPASSWORD=postgres psql -U postgres -h localhost -p "${POSTGRES_TEST_PORT:-5433}" -d nestled_template_test -c "SELECT 1" >/dev/null 2>&1; then
   if ! docker info >/dev/null 2>&1; then
     echo "❌ Test database is not accessible and Docker is not running"
     echo "   Start Docker or set TEST_DATABASE_URL to an accessible test database"

@@ -2,7 +2,6 @@ import {
   ApiCrudDataAccessService,
   UpdateEmailInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { GeneratedEmailResolver } from '@nestled-template/api/generated-crud/feature'
 import { Injectable, UseGuards } from '@nestjs/common'
 import { Args, Info, Mutation, Resolver } from '@nestjs/graphql'
 import { Email } from '@nestled-template/api/core/models'
@@ -12,13 +11,11 @@ import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Email)
 @Injectable()
-export class EmailResolver extends GeneratedEmailResolver {
+export class EmailResolver {
   constructor(
     private readonly customService: EmailService,
-    generatedService: ApiCrudDataAccessService,
-  ) {
-    super(generatedService)
-  }
+    private readonly generatedService: ApiCrudDataAccessService,
+  ) {}
 
   @Mutation(() => Email, { nullable: true })
   @UseGuards(GqlAuthAdminGuard)
@@ -31,8 +28,7 @@ export class EmailResolver extends GeneratedEmailResolver {
     // Validate that unverified emails can't be set as primary
     await this.customService.validateEmailUpdate(emailId, input)
 
-    // Call the parent implementation to do the actual update
-    return super.updateEmail(info, emailId, input)
+    return this.generatedService.updateEmail(info, emailId, input)
   }
 
   @Mutation(() => Email, { nullable: true })
@@ -42,7 +38,6 @@ export class EmailResolver extends GeneratedEmailResolver {
     // Validate that we're not deleting the only email or primary without a replacement
     await this.customService.validateEmailDeletion(emailId)
 
-    // Call the parent implementation to do the actual delete
-    return super.deleteEmail(emailId)
+    return this.generatedService.deleteEmail(emailId)
   }
 }

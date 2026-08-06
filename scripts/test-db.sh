@@ -5,14 +5,51 @@
 
 set -e
 
-DOCKER_COMPOSE_FILE=".dev/docker-compose.yml"
-TEST_DB_URL="postgresql://postgres:postgres@localhost:5433/nestled_template_test"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+COMPOSE="$SCRIPT_DIR/dev-docker.sh"
+
+# Read a single key from the repo-root .env. Deliberately NOT `source` — that would execute the
+# file as shell. Returns empty (never non-zero) when the file or the key is absent, so `set -e`
+# does not kill the script on a fresh clone that has no .env yet.
+#
+# MUST STAY IN STEP with readEnvValue() in scripts/doctor.ts — the two parse the same file, and a
+# disagreement means the doctor blesses a .env this script then misreads. Same rules as there:
+# strip quotes only when they wrap the WHOLE value (keeping it verbatim), otherwise drop a
+# dotenv-style inline ` # comment` and trim. A blanket quote-strip would also eat quotes from
+# inside a value, and leaving the comment in produced URLs like `localhost:5443 # block 1/db`.
+read_env() {
+  [ -f "$ROOT/.env" ] || return 0
+
+  local raw
+  raw="$(grep -m1 "^$1=" "$ROOT/.env" | cut -d= -f2-)"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+
+  local first="${raw:0:1}" last="${raw: -1}"
+  if [ ${#raw} -ge 2 ] && [ "$first" = "$last" ] && { [ "$first" = '"' ] || [ "$first" = "'" ]; }; then
+    printf '%s\n' "${raw:1:${#raw}-2}"
+    return 0
+  fi
+
+  case "$raw" in
+    *" #"*) raw="${raw%%" #"*}" ;;
+  esac
+  printf '%s\n' "${raw%"${raw##*[![:space:]]}"}"
+}
+
+# An exported var wins over .env, which wins over the default. Keeping the port and the URL
+# derived from the same source is what stops a moved POSTGRES_TEST_PORT from silently pointing
+# the tests at another repo's database (see docs/dev/dev-ports.md).
+TEST_DB_PORT="${POSTGRES_TEST_PORT:-$(read_env POSTGRES_TEST_PORT)}"
+TEST_DB_PORT="${TEST_DB_PORT:-5433}"
+TEST_DB_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test}"
 TEST_DB_CONTAINER="nestled-template_postgres_test"
 
 case "$1" in
   "start")
     echo "🚀 Starting test database..."
-    docker-compose -f $DOCKER_COMPOSE_FILE --profile testing up -d postgres-test
+    "$COMPOSE" --profile testing up -d postgres-test
     
     echo "⏳ Waiting for test database to be ready..."
     timeout=30
@@ -25,20 +62,20 @@ case "$1" in
       fi
     done
     
-    echo "✅ Test database is ready on port 5433"
+    echo "✅ Test database is ready on port $TEST_DB_PORT"
     echo "📄 Connection string: $TEST_DB_URL"
     ;;
     
   "stop")
     echo "🛑 Stopping test database..."
-    docker-compose -f $DOCKER_COMPOSE_FILE stop postgres-test
+    "$COMPOSE" stop postgres-test
     echo "✅ Test database stopped"
     ;;
     
   "reset")
     echo "🔄 Resetting test database..."
-    docker-compose -f $DOCKER_COMPOSE_FILE --profile testing down postgres-test
-    docker-compose -f $DOCKER_COMPOSE_FILE --profile testing up -d postgres-test
+    "$COMPOSE" --profile testing down postgres-test
+    "$COMPOSE" --profile testing up -d postgres-test
     
     echo "⏳ Waiting for test database to be ready..."
     timeout=30
@@ -56,7 +93,7 @@ case "$1" in
     
   "logs")
     echo "📋 Test database logs:"
-    docker-compose -f $DOCKER_COMPOSE_FILE logs postgres-test
+    "$COMPOSE" logs postgres-test
     ;;
     
   "migrate")
@@ -65,7 +102,15 @@ case "$1" in
     pnpm prisma migrate deploy
     echo "✅ Test database migrations complete"
     ;;
-    
+
+  "url")
+    # The one place that resolves the test-database URL. Callers that are NOT launched through Nx
+    # (pnpm runs a script with a plain shell, which never loads .env) must ask for it here rather
+    # than re-deriving it, or they end up on 5433 while this script starts the container on the
+    # port .env actually asked for.
+    echo "$TEST_DB_URL"
+    ;;
+
   *)
     echo "Test Database Management"
     echo ""
@@ -77,6 +122,7 @@ case "$1" in
     echo "  reset   - Reset the test database (destroys data)"
     echo "  logs    - Show test database logs"
     echo "  migrate - Run Prisma migrations on test database"
+    echo "  url     - Print the resolved test database URL"
     echo ""
     echo "Test DB URL: $TEST_DB_URL"
     ;;

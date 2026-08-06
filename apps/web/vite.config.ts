@@ -26,16 +26,21 @@ export default defineConfig(() => ({
       '~': path.resolve(__dirname, './app'),
     },
   },
+  // Dev/preview ports come from the repo-root `.env` so several nestled apps can run side by side
+  // (see docs/dev/dev-ports.md). Nx loads that file into the task env, so `pnpm dev:web`
+  // (= `nx serve web`) sees these; a bare `npx vite` from this directory does not.
+  // `Number(undefined)` is NaN and `Number('')` is 0 — both falsy, so unset or empty keeps the
+  // current default.
   server: {
-    port: 4200,
-    host: 'localhost',
+    port: Number(process.env.WEB_PORT) || 4200,
+    host: process.env.VITE_HOST || 'localhost',
     fs: {
       allow: [path.resolve(__dirname, '../../libs'), path.resolve(__dirname, './.react-router')],
     },
   },
   preview: {
-    port: 4300,
-    host: 'localhost',
+    port: Number(process.env.WEB_PREVIEW_PORT) || 4300,
+    host: process.env.VITE_HOST || 'localhost',
   },
   plugins: [
     mdx({

@@ -46,16 +46,17 @@ make generated code compile.
 
 ## 3. Root operations with no auth guard
 
-NestJS registers no `APP_GUARD` in this workspace. `GuardsModule` only _provides_ the guard classes
-for injection; it does not bind one globally. A resolver method with no `@UseGuards` is therefore
-reachable by an anonymous request.
+Before this review, NestJS registered no `APP_GUARD` in this workspace. `GuardsModule` only
+_provided_ the guard classes for injection; it did not bind one globally. A resolver method or REST
+controller route with no `@UseGuards` was therefore reachable by an anonymous request.
 
 The pre-existing `guard-regression` doctor check iterates the guard baseline, so it catches a guard
 being _downgraded_ on a known method but never a new operation that shipped with none.
 
-**Shipped:** a doctor `unguarded-operation` check. Every root operation must carry an auth guard or
-be declared in `.nestled-updates/security/public-operations.json` with a written reason. Guards are
-attributed per resolver class, and a throttler guard does not count as authentication.
+**Shipped:** a doctor `unguarded-operation` check. Every GraphQL operation and REST controller route
+must carry an auth guard or be declared in `.nestled-updates/security/public-operations.json` with a
+written reason. The check parses TypeScript classes and methods, attributes class-level decorators
+to each route, and does not count a throttler as authentication.
 
 **Also shipped:** `GlobalAuthGuard`, registered as an `APP_GUARD`, refusing any operation that has
 not declared an access level via `@Public()`, `@Authenticated()`, or `@AdminOnly()`.
@@ -65,13 +66,16 @@ request is not yet authenticated when it executes — the attached guard still p
 check. A method-level `@UseGuards` does not replace a global guard; both run and both must pass,
 which is why binding an admin guard globally would have broken every user-facing operation.
 
-An attached auth guard counts as a declaration, a temporary bridge for generated CRUD, which carries
-a guard but not yet a decorator. A doctor `auth-level` check enforces explicit decorators on
-hand-written resolvers so the bridge only covers generated output; it can be removed once the
-generator emits them.
+There is no fallback from an attached guard to an access declaration. Generated and hand-written
+GraphQL operations plus REST controller routes must explicitly declare `@Public()`,
+`@Authenticated()`, or `@AdminOnly()` at the method or class level. An attached guard performs the
+real authentication; the declaration records the intended access level.
 
-REST controllers are covered too — all five are declared public at class level, each with its reason
-inline, since every endpoint is reached before a session exists or authenticates by other means.
+The original doctor implementation inspected only `*.resolver.ts`, even though the runtime global
+guard applied to controllers too. The REST coverage added afterward closes that review gap. The
+template's public controllers are allowlisted with reasons because each is reached before an
+application session exists or authenticates through a protocol-specific mechanism such as a Stripe
+signature, OAuth state/code validation, or an MCP bearer token.
 
 ## 4. Credential fields exposed in the GraphQL schema
 

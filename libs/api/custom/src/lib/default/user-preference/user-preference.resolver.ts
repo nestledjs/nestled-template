@@ -3,19 +3,12 @@ import { Args, Mutation, Query, Resolver } from '@nestjs/graphql'
 import { User, UserPreference } from '@nestled-template/api/core/models'
 import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
 import { SecureCreateUserPreferenceInput, SecureUpdateUserPreferenceInput } from './dto'
-import { ApiCrudDataAccessService } from '@nestled-template/api/generated-crud/data-access'
-import { GeneratedUserPreferenceResolver } from '@nestled-template/api/generated-crud/feature'
 import { UserPreferenceService } from './user-preference.service'
 
 @Resolver(() => UserPreference)
 @Injectable()
-export class UserPreferenceResolver extends GeneratedUserPreferenceResolver {
-  constructor(
-    private readonly customService: UserPreferenceService,
-    generatedService: ApiCrudDataAccessService,
-  ) {
-    super(generatedService)
-  }
+export class UserPreferenceResolver {
+  constructor(private readonly customService: UserPreferenceService) {}
 
   // Custom user-specific operations with different names to avoid conflicts
 

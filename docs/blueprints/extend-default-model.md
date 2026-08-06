@@ -8,8 +8,8 @@ preserving generated admin CRUD.
 Add model-specific custom operations without editing generated CRUD, overriding
 generated methods, or colliding with generated SDK operation names.
 
-Default model resolvers must keep extending `Generated<Model>Resolver`; that is
-how generated admin CRUD remains registered for the model.
+`ApiGeneratedCrudFeatureModule` registers generated admin CRUD independently.
+Custom model resolvers are additive and must not extend generated resolvers.
 
 ## When To Use
 
@@ -76,16 +76,16 @@ admin/generator surfaces.
 
 ## Steps
 
-1. Find the model folder under `libs/api/custom/src/lib/default/<model>`.
+1. If no model extension exists, scaffold one with
+   `pnpm nx g @nestledjs/generators:model-extension <Model> --no-interactive`.
 2. Add DTOs under `dto/` if the operation needs custom input or output types.
-3. Add business logic to `<model>.service.ts`.
-4. Add additive resolver methods to `<model>.resolver.ts`.
-5. Keep `<model>.resolver.ts` extending `Generated<Model>Resolver`.
-6. Do not override inherited generated CRUD methods.
-7. Register any new resolver/provider in `<model>.module.ts`.
-8. Add GraphQL operations under `libs/shared/sdk/src/graphql/<feature>`.
-9. Run SDK/code generation if operations or schema changed.
-10. Register any web route in `apps/web/app/routes.tsx`.
+3. Add a model service when the behavior is substantial or reused.
+4. Add independent resolver methods to `<model>.resolver.ts`.
+5. Do not extend a generated resolver or reuse its operation names.
+6. Register any new resolver/provider in `<model>.module.ts`.
+7. Add GraphQL operations under `libs/shared/sdk/src/graphql/<feature>`.
+8. Run SDK/code generation if operations or schema changed.
+9. Register any web route in `apps/web/app/routes.tsx`.
 
 ## Security Checks
 
@@ -124,6 +124,7 @@ or mutation behavior changes.
 ## Common Mistakes
 
 - Editing `libs/api/generated-crud/*`.
+- Extending `Generated<Model>Resolver` from a custom resolver.
 - Reusing `create<Model>` or `update<Model>` for a custom mutation.
 - Creating custom SDK operations with `__Admin*` names.
 - Adding a page component but forgetting `apps/web/app/routes.tsx`.

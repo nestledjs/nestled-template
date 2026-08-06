@@ -1,40 +1,23 @@
+import { ApiGeneratedCrudFeatureModule } from '@nestled-template/api/generated-crud/feature'
 import { ApiCoreDataAccessModule } from '@nestled-template/api/core/data-access'
 import {
-  AddressModule,
   AdminModule,
-  ApiTokenModule,
   ApiTokenAuthMiddleware,
   ApiTokensModule,
-  AuditLogModule,
   AuthModule,
   BillingModule,
   ContactMailerModule,
-  CountryModule,
   EmailModule,
-  InviteModule,
-  LinkModule,
-  LoginAttemptModule,
   McpController,
   McpModule,
-  OAuthAccountModule,
-  OrganizationMemberModule,
   OrganizationModule,
-  PermissionModule,
-  PhoneNumberModule,
   PlanModule,
-  RoleModule,
-  SecurityEventModule,
   SecurityEventsModule,
   StoragePluginModule,
-  StoredFileModule,
   SubscriptionModule,
-  TeamMemberModule,
-  TeamModule,
   TenancyMiddleware,
   TenancyModule,
-  UserModule,
   UserPreferenceModule,
-  UserSessionModule,
 } from '@nestled-template/api/custom'
 import { StripeModule } from '@nestled-template/api/integrations'
 import { GlobalAuthGuard, GuardsModule } from '@nestled-template/api/utils'
@@ -57,33 +40,17 @@ export const coreModules = [
   ApiCoreFeatureModule,
   GuardsModule,
   ApiCoreDataAccessModule,
+  ApiGeneratedCrudFeatureModule,
 ]
 // Auto-generated modules for each data type/model,
 export const defaultModules = [
-  // Minimal generated modules aligned to current schema,
-  UserModule,
-  AddressModule,
-  CountryModule,
+  // Explicit model-adjacent extensions. Generated CRUD is registered by
+  // ApiGeneratedCrudFeatureModule and does not depend on these modules.
   EmailModule,
-  LinkModule,
-  PhoneNumberModule,
   OrganizationModule,
-  InviteModule,
-  OrganizationMemberModule,
-  UserSessionModule,
-  AuditLogModule,
   UserPreferenceModule,
-  TeamModule,
-  TeamMemberModule,
-  LoginAttemptModule,
-  SecurityEventModule,
-  ApiTokenModule,
-  OAuthAccountModule,
-  PermissionModule,
   PlanModule,
-  RoleModule,
   SubscriptionModule,
-  StoredFileModule,
 ]
 // Manually maintained plugin modules (never overwritten by generator)
 export const pluginModules = [
