@@ -1,4 +1,10 @@
 {
+  "apps/api/src/webhooks/stripe-webhook.controller.ts": {
+    "handleStripeWebhook": []
+  },
+  "libs/api/core/feature/src/lib/api-core-feature.controller.ts": {
+    "uptime": []
+  },
   "libs/api/custom/src/lib/default/email/email.resolver.ts": {
     "staffUpdateEmail": ["GqlAuthAdminGuard"],
     "staffDeleteEmail": ["GqlAuthAdminGuard"]
@@ -21,7 +27,8 @@
     "userOrganizationMembers": ["GqlAuthGuard"],
     "organizationInvitations": ["GqlAuthGuard"],
     "organizationRoles": ["GqlAuthGuard"],
-    "getInvitationDetails": []
+    "getInvitationDetails": [],
+    "members": ["GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/default/plan/user-plan.resolver.ts": {
     "availablePlans": ["GqlAuthGuard"],
@@ -47,6 +54,7 @@
     "adminOrganizations": ["GqlAuthAdminGuard"],
     "adminSecurityEvents": ["GqlAuthAdminGuard"],
     "adminAuditLogs": ["GqlAuthAdminGuard"],
+    "adminAuditLogFacets": ["GqlAuthAdminGuard"],
     "adminDashboardStats": ["GqlAuthAdminGuard"],
     "adminAnalytics": ["GqlAuthAdminGuard"],
     "adminDeactivateUser": ["GqlAuthAdminGuard"],
@@ -65,11 +73,12 @@
     "login": [],
     "complete2FALogin": [],
     "logout": [],
-    "register": [],
+    "register": ["GqlThrottlerGuard"],
     "registerWithInvitation": [],
-    "forgotPassword": [],
+    "forgotPassword": ["GqlThrottlerGuard"],
     "resetPassword": [],
-    "resendVerificationEmail": [],
+    "resendVerificationEmail": ["GqlThrottlerGuard"],
+    "resendMyVerificationEmail": ["GqlAuthGuard"],
     "verifyEmail": [],
     "emulateUser": ["GqlAuthAdminGuard"],
     "changeEmail": ["GqlAuthGuard"],
@@ -87,9 +96,20 @@
     "getUserSessions": ["GqlAuthGuard"],
     "invalidateSession": ["GqlAuthGuard"],
     "invalidateAllSessions": ["GqlAuthGuard"],
+    "user": [],
     "exportUserData": ["GqlAuthGuard"],
     "deleteUserAccount": ["GqlAuthGuard"],
     "transferOrganizationOwnership": ["GqlAuthGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/auth/oauth.controller.ts": {
+    "googleCallback": [],
+    "githubCallback": [],
+    "googleAuthorize": [],
+    "githubAuthorize": []
+  },
+  "libs/api/custom/src/lib/plugins/auth/user-extension.resolver.ts": {
+    "isEmulating": ["GqlAuthGuard"],
+    "originalAdminId": ["GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/plugins/billing/billing.resolver.ts": {
     "syncStripeProducts": ["GqlAuthAdminGuard"],
@@ -97,6 +117,18 @@
     "syncStripeProduct": ["GqlAuthAdminGuard"],
     "syncStripePrice": ["GqlAuthAdminGuard"],
     "syncStripeSubscription": ["GqlAuthAdminGuard"]
+  },
+  "libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts": {
+    "getOidcConfig": [],
+    "getOAuthServerMetadata": [],
+    "getProtectedResourceMetadata": [],
+    "getJwks": [],
+    "register": [],
+    "authorize": [],
+    "token": []
+  },
+  "libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts": {
+    "handle": []
   },
   "libs/api/custom/src/lib/plugins/security/security-events.resolver.ts": {
     "userSecurityEvents": ["GqlAuthGuard"],
@@ -107,10 +139,10 @@
   "libs/api/custom/src/lib/plugins/storage/storage.resolver.ts": {
     "uploadFile": ["GqlAuthGuard"],
     "uploadUserAvatar": ["GqlAuthGuard"],
-    "uploadOrganizationLogo": ["GqlOrganizationScopedGuard"],
+    "uploadOrganizationLogo": ["GqlAuthGuard", "GqlOrganizationScopedGuard"],
     "deleteFile": ["GqlAuthGuard"],
     "removeUserAvatar": ["GqlAuthGuard"],
-    "removeOrganizationLogo": ["GqlOrganizationScopedGuard"],
+    "removeOrganizationLogo": ["GqlAuthGuard", "GqlOrganizationScopedGuard"],
     "getSignedUrl": ["GqlAuthGuard"],
     "userFiles": ["GqlAuthGuard"],
     "organizationFiles": ["GqlAuthGuard"]

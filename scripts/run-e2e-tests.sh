@@ -37,7 +37,11 @@ echo -e "${BLUE}1. Starting test database...${NC}"
 
 # Run database migrations
 echo -e "${BLUE}2. Running database migrations...${NC}"
-export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5433/nestled_template_test"
+# Honor a caller-supplied TEST_DATABASE_URL instead of clobbering it. Otherwise ask test-db.sh,
+# which resolved the port from .env when it started the container above — pnpm runs this script
+# with a plain shell that never loads .env, so deriving the URL here would pin it to 5433 while
+# the container came up on whatever port block this repo claimed.
+export TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(./scripts/test-db.sh url)}"
 export DATABASE_URL=$TEST_DATABASE_URL
 pnpm prisma migrate deploy
 

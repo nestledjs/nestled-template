@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common'
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { AUTH_LEVEL_KEY, AuthLevel } from './auth-level.decorator'
 
@@ -26,6 +32,8 @@ import { AUTH_LEVEL_KEY, AuthLevel } from './auth-level.decorator'
  */
 @Injectable()
 export class GlobalAuthGuard implements CanActivate {
+  private readonly logger = new Logger(GlobalAuthGuard.name)
+
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -39,8 +47,11 @@ export class GlobalAuthGuard implements CanActivate {
 
     if (level) return true
 
+    this.logger.error(
+      `${controller.name}.${handler.name} declares no access level; add @Public(), @Authenticated(), or @AdminOnly().`,
+    )
     throw new ForbiddenException(
-      `${controller.name}.${handler.name} declares no access level. Add @Public(), @Authenticated(), or @AdminOnly().`,
+      'Access level is not configured. Add @Public(), @Authenticated(), or @AdminOnly().',
     )
   }
 }

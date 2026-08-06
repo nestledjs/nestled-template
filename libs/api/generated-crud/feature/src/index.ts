@@ -1,4 +1,4 @@
-export * from './lib/api-admin-crud-feature.module'
+export * from './lib/api-generated-crud-feature.module'
 export * from './lib/address.resolver'
 export * from './lib/api-token.resolver'
 export * from './lib/audit-log.resolver'

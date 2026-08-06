@@ -1,0 +1,66 @@
+id: 2026-08-06-rest-controller-auth-doctor
+title: Audit REST controller authorization and hide internal handler names
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Extend Doctor's auth-level, unguarded-operation, and guard-regression checks from GraphQL
+  resolvers to Nest REST controllers. Parse TypeScript decorators at the class and method level so
+  multiline decorators and multiple classes are attributed correctly. Require every route to
+  declare Public, Authenticated, or AdminOnly; require protected routes to keep a real auth guard;
+  and require intentionally unguarded routes to have a written reason in the public-operation
+  allowlist. Keep internal controller and handler names in server logs while returning a generic
+  Forbidden response from GlobalAuthGuard.
+
+why: >
+  The fail-closed global guard applies to both GraphQL and REST at runtime, but Doctor previously
+  inspected only resolver files. A downstream rollout therefore passed review and then refused 33
+  REST routes because their access levels were undeclared. The runtime error also returned internal
+  class and method names to unauthenticated callers. Matching review-time coverage to runtime
+  coverage prevents the outage, and separating internal diagnostics from the client response avoids
+  leaking implementation details.
+
+affectedPaths:
+  - scripts/doctor.ts
+  - scripts/doctor-auth-analysis.ts
+  - scripts/doctor-auth-analysis.spec.ts
+  - package.json
+  - .github/workflows/ci.yml
+  - .nestled-updates/security/public-operations.json
+  - .nestled-updates/security/guard-baseline.json
+  - libs/api/utils/src/lib/guards/global-auth.guard.ts
+  - libs/api/utils/src/lib/guards/global-auth.guard.spec.ts
+  - docs/dev/doctor.md
+  - docs/security/trust-boundary-map.md
+  - docs/security/2026-08-findings.md
+  - docs/dev/api-extension-methodology.md
+  - AGENTS.md
+
+skipIf:
+  - Doctor already audits GraphQL operations and REST controller routes for explicit access levels,
+    real auth guards, public-operation reasons, and guard regressions, and the global guard returns a
+    generic client error while logging internal route details.
+
+verification:
+  - pnpm template:test-doctor-auth
+  - pnpm nx run api-utils:test
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+  - pnpm nx run api:typecheck
+  - pnpm nx build api
+
+agentHints:
+  - Apply this before or together with the fail-closed global guard rollout. Otherwise Doctor can
+    approve controllers that the runtime guard will refuse.
+  - Inspect every method decorated with Get, Post, Put, Patch, Delete, Options, Head, All, or Sse in
+    every `*.controller.ts` file. A class-level declaration or guard applies to all of its routes;
+    method-level metadata can override or strengthen individual routes.
+  - Authenticated and AdminOnly are declarations, not authentication. Keep or add the project's
+    real authentication guard on every protected route.
+  - Public endpoints that authenticate through a provider signature, OAuth exchange, or protocol
+    bearer token still belong in the public-operation allowlist. State that verification contract in
+    the reason.
+  - Do not return controller or handler names to the caller when a declaration is missing. Log the
+    internal target server-side and return a generic Forbidden response.

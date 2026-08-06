@@ -75,6 +75,8 @@ jobs:
 
       - run: pnpm template:validate-upgrade-notes
 
+      - run: pnpm template:test-doctor-auth
+
       - run: pnpm run nestled-doctor
 
       # Prepend any command with "nx-cloud record --" to record its logs to Nx Cloud

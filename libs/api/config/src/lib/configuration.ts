@@ -1,4 +1,4 @@
-import { normalizeApiOrigin } from './api-url'
+import { defaultOrigin, normalizeApiOrigin } from './api-url'
 
 // Treat unset OR `.env.example` placeholder values (e.g. `your-google-client-id`) as "not
 // configured", so a plain `cp .env.example .env` does not falsely report OAuth as enabled. Trim
@@ -35,6 +35,69 @@ const apiOrigin = () =>
     port: process.env['PORT'],
   })
 
+// Was WEB_URL supplied by the environment, or is ConfigModule about to manufacture one?
+//
+// validation.ts defaults WEB_URL to `defaultOrigin(HOST, WEB_PORT, 4200)`, and ConfigModule writes
+// that default into process.env BEFORE it resolves the `load` factories. By the time
+// `configuration()` runs, an injected value is indistinguishable from a user-supplied one by
+// inspection — so the answer has to be captured HERE, at module scope. app.module.ts resolves
+// `import { configuration }` before the `ConfigModule.forRoot({...})` argument in its decorator is
+// evaluated, so this initialises before assignVariablesToProcess can blur it. Same
+// import-time-freeze idiom validation.ts already uses for its own defaults.
+//
+// The capture depends on the real environment ALREADY being in process.env when this line runs,
+// and it is: main.ts:1 is `import 'dotenv/config'`, which precedes the import of this barrel at
+// main.ts:5, so a `.env`-supplied WEB_URL is present here (and `nx serve` pre-loads the root .env
+// into the task env besides). Only the Joi-manufactured default arrives later, inside forRoot().
+// Do not move this to a lazily-evaluated position "to be safe" — reading it after forRoot() is
+// exactly what makes a supplied and an injected WEB_URL indistinguishable.
+//
+// This is what keeps HOST out of the CORS origin. HOST is the API's BIND address: folding it in
+// yields `http://0.0.0.0:4200`, or `http://127.0.0.1:4200` (a different origin to a browser sitting
+// on `http://localhost:4200`), or the incoherent `http://api.internal:4200` — pairing the API's
+// host with the WEB port. Every one of those silently rejects requests that today's default allows.
+const WEB_URL_WAS_EXPLICIT = 'WEB_URL' in process.env
+
+// Wildcard BIND addresses, as `new URL(...).hostname` reports them (Node normalizes `[::0]` to
+// `[::]`). A server binds to these; a browser never sends one as an Origin.
+const WILDCARD_BIND_HOSTS = new Set(['0.0.0.0', '[::]'])
+
+/**
+ * Collapse a WEB_URL to a bare browser origin, or return '' when it cannot be one.
+ *
+ * main.ts matches with `origins.includes(origin)` — exact string equality against the browser's
+ * `Origin` header, which is always bare scheme+host+port. So a WEB_URL carrying a trailing slash,
+ * a path, or credentials becomes an allow-list entry NOTHING can ever match, silently blocking
+ * every request. `url.origin` drops path, query, hash and credentials in one step.
+ *
+ * Deliberately NOT normalizeApiOrigin: that also strips a trailing `/api` segment, which is
+ * API-prefix semantics with no meaning for a web URL.
+ *
+ * '' means unusable, and the caller falls back to the WEB_PORT-derived origin: an unparseable or
+ * scheme-less value (`localhost:4200`), a non-http(s) protocol, or a wildcard bind address.
+ */
+const toBrowserOrigin = (value: string): string => {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    if (WILDCARD_BIND_HOSTS.has(url.hostname)) return ''
+    return url.origin
+  } catch {
+    return ''
+  }
+}
+
+// The browser origin the web app is served from. A genuinely user-supplied WEB_URL wins, collapsed
+// to an origin; otherwise derive from WEB_PORT alone, so moving the web port does not silently
+// break CORS and HOST never leaks in. (validation.ts's own HOST-derived default is deliberately
+// left alone — that divergence is out of scope here; this just declines to consume it.)
+const webOrigin = () => {
+  const supplied = WEB_URL_WAS_EXPLICIT
+    ? toBrowserOrigin((process.env['WEB_URL'] ?? '').trim())
+    : ''
+  return supplied.length > 0 ? supplied : defaultOrigin(undefined, process.env['WEB_PORT'], 4200)
+}
+
 export const configuration = () => ({
   prefix: 'api',
   environment: process.env['NODE_ENV'],
@@ -69,10 +132,17 @@ export const configuration = () => ({
       },
     },
     cors: {
-      origin: (process.env['ALLOWED_ORIGINS'] ?? '')
-        .split(',')
-        .map(o => o.trim())
-        .filter(o => o.length > 0),
+      // An empty ALLOWED_ORIGINS used to yield [] and hand main.ts's hardcoded
+      // ['http://localhost:4200'] the job, so moving WEB_PORT blocked every request with no
+      // visible error. Fall back to the derived web origin instead — identical to the old
+      // behavior when nothing is set.
+      origin: (() => {
+        const explicit = (process.env['ALLOWED_ORIGINS'] ?? '')
+          .split(',')
+          .map(o => o.trim())
+          .filter(o => o.length > 0)
+        return explicit.length > 0 ? explicit : [webOrigin()]
+      })(),
     },
   },
   siteUrl: process.env['SITE_URL'] ?? apiOrigin(),
