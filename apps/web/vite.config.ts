@@ -27,7 +27,7 @@ export default defineConfig(() => ({
     },
   },
   // Dev/preview ports come from the repo-root `.env` so several nestled apps can run side by side
-  // (see docs/dev/dev-ports.md). Nx loads that file into the task env, so `pnpm dev:web`
+  // (see the port block in `.env.example`). Nx loads that file into the task env, so `pnpm dev:web`
   // (= `nx serve web`) sees these; a bare `npx vite` from this directory does not.
   // `Number(undefined)` is NaN and `Number('')` is 0 — both falsy, so unset or empty keeps the
   // current default.

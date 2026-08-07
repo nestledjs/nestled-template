@@ -49,11 +49,11 @@ intent: >
   down` first — this note drops `-p` and the compose file's `name:` takes over, so containers
   started under the old project name would otherwise be orphaned.
 
-  AFTER APPLYING: choose a unique positive block number, record the repo-to-block mapping in a
-  private team inventory, and calculate the local .env values from these bases: app ports
-  3000/4200/4300 stride by 1; infrastructure ports 5432/5433/6379/1025/8025 stride by 10. Never
-  commit real repo/client mappings, local sites, or IP ranges to a public template. A repo staying
-  on block 0 (the defaults) needs no .env change at all.
+  AFTER APPLYING: block 0 remains the public default and needs no .env change. For each additional
+  checkout, choose a unique private allocation starting at block 1, record the repo-to-block
+  mapping in a private team inventory, and calculate the local .env values from these bases: app
+  ports 3000/4200/4300 stride by 1; infrastructure ports 5432/5433/6379/1025/8025 stride by 10.
+  Never commit real repo/client mappings, local sites, or IP ranges to a public template.
 
 why: >
   Six things had to move together to relocate an app's dev ports, and three of them failed

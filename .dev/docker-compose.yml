@@ -2,8 +2,9 @@
 # Workspace-setup's rename sets this automatically when a new project is created.
 name: nestled-template
 
-# Host-side port bindings are env-driven so several repos' stacks can run at once — claim a block
-# in docs/dev/dev-ports.md and set them in the repo-root .env. Container-side ports never change.
+# Host-side port bindings are env-driven so several repos' stacks can run at once — choose a
+# private allocation and set the complete block from .env.example in the repo-root .env.
+# Container-side ports never change.
 # The vars only reach compose through scripts/dev-docker.sh, which passes the root .env with
 # --env-file; compose on its own would read .dev/.env instead.
 services:

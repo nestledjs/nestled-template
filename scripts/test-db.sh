@@ -41,7 +41,7 @@ read_env() {
 
 # An exported var wins over .env, which wins over the default. Keeping the port and the URL
 # derived from the same source is what stops a moved POSTGRES_TEST_PORT from silently pointing
-# the tests at another repo's database (see docs/dev/dev-ports.md).
+# the tests at another repo's database (see the port block in .env.example).
 TEST_DB_PORT="${POSTGRES_TEST_PORT:-$(read_env POSTGRES_TEST_PORT)}"
 TEST_DB_PORT="${TEST_DB_PORT:-5433}"
 TEST_DB_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test}"
