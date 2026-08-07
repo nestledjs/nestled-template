@@ -27,7 +27,7 @@
     "test:e2e": "./scripts/run-e2e-tests.sh",
     "test:e2e:auth": "./scripts/run-e2e-tests.sh auth",
     "template:create-upgrade-note": "tsx scripts/create-upgrade-note.ts",
-    "template:test-doctor-auth": "vitest run scripts/doctor-auth-analysis.spec.ts",
+    "template:test-doctor-auth": "vitest run scripts/doctor-*-analysis.spec.ts",
     "template:validate-upgrade-notes": "tsx scripts/validate-upgrade-notes.ts",
     "nestled-doctor": "tsx scripts/doctor.ts",
     "security:update-guard-baseline": "tsx scripts/doctor.ts --update-guard-baseline",
