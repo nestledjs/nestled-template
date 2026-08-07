@@ -1,0 +1,34 @@
+id: 2026-08-07-admin-custom-build-wiring
+title: 'Wire admin-custom into the api project references and Sonar'
+priority: ignore
+area: infra
+type: cleanup
+delivery: code-patch
+
+intent: >
+  Add libs/api/admin-custom/src to sonar.sources, and a ./libs/api/admin-custom entry to the
+  api project's tsconfig references, so the library introduced by the admin-crud boundary batch
+  is analysed and listed alongside its siblings.
+
+why: >
+  Sonar was not scanning admin-custom at all, which matters because that library exists to hold
+  the admin-only workflows that compose generated CRUD — the code most worth analysing. The
+  tsconfig reference was raised in review on nestled-template#34.
+
+  priority: ignore because nothing downstream needs to act. A clone that has taken the
+  admin-crud boundary batch already has the library; these two files are repo-local build and
+  analysis configuration, and both are excluded from the promotion mirror, so a downstream
+  project maintains its own copies against its own library list.
+
+  Also corrects every project reference in apps/api/tsconfig.json. They resolved relative to
+  apps/api/, so "./libs/api/prisma" pointed at apps/api/libs/api/prisma and tsc reported TS6053
+  for all eleven — the whole references block was inert. They are now ../../libs/... and resolve,
+  and `tsc --build` walks them. One entry pointed at libs/api/smtp-mailer/data-access, a library
+  that no longer exists anywhere in the repo; removed.
+
+affectedPaths:
+  - apps/api/tsconfig.json
+  - sonar-project.properties
+
+skipIf:
+  - Always. Repo-local build and analysis configuration; both files are mirror-excluded.
