@@ -48,6 +48,9 @@ Thumbs.db
 
 .env
 
+# Private/local operational inventory. Never commit client sites, port assignments, or IP ranges.
+.nestled-local/
+
 vite.config.*.timestamp*
 vitest.config.*.timestamp*
 !/apps/web/.react-router/
