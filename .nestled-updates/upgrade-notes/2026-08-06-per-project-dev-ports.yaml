@@ -47,11 +47,13 @@ intent: >
   BEFORE APPLYING: if this repo's docker:* scripts passed a `-p <name>` that differed from the
   `name:` in .dev/docker-compose.yml, run `docker compose -f .dev/docker-compose.yml -p <old-name>
   down` first — this note drops `-p` and the compose file's `name:` takes over, so containers
-  started under the old project name would otherwise be orphaned. (qalatra.com used
-  `-p qalatracom`.)
+  started under the old project name would otherwise be orphaned.
 
-  AFTER APPLYING: claim a port block in docs/dev/dev-ports.md and paste it into the local,
-  gitignored .env. A repo staying on block 0 (the defaults) needs no .env change at all.
+  AFTER APPLYING: choose a unique positive block number, record the repo-to-block mapping in a
+  private team inventory, and calculate the local .env values from these bases: app ports
+  3000/4200/4300 stride by 1; infrastructure ports 5432/5433/6379/1025/8025 stride by 10. Never
+  commit real repo/client mappings, local sites, or IP ranges to a public template. A repo staying
+  on block 0 (the defaults) needs no .env change at all.
 
 why: >
   Six things had to move together to relocate an app's dev ports, and three of them failed
@@ -71,10 +73,9 @@ why: >
   docker scripts passed `-p nestled-template` — two compose projects for one repo. Both are fixed
   here by routing every compose call through scripts/dev-docker.sh.
 
-  The .env pairs are now documented in .env.example with their failure modes named, listed in
-  docs/dev/dev-ports.md, and checked by a warn-only `dev-ports` check in nestled-doctor —
-  documentation alone does not catch a half-edited .env. The check never fails: .env is
-  developer-local and CI has none.
+  The .env pairs are now documented in .env.example with their failure modes named and checked by
+  a warn-only `dev-ports` check in nestled-doctor — documentation alone does not catch a
+  half-edited .env. The check never fails: .env is developer-local and CI has none.
 
   libs/api/core/feature/src/lib/config/configuration.ts was deleted as part of this. It was a dead
   duplicate — not exported from the lib's index.ts and imported nowhere; the API loads
@@ -94,7 +95,6 @@ affectedPaths:
   - libs/api/config/src/lib/configuration.spec.ts
   - libs/api/core/feature/src/lib/config/configuration.ts
   - scripts/doctor.ts
-  - docs/dev/dev-ports.md
   - docs/dev/doctor.md
   - docs/dev/README.md
   - docs/template/README.md
