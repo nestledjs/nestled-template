@@ -92,7 +92,7 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
     }
     // Create organizations for each user
     const createOrgMutation = `
-      mutation UserCreateOrganization($input: CreateOrganizationInput!) {
+      mutation UserCreateOrganization($input: UserCreateOrganizationInput!) {
         userCreateOrganization(input: $input) {
           id
           name
@@ -217,7 +217,7 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
   describe('Update Isolation', () => {
     it('should reject direct organization id manipulation for organization updates', async () => {
       const updateOrgMutation = `
-        mutation UserUpdateOrganization($input: UpdateOrganizationInput!) {
+        mutation UserUpdateOrganization($input: UserUpdateOrganizationInput!) {
           userUpdateOrganization(input: $input) {
             id
             name

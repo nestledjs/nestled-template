@@ -1,4 +1,4 @@
-# ADR-0001: Generated CRUD Is Admin-Only By Default
+# ADR-0001: Generated CRUD Is Always Admin-Only
 
 ## Status
 
@@ -12,16 +12,22 @@ checks, membership checks, and audit behavior than generic CRUD can provide.
 
 ## Decision
 
-Generated CRUD operations are protected by `GqlAuthAdminGuard` by default. User-facing operations
-must be custom resolver methods with non-colliding names and explicit scope checks derived from
-`@CtxUser()` and verified memberships. Prisma `@crudAuth` annotations may relax generated CRUD only
-when the schema documents that intent.
+Generated CRUD operations are always protected by `GqlAuthAdminGuard` and `@AdminOnly()`. Prisma
+`@crudAuth` annotations may not relax them. User-facing operations must be custom resolver methods
+with purpose-built inputs, non-colliding names, explicit Prisma queries, and scope checks derived
+from `@CtxUser()` and verified memberships.
+
+The recursive GraphQL-selection-to-Prisma compiler belongs exclusively to generated admin CRUD.
+Application resolvers under `libs/api/custom` may use `ApiCoreDataAccessService`, but may not import
+generated CRUD inputs or runtime services. Rare admin-only compositions live in
+`libs/api/admin-custom` and declare admin protection at class level.
 
 ## Consequences
 
 Admin tooling stays predictable, while user workflows remain explicit and reviewable. Developers
-must create custom operations for user behavior instead of weakening generated CRUD guards to satisfy
-frontend needs.
+must create custom operations for user behavior instead of weakening generated CRUD guards to
+satisfy frontend needs. Typed generated filters remain available to the admin data browser, but are
+not inherited by application operations.
 
 ## Alternatives Considered
 
@@ -29,3 +35,6 @@ frontend needs.
   depend on every caller and model configuration.
 - Skip CRUD for normal models. Rejected because it removes the admin management surface and hides
   authorization work rather than specifying it.
+- Authorize recursive relation traversal with model annotations. Rejected because it preserves a
+  generic query compiler in lower-privilege code and creates a second authorization language that
+  can drift from resolver business rules.

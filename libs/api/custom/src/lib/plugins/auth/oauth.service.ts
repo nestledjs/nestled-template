@@ -269,7 +269,7 @@ export class OAuthService {
    */
   async findOrCreateUserFromOAuth(profile: OAuthUserProfile, organizationId?: string) {
     // Check if OAuth account already exists
-    let oAuthAccount = await this.data.oAuthAccount.findUnique({
+    const oAuthAccount = await this.data.oAuthAccount.findUnique({
       where: {
         provider_providerUserId: {
           provider: profile.provider,

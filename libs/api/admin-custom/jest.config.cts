@@ -1,10 +1,10 @@
-export default {
-  displayName: 'api-core-helpers',
-  preset: '../../../../jest.preset.js',
+module.exports = {
+  displayName: 'api-admin-custom',
+  preset: '../../../jest.preset.js',
   testEnvironment: 'node',
   transform: {
     '^.+\\.[tj]s$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.spec.json' }],
   },
   moduleFileExtensions: ['ts', 'js', 'html'],
-  coverageDirectory: '../../../../coverage/libs/api/core/helpers',
+  coverageDirectory: '../../../coverage/libs/api/admin-custom',
 }

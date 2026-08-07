@@ -3,7 +3,7 @@
   "$schema": "../../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "libs/api/custom/src",
   "projectType": "library",
-  "tags": ["scope:api"],
+  "tags": ["scope:api", "type:application-api"],
   "targets": {
     "test": {
       "executor": "@nx/jest:jest",

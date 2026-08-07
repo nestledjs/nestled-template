@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { OrganizationMember } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => OrganizationMember)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedOrganizationMemberResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [OrganizationMember], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   organizationMembers(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListOrganizationMemberInput, nullable: true })
@@ -27,8 +27,6 @@ export class GeneratedOrganizationMemberResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   organizationMembersCount(
     @Args({ name: 'input', type: () => ListOrganizationMemberInput, nullable: true })
     input?: ListOrganizationMemberInput,
@@ -37,8 +35,6 @@ export class GeneratedOrganizationMemberResolver {
   }
 
   @Query(() => OrganizationMember, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   organizationMember(
     @Info() info: GraphQLResolveInfo,
     @Args('organizationMemberId') organizationMemberId: string,
@@ -47,8 +43,6 @@ export class GeneratedOrganizationMemberResolver {
   }
 
   @Mutation(() => OrganizationMember, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createOrganizationMember(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateOrganizationMemberInput,
@@ -57,8 +51,6 @@ export class GeneratedOrganizationMemberResolver {
   }
 
   @Mutation(() => OrganizationMember, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateOrganizationMember(
     @Info() info: GraphQLResolveInfo,
     @Args('organizationMemberId') organizationMemberId: string,
@@ -68,8 +60,6 @@ export class GeneratedOrganizationMemberResolver {
   }
 
   @Mutation(() => OrganizationMember, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteOrganizationMember(@Args('organizationMemberId') organizationMemberId: string) {
     return this.generatedService.deleteOrganizationMember(organizationMemberId)
   }

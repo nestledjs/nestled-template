@@ -60,40 +60,46 @@ export type Address = {
 }
 
 export type AddressFilterInput = {
+  AND?: InputMaybe<Array<AddressFilterInput2>>
+  NOT?: InputMaybe<Array<AddressFilterInput2>>
+  OR?: InputMaybe<Array<AddressFilterInput2>>
   address1?: InputMaybe<StringFilterInput>
   address2?: InputMaybe<StringFilterInput>
   addressType?: InputMaybe<AddressTypeFilterInput>
   city?: InputMaybe<StringFilterInput>
-  country?: InputMaybe<CountryFilterInput2>
+  country?: InputMaybe<CountryRelationFilterInput>
   countryId?: InputMaybe<StringFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   isPrimary?: InputMaybe<BooleanFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   postalCode?: InputMaybe<StringFilterInput>
   region?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type AddressFilterInput2 = {
+  AND?: InputMaybe<Array<AddressFilterInput3>>
+  NOT?: InputMaybe<Array<AddressFilterInput3>>
+  OR?: InputMaybe<Array<AddressFilterInput3>>
   address1?: InputMaybe<StringFilterInput>
   address2?: InputMaybe<StringFilterInput>
   addressType?: InputMaybe<AddressTypeFilterInput>
   city?: InputMaybe<StringFilterInput>
-  country?: InputMaybe<CountryFilterInput3>
+  country?: InputMaybe<CountryRelationFilterInput2>
   countryId?: InputMaybe<StringFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   isPrimary?: InputMaybe<BooleanFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   postalCode?: InputMaybe<StringFilterInput>
   region?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -136,6 +142,7 @@ export enum AddressType {
 export type AddressTypeFilterInput = {
   equals?: InputMaybe<AddressType>
   in?: InputMaybe<Array<AddressType>>
+  not?: InputMaybe<AddressType>
 }
 
 export type AdminAnalytics = {
@@ -277,30 +284,36 @@ export type ApiToken = {
 }
 
 export type ApiTokenFilterInput = {
+  AND?: InputMaybe<Array<ApiTokenFilterInput2>>
+  NOT?: InputMaybe<Array<ApiTokenFilterInput2>>
+  OR?: InputMaybe<Array<ApiTokenFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   expiresAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   lastUsedAt?: InputMaybe<DateTimeFilterInput>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   revoked?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type ApiTokenFilterInput2 = {
+  AND?: InputMaybe<Array<ApiTokenFilterInput3>>
+  NOT?: InputMaybe<Array<ApiTokenFilterInput3>>
+  OR?: InputMaybe<Array<ApiTokenFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   expiresAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   lastUsedAt?: InputMaybe<DateTimeFilterInput>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   revoked?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -344,28 +357,34 @@ export type AuditLog = {
 }
 
 export type AuditLogFilterInput = {
+  AND?: InputMaybe<Array<AuditLogFilterInput2>>
+  NOT?: InputMaybe<Array<AuditLogFilterInput2>>
+  OR?: InputMaybe<Array<AuditLogFilterInput2>>
   action?: InputMaybe<StringFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   entityId?: InputMaybe<StringFilterInput>
   entityType?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type AuditLogFilterInput2 = {
+  AND?: InputMaybe<Array<AuditLogFilterInput3>>
+  NOT?: InputMaybe<Array<AuditLogFilterInput3>>
+  OR?: InputMaybe<Array<AuditLogFilterInput3>>
   action?: InputMaybe<StringFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   entityId?: InputMaybe<StringFilterInput>
   entityType?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -395,6 +414,7 @@ export type AuditLogListRelationFilterInput2 = {
 export type BooleanFilterInput = {
   equals?: InputMaybe<Scalars['Boolean']['input']>
   in?: InputMaybe<Array<Scalars['Boolean']['input']>>
+  not?: InputMaybe<Scalars['Boolean']['input']>
 }
 
 export type CancelInvitationInput = {
@@ -443,6 +463,9 @@ export type Country = {
 }
 
 export type CountryFilterInput = {
+  AND?: InputMaybe<Array<CountryFilterInput2>>
+  NOT?: InputMaybe<Array<CountryFilterInput2>>
+  OR?: InputMaybe<Array<CountryFilterInput2>>
   addresses?: InputMaybe<AddressListRelationFilterInput>
   alpha2?: InputMaybe<StringFilterInput>
   alpha3?: InputMaybe<StringFilterInput>
@@ -461,6 +484,9 @@ export type CountryFilterInput = {
 }
 
 export type CountryFilterInput2 = {
+  AND?: InputMaybe<Array<CountryFilterInput3>>
+  NOT?: InputMaybe<Array<CountryFilterInput3>>
+  OR?: InputMaybe<Array<CountryFilterInput3>>
   addresses?: InputMaybe<AddressListRelationFilterInput2>
   alpha2?: InputMaybe<StringFilterInput>
   alpha3?: InputMaybe<StringFilterInput>
@@ -486,6 +512,48 @@ export type CountryFilterInput3 = {
   id?: InputMaybe<StringFilterInput>
   intermediateRegion?: InputMaybe<StringFilterInput>
   intermediateRegionCode?: InputMaybe<StringFilterInput>
+  iso3166_2?: InputMaybe<StringFilterInput>
+  name?: InputMaybe<StringFilterInput>
+  region?: InputMaybe<StringFilterInput>
+  regionCode?: InputMaybe<StringFilterInput>
+  subRegion?: InputMaybe<StringFilterInput>
+  subRegionCode?: InputMaybe<StringFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type CountryRelationFilterInput = {
+  AND?: InputMaybe<Array<CountryFilterInput3>>
+  NOT?: InputMaybe<Array<CountryFilterInput3>>
+  OR?: InputMaybe<Array<CountryFilterInput3>>
+  addresses?: InputMaybe<AddressListRelationFilterInput2>
+  alpha2?: InputMaybe<StringFilterInput>
+  alpha3?: InputMaybe<StringFilterInput>
+  countryCode?: InputMaybe<StringFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  intermediateRegion?: InputMaybe<StringFilterInput>
+  intermediateRegionCode?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<CountryFilterInput2>
+  isNot?: InputMaybe<CountryFilterInput2>
+  iso3166_2?: InputMaybe<StringFilterInput>
+  name?: InputMaybe<StringFilterInput>
+  region?: InputMaybe<StringFilterInput>
+  regionCode?: InputMaybe<StringFilterInput>
+  subRegion?: InputMaybe<StringFilterInput>
+  subRegionCode?: InputMaybe<StringFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type CountryRelationFilterInput2 = {
+  alpha2?: InputMaybe<StringFilterInput>
+  alpha3?: InputMaybe<StringFilterInput>
+  countryCode?: InputMaybe<StringFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  intermediateRegion?: InputMaybe<StringFilterInput>
+  intermediateRegionCode?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<CountryFilterInput3>
+  isNot?: InputMaybe<CountryFilterInput3>
   iso3166_2?: InputMaybe<StringFilterInput>
   name?: InputMaybe<StringFilterInput>
   region?: InputMaybe<StringFilterInput>
@@ -831,6 +899,7 @@ export type DateTimeFilterInput = {
   in?: InputMaybe<Array<Scalars['DateTime']['input']>>
   lt?: InputMaybe<Scalars['DateTime']['input']>
   lte?: InputMaybe<Scalars['DateTime']['input']>
+  not?: InputMaybe<Scalars['DateTime']['input']>
 }
 
 export type Disable2FaInput = {
@@ -855,32 +924,38 @@ export type Email = {
 }
 
 export type EmailFilterInput = {
+  AND?: InputMaybe<Array<EmailFilterInput2>>
+  NOT?: InputMaybe<Array<EmailFilterInput2>>
+  OR?: InputMaybe<Array<EmailFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   email?: InputMaybe<StringFilterInput>
   emailType?: InputMaybe<EmailTypeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   primary?: InputMaybe<BooleanFilterInput>
   public?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
   verified?: InputMaybe<BooleanFilterInput>
   verifyExpires?: InputMaybe<DateTimeFilterInput>
 }
 
 export type EmailFilterInput2 = {
+  AND?: InputMaybe<Array<EmailFilterInput3>>
+  NOT?: InputMaybe<Array<EmailFilterInput3>>
+  OR?: InputMaybe<Array<EmailFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   email?: InputMaybe<StringFilterInput>
   emailType?: InputMaybe<EmailTypeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   primary?: InputMaybe<BooleanFilterInput>
   public?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
   verified?: InputMaybe<BooleanFilterInput>
   verifyExpires?: InputMaybe<DateTimeFilterInput>
@@ -921,6 +996,7 @@ export enum EmailType {
 export type EmailTypeFilterInput = {
   equals?: InputMaybe<EmailType>
   in?: InputMaybe<Array<EmailType>>
+  not?: InputMaybe<EmailType>
 }
 
 export type EmulateUserInput = {
@@ -953,6 +1029,7 @@ export enum FailureReason {
 export type FailureReasonFilterInput = {
   equals?: InputMaybe<FailureReason>
   in?: InputMaybe<Array<FailureReason>>
+  not?: InputMaybe<FailureReason>
 }
 
 export type FloatFilterInput = {
@@ -962,6 +1039,7 @@ export type FloatFilterInput = {
   in?: InputMaybe<Array<Scalars['Float']['input']>>
   lt?: InputMaybe<Scalars['Float']['input']>
   lte?: InputMaybe<Scalars['Float']['input']>
+  not?: InputMaybe<Scalars['Float']['input']>
 }
 
 export type ForgotPasswordInput = {
@@ -988,6 +1066,7 @@ export type IntFilterInput = {
   in?: InputMaybe<Array<Scalars['Int']['input']>>
   lt?: InputMaybe<Scalars['Int']['input']>
   lte?: InputMaybe<Scalars['Int']['input']>
+  not?: InputMaybe<Scalars['Int']['input']>
 }
 
 export type InvitationDetails = {
@@ -1018,15 +1097,18 @@ export type Invite = {
 }
 
 export type InviteFilterInput = {
+  AND?: InputMaybe<Array<InviteFilterInput2>>
+  NOT?: InputMaybe<Array<InviteFilterInput2>>
+  OR?: InputMaybe<Array<InviteFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   email?: InputMaybe<StringFilterInput>
   expiresAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  inviter?: InputMaybe<UserFilterInput2>
+  inviter?: InputMaybe<UserRelationFilterInput>
   inviterId?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
-  role?: InputMaybe<RoleFilterInput2>
+  role?: InputMaybe<RoleRelationFilterInput>
   roleId?: InputMaybe<StringFilterInput>
   status?: InputMaybe<InviteStatusFilterInput>
   token?: InputMaybe<StringFilterInput>
@@ -1034,15 +1116,18 @@ export type InviteFilterInput = {
 }
 
 export type InviteFilterInput2 = {
+  AND?: InputMaybe<Array<InviteFilterInput3>>
+  NOT?: InputMaybe<Array<InviteFilterInput3>>
+  OR?: InputMaybe<Array<InviteFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   email?: InputMaybe<StringFilterInput>
   expiresAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  inviter?: InputMaybe<UserFilterInput3>
+  inviter?: InputMaybe<UserRelationFilterInput2>
   inviterId?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
-  role?: InputMaybe<RoleFilterInput3>
+  role?: InputMaybe<RoleRelationFilterInput2>
   roleId?: InputMaybe<StringFilterInput>
   status?: InputMaybe<InviteStatusFilterInput>
   token?: InputMaybe<StringFilterInput>
@@ -1084,6 +1169,7 @@ export enum InviteStatus {
 export type InviteStatusFilterInput = {
   equals?: InputMaybe<InviteStatus>
   in?: InputMaybe<Array<InviteStatus>>
+  not?: InputMaybe<InviteStatus>
 }
 
 export type Link = {
@@ -1100,26 +1186,32 @@ export type Link = {
 }
 
 export type LinkFilterInput = {
+  AND?: InputMaybe<Array<LinkFilterInput2>>
+  NOT?: InputMaybe<Array<LinkFilterInput2>>
+  OR?: InputMaybe<Array<LinkFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
   url?: InputMaybe<StringFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type LinkFilterInput2 = {
+  AND?: InputMaybe<Array<LinkFilterInput3>>
+  NOT?: InputMaybe<Array<LinkFilterInput3>>
+  OR?: InputMaybe<Array<LinkFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
   url?: InputMaybe<StringFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -1651,6 +1743,9 @@ export type LoginAttempt = {
 }
 
 export type LoginAttemptFilterInput = {
+  AND?: InputMaybe<Array<LoginAttemptFilterInput2>>
+  NOT?: InputMaybe<Array<LoginAttemptFilterInput2>>
+  OR?: InputMaybe<Array<LoginAttemptFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   email?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
@@ -1659,12 +1754,15 @@ export type LoginAttemptFilterInput = {
   reason?: InputMaybe<FailureReasonFilterInput>
   success?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userAgent?: InputMaybe<StringFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type LoginAttemptFilterInput2 = {
+  AND?: InputMaybe<Array<LoginAttemptFilterInput3>>
+  NOT?: InputMaybe<Array<LoginAttemptFilterInput3>>
+  OR?: InputMaybe<Array<LoginAttemptFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   email?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
@@ -1673,7 +1771,7 @@ export type LoginAttemptFilterInput2 = {
   reason?: InputMaybe<FailureReasonFilterInput>
   success?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userAgent?: InputMaybe<StringFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
@@ -2323,7 +2421,7 @@ export type MutationUploadUserAvatarArgs = {
 }
 
 export type MutationUserCreateOrganizationArgs = {
-  input: CreateOrganizationInput
+  input: UserCreateOrganizationInput
 }
 
 export type MutationUserCreateUserPreferenceArgs = {
@@ -2339,7 +2437,7 @@ export type MutationUserDeleteUserPreferenceArgs = {
 }
 
 export type MutationUserUpdateOrganizationArgs = {
-  input: UpdateOrganizationInput
+  input: UserUpdateOrganizationInput
 }
 
 export type MutationUserUpdateUserPreferenceArgs = {
@@ -2371,22 +2469,28 @@ export type OAuthAccount = {
 }
 
 export type OAuthAccountFilterInput = {
+  AND?: InputMaybe<Array<OAuthAccountFilterInput2>>
+  NOT?: InputMaybe<Array<OAuthAccountFilterInput2>>
+  OR?: InputMaybe<Array<OAuthAccountFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   provider?: InputMaybe<StringFilterInput>
   providerUserId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type OAuthAccountFilterInput2 = {
+  AND?: InputMaybe<Array<OAuthAccountFilterInput3>>
+  NOT?: InputMaybe<Array<OAuthAccountFilterInput3>>
+  OR?: InputMaybe<Array<OAuthAccountFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   provider?: InputMaybe<StringFilterInput>
   providerUserId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -2447,7 +2551,10 @@ export type Organization = {
 }
 
 export type OrganizationFilterInput = {
+  AND?: InputMaybe<Array<OrganizationFilterInput2>>
   AuditLog?: InputMaybe<AuditLogListRelationFilterInput>
+  NOT?: InputMaybe<Array<OrganizationFilterInput2>>
+  OR?: InputMaybe<Array<OrganizationFilterInput2>>
   Team?: InputMaybe<TeamListRelationFilterInput>
   addresses?: InputMaybe<AddressListRelationFilterInput>
   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput>
@@ -2457,18 +2564,21 @@ export type OrganizationFilterInput = {
   images?: InputMaybe<StoredFileListRelationFilterInput>
   invites?: InputMaybe<InviteListRelationFilterInput>
   links?: InputMaybe<LinkListRelationFilterInput>
-  logo?: InputMaybe<StoredFileFilterInput2>
+  logo?: InputMaybe<StoredFileRelationFilterInput>
   logoId?: InputMaybe<StringFilterInput>
   members?: InputMaybe<OrganizationMemberListRelationFilterInput>
   name?: InputMaybe<StringFilterInput>
   phoneNumbers?: InputMaybe<PhoneNumberListRelationFilterInput>
   roles?: InputMaybe<RoleListRelationFilterInput>
-  subscription?: InputMaybe<SubscriptionFilterInput2>
+  subscription?: InputMaybe<SubscriptionRelationFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
 }
 
 export type OrganizationFilterInput2 = {
+  AND?: InputMaybe<Array<OrganizationFilterInput3>>
   AuditLog?: InputMaybe<AuditLogListRelationFilterInput2>
+  NOT?: InputMaybe<Array<OrganizationFilterInput3>>
+  OR?: InputMaybe<Array<OrganizationFilterInput3>>
   Team?: InputMaybe<TeamListRelationFilterInput2>
   addresses?: InputMaybe<AddressListRelationFilterInput2>
   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
@@ -2478,13 +2588,13 @@ export type OrganizationFilterInput2 = {
   images?: InputMaybe<StoredFileListRelationFilterInput2>
   invites?: InputMaybe<InviteListRelationFilterInput2>
   links?: InputMaybe<LinkListRelationFilterInput2>
-  logo?: InputMaybe<StoredFileFilterInput3>
+  logo?: InputMaybe<StoredFileRelationFilterInput2>
   logoId?: InputMaybe<StringFilterInput>
   members?: InputMaybe<OrganizationMemberListRelationFilterInput2>
   name?: InputMaybe<StringFilterInput>
   phoneNumbers?: InputMaybe<PhoneNumberListRelationFilterInput2>
   roles?: InputMaybe<RoleListRelationFilterInput2>
-  subscription?: InputMaybe<SubscriptionFilterInput3>
+  subscription?: InputMaybe<SubscriptionRelationFilterInput2>
   updatedAt?: InputMaybe<DateTimeFilterInput>
 }
 
@@ -2510,26 +2620,32 @@ export type OrganizationMember = {
 }
 
 export type OrganizationMemberFilterInput = {
+  AND?: InputMaybe<Array<OrganizationMemberFilterInput2>>
+  NOT?: InputMaybe<Array<OrganizationMemberFilterInput2>>
+  OR?: InputMaybe<Array<OrganizationMemberFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
-  role?: InputMaybe<RoleFilterInput2>
+  role?: InputMaybe<RoleRelationFilterInput>
   roleId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type OrganizationMemberFilterInput2 = {
+  AND?: InputMaybe<Array<OrganizationMemberFilterInput3>>
+  NOT?: InputMaybe<Array<OrganizationMemberFilterInput3>>
+  OR?: InputMaybe<Array<OrganizationMemberFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
-  role?: InputMaybe<RoleFilterInput3>
+  role?: InputMaybe<RoleRelationFilterInput2>
   roleId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -2554,6 +2670,42 @@ export type OrganizationMemberListRelationFilterInput2 = {
   some?: InputMaybe<OrganizationMemberFilterInput3>
 }
 
+export type OrganizationRelationFilterInput = {
+  AND?: InputMaybe<Array<OrganizationFilterInput3>>
+  AuditLog?: InputMaybe<AuditLogListRelationFilterInput2>
+  NOT?: InputMaybe<Array<OrganizationFilterInput3>>
+  OR?: InputMaybe<Array<OrganizationFilterInput3>>
+  Team?: InputMaybe<TeamListRelationFilterInput2>
+  addresses?: InputMaybe<AddressListRelationFilterInput2>
+  apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  emails?: InputMaybe<EmailListRelationFilterInput2>
+  id?: InputMaybe<StringFilterInput>
+  images?: InputMaybe<StoredFileListRelationFilterInput2>
+  invites?: InputMaybe<InviteListRelationFilterInput2>
+  is?: InputMaybe<OrganizationFilterInput2>
+  isNot?: InputMaybe<OrganizationFilterInput2>
+  links?: InputMaybe<LinkListRelationFilterInput2>
+  logo?: InputMaybe<StoredFileRelationFilterInput2>
+  logoId?: InputMaybe<StringFilterInput>
+  members?: InputMaybe<OrganizationMemberListRelationFilterInput2>
+  name?: InputMaybe<StringFilterInput>
+  phoneNumbers?: InputMaybe<PhoneNumberListRelationFilterInput2>
+  roles?: InputMaybe<RoleListRelationFilterInput2>
+  subscription?: InputMaybe<SubscriptionRelationFilterInput2>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type OrganizationRelationFilterInput2 = {
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<OrganizationFilterInput3>
+  isNot?: InputMaybe<OrganizationFilterInput3>
+  logoId?: InputMaybe<StringFilterInput>
+  name?: InputMaybe<StringFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
 export type Permission = {
   __typename?: 'Permission'
   action: Scalars['String']['output']
@@ -2564,6 +2716,9 @@ export type Permission = {
 }
 
 export type PermissionFilterInput = {
+  AND?: InputMaybe<Array<PermissionFilterInput2>>
+  NOT?: InputMaybe<Array<PermissionFilterInput2>>
+  OR?: InputMaybe<Array<PermissionFilterInput2>>
   action?: InputMaybe<StringFilterInput>
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
@@ -2572,6 +2727,9 @@ export type PermissionFilterInput = {
 }
 
 export type PermissionFilterInput2 = {
+  AND?: InputMaybe<Array<PermissionFilterInput3>>
+  NOT?: InputMaybe<Array<PermissionFilterInput3>>
+  OR?: InputMaybe<Array<PermissionFilterInput3>>
   action?: InputMaybe<StringFilterInput>
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
@@ -2613,28 +2771,34 @@ export type PhoneNumber = {
 }
 
 export type PhoneNumberFilterInput = {
+  AND?: InputMaybe<Array<PhoneNumberFilterInput2>>
+  NOT?: InputMaybe<Array<PhoneNumberFilterInput2>>
+  OR?: InputMaybe<Array<PhoneNumberFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   phone?: InputMaybe<StringFilterInput>
   phoneType?: InputMaybe<PhoneTypeFilterInput>
   primary?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type PhoneNumberFilterInput2 = {
+  AND?: InputMaybe<Array<PhoneNumberFilterInput3>>
+  NOT?: InputMaybe<Array<PhoneNumberFilterInput3>>
+  OR?: InputMaybe<Array<PhoneNumberFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   phone?: InputMaybe<StringFilterInput>
   phoneType?: InputMaybe<PhoneTypeFilterInput>
   primary?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -2671,6 +2835,7 @@ export enum PhoneType {
 export type PhoneTypeFilterInput = {
   equals?: InputMaybe<PhoneType>
   in?: InputMaybe<Array<PhoneType>>
+  not?: InputMaybe<PhoneType>
 }
 
 export type Plan = {
@@ -2692,6 +2857,9 @@ export type Plan = {
 }
 
 export type PlanFilterInput = {
+  AND?: InputMaybe<Array<PlanFilterInput2>>
+  NOT?: InputMaybe<Array<PlanFilterInput2>>
+  OR?: InputMaybe<Array<PlanFilterInput2>>
   active?: InputMaybe<BooleanFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   description?: InputMaybe<StringFilterInput>
@@ -2707,6 +2875,9 @@ export type PlanFilterInput = {
 }
 
 export type PlanFilterInput2 = {
+  AND?: InputMaybe<Array<PlanFilterInput3>>
+  NOT?: InputMaybe<Array<PlanFilterInput3>>
+  OR?: InputMaybe<Array<PlanFilterInput3>>
   active?: InputMaybe<BooleanFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   description?: InputMaybe<StringFilterInput>
@@ -2727,6 +2898,42 @@ export type PlanFilterInput3 = {
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
   interval?: InputMaybe<StringFilterInput>
+  name?: InputMaybe<StringFilterInput>
+  price?: InputMaybe<FloatFilterInput>
+  stripePriceId?: InputMaybe<StringFilterInput>
+  stripeProductId?: InputMaybe<StringFilterInput>
+  trialPeriodDays?: InputMaybe<IntFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type PlanRelationFilterInput = {
+  AND?: InputMaybe<Array<PlanFilterInput3>>
+  NOT?: InputMaybe<Array<PlanFilterInput3>>
+  OR?: InputMaybe<Array<PlanFilterInput3>>
+  active?: InputMaybe<BooleanFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  description?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  interval?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<PlanFilterInput2>
+  isNot?: InputMaybe<PlanFilterInput2>
+  name?: InputMaybe<StringFilterInput>
+  price?: InputMaybe<FloatFilterInput>
+  stripePriceId?: InputMaybe<StringFilterInput>
+  stripeProductId?: InputMaybe<StringFilterInput>
+  subscriptions?: InputMaybe<SubscriptionListRelationFilterInput2>
+  trialPeriodDays?: InputMaybe<IntFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type PlanRelationFilterInput2 = {
+  active?: InputMaybe<BooleanFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  description?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  interval?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<PlanFilterInput3>
+  isNot?: InputMaybe<PlanFilterInput3>
   name?: InputMaybe<StringFilterInput>
   price?: InputMaybe<FloatFilterInput>
   stripePriceId?: InputMaybe<StringFilterInput>
@@ -2966,7 +3173,7 @@ export type QueryLoginAttemptsCountArgs = {
 }
 
 export type QueryMySecurityEventsArgs = {
-  input?: InputMaybe<ListSecurityEventInput>
+  input?: InputMaybe<SecurityEventPagingInput>
 }
 
 export type QueryOAuthAccountArgs = {
@@ -3239,24 +3446,30 @@ export type Role = {
 }
 
 export type RoleFilterInput = {
+  AND?: InputMaybe<Array<RoleFilterInput2>>
+  NOT?: InputMaybe<Array<RoleFilterInput2>>
+  OR?: InputMaybe<Array<RoleFilterInput2>>
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
   invites?: InputMaybe<InviteListRelationFilterInput>
   members?: InputMaybe<OrganizationMemberListRelationFilterInput>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   permissions?: InputMaybe<PermissionListRelationFilterInput>
   teamMembers?: InputMaybe<TeamMemberListRelationFilterInput>
 }
 
 export type RoleFilterInput2 = {
+  AND?: InputMaybe<Array<RoleFilterInput3>>
+  NOT?: InputMaybe<Array<RoleFilterInput3>>
+  OR?: InputMaybe<Array<RoleFilterInput3>>
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
   invites?: InputMaybe<InviteListRelationFilterInput2>
   members?: InputMaybe<OrganizationMemberListRelationFilterInput2>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   permissions?: InputMaybe<PermissionListRelationFilterInput2>
   teamMembers?: InputMaybe<TeamMemberListRelationFilterInput2>
@@ -3279,6 +3492,32 @@ export type RoleListRelationFilterInput2 = {
   every?: InputMaybe<RoleFilterInput3>
   none?: InputMaybe<RoleFilterInput3>
   some?: InputMaybe<RoleFilterInput3>
+}
+
+export type RoleRelationFilterInput = {
+  AND?: InputMaybe<Array<RoleFilterInput3>>
+  NOT?: InputMaybe<Array<RoleFilterInput3>>
+  OR?: InputMaybe<Array<RoleFilterInput3>>
+  description?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  invites?: InputMaybe<InviteListRelationFilterInput2>
+  is?: InputMaybe<RoleFilterInput2>
+  isNot?: InputMaybe<RoleFilterInput2>
+  members?: InputMaybe<OrganizationMemberListRelationFilterInput2>
+  name?: InputMaybe<StringFilterInput>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
+  organizationId?: InputMaybe<StringFilterInput>
+  permissions?: InputMaybe<PermissionListRelationFilterInput2>
+  teamMembers?: InputMaybe<TeamMemberListRelationFilterInput2>
+}
+
+export type RoleRelationFilterInput2 = {
+  description?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<RoleFilterInput3>
+  isNot?: InputMaybe<RoleFilterInput3>
+  name?: InputMaybe<StringFilterInput>
+  organizationId?: InputMaybe<StringFilterInput>
 }
 
 export type RotateApiTokenInput = {
@@ -3310,23 +3549,29 @@ export type SecurityEvent = {
 }
 
 export type SecurityEventFilterInput = {
+  AND?: InputMaybe<Array<SecurityEventFilterInput2>>
+  NOT?: InputMaybe<Array<SecurityEventFilterInput2>>
+  OR?: InputMaybe<Array<SecurityEventFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   eventType?: InputMaybe<SecurityEventTypeFilterInput>
   id?: InputMaybe<StringFilterInput>
   ipAddress?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userAgent?: InputMaybe<StringFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type SecurityEventFilterInput2 = {
+  AND?: InputMaybe<Array<SecurityEventFilterInput3>>
+  NOT?: InputMaybe<Array<SecurityEventFilterInput3>>
+  OR?: InputMaybe<Array<SecurityEventFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   eventType?: InputMaybe<SecurityEventTypeFilterInput>
   id?: InputMaybe<StringFilterInput>
   ipAddress?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userAgent?: InputMaybe<StringFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
@@ -3353,6 +3598,17 @@ export type SecurityEventListRelationFilterInput2 = {
   some?: InputMaybe<SecurityEventFilterInput3>
 }
 
+export enum SecurityEventOrderDirection {
+  Asc = 'ASC',
+  Desc = 'DESC',
+}
+
+export type SecurityEventPagingInput = {
+  orderDirection?: InputMaybe<SecurityEventOrderDirection>
+  skip?: InputMaybe<Scalars['Int']['input']>
+  take?: InputMaybe<Scalars['Int']['input']>
+}
+
 export enum SecurityEventType {
   AccountLocked = 'ACCOUNT_LOCKED',
   AccountUnlocked = 'ACCOUNT_UNLOCKED',
@@ -3372,6 +3628,7 @@ export enum SecurityEventType {
 export type SecurityEventTypeFilterInput = {
   equals?: InputMaybe<SecurityEventType>
   in?: InputMaybe<Array<SecurityEventType>>
+  not?: InputMaybe<SecurityEventType>
 }
 
 export type SecuritySummary = {
@@ -3400,6 +3657,7 @@ export enum StorageProvider {
 export type StorageProviderFilterInput = {
   equals?: InputMaybe<StorageProvider>
   in?: InputMaybe<Array<StorageProvider>>
+  not?: InputMaybe<StorageProvider>
 }
 
 export type StoredFile = {
@@ -3428,15 +3686,18 @@ export type StoredFile = {
 }
 
 export type StoredFileFilterInput = {
+  AND?: InputMaybe<Array<StoredFileFilterInput2>>
+  NOT?: InputMaybe<Array<StoredFileFilterInput2>>
+  OR?: InputMaybe<Array<StoredFileFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   filename?: InputMaybe<StringFilterInput>
   folder?: InputMaybe<StringFilterInput>
   height?: InputMaybe<IntFilterInput>
   id?: InputMaybe<StringFilterInput>
   mimeType?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
-  organizationLogo?: InputMaybe<OrganizationFilterInput2>
+  organizationLogo?: InputMaybe<OrganizationRelationFilterInput>
   originalName?: InputMaybe<StringFilterInput>
   provider?: InputMaybe<StorageProviderFilterInput>
   providerFileId?: InputMaybe<StringFilterInput>
@@ -3444,22 +3705,25 @@ export type StoredFileFilterInput = {
   size?: InputMaybe<IntFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
   url?: InputMaybe<StringFilterInput>
-  user?: InputMaybe<UserFilterInput2>
-  userAvatar?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
+  userAvatar?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
   width?: InputMaybe<IntFilterInput>
 }
 
 export type StoredFileFilterInput2 = {
+  AND?: InputMaybe<Array<StoredFileFilterInput3>>
+  NOT?: InputMaybe<Array<StoredFileFilterInput3>>
+  OR?: InputMaybe<Array<StoredFileFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   filename?: InputMaybe<StringFilterInput>
   folder?: InputMaybe<StringFilterInput>
   height?: InputMaybe<IntFilterInput>
   id?: InputMaybe<StringFilterInput>
   mimeType?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
-  organizationLogo?: InputMaybe<OrganizationFilterInput3>
+  organizationLogo?: InputMaybe<OrganizationRelationFilterInput2>
   originalName?: InputMaybe<StringFilterInput>
   provider?: InputMaybe<StorageProviderFilterInput>
   providerFileId?: InputMaybe<StringFilterInput>
@@ -3467,8 +3731,8 @@ export type StoredFileFilterInput2 = {
   size?: InputMaybe<IntFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
   url?: InputMaybe<StringFilterInput>
-  user?: InputMaybe<UserFilterInput3>
-  userAvatar?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
+  userAvatar?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
   width?: InputMaybe<IntFilterInput>
 }
@@ -3504,11 +3768,61 @@ export type StoredFileListRelationFilterInput2 = {
   some?: InputMaybe<StoredFileFilterInput3>
 }
 
+export type StoredFileRelationFilterInput = {
+  AND?: InputMaybe<Array<StoredFileFilterInput3>>
+  NOT?: InputMaybe<Array<StoredFileFilterInput3>>
+  OR?: InputMaybe<Array<StoredFileFilterInput3>>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  filename?: InputMaybe<StringFilterInput>
+  folder?: InputMaybe<StringFilterInput>
+  height?: InputMaybe<IntFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<StoredFileFilterInput2>
+  isNot?: InputMaybe<StoredFileFilterInput2>
+  mimeType?: InputMaybe<StringFilterInput>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
+  organizationId?: InputMaybe<StringFilterInput>
+  organizationLogo?: InputMaybe<OrganizationRelationFilterInput2>
+  originalName?: InputMaybe<StringFilterInput>
+  provider?: InputMaybe<StorageProviderFilterInput>
+  providerFileId?: InputMaybe<StringFilterInput>
+  publicUrl?: InputMaybe<StringFilterInput>
+  size?: InputMaybe<IntFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+  url?: InputMaybe<StringFilterInput>
+  user?: InputMaybe<UserRelationFilterInput2>
+  userAvatar?: InputMaybe<UserRelationFilterInput2>
+  userId?: InputMaybe<StringFilterInput>
+  width?: InputMaybe<IntFilterInput>
+}
+
+export type StoredFileRelationFilterInput2 = {
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  filename?: InputMaybe<StringFilterInput>
+  folder?: InputMaybe<StringFilterInput>
+  height?: InputMaybe<IntFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<StoredFileFilterInput3>
+  isNot?: InputMaybe<StoredFileFilterInput3>
+  mimeType?: InputMaybe<StringFilterInput>
+  organizationId?: InputMaybe<StringFilterInput>
+  originalName?: InputMaybe<StringFilterInput>
+  provider?: InputMaybe<StorageProviderFilterInput>
+  providerFileId?: InputMaybe<StringFilterInput>
+  publicUrl?: InputMaybe<StringFilterInput>
+  size?: InputMaybe<IntFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+  url?: InputMaybe<StringFilterInput>
+  userId?: InputMaybe<StringFilterInput>
+  width?: InputMaybe<IntFilterInput>
+}
+
 export type StringFilterInput = {
   contains?: InputMaybe<Scalars['String']['input']>
   endsWith?: InputMaybe<Scalars['String']['input']>
   equals?: InputMaybe<Scalars['String']['input']>
   in?: InputMaybe<Array<Scalars['String']['input']>>
+  not?: InputMaybe<Scalars['String']['input']>
   startsWith?: InputMaybe<Scalars['String']['input']>
 }
 
@@ -3534,14 +3848,17 @@ export type Subscription = {
 }
 
 export type SubscriptionFilterInput = {
+  AND?: InputMaybe<Array<SubscriptionFilterInput2>>
+  NOT?: InputMaybe<Array<SubscriptionFilterInput2>>
+  OR?: InputMaybe<Array<SubscriptionFilterInput2>>
   cancelAt?: InputMaybe<DateTimeFilterInput>
   cancelAtPeriodEnd?: InputMaybe<BooleanFilterInput>
   canceledAt?: InputMaybe<DateTimeFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
-  plan?: InputMaybe<PlanFilterInput2>
+  plan?: InputMaybe<PlanRelationFilterInput>
   planId?: InputMaybe<StringFilterInput>
   status?: InputMaybe<SubscriptionStatusFilterInput>
   stripeCurrentPeriodEnd?: InputMaybe<DateTimeFilterInput>
@@ -3554,14 +3871,17 @@ export type SubscriptionFilterInput = {
 }
 
 export type SubscriptionFilterInput2 = {
+  AND?: InputMaybe<Array<SubscriptionFilterInput3>>
+  NOT?: InputMaybe<Array<SubscriptionFilterInput3>>
+  OR?: InputMaybe<Array<SubscriptionFilterInput3>>
   cancelAt?: InputMaybe<DateTimeFilterInput>
   cancelAtPeriodEnd?: InputMaybe<BooleanFilterInput>
   canceledAt?: InputMaybe<DateTimeFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
-  plan?: InputMaybe<PlanFilterInput3>
+  plan?: InputMaybe<PlanRelationFilterInput2>
   planId?: InputMaybe<StringFilterInput>
   status?: InputMaybe<SubscriptionStatusFilterInput>
   stripeCurrentPeriodEnd?: InputMaybe<DateTimeFilterInput>
@@ -3603,6 +3923,51 @@ export type SubscriptionListRelationFilterInput2 = {
   some?: InputMaybe<SubscriptionFilterInput3>
 }
 
+export type SubscriptionRelationFilterInput = {
+  AND?: InputMaybe<Array<SubscriptionFilterInput3>>
+  NOT?: InputMaybe<Array<SubscriptionFilterInput3>>
+  OR?: InputMaybe<Array<SubscriptionFilterInput3>>
+  cancelAt?: InputMaybe<DateTimeFilterInput>
+  cancelAtPeriodEnd?: InputMaybe<BooleanFilterInput>
+  canceledAt?: InputMaybe<DateTimeFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<SubscriptionFilterInput2>
+  isNot?: InputMaybe<SubscriptionFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
+  organizationId?: InputMaybe<StringFilterInput>
+  plan?: InputMaybe<PlanRelationFilterInput2>
+  planId?: InputMaybe<StringFilterInput>
+  status?: InputMaybe<SubscriptionStatusFilterInput>
+  stripeCurrentPeriodEnd?: InputMaybe<DateTimeFilterInput>
+  stripeCustomerId?: InputMaybe<StringFilterInput>
+  stripePriceId?: InputMaybe<StringFilterInput>
+  stripeSubscriptionId?: InputMaybe<StringFilterInput>
+  trialEnd?: InputMaybe<DateTimeFilterInput>
+  trialStart?: InputMaybe<DateTimeFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type SubscriptionRelationFilterInput2 = {
+  cancelAt?: InputMaybe<DateTimeFilterInput>
+  cancelAtPeriodEnd?: InputMaybe<BooleanFilterInput>
+  canceledAt?: InputMaybe<DateTimeFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<SubscriptionFilterInput3>
+  isNot?: InputMaybe<SubscriptionFilterInput3>
+  organizationId?: InputMaybe<StringFilterInput>
+  planId?: InputMaybe<StringFilterInput>
+  status?: InputMaybe<SubscriptionStatusFilterInput>
+  stripeCurrentPeriodEnd?: InputMaybe<DateTimeFilterInput>
+  stripeCustomerId?: InputMaybe<StringFilterInput>
+  stripePriceId?: InputMaybe<StringFilterInput>
+  stripeSubscriptionId?: InputMaybe<StringFilterInput>
+  trialEnd?: InputMaybe<DateTimeFilterInput>
+  trialStart?: InputMaybe<DateTimeFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
 export enum SubscriptionStatus {
   Active = 'ACTIVE',
   Canceled = 'CANCELED',
@@ -3615,6 +3980,7 @@ export enum SubscriptionStatus {
 export type SubscriptionStatusFilterInput = {
   equals?: InputMaybe<SubscriptionStatus>
   in?: InputMaybe<Array<SubscriptionStatus>>
+  not?: InputMaybe<SubscriptionStatus>
 }
 
 export type SwitchOrganizationInput = {
@@ -3634,23 +4000,29 @@ export type Team = {
 }
 
 export type TeamFilterInput = {
+  AND?: InputMaybe<Array<TeamFilterInput2>>
+  NOT?: InputMaybe<Array<TeamFilterInput2>>
+  OR?: InputMaybe<Array<TeamFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
   members?: InputMaybe<TeamMemberListRelationFilterInput>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput2>
+  organization?: InputMaybe<OrganizationRelationFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
 }
 
 export type TeamFilterInput2 = {
+  AND?: InputMaybe<Array<TeamFilterInput3>>
+  NOT?: InputMaybe<Array<TeamFilterInput3>>
+  OR?: InputMaybe<Array<TeamFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
   members?: InputMaybe<TeamMemberListRelationFilterInput2>
   name?: InputMaybe<StringFilterInput>
-  organization?: InputMaybe<OrganizationFilterInput3>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
   organizationId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
 }
@@ -3690,26 +4062,32 @@ export type TeamMember = {
 }
 
 export type TeamMemberFilterInput = {
+  AND?: InputMaybe<Array<TeamMemberFilterInput2>>
+  NOT?: InputMaybe<Array<TeamMemberFilterInput2>>
+  OR?: InputMaybe<Array<TeamMemberFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  role?: InputMaybe<RoleFilterInput2>
+  role?: InputMaybe<RoleRelationFilterInput>
   roleId?: InputMaybe<StringFilterInput>
-  team?: InputMaybe<TeamFilterInput2>
+  team?: InputMaybe<TeamRelationFilterInput>
   teamId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type TeamMemberFilterInput2 = {
+  AND?: InputMaybe<Array<TeamMemberFilterInput3>>
+  NOT?: InputMaybe<Array<TeamMemberFilterInput3>>
+  OR?: InputMaybe<Array<TeamMemberFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
-  role?: InputMaybe<RoleFilterInput3>
+  role?: InputMaybe<RoleRelationFilterInput2>
   roleId?: InputMaybe<StringFilterInput>
-  team?: InputMaybe<TeamFilterInput3>
+  team?: InputMaybe<TeamRelationFilterInput2>
   teamId?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -3734,6 +4112,33 @@ export type TeamMemberListRelationFilterInput2 = {
   some?: InputMaybe<TeamMemberFilterInput3>
 }
 
+export type TeamRelationFilterInput = {
+  AND?: InputMaybe<Array<TeamFilterInput3>>
+  NOT?: InputMaybe<Array<TeamFilterInput3>>
+  OR?: InputMaybe<Array<TeamFilterInput3>>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  description?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<TeamFilterInput2>
+  isNot?: InputMaybe<TeamFilterInput2>
+  members?: InputMaybe<TeamMemberListRelationFilterInput2>
+  name?: InputMaybe<StringFilterInput>
+  organization?: InputMaybe<OrganizationRelationFilterInput2>
+  organizationId?: InputMaybe<StringFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type TeamRelationFilterInput2 = {
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  description?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<TeamFilterInput3>
+  isNot?: InputMaybe<TeamFilterInput3>
+  name?: InputMaybe<StringFilterInput>
+  organizationId?: InputMaybe<StringFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
 export type TransferOwnershipInput = {
   newOwnerUserId: Scalars['String']['input']
   organizationId: Scalars['String']['input']
@@ -3749,6 +4154,7 @@ export enum TwoFactorMethod {
 export type TwoFactorMethodFilterInput = {
   equals?: InputMaybe<TwoFactorMethod>
   in?: InputMaybe<Array<TwoFactorMethod>>
+  not?: InputMaybe<TwoFactorMethod>
 }
 
 export type UnlinkOAuthInput = {
@@ -4148,8 +4554,15 @@ export type User = {
   updatedAt: Scalars['DateTime']['output']
 }
 
+export type UserCreateOrganizationInput = {
+  name: Scalars['String']['input']
+}
+
 export type UserFilterInput = {
+  AND?: InputMaybe<Array<UserFilterInput2>>
   AuditLog?: InputMaybe<AuditLogListRelationFilterInput>
+  NOT?: InputMaybe<Array<UserFilterInput2>>
+  OR?: InputMaybe<Array<UserFilterInput2>>
   SecurityEvent?: InputMaybe<SecurityEventListRelationFilterInput>
   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput>
   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput>
@@ -4157,7 +4570,7 @@ export type UserFilterInput = {
   activeSessions?: InputMaybe<UserSessionListRelationFilterInput>
   addresses?: InputMaybe<AddressListRelationFilterInput>
   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput>
-  avatar?: InputMaybe<StoredFileFilterInput2>
+  avatar?: InputMaybe<StoredFileRelationFilterInput>
   avatarId?: InputMaybe<StringFilterInput>
   bio?: InputMaybe<StringFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
@@ -4189,7 +4602,10 @@ export type UserFilterInput = {
 }
 
 export type UserFilterInput2 = {
+  AND?: InputMaybe<Array<UserFilterInput3>>
   AuditLog?: InputMaybe<AuditLogListRelationFilterInput2>
+  NOT?: InputMaybe<Array<UserFilterInput3>>
+  OR?: InputMaybe<Array<UserFilterInput3>>
   SecurityEvent?: InputMaybe<SecurityEventListRelationFilterInput2>
   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput2>
   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput2>
@@ -4197,7 +4613,7 @@ export type UserFilterInput2 = {
   activeSessions?: InputMaybe<UserSessionListRelationFilterInput2>
   addresses?: InputMaybe<AddressListRelationFilterInput2>
   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
-  avatar?: InputMaybe<StoredFileFilterInput3>
+  avatar?: InputMaybe<StoredFileRelationFilterInput2>
   avatarId?: InputMaybe<StringFilterInput>
   bio?: InputMaybe<StringFilterInput>
   createdAt?: InputMaybe<DateTimeFilterInput>
@@ -4264,21 +4680,27 @@ export type UserPreference = {
 }
 
 export type UserPreferenceFilterInput = {
+  AND?: InputMaybe<Array<UserPreferenceFilterInput2>>
+  NOT?: InputMaybe<Array<UserPreferenceFilterInput2>>
+  OR?: InputMaybe<Array<UserPreferenceFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   key?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
   value?: InputMaybe<StringFilterInput>
 }
 
 export type UserPreferenceFilterInput2 = {
+  AND?: InputMaybe<Array<UserPreferenceFilterInput3>>
+  NOT?: InputMaybe<Array<UserPreferenceFilterInput3>>
+  OR?: InputMaybe<Array<UserPreferenceFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   key?: InputMaybe<StringFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
   value?: InputMaybe<StringFilterInput>
 }
@@ -4304,6 +4726,77 @@ export type UserPreferenceListRelationFilterInput2 = {
   some?: InputMaybe<UserPreferenceFilterInput3>
 }
 
+export type UserRelationFilterInput = {
+  AND?: InputMaybe<Array<UserFilterInput3>>
+  AuditLog?: InputMaybe<AuditLogListRelationFilterInput2>
+  NOT?: InputMaybe<Array<UserFilterInput3>>
+  OR?: InputMaybe<Array<UserFilterInput3>>
+  SecurityEvent?: InputMaybe<SecurityEventListRelationFilterInput2>
+  TeamMember?: InputMaybe<TeamMemberListRelationFilterInput2>
+  UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput2>
+  activeOrganizationId?: InputMaybe<StringFilterInput>
+  activeSessions?: InputMaybe<UserSessionListRelationFilterInput2>
+  addresses?: InputMaybe<AddressListRelationFilterInput2>
+  apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
+  avatar?: InputMaybe<StoredFileRelationFilterInput2>
+  avatarId?: InputMaybe<StringFilterInput>
+  bio?: InputMaybe<StringFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  deactivatedAt?: InputMaybe<DateTimeFilterInput>
+  displayName?: InputMaybe<StringFilterInput>
+  emailValidated?: InputMaybe<BooleanFilterInput>
+  emails?: InputMaybe<EmailListRelationFilterInput2>
+  failedLoginCount?: InputMaybe<IntFilterInput>
+  firstName?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  images?: InputMaybe<StoredFileListRelationFilterInput2>
+  invitesSent?: InputMaybe<InviteListRelationFilterInput2>
+  is?: InputMaybe<UserFilterInput2>
+  isActive?: InputMaybe<BooleanFilterInput>
+  isNot?: InputMaybe<UserFilterInput2>
+  isSuperAdmin?: InputMaybe<BooleanFilterInput>
+  lastFailedLogin?: InputMaybe<DateTimeFilterInput>
+  lastName?: InputMaybe<StringFilterInput>
+  lastSuccessfulLogin?: InputMaybe<DateTimeFilterInput>
+  links?: InputMaybe<LinkListRelationFilterInput2>
+  lockedUntil?: InputMaybe<DateTimeFilterInput>
+  loginAttempts?: InputMaybe<LoginAttemptListRelationFilterInput2>
+  oAuthAccounts?: InputMaybe<OAuthAccountListRelationFilterInput2>
+  organizations?: InputMaybe<OrganizationMemberListRelationFilterInput2>
+  phoneNumbers?: InputMaybe<PhoneNumberListRelationFilterInput2>
+  privacyPolicyAcceptedAt?: InputMaybe<DateTimeFilterInput>
+  termsAcceptedAt?: InputMaybe<DateTimeFilterInput>
+  twoFactorEnabled?: InputMaybe<BooleanFilterInput>
+  twoFactorMethod?: InputMaybe<TwoFactorMethodFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
+export type UserRelationFilterInput2 = {
+  activeOrganizationId?: InputMaybe<StringFilterInput>
+  avatarId?: InputMaybe<StringFilterInput>
+  bio?: InputMaybe<StringFilterInput>
+  createdAt?: InputMaybe<DateTimeFilterInput>
+  deactivatedAt?: InputMaybe<DateTimeFilterInput>
+  displayName?: InputMaybe<StringFilterInput>
+  emailValidated?: InputMaybe<BooleanFilterInput>
+  failedLoginCount?: InputMaybe<IntFilterInput>
+  firstName?: InputMaybe<StringFilterInput>
+  id?: InputMaybe<StringFilterInput>
+  is?: InputMaybe<UserFilterInput3>
+  isActive?: InputMaybe<BooleanFilterInput>
+  isNot?: InputMaybe<UserFilterInput3>
+  isSuperAdmin?: InputMaybe<BooleanFilterInput>
+  lastFailedLogin?: InputMaybe<DateTimeFilterInput>
+  lastName?: InputMaybe<StringFilterInput>
+  lastSuccessfulLogin?: InputMaybe<DateTimeFilterInput>
+  lockedUntil?: InputMaybe<DateTimeFilterInput>
+  privacyPolicyAcceptedAt?: InputMaybe<DateTimeFilterInput>
+  termsAcceptedAt?: InputMaybe<DateTimeFilterInput>
+  twoFactorEnabled?: InputMaybe<BooleanFilterInput>
+  twoFactorMethod?: InputMaybe<TwoFactorMethodFilterInput>
+  updatedAt?: InputMaybe<DateTimeFilterInput>
+}
+
 export type UserSession = {
   __typename?: 'UserSession'
   createdAt: Scalars['DateTime']['output']
@@ -4319,6 +4812,9 @@ export type UserSession = {
 }
 
 export type UserSessionFilterInput = {
+  AND?: InputMaybe<Array<UserSessionFilterInput2>>
+  NOT?: InputMaybe<Array<UserSessionFilterInput2>>
+  OR?: InputMaybe<Array<UserSessionFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   deviceInfo?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
@@ -4327,11 +4823,14 @@ export type UserSessionFilterInput = {
   lastActiveAt?: InputMaybe<DateTimeFilterInput>
   twoFactorVerified?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput2>
+  user?: InputMaybe<UserRelationFilterInput>
   userId?: InputMaybe<StringFilterInput>
 }
 
 export type UserSessionFilterInput2 = {
+  AND?: InputMaybe<Array<UserSessionFilterInput3>>
+  NOT?: InputMaybe<Array<UserSessionFilterInput3>>
+  OR?: InputMaybe<Array<UserSessionFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   deviceInfo?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
@@ -4340,7 +4839,7 @@ export type UserSessionFilterInput2 = {
   lastActiveAt?: InputMaybe<DateTimeFilterInput>
   twoFactorVerified?: InputMaybe<BooleanFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserFilterInput3>
+  user?: InputMaybe<UserRelationFilterInput2>
   userId?: InputMaybe<StringFilterInput>
 }
 
@@ -4389,6 +4888,10 @@ export type UserToken = {
   /** JWT Bearer token */
   token?: Maybe<Scalars['String']['output']>
   user?: Maybe<User>
+}
+
+export type UserUpdateOrganizationInput = {
+  name?: InputMaybe<Scalars['String']['input']>
 }
 
 export type Verify2FaInput = {
@@ -10895,7 +11398,7 @@ export type OrganizationDetailsFragment = {
 }
 
 export type UserCreateOrganizationMutationVariables = Exact<{
-  input: CreateOrganizationInput
+  input: UserCreateOrganizationInput
 }>
 
 export type UserCreateOrganizationMutation = {
@@ -10969,7 +11472,7 @@ export type UserDeleteOrganizationMutation = {
 }
 
 export type UserUpdateOrganizationMutationVariables = Exact<{
-  input: UpdateOrganizationInput
+  input: UserUpdateOrganizationInput
 }>
 
 export type UserUpdateOrganizationMutation = {
@@ -11886,7 +12389,7 @@ export type RolePaginationQuery = {
 }
 
 export type MySecurityEventsQueryVariables = Exact<{
-  input?: InputMaybe<ListSecurityEventInput>
+  input?: InputMaybe<SecurityEventPagingInput>
 }>
 
 export type MySecurityEventsQuery = {
@@ -11968,74 +12471,6 @@ export type UpdateSecurityEventMutation = {
     ipAddress?: string | null
     userAgent?: string | null
     metadata?: any | null
-  } | null
-}
-
-export type SecurityEventQueryVariables = Exact<{
-  securityEventId: Scalars['String']['input']
-}>
-
-export type SecurityEventQuery = {
-  __typename?: 'Query'
-  securityEvent?: {
-    __typename?: 'SecurityEvent'
-    id: string
-    createdAt: any
-    updatedAt: any
-    eventType: SecurityEventType
-    ipAddress?: string | null
-    userAgent?: string | null
-    metadata?: any | null
-  } | null
-}
-
-export type SecurityEventsQueryVariables = Exact<{
-  input?: InputMaybe<ListSecurityEventInput>
-}>
-
-export type SecurityEventsQuery = {
-  __typename?: 'Query'
-  securityEvents?: Array<{
-    __typename?: 'SecurityEvent'
-    id: string
-    createdAt: any
-    updatedAt: any
-    eventType: SecurityEventType
-    ipAddress?: string | null
-    userAgent?: string | null
-    metadata?: any | null
-  }> | null
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
-  } | null
-}
-
-export type SecurityEventPaginationQueryVariables = Exact<{
-  input?: InputMaybe<ListSecurityEventInput>
-}>
-
-export type SecurityEventPaginationQuery = {
-  __typename?: 'Query'
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
   } | null
 }
 
@@ -35711,7 +36146,10 @@ export const UserCreateOrganization = {
           variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
           type: {
             kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'CreateOrganizationInput' } },
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'UserCreateOrganizationInput' },
+            },
           },
         },
       ],
@@ -35912,7 +36350,10 @@ export const UserUpdateOrganization = {
           variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
           type: {
             kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'UpdateOrganizationInput' } },
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'UserUpdateOrganizationInput' },
+            },
           },
         },
       ],
@@ -38714,7 +39155,7 @@ export const MySecurityEvents = {
         {
           kind: 'VariableDefinition',
           variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListSecurityEventInput' } },
+          type: { kind: 'NamedType', name: { kind: 'Name', value: 'SecurityEventPagingInput' } },
         },
       ],
       selectionSet: {
@@ -38952,228 +39393,6 @@ export const UpdateSecurityEvent = {
     },
   ],
 } as unknown as DocumentNode<UpdateSecurityEventMutation, UpdateSecurityEventMutationVariables>
-export const SecurityEvent = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: 'SecurityEvent' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'securityEventId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'securityEvent' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'securityEventId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'securityEventId' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'SecurityEventDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'SecurityEventList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'SecurityEvent' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'eventType' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userAgent' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'metadata' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'SecurityEventDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'SecurityEvent' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: 'SecurityEventList' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<SecurityEventQuery, SecurityEventQueryVariables>
-export const SecurityEvents = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: 'SecurityEvents' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListSecurityEventInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'securityEvents' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'SecurityEventList' } },
-              ],
-            },
-          },
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'securityEventsCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'SecurityEventList' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'SecurityEvent' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'eventType' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userAgent' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'metadata' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<SecurityEventsQuery, SecurityEventsQueryVariables>
-export const SecurityEventPagination = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: 'SecurityEventPagination' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListSecurityEventInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'securityEventsCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<SecurityEventPaginationQuery, SecurityEventPaginationQueryVariables>
 export const UploadUserAvatar = {
   kind: 'Document',
   definitions: [

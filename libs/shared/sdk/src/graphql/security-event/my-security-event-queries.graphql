@@ -1,4 +1,4 @@
-query MySecurityEvents($input: ListSecurityEventInput) {
+query MySecurityEvents($input: SecurityEventPagingInput) {
   mySecurityEvents(input: $input) {
     ...SecurityEventList
   }

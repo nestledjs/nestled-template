@@ -38,7 +38,7 @@ async function isDatabaseAccessible(databaseUrl: string): Promise<boolean> {
 /**
  * Check if a port is already in use
  */
-async function isPortInUse(port: number, host: string = 'localhost'): Promise<boolean> {
+async function isPortInUse(port: number, host = 'localhost'): Promise<boolean> {
   return new Promise(resolve => {
     const socket = createConnection({ port, host, timeout: 100 })
 

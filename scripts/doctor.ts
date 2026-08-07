@@ -8,6 +8,13 @@ import {
   getOperationGuardNames,
   hasAuthenticationGuard,
 } from './doctor-auth-analysis'
+import {
+  getCrudAuthAnnotationLines,
+  getCustomCrudImportViolations,
+  getLegacyCoreHelpersImportViolations,
+  getNonAdminOperationViolations,
+  supportsAdminOnlyGeneratorBoundary,
+} from './doctor-crud-boundary-analysis'
 
 type Finding = {
   check: string
@@ -22,6 +29,7 @@ const warnings: Finding[] = []
 const routeRoot = 'apps/web/app/routes'
 const routeConfigPath = 'apps/web/app/routes.tsx'
 const schemaPath = 'libs/api/prisma/src/lib/schemas/schema.prisma'
+const generatorPackagePath = 'node_modules/@nestledjs/generators/package.json'
 const notesDir = '.nestled-updates/upgrade-notes'
 const guardBaselinePath = '.nestled-updates/security/guard-baseline.json'
 const publicOperationsPath = '.nestled-updates/security/public-operations.json'
@@ -740,6 +748,98 @@ const checkGeneratedCrudModuleRegistration = () => {
       'ApiGeneratedCrudFeatureModule must be imported and registered in coreModules',
       appModulePath,
     )
+  }
+}
+
+const checkGeneratedCrudAlwaysAdmin = () => {
+  const resolverFiles = walkFiles('libs/api/generated-crud/feature/src/lib', path =>
+    path.endsWith('.resolver.ts'),
+  )
+
+  for (const file of resolverFiles) {
+    const source = readFileSync(file, 'utf8')
+    for (const violation of getNonAdminOperationViolations(source, file)) {
+      fail(
+        'admin-crud-boundary',
+        `Generated CRUD is fixed admin-only: ${violation.message}`,
+        file,
+        violation.line,
+      )
+    }
+  }
+}
+
+const checkCrudAuthAnnotations = () => {
+  if (!existsSync(schemaPath)) return
+
+  const schema = readFileSync(schemaPath, 'utf8')
+  for (const line of getCrudAuthAnnotationLines(schema)) {
+    fail(
+      'admin-crud-boundary',
+      '@crudAuth is no longer supported: generated CRUD is always admin-only; create an explicit custom resolver and input for user-facing access',
+      schemaPath,
+      line,
+    )
+  }
+}
+
+const checkGeneratorAdminBoundaryVersion = () => {
+  if (!existsSync(generatorPackagePath)) {
+    fail(
+      'admin-crud-boundary',
+      '@nestledjs/generators is not installed; run pnpm install with version 3.0.2 or newer',
+      generatorPackagePath,
+    )
+    return
+  }
+
+  const packageJson = JSON.parse(readFileSync(generatorPackagePath, 'utf8')) as {
+    version?: unknown
+  }
+  const version = typeof packageJson.version === 'string' ? packageJson.version : ''
+  if (!supportsAdminOnlyGeneratorBoundary(version)) {
+    fail(
+      'admin-crud-boundary',
+      `@nestledjs/generators ${version || '(unknown version)'} cannot enforce the permanent admin-only CRUD boundary with strict TypeScript compatibility; upgrade to 3.0.2 or newer before running db-update`,
+      generatorPackagePath,
+    )
+  }
+}
+
+const checkApplicationCrudImports = () => {
+  const customFiles = walkFiles(
+    'libs/api/custom/src',
+    path => path.endsWith('.ts') && !path.endsWith('.spec.ts') && !path.endsWith('.test.ts'),
+  )
+
+  for (const file of customFiles) {
+    const source = readFileSync(file, 'utf8')
+    const violations = [
+      ...getCustomCrudImportViolations(source, file),
+      ...getLegacyCoreHelpersImportViolations(source, file),
+    ]
+
+    for (const violation of violations) {
+      fail('admin-crud-boundary', violation.message, file, violation.line)
+    }
+  }
+}
+
+const checkAdminCustomResolvers = () => {
+  const resolverFiles = walkFiles('libs/api/admin-custom/src', path =>
+    path.endsWith('.resolver.ts'),
+  )
+
+  for (const file of resolverFiles) {
+    const source = readFileSync(file, 'utf8')
+    for (const violation of getNonAdminOperationViolations(source, file)) {
+      fail(
+        'admin-crud-boundary',
+        `Admin CRUD composition must remain admin-only: ${violation.message}`,
+        file,
+        violation.line,
+      )
+    }
   }
 }
 
@@ -1692,6 +1792,11 @@ checkStaleConfigNames()
 checkMcpWiring()
 checkApiControllerRoutesAllowed()
 checkGeneratedCrudModuleRegistration()
+checkGeneratedCrudAlwaysAdmin()
+checkCrudAuthAnnotations()
+checkGeneratorAdminBoundaryVersion()
+checkApplicationCrudImports()
+checkAdminCustomResolvers()
 checkDefaultResolverGeneratedNameCollisions()
 checkHandwrittenAdminSdkOperations()
 checkPluginExportsAndRegistration()

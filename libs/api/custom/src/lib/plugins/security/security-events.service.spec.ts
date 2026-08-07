@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing'
 import { SecurityEventsService, SecurityEventContext } from './security-events.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { SecurityEventType } from '@nestled-template/api/core/models'
+import { SecurityEventOrderDirection } from './dto'
 describe('SecurityEventsService', () => {
   let service: SecurityEventsService
   let mockData: any
@@ -208,8 +209,7 @@ describe('SecurityEventsService', () => {
       const pagingInput = {
         take: 20,
         skip: 40,
-        orderBy: 'createdAt',
-        orderDirection: 'asc',
+        orderDirection: SecurityEventOrderDirection.ASC,
       }
       await service.getUserSecurityEventsWithPaging('user-123', pagingInput)
       expect(mockData.securityEvent.findMany).toHaveBeenCalledWith({
@@ -226,6 +226,16 @@ describe('SecurityEventsService', () => {
         where: { userId: 'user-123' },
         orderBy: { createdAt: 'desc' },
         take: 50,
+        skip: 0,
+      })
+    })
+    it('should clamp paging rather than forwarding excessive values', async () => {
+      mockData.securityEvent.findMany.mockResolvedValue([])
+      await service.getUserSecurityEventsWithPaging('user-123', { take: 1_000, skip: -5 })
+      expect(mockData.securityEvent.findMany).toHaveBeenCalledWith({
+        where: { userId: 'user-123' },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
         skip: 0,
       })
     })

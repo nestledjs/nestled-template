@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { SecurityEvent } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => SecurityEvent)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedSecurityEventResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [SecurityEvent], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   securityEvents(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListSecurityEventInput, nullable: true })
@@ -27,8 +27,6 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   securityEventsCount(
     @Args({ name: 'input', type: () => ListSecurityEventInput, nullable: true })
     input?: ListSecurityEventInput,
@@ -37,8 +35,6 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Query(() => SecurityEvent, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   securityEvent(
     @Info() info: GraphQLResolveInfo,
     @Args('securityEventId') securityEventId: string,
@@ -47,8 +43,6 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Mutation(() => SecurityEvent, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createSecurityEvent(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateSecurityEventInput,
@@ -57,8 +51,6 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Mutation(() => SecurityEvent, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateSecurityEvent(
     @Info() info: GraphQLResolveInfo,
     @Args('securityEventId') securityEventId: string,
@@ -68,8 +60,6 @@ export class GeneratedSecurityEventResolver {
   }
 
   @Mutation(() => SecurityEvent, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteSecurityEvent(@Args('securityEventId') securityEventId: string) {
     return this.generatedService.deleteSecurityEvent(securityEventId)
   }

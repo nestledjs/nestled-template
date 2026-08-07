@@ -1,4 +1,5 @@
 import { ApiGeneratedCrudFeatureModule } from '@nestled-template/api/generated-crud/feature'
+import { ApiAdminCustomModule } from '@nestled-template/api/admin-custom'
 import { ApiCoreDataAccessModule } from '@nestled-template/api/core/data-access'
 import {
   AdminModule,
@@ -7,7 +8,6 @@ import {
   AuthModule,
   BillingModule,
   ContactMailerModule,
-  EmailModule,
   McpController,
   McpModule,
   OrganizationModule,
@@ -23,8 +23,7 @@ import { StripeModule } from '@nestled-template/api/integrations'
 import { GlobalAuthGuard, GuardsModule } from '@nestled-template/api/utils'
 import { ApiCoreFeatureModule } from '@nestled-template/api/core/feature'
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common'
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core'
-import { ViewerContextInterceptor } from '@nestled-template/api/core/helpers'
+import { APP_GUARD } from '@nestjs/core'
 import { LoggerMiddleware } from './applogger.middleware'
 import { ConfigModule } from '@nestjs/config'
 import {
@@ -34,19 +33,19 @@ import {
 } from '@nestled-template/api/config'
 import { StripeWebhookController } from './webhooks/stripe-webhook.controller'
 
-// Auto-generated modules with special functions,
+// Generated and framework infrastructure modules.
 export const coreModules = [
-  // Auto-generated modules with special functions,
   ApiCoreFeatureModule,
   GuardsModule,
   ApiCoreDataAccessModule,
   ApiGeneratedCrudFeatureModule,
 ]
-// Auto-generated modules for each data type/model,
+// Admin-only custom workflows that intentionally compose generated CRUD.
+export const adminModules = [ApiAdminCustomModule]
+// Explicit model-adjacent application extensions.
 export const defaultModules = [
   // Explicit model-adjacent extensions. Generated CRUD is registered by
   // ApiGeneratedCrudFeatureModule and does not depend on these modules.
-  EmailModule,
   OrganizationModule,
   UserPreferenceModule,
   PlanModule,
@@ -67,7 +66,7 @@ export const pluginModules = [
   McpModule,
 ]
 // Combined modules used in the app
-export const appModules = [...coreModules, ...defaultModules, ...pluginModules]
+export const appModules = [...coreModules, ...adminModules, ...defaultModules, ...pluginModules]
 
 @Module({
   imports: [
@@ -89,10 +88,6 @@ export const appModules = [...coreModules, ...defaultModules, ...pluginModules]
     // operation that forgets `@UseGuards` is reachable anonymously. Refuses anything that has not
     // declared an access level; the declared guards still perform the actual check.
     { provide: APP_GUARD, useClass: GlobalAuthGuard },
-    // Publishes the authenticated user for the duration of each request so the nested-select
-    // builder can authorize relation traversal. Interceptors run after guards, so req.user is
-    // already populated. Registered globally because generated resolvers cannot be edited.
-    { provide: APP_INTERCEPTOR, useClass: ViewerContextInterceptor },
   ],
 })
 export class AppModule implements NestModule {

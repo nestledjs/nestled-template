@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { SecurityEventType } from '@nestled-template/api/core/models'
+import { SecurityEventOrderDirection, SecurityEventPagingInput } from './dto'
 
 export interface SecurityEventContext {
   ipAddress?: string
@@ -154,15 +155,15 @@ export class SecurityEventsService {
     })
   }
 
-  /**
-   * Get user's security events with CorePaging support
-   */
-  async getUserSecurityEventsWithPaging(userId: string, input?: any) {
-    const { take = 50, skip = 0, orderBy = 'createdAt', orderDirection = 'desc' } = input || {}
+  /** Get a user's security events with an intentionally small public paging contract. */
+  async getUserSecurityEventsWithPaging(userId: string, input?: SecurityEventPagingInput) {
+    const take = Math.max(1, Math.min(input?.take ?? 50, 100))
+    const skip = Math.max(0, input?.skip ?? 0)
+    const orderDirection = input?.orderDirection ?? SecurityEventOrderDirection.DESC
 
     return this.data.securityEvent.findMany({
       where: { userId },
-      orderBy: { [orderBy]: orderDirection },
+      orderBy: { createdAt: orderDirection },
       take,
       skip,
     })

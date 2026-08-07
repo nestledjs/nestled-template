@@ -10,10 +10,6 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
 import { Organization, User } from '@nestled-template/api/core/models'
 import { defaultRoles, type InputJsonValue } from '@nestled-template/api/prisma'
 import {
-  CreateOrganizationInput,
-  UpdateOrganizationInput,
-} from '@nestled-template/api/generated-crud/data-access'
-import {
   AddOrganizationMemberInput,
   RemoveOrganizationMemberInput,
   UpdateMemberRoleInput,
@@ -24,6 +20,8 @@ import {
   RejectInvitationInput,
   SwitchOrganizationInput,
   TransferOrganizationOwnershipInput,
+  UserCreateOrganizationInput,
+  UserUpdateOrganizationInput,
 } from './dto'
 import { EmailService } from '@nestled-template/api/integrations'
 import { ConfigService } from '@nestjs/config'
@@ -161,7 +159,7 @@ export class OrganizationService {
    */
   async userCreateOrganization(
     userId: string,
-    input: CreateOrganizationInput,
+    input: UserCreateOrganizationInput,
   ): Promise<Organization> {
     // Create the organization
     const organization = await this.data.organization.create({
@@ -212,7 +210,7 @@ export class OrganizationService {
   async userUpdateOrganization(
     userId: string,
     organizationId: string,
-    input: UpdateOrganizationInput,
+    input: UserUpdateOrganizationInput,
   ): Promise<Organization> {
     // Organization identity and branding are owner-managed by default.
     const canUpdate = await this.isOwner(userId, organizationId)

@@ -15,10 +15,10 @@
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "paths": {
+      "@nestled-template/api/admin-custom": ["libs/api/admin-custom/src/index.ts"],
       "@nestled-template/api/config": ["libs/api/config/src/index.ts"],
       "@nestled-template/api/core/data-access": ["libs/api/core/data-access/src/index.ts"],
       "@nestled-template/api/core/feature": ["libs/api/core/feature/src/index.ts"],
-      "@nestled-template/api/core/helpers": ["libs/api/core/helpers/src/index.ts"],
       "@nestled-template/api/core/models": ["libs/api/core/models/src/index.ts"],
       "@nestled-template/api/custom": ["libs/api/custom/src/index.ts"],
       "@nestled-template/api/generated-crud/data-access": [

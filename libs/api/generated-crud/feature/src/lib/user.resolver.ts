@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { User } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => User)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedUserResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [User], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   users(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListUserInput, nullable: true }) input?: ListUserInput,
@@ -26,8 +26,6 @@ export class GeneratedUserResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   usersCount(
     @Args({ name: 'input', type: () => ListUserInput, nullable: true }) input?: ListUserInput,
   ) {
@@ -35,22 +33,16 @@ export class GeneratedUserResolver {
   }
 
   @Query(() => User, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   user(@Info() info: GraphQLResolveInfo, @Args('userId') userId: string) {
     return this.generatedService.user(info, userId)
   }
 
   @Mutation(() => User, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createUser(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateUserInput) {
     return this.generatedService.createUser(info, input)
   }
 
   @Mutation(() => User, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateUser(
     @Info() info: GraphQLResolveInfo,
     @Args('userId') userId: string,
@@ -60,8 +52,6 @@ export class GeneratedUserResolver {
   }
 
   @Mutation(() => User, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteUser(@Args('userId') userId: string) {
     return this.generatedService.deleteUser(userId)
   }

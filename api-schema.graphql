@@ -32,40 +32,46 @@ type Address {
 }
 
 input AddressFilterInput {
+  AND: [AddressFilterInput2!]
+  NOT: [AddressFilterInput2!]
+  OR: [AddressFilterInput2!]
   address1: StringFilterInput
   address2: StringFilterInput
   addressType: AddressTypeFilterInput
   city: StringFilterInput
-  country: CountryFilterInput2
+  country: CountryRelationFilterInput
   countryId: StringFilterInput
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   isPrimary: BooleanFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   postalCode: StringFilterInput
   region: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input AddressFilterInput2 {
+  AND: [AddressFilterInput3!]
+  NOT: [AddressFilterInput3!]
+  OR: [AddressFilterInput3!]
   address1: StringFilterInput
   address2: StringFilterInput
   addressType: AddressTypeFilterInput
   city: StringFilterInput
-  country: CountryFilterInput3
+  country: CountryRelationFilterInput2
   countryId: StringFilterInput
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   isPrimary: BooleanFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   postalCode: StringFilterInput
   region: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -108,6 +114,7 @@ enum AddressType {
 input AddressTypeFilterInput {
   equals: AddressType
   in: [AddressType!]
+  not: AddressType
 }
 
 type AdminAnalytics {
@@ -239,30 +246,36 @@ type ApiToken {
 }
 
 input ApiTokenFilterInput {
+  AND: [ApiTokenFilterInput2!]
+  NOT: [ApiTokenFilterInput2!]
+  OR: [ApiTokenFilterInput2!]
   createdAt: DateTimeFilterInput
   expiresAt: DateTimeFilterInput
   id: StringFilterInput
   lastUsedAt: DateTimeFilterInput
   name: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   revoked: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input ApiTokenFilterInput2 {
+  AND: [ApiTokenFilterInput3!]
+  NOT: [ApiTokenFilterInput3!]
+  OR: [ApiTokenFilterInput3!]
   createdAt: DateTimeFilterInput
   expiresAt: DateTimeFilterInput
   id: StringFilterInput
   lastUsedAt: DateTimeFilterInput
   name: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   revoked: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -305,28 +318,34 @@ type AuditLog {
 }
 
 input AuditLogFilterInput {
+  AND: [AuditLogFilterInput2!]
+  NOT: [AuditLogFilterInput2!]
+  OR: [AuditLogFilterInput2!]
   action: StringFilterInput
   createdAt: DateTimeFilterInput
   entityId: StringFilterInput
   entityType: StringFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input AuditLogFilterInput2 {
+  AND: [AuditLogFilterInput3!]
+  NOT: [AuditLogFilterInput3!]
+  OR: [AuditLogFilterInput3!]
   action: StringFilterInput
   createdAt: DateTimeFilterInput
   entityId: StringFilterInput
   entityType: StringFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -356,6 +375,7 @@ input AuditLogListRelationFilterInput2 {
 input BooleanFilterInput {
   equals: Boolean
   in: [Boolean!]
+  not: Boolean
 }
 
 input CancelInvitationInput {
@@ -402,6 +422,9 @@ type Country {
 }
 
 input CountryFilterInput {
+  AND: [CountryFilterInput2!]
+  NOT: [CountryFilterInput2!]
+  OR: [CountryFilterInput2!]
   addresses: AddressListRelationFilterInput
   alpha2: StringFilterInput
   alpha3: StringFilterInput
@@ -420,6 +443,9 @@ input CountryFilterInput {
 }
 
 input CountryFilterInput2 {
+  AND: [CountryFilterInput3!]
+  NOT: [CountryFilterInput3!]
+  OR: [CountryFilterInput3!]
   addresses: AddressListRelationFilterInput2
   alpha2: StringFilterInput
   alpha3: StringFilterInput
@@ -445,6 +471,48 @@ input CountryFilterInput3 {
   id: StringFilterInput
   intermediateRegion: StringFilterInput
   intermediateRegionCode: StringFilterInput
+  iso3166_2: StringFilterInput
+  name: StringFilterInput
+  region: StringFilterInput
+  regionCode: StringFilterInput
+  subRegion: StringFilterInput
+  subRegionCode: StringFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
+input CountryRelationFilterInput {
+  AND: [CountryFilterInput3!]
+  NOT: [CountryFilterInput3!]
+  OR: [CountryFilterInput3!]
+  addresses: AddressListRelationFilterInput2
+  alpha2: StringFilterInput
+  alpha3: StringFilterInput
+  countryCode: StringFilterInput
+  createdAt: DateTimeFilterInput
+  id: StringFilterInput
+  intermediateRegion: StringFilterInput
+  intermediateRegionCode: StringFilterInput
+  is: CountryFilterInput2
+  isNot: CountryFilterInput2
+  iso3166_2: StringFilterInput
+  name: StringFilterInput
+  region: StringFilterInput
+  regionCode: StringFilterInput
+  subRegion: StringFilterInput
+  subRegionCode: StringFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
+input CountryRelationFilterInput2 {
+  alpha2: StringFilterInput
+  alpha3: StringFilterInput
+  countryCode: StringFilterInput
+  createdAt: DateTimeFilterInput
+  id: StringFilterInput
+  intermediateRegion: StringFilterInput
+  intermediateRegionCode: StringFilterInput
+  is: CountryFilterInput3
+  isNot: CountryFilterInput3
   iso3166_2: StringFilterInput
   name: StringFilterInput
   region: StringFilterInput
@@ -795,6 +863,7 @@ input DateTimeFilterInput {
   in: [DateTime!]
   lt: DateTime
   lte: DateTime
+  not: DateTime
 }
 
 """An arbitrary-precision Decimal type"""
@@ -821,32 +890,38 @@ type Email {
 }
 
 input EmailFilterInput {
+  AND: [EmailFilterInput2!]
+  NOT: [EmailFilterInput2!]
+  OR: [EmailFilterInput2!]
   createdAt: DateTimeFilterInput
   email: StringFilterInput
   emailType: EmailTypeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   primary: BooleanFilterInput
   public: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
   verified: BooleanFilterInput
   verifyExpires: DateTimeFilterInput
 }
 
 input EmailFilterInput2 {
+  AND: [EmailFilterInput3!]
+  NOT: [EmailFilterInput3!]
+  OR: [EmailFilterInput3!]
   createdAt: DateTimeFilterInput
   email: StringFilterInput
   emailType: EmailTypeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   primary: BooleanFilterInput
   public: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
   verified: BooleanFilterInput
   verifyExpires: DateTimeFilterInput
@@ -887,6 +962,7 @@ enum EmailType {
 input EmailTypeFilterInput {
   equals: EmailType
   in: [EmailType!]
+  not: EmailType
 }
 
 input EmulateUserInput {
@@ -917,6 +993,7 @@ enum FailureReason {
 input FailureReasonFilterInput {
   equals: FailureReason
   in: [FailureReason!]
+  not: FailureReason
 }
 
 input FloatFilterInput {
@@ -926,6 +1003,7 @@ input FloatFilterInput {
   in: [Float!]
   lt: Float
   lte: Float
+  not: Float
 }
 
 input ForgotPasswordInput {
@@ -951,6 +1029,7 @@ input IntFilterInput {
   in: [Int!]
   lt: Int
   lte: Int
+  not: Int
 }
 
 type InvitationDetails {
@@ -979,15 +1058,18 @@ type Invite {
 }
 
 input InviteFilterInput {
+  AND: [InviteFilterInput2!]
+  NOT: [InviteFilterInput2!]
+  OR: [InviteFilterInput2!]
   createdAt: DateTimeFilterInput
   email: StringFilterInput
   expiresAt: DateTimeFilterInput
   id: StringFilterInput
-  inviter: UserFilterInput2
+  inviter: UserRelationFilterInput
   inviterId: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
-  role: RoleFilterInput2
+  role: RoleRelationFilterInput
   roleId: StringFilterInput
   status: InviteStatusFilterInput
   token: StringFilterInput
@@ -995,15 +1077,18 @@ input InviteFilterInput {
 }
 
 input InviteFilterInput2 {
+  AND: [InviteFilterInput3!]
+  NOT: [InviteFilterInput3!]
+  OR: [InviteFilterInput3!]
   createdAt: DateTimeFilterInput
   email: StringFilterInput
   expiresAt: DateTimeFilterInput
   id: StringFilterInput
-  inviter: UserFilterInput3
+  inviter: UserRelationFilterInput2
   inviterId: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
-  role: RoleFilterInput3
+  role: RoleRelationFilterInput2
   roleId: StringFilterInput
   status: InviteStatusFilterInput
   token: StringFilterInput
@@ -1045,6 +1130,7 @@ enum InviteStatus {
 input InviteStatusFilterInput {
   equals: InviteStatus
   in: [InviteStatus!]
+  not: InviteStatus
 }
 
 """
@@ -1070,26 +1156,32 @@ type Link {
 }
 
 input LinkFilterInput {
+  AND: [LinkFilterInput2!]
+  NOT: [LinkFilterInput2!]
+  OR: [LinkFilterInput2!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   name: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   updatedAt: DateTimeFilterInput
   url: StringFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input LinkFilterInput2 {
+  AND: [LinkFilterInput3!]
+  NOT: [LinkFilterInput3!]
+  OR: [LinkFilterInput3!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   name: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   updatedAt: DateTimeFilterInput
   url: StringFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -1621,6 +1713,9 @@ type LoginAttempt {
 }
 
 input LoginAttemptFilterInput {
+  AND: [LoginAttemptFilterInput2!]
+  NOT: [LoginAttemptFilterInput2!]
+  OR: [LoginAttemptFilterInput2!]
   createdAt: DateTimeFilterInput
   email: StringFilterInput
   id: StringFilterInput
@@ -1629,12 +1724,15 @@ input LoginAttemptFilterInput {
   reason: FailureReasonFilterInput
   success: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userAgent: StringFilterInput
   userId: StringFilterInput
 }
 
 input LoginAttemptFilterInput2 {
+  AND: [LoginAttemptFilterInput3!]
+  NOT: [LoginAttemptFilterInput3!]
+  OR: [LoginAttemptFilterInput3!]
   createdAt: DateTimeFilterInput
   email: StringFilterInput
   id: StringFilterInput
@@ -1643,7 +1741,7 @@ input LoginAttemptFilterInput2 {
   reason: FailureReasonFilterInput
   success: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userAgent: StringFilterInput
   userId: StringFilterInput
 }
@@ -1804,11 +1902,11 @@ type Mutation {
   uploadFile(file: Upload!, folder: String): UploadedFile!
   uploadOrganizationLogo(file: Upload!): UploadedFile!
   uploadUserAvatar(file: Upload!): UploadedFile!
-  userCreateOrganization(input: CreateOrganizationInput!): Organization!
+  userCreateOrganization(input: UserCreateOrganizationInput!): Organization!
   userCreateUserPreference(input: SecureCreateUserPreferenceInput!): UserPreference
   userDeleteOrganization(organizationId: String!): Boolean!
   userDeleteUserPreference(userPreferenceId: String!): UserPreference
-  userUpdateOrganization(input: UpdateOrganizationInput!): Organization!
+  userUpdateOrganization(input: UserUpdateOrganizationInput!): Organization!
   userUpdateUserPreference(input: SecureUpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
   verify2FACode(input: Verify2FAInput!): Boolean!
   verifyEmail(input: VerifyEmailInput!): User!
@@ -1826,22 +1924,28 @@ type OAuthAccount {
 }
 
 input OAuthAccountFilterInput {
+  AND: [OAuthAccountFilterInput2!]
+  NOT: [OAuthAccountFilterInput2!]
+  OR: [OAuthAccountFilterInput2!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   provider: StringFilterInput
   providerUserId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input OAuthAccountFilterInput2 {
+  AND: [OAuthAccountFilterInput3!]
+  NOT: [OAuthAccountFilterInput3!]
+  OR: [OAuthAccountFilterInput3!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   provider: StringFilterInput
   providerUserId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -1900,7 +2004,10 @@ type Organization {
 }
 
 input OrganizationFilterInput {
+  AND: [OrganizationFilterInput2!]
   AuditLog: AuditLogListRelationFilterInput
+  NOT: [OrganizationFilterInput2!]
+  OR: [OrganizationFilterInput2!]
   Team: TeamListRelationFilterInput
   addresses: AddressListRelationFilterInput
   apiTokens: ApiTokenListRelationFilterInput
@@ -1910,18 +2017,21 @@ input OrganizationFilterInput {
   images: StoredFileListRelationFilterInput
   invites: InviteListRelationFilterInput
   links: LinkListRelationFilterInput
-  logo: StoredFileFilterInput2
+  logo: StoredFileRelationFilterInput
   logoId: StringFilterInput
   members: OrganizationMemberListRelationFilterInput
   name: StringFilterInput
   phoneNumbers: PhoneNumberListRelationFilterInput
   roles: RoleListRelationFilterInput
-  subscription: SubscriptionFilterInput2
+  subscription: SubscriptionRelationFilterInput
   updatedAt: DateTimeFilterInput
 }
 
 input OrganizationFilterInput2 {
+  AND: [OrganizationFilterInput3!]
   AuditLog: AuditLogListRelationFilterInput2
+  NOT: [OrganizationFilterInput3!]
+  OR: [OrganizationFilterInput3!]
   Team: TeamListRelationFilterInput2
   addresses: AddressListRelationFilterInput2
   apiTokens: ApiTokenListRelationFilterInput2
@@ -1931,13 +2041,13 @@ input OrganizationFilterInput2 {
   images: StoredFileListRelationFilterInput2
   invites: InviteListRelationFilterInput2
   links: LinkListRelationFilterInput2
-  logo: StoredFileFilterInput3
+  logo: StoredFileRelationFilterInput2
   logoId: StringFilterInput
   members: OrganizationMemberListRelationFilterInput2
   name: StringFilterInput
   phoneNumbers: PhoneNumberListRelationFilterInput2
   roles: RoleListRelationFilterInput2
-  subscription: SubscriptionFilterInput3
+  subscription: SubscriptionRelationFilterInput2
   updatedAt: DateTimeFilterInput
 }
 
@@ -1962,26 +2072,32 @@ type OrganizationMember {
 }
 
 input OrganizationMemberFilterInput {
+  AND: [OrganizationMemberFilterInput2!]
+  NOT: [OrganizationMemberFilterInput2!]
+  OR: [OrganizationMemberFilterInput2!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
-  role: RoleFilterInput2
+  role: RoleRelationFilterInput
   roleId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input OrganizationMemberFilterInput2 {
+  AND: [OrganizationMemberFilterInput3!]
+  NOT: [OrganizationMemberFilterInput3!]
+  OR: [OrganizationMemberFilterInput3!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
-  role: RoleFilterInput3
+  role: RoleRelationFilterInput2
   roleId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -2006,6 +2122,42 @@ input OrganizationMemberListRelationFilterInput2 {
   some: OrganizationMemberFilterInput3
 }
 
+input OrganizationRelationFilterInput {
+  AND: [OrganizationFilterInput3!]
+  AuditLog: AuditLogListRelationFilterInput2
+  NOT: [OrganizationFilterInput3!]
+  OR: [OrganizationFilterInput3!]
+  Team: TeamListRelationFilterInput2
+  addresses: AddressListRelationFilterInput2
+  apiTokens: ApiTokenListRelationFilterInput2
+  createdAt: DateTimeFilterInput
+  emails: EmailListRelationFilterInput2
+  id: StringFilterInput
+  images: StoredFileListRelationFilterInput2
+  invites: InviteListRelationFilterInput2
+  is: OrganizationFilterInput2
+  isNot: OrganizationFilterInput2
+  links: LinkListRelationFilterInput2
+  logo: StoredFileRelationFilterInput2
+  logoId: StringFilterInput
+  members: OrganizationMemberListRelationFilterInput2
+  name: StringFilterInput
+  phoneNumbers: PhoneNumberListRelationFilterInput2
+  roles: RoleListRelationFilterInput2
+  subscription: SubscriptionRelationFilterInput2
+  updatedAt: DateTimeFilterInput
+}
+
+input OrganizationRelationFilterInput2 {
+  createdAt: DateTimeFilterInput
+  id: StringFilterInput
+  is: OrganizationFilterInput3
+  isNot: OrganizationFilterInput3
+  logoId: StringFilterInput
+  name: StringFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
 type Permission {
   action: String!
   description: String
@@ -2015,6 +2167,9 @@ type Permission {
 }
 
 input PermissionFilterInput {
+  AND: [PermissionFilterInput2!]
+  NOT: [PermissionFilterInput2!]
+  OR: [PermissionFilterInput2!]
   action: StringFilterInput
   description: StringFilterInput
   id: StringFilterInput
@@ -2023,6 +2178,9 @@ input PermissionFilterInput {
 }
 
 input PermissionFilterInput2 {
+  AND: [PermissionFilterInput3!]
+  NOT: [PermissionFilterInput3!]
+  OR: [PermissionFilterInput3!]
   action: StringFilterInput
   description: StringFilterInput
   id: StringFilterInput
@@ -2063,28 +2221,34 @@ type PhoneNumber {
 }
 
 input PhoneNumberFilterInput {
+  AND: [PhoneNumberFilterInput2!]
+  NOT: [PhoneNumberFilterInput2!]
+  OR: [PhoneNumberFilterInput2!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   phone: StringFilterInput
   phoneType: PhoneTypeFilterInput
   primary: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input PhoneNumberFilterInput2 {
+  AND: [PhoneNumberFilterInput3!]
+  NOT: [PhoneNumberFilterInput3!]
+  OR: [PhoneNumberFilterInput3!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   phone: StringFilterInput
   phoneType: PhoneTypeFilterInput
   primary: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -2121,6 +2285,7 @@ enum PhoneType {
 input PhoneTypeFilterInput {
   equals: PhoneType
   in: [PhoneType!]
+  not: PhoneType
 }
 
 type Plan {
@@ -2141,6 +2306,9 @@ type Plan {
 }
 
 input PlanFilterInput {
+  AND: [PlanFilterInput2!]
+  NOT: [PlanFilterInput2!]
+  OR: [PlanFilterInput2!]
   active: BooleanFilterInput
   createdAt: DateTimeFilterInput
   description: StringFilterInput
@@ -2156,6 +2324,9 @@ input PlanFilterInput {
 }
 
 input PlanFilterInput2 {
+  AND: [PlanFilterInput3!]
+  NOT: [PlanFilterInput3!]
+  OR: [PlanFilterInput3!]
   active: BooleanFilterInput
   createdAt: DateTimeFilterInput
   description: StringFilterInput
@@ -2176,6 +2347,42 @@ input PlanFilterInput3 {
   description: StringFilterInput
   id: StringFilterInput
   interval: StringFilterInput
+  name: StringFilterInput
+  price: FloatFilterInput
+  stripePriceId: StringFilterInput
+  stripeProductId: StringFilterInput
+  trialPeriodDays: IntFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
+input PlanRelationFilterInput {
+  AND: [PlanFilterInput3!]
+  NOT: [PlanFilterInput3!]
+  OR: [PlanFilterInput3!]
+  active: BooleanFilterInput
+  createdAt: DateTimeFilterInput
+  description: StringFilterInput
+  id: StringFilterInput
+  interval: StringFilterInput
+  is: PlanFilterInput2
+  isNot: PlanFilterInput2
+  name: StringFilterInput
+  price: FloatFilterInput
+  stripePriceId: StringFilterInput
+  stripeProductId: StringFilterInput
+  subscriptions: SubscriptionListRelationFilterInput2
+  trialPeriodDays: IntFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
+input PlanRelationFilterInput2 {
+  active: BooleanFilterInput
+  createdAt: DateTimeFilterInput
+  description: StringFilterInput
+  id: StringFilterInput
+  interval: StringFilterInput
+  is: PlanFilterInput3
+  isNot: PlanFilterInput3
   name: StringFilterInput
   price: FloatFilterInput
   stripePriceId: StringFilterInput
@@ -2229,7 +2436,7 @@ type Query {
   loginAttemptsCount(input: ListLoginAttemptInput): CorePaging
   me: User
   myOrganizations: [Organization!]!
-  mySecurityEvents(input: ListSecurityEventInput): [SecurityEvent!]!
+  mySecurityEvents(input: SecurityEventPagingInput): [SecurityEvent!]!
   oAuthAccount(oAuthAccountId: String!): OAuthAccount
   oAuthAccounts(input: ListOAuthAccountInput): [OAuthAccount!]
   oAuthAccountsCount(input: ListOAuthAccountInput): CorePaging
@@ -2341,24 +2548,30 @@ type Role {
 }
 
 input RoleFilterInput {
+  AND: [RoleFilterInput2!]
+  NOT: [RoleFilterInput2!]
+  OR: [RoleFilterInput2!]
   description: StringFilterInput
   id: StringFilterInput
   invites: InviteListRelationFilterInput
   members: OrganizationMemberListRelationFilterInput
   name: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   permissions: PermissionListRelationFilterInput
   teamMembers: TeamMemberListRelationFilterInput
 }
 
 input RoleFilterInput2 {
+  AND: [RoleFilterInput3!]
+  NOT: [RoleFilterInput3!]
+  OR: [RoleFilterInput3!]
   description: StringFilterInput
   id: StringFilterInput
   invites: InviteListRelationFilterInput2
   members: OrganizationMemberListRelationFilterInput2
   name: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   permissions: PermissionListRelationFilterInput2
   teamMembers: TeamMemberListRelationFilterInput2
@@ -2381,6 +2594,32 @@ input RoleListRelationFilterInput2 {
   every: RoleFilterInput3
   none: RoleFilterInput3
   some: RoleFilterInput3
+}
+
+input RoleRelationFilterInput {
+  AND: [RoleFilterInput3!]
+  NOT: [RoleFilterInput3!]
+  OR: [RoleFilterInput3!]
+  description: StringFilterInput
+  id: StringFilterInput
+  invites: InviteListRelationFilterInput2
+  is: RoleFilterInput2
+  isNot: RoleFilterInput2
+  members: OrganizationMemberListRelationFilterInput2
+  name: StringFilterInput
+  organization: OrganizationRelationFilterInput2
+  organizationId: StringFilterInput
+  permissions: PermissionListRelationFilterInput2
+  teamMembers: TeamMemberListRelationFilterInput2
+}
+
+input RoleRelationFilterInput2 {
+  description: StringFilterInput
+  id: StringFilterInput
+  is: RoleFilterInput3
+  isNot: RoleFilterInput3
+  name: StringFilterInput
+  organizationId: StringFilterInput
 }
 
 input RotateApiTokenInput {
@@ -2411,23 +2650,29 @@ type SecurityEvent {
 }
 
 input SecurityEventFilterInput {
+  AND: [SecurityEventFilterInput2!]
+  NOT: [SecurityEventFilterInput2!]
+  OR: [SecurityEventFilterInput2!]
   createdAt: DateTimeFilterInput
   eventType: SecurityEventTypeFilterInput
   id: StringFilterInput
   ipAddress: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userAgent: StringFilterInput
   userId: StringFilterInput
 }
 
 input SecurityEventFilterInput2 {
+  AND: [SecurityEventFilterInput3!]
+  NOT: [SecurityEventFilterInput3!]
+  OR: [SecurityEventFilterInput3!]
   createdAt: DateTimeFilterInput
   eventType: SecurityEventTypeFilterInput
   id: StringFilterInput
   ipAddress: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userAgent: StringFilterInput
   userId: StringFilterInput
 }
@@ -2454,6 +2699,17 @@ input SecurityEventListRelationFilterInput2 {
   some: SecurityEventFilterInput3
 }
 
+enum SecurityEventOrderDirection {
+  ASC
+  DESC
+}
+
+input SecurityEventPagingInput {
+  orderDirection: SecurityEventOrderDirection = DESC
+  skip: Int = 0
+  take: Int = 50
+}
+
 enum SecurityEventType {
   ACCOUNT_LOCKED
   ACCOUNT_UNLOCKED
@@ -2473,6 +2729,7 @@ enum SecurityEventType {
 input SecurityEventTypeFilterInput {
   equals: SecurityEventType
   in: [SecurityEventType!]
+  not: SecurityEventType
 }
 
 type SecuritySummary {
@@ -2499,6 +2756,7 @@ enum StorageProvider {
 input StorageProviderFilterInput {
   equals: StorageProvider
   in: [StorageProvider!]
+  not: StorageProvider
 }
 
 type StoredFile {
@@ -2526,15 +2784,18 @@ type StoredFile {
 }
 
 input StoredFileFilterInput {
+  AND: [StoredFileFilterInput2!]
+  NOT: [StoredFileFilterInput2!]
+  OR: [StoredFileFilterInput2!]
   createdAt: DateTimeFilterInput
   filename: StringFilterInput
   folder: StringFilterInput
   height: IntFilterInput
   id: StringFilterInput
   mimeType: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
-  organizationLogo: OrganizationFilterInput2
+  organizationLogo: OrganizationRelationFilterInput
   originalName: StringFilterInput
   provider: StorageProviderFilterInput
   providerFileId: StringFilterInput
@@ -2542,22 +2803,25 @@ input StoredFileFilterInput {
   size: IntFilterInput
   updatedAt: DateTimeFilterInput
   url: StringFilterInput
-  user: UserFilterInput2
-  userAvatar: UserFilterInput2
+  user: UserRelationFilterInput
+  userAvatar: UserRelationFilterInput
   userId: StringFilterInput
   width: IntFilterInput
 }
 
 input StoredFileFilterInput2 {
+  AND: [StoredFileFilterInput3!]
+  NOT: [StoredFileFilterInput3!]
+  OR: [StoredFileFilterInput3!]
   createdAt: DateTimeFilterInput
   filename: StringFilterInput
   folder: StringFilterInput
   height: IntFilterInput
   id: StringFilterInput
   mimeType: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
-  organizationLogo: OrganizationFilterInput3
+  organizationLogo: OrganizationRelationFilterInput2
   originalName: StringFilterInput
   provider: StorageProviderFilterInput
   providerFileId: StringFilterInput
@@ -2565,8 +2829,8 @@ input StoredFileFilterInput2 {
   size: IntFilterInput
   updatedAt: DateTimeFilterInput
   url: StringFilterInput
-  user: UserFilterInput3
-  userAvatar: UserFilterInput3
+  user: UserRelationFilterInput2
+  userAvatar: UserRelationFilterInput2
   userId: StringFilterInput
   width: IntFilterInput
 }
@@ -2602,11 +2866,61 @@ input StoredFileListRelationFilterInput2 {
   some: StoredFileFilterInput3
 }
 
+input StoredFileRelationFilterInput {
+  AND: [StoredFileFilterInput3!]
+  NOT: [StoredFileFilterInput3!]
+  OR: [StoredFileFilterInput3!]
+  createdAt: DateTimeFilterInput
+  filename: StringFilterInput
+  folder: StringFilterInput
+  height: IntFilterInput
+  id: StringFilterInput
+  is: StoredFileFilterInput2
+  isNot: StoredFileFilterInput2
+  mimeType: StringFilterInput
+  organization: OrganizationRelationFilterInput2
+  organizationId: StringFilterInput
+  organizationLogo: OrganizationRelationFilterInput2
+  originalName: StringFilterInput
+  provider: StorageProviderFilterInput
+  providerFileId: StringFilterInput
+  publicUrl: StringFilterInput
+  size: IntFilterInput
+  updatedAt: DateTimeFilterInput
+  url: StringFilterInput
+  user: UserRelationFilterInput2
+  userAvatar: UserRelationFilterInput2
+  userId: StringFilterInput
+  width: IntFilterInput
+}
+
+input StoredFileRelationFilterInput2 {
+  createdAt: DateTimeFilterInput
+  filename: StringFilterInput
+  folder: StringFilterInput
+  height: IntFilterInput
+  id: StringFilterInput
+  is: StoredFileFilterInput3
+  isNot: StoredFileFilterInput3
+  mimeType: StringFilterInput
+  organizationId: StringFilterInput
+  originalName: StringFilterInput
+  provider: StorageProviderFilterInput
+  providerFileId: StringFilterInput
+  publicUrl: StringFilterInput
+  size: IntFilterInput
+  updatedAt: DateTimeFilterInput
+  url: StringFilterInput
+  userId: StringFilterInput
+  width: IntFilterInput
+}
+
 input StringFilterInput {
   contains: String
   endsWith: String
   equals: String
   in: [String!]
+  not: String
   startsWith: String
 }
 
@@ -2631,14 +2945,17 @@ type Subscription {
 }
 
 input SubscriptionFilterInput {
+  AND: [SubscriptionFilterInput2!]
+  NOT: [SubscriptionFilterInput2!]
+  OR: [SubscriptionFilterInput2!]
   cancelAt: DateTimeFilterInput
   cancelAtPeriodEnd: BooleanFilterInput
   canceledAt: DateTimeFilterInput
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
-  plan: PlanFilterInput2
+  plan: PlanRelationFilterInput
   planId: StringFilterInput
   status: SubscriptionStatusFilterInput
   stripeCurrentPeriodEnd: DateTimeFilterInput
@@ -2651,14 +2968,17 @@ input SubscriptionFilterInput {
 }
 
 input SubscriptionFilterInput2 {
+  AND: [SubscriptionFilterInput3!]
+  NOT: [SubscriptionFilterInput3!]
+  OR: [SubscriptionFilterInput3!]
   cancelAt: DateTimeFilterInput
   cancelAtPeriodEnd: BooleanFilterInput
   canceledAt: DateTimeFilterInput
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
-  plan: PlanFilterInput3
+  plan: PlanRelationFilterInput2
   planId: StringFilterInput
   status: SubscriptionStatusFilterInput
   stripeCurrentPeriodEnd: DateTimeFilterInput
@@ -2700,6 +3020,51 @@ input SubscriptionListRelationFilterInput2 {
   some: SubscriptionFilterInput3
 }
 
+input SubscriptionRelationFilterInput {
+  AND: [SubscriptionFilterInput3!]
+  NOT: [SubscriptionFilterInput3!]
+  OR: [SubscriptionFilterInput3!]
+  cancelAt: DateTimeFilterInput
+  cancelAtPeriodEnd: BooleanFilterInput
+  canceledAt: DateTimeFilterInput
+  createdAt: DateTimeFilterInput
+  id: StringFilterInput
+  is: SubscriptionFilterInput2
+  isNot: SubscriptionFilterInput2
+  organization: OrganizationRelationFilterInput2
+  organizationId: StringFilterInput
+  plan: PlanRelationFilterInput2
+  planId: StringFilterInput
+  status: SubscriptionStatusFilterInput
+  stripeCurrentPeriodEnd: DateTimeFilterInput
+  stripeCustomerId: StringFilterInput
+  stripePriceId: StringFilterInput
+  stripeSubscriptionId: StringFilterInput
+  trialEnd: DateTimeFilterInput
+  trialStart: DateTimeFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
+input SubscriptionRelationFilterInput2 {
+  cancelAt: DateTimeFilterInput
+  cancelAtPeriodEnd: BooleanFilterInput
+  canceledAt: DateTimeFilterInput
+  createdAt: DateTimeFilterInput
+  id: StringFilterInput
+  is: SubscriptionFilterInput3
+  isNot: SubscriptionFilterInput3
+  organizationId: StringFilterInput
+  planId: StringFilterInput
+  status: SubscriptionStatusFilterInput
+  stripeCurrentPeriodEnd: DateTimeFilterInput
+  stripeCustomerId: StringFilterInput
+  stripePriceId: StringFilterInput
+  stripeSubscriptionId: StringFilterInput
+  trialEnd: DateTimeFilterInput
+  trialStart: DateTimeFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
 enum SubscriptionStatus {
   ACTIVE
   CANCELED
@@ -2712,6 +3077,7 @@ enum SubscriptionStatus {
 input SubscriptionStatusFilterInput {
   equals: SubscriptionStatus
   in: [SubscriptionStatus!]
+  not: SubscriptionStatus
 }
 
 input SwitchOrganizationInput {
@@ -2730,23 +3096,29 @@ type Team {
 }
 
 input TeamFilterInput {
+  AND: [TeamFilterInput2!]
+  NOT: [TeamFilterInput2!]
+  OR: [TeamFilterInput2!]
   createdAt: DateTimeFilterInput
   description: StringFilterInput
   id: StringFilterInput
   members: TeamMemberListRelationFilterInput
   name: StringFilterInput
-  organization: OrganizationFilterInput2
+  organization: OrganizationRelationFilterInput
   organizationId: StringFilterInput
   updatedAt: DateTimeFilterInput
 }
 
 input TeamFilterInput2 {
+  AND: [TeamFilterInput3!]
+  NOT: [TeamFilterInput3!]
+  OR: [TeamFilterInput3!]
   createdAt: DateTimeFilterInput
   description: StringFilterInput
   id: StringFilterInput
   members: TeamMemberListRelationFilterInput2
   name: StringFilterInput
-  organization: OrganizationFilterInput3
+  organization: OrganizationRelationFilterInput2
   organizationId: StringFilterInput
   updatedAt: DateTimeFilterInput
 }
@@ -2785,26 +3157,32 @@ type TeamMember {
 }
 
 input TeamMemberFilterInput {
+  AND: [TeamMemberFilterInput2!]
+  NOT: [TeamMemberFilterInput2!]
+  OR: [TeamMemberFilterInput2!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  role: RoleFilterInput2
+  role: RoleRelationFilterInput
   roleId: StringFilterInput
-  team: TeamFilterInput2
+  team: TeamRelationFilterInput
   teamId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input TeamMemberFilterInput2 {
+  AND: [TeamMemberFilterInput3!]
+  NOT: [TeamMemberFilterInput3!]
+  OR: [TeamMemberFilterInput3!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
-  role: RoleFilterInput3
+  role: RoleRelationFilterInput2
   roleId: StringFilterInput
-  team: TeamFilterInput3
+  team: TeamRelationFilterInput2
   teamId: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -2829,6 +3207,33 @@ input TeamMemberListRelationFilterInput2 {
   some: TeamMemberFilterInput3
 }
 
+input TeamRelationFilterInput {
+  AND: [TeamFilterInput3!]
+  NOT: [TeamFilterInput3!]
+  OR: [TeamFilterInput3!]
+  createdAt: DateTimeFilterInput
+  description: StringFilterInput
+  id: StringFilterInput
+  is: TeamFilterInput2
+  isNot: TeamFilterInput2
+  members: TeamMemberListRelationFilterInput2
+  name: StringFilterInput
+  organization: OrganizationRelationFilterInput2
+  organizationId: StringFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
+input TeamRelationFilterInput2 {
+  createdAt: DateTimeFilterInput
+  description: StringFilterInput
+  id: StringFilterInput
+  is: TeamFilterInput3
+  isNot: TeamFilterInput3
+  name: StringFilterInput
+  organizationId: StringFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
 input TransferOwnershipInput {
   newOwnerUserId: String!
   organizationId: String!
@@ -2844,6 +3249,7 @@ enum TwoFactorMethod {
 input TwoFactorMethodFilterInput {
   equals: TwoFactorMethod
   in: [TwoFactorMethod!]
+  not: TwoFactorMethod
 }
 
 input UnlinkOAuthInput {
@@ -3244,8 +3650,15 @@ type User {
   updatedAt: DateTime!
 }
 
+input UserCreateOrganizationInput {
+  name: String!
+}
+
 input UserFilterInput {
+  AND: [UserFilterInput2!]
   AuditLog: AuditLogListRelationFilterInput
+  NOT: [UserFilterInput2!]
+  OR: [UserFilterInput2!]
   SecurityEvent: SecurityEventListRelationFilterInput
   TeamMember: TeamMemberListRelationFilterInput
   UserPreference: UserPreferenceListRelationFilterInput
@@ -3253,7 +3666,7 @@ input UserFilterInput {
   activeSessions: UserSessionListRelationFilterInput
   addresses: AddressListRelationFilterInput
   apiTokens: ApiTokenListRelationFilterInput
-  avatar: StoredFileFilterInput2
+  avatar: StoredFileRelationFilterInput
   avatarId: StringFilterInput
   bio: StringFilterInput
   createdAt: DateTimeFilterInput
@@ -3285,7 +3698,10 @@ input UserFilterInput {
 }
 
 input UserFilterInput2 {
+  AND: [UserFilterInput3!]
   AuditLog: AuditLogListRelationFilterInput2
+  NOT: [UserFilterInput3!]
+  OR: [UserFilterInput3!]
   SecurityEvent: SecurityEventListRelationFilterInput2
   TeamMember: TeamMemberListRelationFilterInput2
   UserPreference: UserPreferenceListRelationFilterInput2
@@ -3293,7 +3709,7 @@ input UserFilterInput2 {
   activeSessions: UserSessionListRelationFilterInput2
   addresses: AddressListRelationFilterInput2
   apiTokens: ApiTokenListRelationFilterInput2
-  avatar: StoredFileFilterInput3
+  avatar: StoredFileRelationFilterInput2
   avatarId: StringFilterInput
   bio: StringFilterInput
   createdAt: DateTimeFilterInput
@@ -3359,21 +3775,27 @@ type UserPreference {
 }
 
 input UserPreferenceFilterInput {
+  AND: [UserPreferenceFilterInput2!]
+  NOT: [UserPreferenceFilterInput2!]
+  OR: [UserPreferenceFilterInput2!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   key: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
   value: StringFilterInput
 }
 
 input UserPreferenceFilterInput2 {
+  AND: [UserPreferenceFilterInput3!]
+  NOT: [UserPreferenceFilterInput3!]
+  OR: [UserPreferenceFilterInput3!]
   createdAt: DateTimeFilterInput
   id: StringFilterInput
   key: StringFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
   value: StringFilterInput
 }
@@ -3399,6 +3821,77 @@ input UserPreferenceListRelationFilterInput2 {
   some: UserPreferenceFilterInput3
 }
 
+input UserRelationFilterInput {
+  AND: [UserFilterInput3!]
+  AuditLog: AuditLogListRelationFilterInput2
+  NOT: [UserFilterInput3!]
+  OR: [UserFilterInput3!]
+  SecurityEvent: SecurityEventListRelationFilterInput2
+  TeamMember: TeamMemberListRelationFilterInput2
+  UserPreference: UserPreferenceListRelationFilterInput2
+  activeOrganizationId: StringFilterInput
+  activeSessions: UserSessionListRelationFilterInput2
+  addresses: AddressListRelationFilterInput2
+  apiTokens: ApiTokenListRelationFilterInput2
+  avatar: StoredFileRelationFilterInput2
+  avatarId: StringFilterInput
+  bio: StringFilterInput
+  createdAt: DateTimeFilterInput
+  deactivatedAt: DateTimeFilterInput
+  displayName: StringFilterInput
+  emailValidated: BooleanFilterInput
+  emails: EmailListRelationFilterInput2
+  failedLoginCount: IntFilterInput
+  firstName: StringFilterInput
+  id: StringFilterInput
+  images: StoredFileListRelationFilterInput2
+  invitesSent: InviteListRelationFilterInput2
+  is: UserFilterInput2
+  isActive: BooleanFilterInput
+  isNot: UserFilterInput2
+  isSuperAdmin: BooleanFilterInput
+  lastFailedLogin: DateTimeFilterInput
+  lastName: StringFilterInput
+  lastSuccessfulLogin: DateTimeFilterInput
+  links: LinkListRelationFilterInput2
+  lockedUntil: DateTimeFilterInput
+  loginAttempts: LoginAttemptListRelationFilterInput2
+  oAuthAccounts: OAuthAccountListRelationFilterInput2
+  organizations: OrganizationMemberListRelationFilterInput2
+  phoneNumbers: PhoneNumberListRelationFilterInput2
+  privacyPolicyAcceptedAt: DateTimeFilterInput
+  termsAcceptedAt: DateTimeFilterInput
+  twoFactorEnabled: BooleanFilterInput
+  twoFactorMethod: TwoFactorMethodFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
+input UserRelationFilterInput2 {
+  activeOrganizationId: StringFilterInput
+  avatarId: StringFilterInput
+  bio: StringFilterInput
+  createdAt: DateTimeFilterInput
+  deactivatedAt: DateTimeFilterInput
+  displayName: StringFilterInput
+  emailValidated: BooleanFilterInput
+  failedLoginCount: IntFilterInput
+  firstName: StringFilterInput
+  id: StringFilterInput
+  is: UserFilterInput3
+  isActive: BooleanFilterInput
+  isNot: UserFilterInput3
+  isSuperAdmin: BooleanFilterInput
+  lastFailedLogin: DateTimeFilterInput
+  lastName: StringFilterInput
+  lastSuccessfulLogin: DateTimeFilterInput
+  lockedUntil: DateTimeFilterInput
+  privacyPolicyAcceptedAt: DateTimeFilterInput
+  termsAcceptedAt: DateTimeFilterInput
+  twoFactorEnabled: BooleanFilterInput
+  twoFactorMethod: TwoFactorMethodFilterInput
+  updatedAt: DateTimeFilterInput
+}
+
 type UserSession {
   createdAt: DateTime!
   deviceInfo: String
@@ -3413,6 +3906,9 @@ type UserSession {
 }
 
 input UserSessionFilterInput {
+  AND: [UserSessionFilterInput2!]
+  NOT: [UserSessionFilterInput2!]
+  OR: [UserSessionFilterInput2!]
   createdAt: DateTimeFilterInput
   deviceInfo: StringFilterInput
   id: StringFilterInput
@@ -3421,11 +3917,14 @@ input UserSessionFilterInput {
   lastActiveAt: DateTimeFilterInput
   twoFactorVerified: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput2
+  user: UserRelationFilterInput
   userId: StringFilterInput
 }
 
 input UserSessionFilterInput2 {
+  AND: [UserSessionFilterInput3!]
+  NOT: [UserSessionFilterInput3!]
+  OR: [UserSessionFilterInput3!]
   createdAt: DateTimeFilterInput
   deviceInfo: StringFilterInput
   id: StringFilterInput
@@ -3434,7 +3933,7 @@ input UserSessionFilterInput2 {
   lastActiveAt: DateTimeFilterInput
   twoFactorVerified: BooleanFilterInput
   updatedAt: DateTimeFilterInput
-  user: UserFilterInput3
+  user: UserRelationFilterInput2
   userId: StringFilterInput
 }
 
@@ -3483,6 +3982,10 @@ type UserToken {
   """JWT Bearer token"""
   token: String
   user: User
+}
+
+input UserUpdateOrganizationInput {
+  name: String
 }
 
 input Verify2FAInput {

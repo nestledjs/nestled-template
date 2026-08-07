@@ -3,7 +3,7 @@ import { UseGuards } from '@nestjs/common'
 import { SecurityEventsService } from './security-events.service'
 import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
 import { SecurityEvent, SecurityEventType, User } from '@nestled-template/api/core/models'
-import { ListSecurityEventInput } from '@nestled-template/api/generated-crud/data-access'
+import { SecurityEventPagingInput } from './dto'
 
 @Resolver(() => SecurityEvent)
 export class SecurityEventsResolver {
@@ -24,8 +24,8 @@ export class SecurityEventsResolver {
   @Authenticated()
   async mySecurityEvents(
     @CtxUser() user: User,
-    @Args({ name: 'input', type: () => ListSecurityEventInput, nullable: true })
-    input?: ListSecurityEventInput,
+    @Args({ name: 'input', type: () => SecurityEventPagingInput, nullable: true })
+    input?: SecurityEventPagingInput,
   ): Promise<SecurityEvent[]> {
     return this.securityEventsService.getUserSecurityEventsWithPaging(user.id, input)
   }

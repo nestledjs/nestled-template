@@ -17,10 +17,6 @@ import {
 } from '@nestled-template/api/core/models'
 import { OrganizationService } from './organization.service'
 import {
-  CreateOrganizationInput,
-  UpdateOrganizationInput,
-} from '@nestled-template/api/generated-crud/data-access'
-import {
   AddOrganizationMemberInput,
   RemoveOrganizationMemberInput,
   UpdateMemberRoleInput,
@@ -32,6 +28,8 @@ import {
   SwitchOrganizationInput,
   TransferOrganizationOwnershipInput,
   InvitationDetails,
+  UserCreateOrganizationInput,
+  UserUpdateOrganizationInput,
 } from './dto'
 
 @Resolver(() => Organization)
@@ -46,7 +44,7 @@ export class OrganizationResolver {
   @Authenticated()
   async userCreateOrganization(
     @CtxUser() user: User,
-    @Args('input') input: CreateOrganizationInput,
+    @Args('input') input: UserCreateOrganizationInput,
   ): Promise<Organization> {
     return this.customService.userCreateOrganization(user.id, input)
   }
@@ -57,7 +55,7 @@ export class OrganizationResolver {
   async userUpdateOrganization(
     @CtxUser() user: User,
     @CtxOrganizationId() organizationId: string,
-    @Args('input') input: UpdateOrganizationInput,
+    @Args('input') input: UserUpdateOrganizationInput,
   ): Promise<Organization> {
     return this.customService.userUpdateOrganization(user.id, organizationId, input)
   }

@@ -10,14 +10,14 @@ require a package release before this template can consume them.
 
 ## Status
 
-| #   | Finding                                                  | Severity | Lives in             | Reachable by                              | Status                                          |
-| --- | -------------------------------------------------------- | -------- | -------------------- | ----------------------------------------- | ----------------------------------------------- |
-| 1   | `@crudAuth` resolved by prefix match, not model identity | critical | generator            | n/a (misconfiguration)                    | Fixed — generators 1.1.4                        |
-| 2   | Custom `@crudAuth` level casing mangled                  | low      | generator            | n/a (build failure)                       | Fixed — generators 1.1.4                        |
-| 3   | Root operations with no auth guard are fully public      | high     | template             | anonymous                                 | Fixed — doctor check + fail-closed APP_GUARD    |
-| 4   | Credential fields exposed in the GraphQL schema          | critical | template             | any caller who can read the row           | Fixed — verified against the live schema        |
-| 5   | Arbitrary Prisma `where` injection via `filters`         | critical | template + generator | **anonymous**                             | Fixed — generators 1.1.5 + typed inputs         |
-| 6   | Relation traversal performs no authorization             | high     | template + generator | any caller with one reachable entry point | Fixed — generators 1.1.5 + select-builder check |
+| #   | Finding                                                  | Severity | Lives in             | Reachable by                              | Status                                                |
+| --- | -------------------------------------------------------- | -------- | -------------------- | ----------------------------------------- | ----------------------------------------------------- |
+| 1   | `@crudAuth` resolved by prefix match, not model identity | critical | generator            | n/a (misconfiguration)                    | Fixed — generators 1.1.4                              |
+| 2   | Custom `@crudAuth` level casing mangled                  | low      | generator            | n/a (build failure)                       | Fixed — generators 1.1.4                              |
+| 3   | Root operations with no auth guard are fully public      | high     | template             | anonymous                                 | Fixed — doctor check + fail-closed APP_GUARD          |
+| 4   | Credential fields exposed in the GraphQL schema          | critical | template             | any caller who can read the row           | Fixed — verified against the live schema              |
+| 5   | Arbitrary Prisma `where` injection via `filters`         | critical | template + generator | **anonymous**                             | Fixed — 1.1.5 typed inputs; grammar complete in 1.1.7 |
+| 6   | Relation traversal performs no authorization             | high     | template + generator | any caller with one reachable entry point | Fixed — generators 1.1.5 + select-builder check       |
 
 ## 1. `@crudAuth` resolved by prefix match
 
@@ -164,6 +164,13 @@ not a gap the browser uses.
 
 Finding 4 is therefore a prerequisite for fixing this cleanly, not a detour.
 
+Implementation note: generator 1.1.5 closed the arbitrary-key oracle but omitted AND/OR/NOT,
+scalar not, and to-one is/isNot. That made valid existing admin filters fail GraphQL validation,
+sometimes only at runtime when the filter object was assembled in TypeScript. Generator 1.1.7
+restores those operations without reopening recursion: each logical or relation step points at the
+next generated depth, and the deepest input remains scalars-only. Generator 1.1.8 adds the strict
+index-signature access required by consumers that enable `noPropertyAccessFromIndexSignature`.
+
 Planned, in order of value:
 
 1. **Generator** — emit typed per-model filter inputs containing only filterable columns, with typed
@@ -175,7 +182,17 @@ Planned, in order of value:
 4. **Template** — bound relation-filter depth, and consider disallowing relation filters entirely on
    operations reachable without authentication.
 
-## 6. Relation traversal performs no authorization — FIXED
+## 6. Relation traversal performs no authorization — SUPERSEDED BY ADMIN-ONLY BOUNDARY
+
+The request-scoped traversal authorization described below was the first fix. It is no longer the
+template architecture: generated CRUD and its recursive selector are now exclusively admin-only,
+while user-facing operations define their own inputs and explicit Prisma queries. Doctor and ESLint
+prevent `libs/api/custom` from importing generated CRUD or `createSelect`; intentional admin-only
+composition lives in `libs/api/admin-custom`.
+
+This removes the lower-privilege generic query compiler instead of maintaining a second model-level
+authorization language for it. The historical finding and original fix design remain below because
+downstream projects may encounter either architecture during migration.
 
 `createSelect(info)` compiles the whole incoming selection set into a single nested Prisma `select`.
 `buildSelectTree` recurses on any field carrying a `relationName`, at unbounded depth, producing one
@@ -219,5 +236,6 @@ omission returns partial data that looks like empty results and hides attacks.
   fix. Check for non-admin root-level callers of the affected operations before deploying, or the
   fix becomes an outage. Nested field selections inside fragments are unaffected; only root-level
   calls matter.
-- Projects using a `public` `@crudAuth` level will fail the new doctor check until they add
-  allow-list entries. That is the check working as intended.
+- Projects using any `@crudAuth` level must replace the lowered operation with a purpose-built
+  resolver, DTO, guard, and user/tenant-scoped Prisma query. The current Doctor rejects the
+  annotation rather than treating it as a public-operation allow-list concern.
