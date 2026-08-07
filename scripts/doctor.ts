@@ -1354,7 +1354,7 @@ const checkCookieDomainConfig = () => {
 // Local dev ports move in must-move-together pairs: a port var, and the URL that points at it.
 // Moving only one half fails SILENTLY — the process starts clean and is broken only in the
 // browser, or, worse, connects to another repo's database. Documentation alone does not catch a
-// half-edited .env; this does. See docs/dev/dev-ports.md.
+// half-edited .env; this does. See the port block in .env.example.
 //
 // WARN ONLY, never fail: .env is developer-local, CI has none, and a deliberate local setup must
 // never be able to break a build.
