@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { LoginAttempt } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => LoginAttempt)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedLoginAttemptResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [LoginAttempt], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   loginAttempts(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListLoginAttemptInput, nullable: true })
@@ -27,8 +27,6 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   loginAttemptsCount(
     @Args({ name: 'input', type: () => ListLoginAttemptInput, nullable: true })
     input?: ListLoginAttemptInput,
@@ -37,15 +35,11 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Query(() => LoginAttempt, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   loginAttempt(@Info() info: GraphQLResolveInfo, @Args('loginAttemptId') loginAttemptId: string) {
     return this.generatedService.loginAttempt(info, loginAttemptId)
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createLoginAttempt(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateLoginAttemptInput,
@@ -54,8 +48,6 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateLoginAttempt(
     @Info() info: GraphQLResolveInfo,
     @Args('loginAttemptId') loginAttemptId: string,
@@ -65,8 +57,6 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteLoginAttempt(@Args('loginAttemptId') loginAttemptId: string) {
     return this.generatedService.deleteLoginAttempt(loginAttemptId)
   }

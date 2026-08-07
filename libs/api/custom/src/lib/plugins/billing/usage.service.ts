@@ -114,7 +114,7 @@ export class UsageService {
   async wouldExceedLimit(
     organizationId: string,
     metric: keyof UsageData,
-    additionalUnits: number = 1,
+    additionalUnits = 1,
   ): Promise<boolean> {
     const usage = await this.getCurrentUsage(organizationId)
     const limits = await this.getPlanLimits(organizationId)

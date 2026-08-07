@@ -72,7 +72,7 @@ describe('CRITICAL: Permission Enforcement', () => {
     }
     // Create a new organization for testing (owner will be the owner)
     const createOrgMutation = `
-      mutation UserCreateOrganization($input: CreateOrganizationInput!) {
+      mutation UserCreateOrganization($input: UserCreateOrganizationInput!) {
         userCreateOrganization(input: $input) {
           id
           name
@@ -350,7 +350,7 @@ describe('CRITICAL: Permission Enforcement', () => {
   describe('Owner Permissions', () => {
     it('owner can update organization', async () => {
       const updateMutation = `
-        mutation UserUpdateOrganization($input: UpdateOrganizationInput!) {
+        mutation UserUpdateOrganization($input: UserUpdateOrganizationInput!) {
           userUpdateOrganization(input: $input) {
             id
             name
@@ -483,7 +483,7 @@ describe('CRITICAL: Permission Enforcement', () => {
       // Create an organization to delete
       const createOrgResponse = await TestHelpers.authenticatedGraphql(
         `
-        mutation UserCreateOrganization($input: CreateOrganizationInput!) {
+        mutation UserCreateOrganization($input: UserCreateOrganizationInput!) {
           userCreateOrganization(input: $input) {
             id
           }
@@ -511,7 +511,7 @@ describe('CRITICAL: Permission Enforcement', () => {
   describe('Admin Permissions', () => {
     it('admin cannot update organization settings', async () => {
       const updateMutation = `
-        mutation UserUpdateOrganization($input: UpdateOrganizationInput!) {
+        mutation UserUpdateOrganization($input: UserUpdateOrganizationInput!) {
           userUpdateOrganization(input: $input) {
             id
             name
@@ -613,7 +613,7 @@ describe('CRITICAL: Permission Enforcement', () => {
   describe('Member Permissions', () => {
     it('member cannot update organization settings', async () => {
       const updateMutation = `
-        mutation UserUpdateOrganization($input: UpdateOrganizationInput!) {
+        mutation UserUpdateOrganization($input: UserUpdateOrganizationInput!) {
           userUpdateOrganization(input: $input) {
             id
             name
@@ -723,7 +723,7 @@ describe('CRITICAL: Permission Enforcement', () => {
       const mutations = [
         {
           name: 'Update Organization',
-          query: `mutation UserUpdateOrganization($input: UpdateOrganizationInput!) {
+          query: `mutation UserUpdateOrganization($input: UserUpdateOrganizationInput!) {
             userUpdateOrganization(input: $input) { id }
           }`,
           variables: {

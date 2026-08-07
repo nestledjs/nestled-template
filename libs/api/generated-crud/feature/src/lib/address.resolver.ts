@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { Address } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Address)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedAddressResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Address], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   addresses(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListAddressInput, nullable: true }) input?: ListAddressInput,
@@ -26,8 +26,6 @@ export class GeneratedAddressResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   addressesCount(
     @Args({ name: 'input', type: () => ListAddressInput, nullable: true }) input?: ListAddressInput,
   ) {
@@ -35,22 +33,16 @@ export class GeneratedAddressResolver {
   }
 
   @Query(() => Address, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   address(@Info() info: GraphQLResolveInfo, @Args('addressId') addressId: string) {
     return this.generatedService.address(info, addressId)
   }
 
   @Mutation(() => Address, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createAddress(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateAddressInput) {
     return this.generatedService.createAddress(info, input)
   }
 
   @Mutation(() => Address, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateAddress(
     @Info() info: GraphQLResolveInfo,
     @Args('addressId') addressId: string,
@@ -60,8 +52,6 @@ export class GeneratedAddressResolver {
   }
 
   @Mutation(() => Address, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteAddress(@Args('addressId') addressId: string) {
     return this.generatedService.deleteAddress(addressId)
   }

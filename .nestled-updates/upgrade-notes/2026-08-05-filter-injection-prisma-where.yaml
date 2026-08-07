@@ -6,16 +6,17 @@ type: security
 delivery: code-patch
 
 intent: >
-  Upgrade `@nestledjs/generators` to 1.1.5, regenerate, and take the three matching template
+  Upgrade `@nestledjs/generators` to 1.1.8, regenerate, and take the three matching template
   changes. Together they close an arbitrary Prisma `where` injection reachable through every
   generated list query.
 
   `CorePagingInput` declared `filters` as an untyped `GraphQLJSONObject` that the core data-access
   service merged into Prisma's `where` clause verbatim. Every generated `List<Model>Input` inherits
-  from that class, so every list query accepted arbitrary filter expressions. 1.1.5 generates a
-  typed `<Model>FilterInput` per model instead, built from the same field list that `@graphqlOmit`
-  already strips, with operators chosen per scalar type and typed relation filters. Each nesting
-  level gets its own generated type so depth is bounded by the schema rather than left open.
+  from that class, so every list query accepted arbitrary filter expressions. 1.1.5 introduced a
+  typed `<Model>FilterInput` per model, built from the same field list that `@graphqlOmit` already
+  strips. 1.1.7 completes that safe subset with depth-bounded AND/OR/NOT, scalar not, and to-one
+  is/isNot filters. Each nesting level gets its own generated type so logical composition and
+  relation traversal are bounded by the schema rather than left open.
 
   On the template side, `filters` is removed from `CorePagingInput` entirely, so a hand-written
   input that extends it must opt into filtering explicitly rather than inherit an open one. `take`
@@ -53,6 +54,7 @@ skipIf:
 verification:
   - node -p "require('./node_modules/@nestledjs/generators/package.json').version"
   - pnpm db-update
+  - pnpm sdk
   - pnpm nx test api-core-data-access
   - pnpm nx build api
 
@@ -64,19 +66,31 @@ agentHints:
     JSONObject. Generated code that compiles proves nothing here.
   - Then run the exploit against the fix. Send a filter naming a credential column with a startsWith
     operator and confirm a GraphQL validation error rather than a result. That is the actual check.
-  - Public SDK operations are preserved rather than regenerated, so any operation passing raw filters
-    JSON keeps its old shape and codegen fails against the new schema. Hand-edit those operations to
-    the typed shape. The admin SDK directory rebuilds itself and needs no manual step.
+  - >
+    Exercise the legitimate grammar too. Confirm an OR over scalar predicates, scalar not, and a
+    nullable to-one relation with `{ is: null }` all pass GraphQL validation. Generator 1.1.5 and
+    1.1.6 omitted those fields, so projects using them could build cleanly and still fail at runtime.
+  - >
+    Public SDK operations are preserved rather than regenerated. Inline raw filter fields fail
+    graphql-codegen against the typed schema, but filters assembled as runtime variables may still
+    compile and then fail GraphQL validation. Search both `.graphql` documents and TypeScript callers
+    for AND/OR/NOT and is/isNot; the admin SDK directory rebuilds itself and needs no manual step.
+  - >
+    Generated scalar filter fields are operator objects. Audit custom resolvers that cast a generated
+    List input and read `filters.<field>` as a primitive. The durable fix is a purpose-built input;
+    if an interim compatibility path is unavoidable, accept only `<field>.equals` and fail closed.
   - The take ceiling is set by the largest legitimate page the API serves, which in the template is
     the admin data browser's export limit. A project whose export limit differs must adjust the
     constant, or exports silently truncate.
   - orderBy now falls back to the id column when the requested field is not in DATABASE_MODELS,
     rather than throwing. A client that sorted by a column since removed from the GraphQL schema
     will quietly change ordering rather than error, so check for callers that depend on it.
-  - The generator emits a transitional index signature on depth-one filter inputs so generated code
-    compiles against a template that still declares the old filters field. Once this note is applied
-    the field is gone and that shim is redundant, but it is type-level only and does not widen what
-    a caller can send.
+  - >
+    Apply the CorePagingInput change before regeneration when possible. Generator 1.1.8 also emits a
+    transitional index signature and explicit undefined initializer so an ES2022 consumer can stage
+    the generator update before removing the old base filters field without TS2612, and uses strict
+    index-signature property access in the generated normalizer. Do not change workspace-wide
+    `useDefineForClassFields` merely to make generated DTOs compile.
   - This does not address relation traversal on selection, which is a separate open issue. A guard
     protects an entry point, and nested selections are resolved in one compiled Prisma query with no
     second guard check. Do not treat this note as closing that.

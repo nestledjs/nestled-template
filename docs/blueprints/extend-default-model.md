@@ -82,10 +82,12 @@ admin/generator surfaces.
 3. Add a model service when the behavior is substantial or reused.
 4. Add independent resolver methods to `<model>.resolver.ts`.
 5. Do not extend a generated resolver or reuse its operation names.
-6. Register any new resolver/provider in `<model>.module.ts`.
-7. Add GraphQL operations under `libs/shared/sdk/src/graphql/<feature>`.
-8. Run SDK/code generation if operations or schema changed.
-9. Register any web route in `apps/web/app/routes.tsx`.
+6. Do not import generated CRUD DTOs or services. Define the exact application input and use
+   `ApiCoreDataAccessService` with an explicit user-scoped Prisma query.
+7. Register any new resolver/provider in `<model>.module.ts`.
+8. Add GraphQL operations under `libs/shared/sdk/src/graphql/<feature>`.
+9. Run SDK/code generation if operations or schema changed.
+10. Register any web route in `apps/web/app/routes.tsx`.
 
 ## Security Checks
 
@@ -93,8 +95,8 @@ admin/generator surfaces.
 - Validate organization membership before reading or mutating tenant data.
 - Check permissions for role/member/billing/security workflows.
 - Do not expose credential material or provider secrets.
-- Keep generated admin CRUD admin-only unless the Prisma `@crudAuth` annotation
-  intentionally changes it.
+- Keep generated admin CRUD admin-only without exceptions. Never add `@crudAuth`.
+- Resolve relations explicitly; do not use `createSelect` in user-facing code.
 
 ## Generation Commands
 
@@ -125,6 +127,8 @@ or mutation behavior changes.
 
 - Editing `libs/api/generated-crud/*`.
 - Extending `Generated<Model>Resolver` from a custom resolver.
+- Importing a generated `Create*`, `Update*`, `List*`, or filter input into a user operation.
+- Injecting `ApiCrudDataAccessService` or calling `createSelect` from `libs/api/custom`.
 - Reusing `create<Model>` or `update<Model>` for a custom mutation.
 - Creating custom SDK operations with `__Admin*` names.
 - Adding a page component but forgetting `apps/web/app/routes.tsx`.

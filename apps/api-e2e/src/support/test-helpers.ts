@@ -85,7 +85,7 @@ export class TestHelpers {
     }
   }
 
-  static async loginUser(email: string, password: string = 'TestPassword123!'): Promise<TestUser> {
+  static async loginUser(email: string, password = 'TestPassword123!'): Promise<TestUser> {
     const loginMutation = `
       mutation Login($input: LoginInput!) {
         login(input: $input) {
@@ -249,7 +249,7 @@ export class TestHelpers {
     return new Promise(resolve => setTimeout(resolve, ms))
   }
 
-  static generateTestEmail(prefix: string = 'test'): string {
+  static generateTestEmail(prefix = 'test'): string {
     const timestamp = Date.now()
     const random = Math.random().toString(36).substring(7)
     return `${prefix}-${timestamp}-${random}@example.com`

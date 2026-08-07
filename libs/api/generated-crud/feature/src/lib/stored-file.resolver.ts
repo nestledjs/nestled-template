@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { StoredFile } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => StoredFile)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedStoredFileResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [StoredFile], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   storedFiles(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListStoredFileInput, nullable: true })
@@ -27,8 +27,6 @@ export class GeneratedStoredFileResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   storedFilesCount(
     @Args({ name: 'input', type: () => ListStoredFileInput, nullable: true })
     input?: ListStoredFileInput,
@@ -37,22 +35,16 @@ export class GeneratedStoredFileResolver {
   }
 
   @Query(() => StoredFile, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   storedFile(@Info() info: GraphQLResolveInfo, @Args('storedFileId') storedFileId: string) {
     return this.generatedService.storedFile(info, storedFileId)
   }
 
   @Mutation(() => StoredFile, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createStoredFile(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateStoredFileInput) {
     return this.generatedService.createStoredFile(info, input)
   }
 
   @Mutation(() => StoredFile, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateStoredFile(
     @Info() info: GraphQLResolveInfo,
     @Args('storedFileId') storedFileId: string,
@@ -62,8 +54,6 @@ export class GeneratedStoredFileResolver {
   }
 
   @Mutation(() => StoredFile, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteStoredFile(@Args('storedFileId') storedFileId: string) {
     return this.generatedService.deleteStoredFile(storedFileId)
   }

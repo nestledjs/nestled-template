@@ -24,8 +24,34 @@ export default [
           allow: [String.raw`^.*/eslint(\.base)?\.config\.[cm]?[jt]s$`],
           depConstraints: [
             {
+              sourceTag: 'type:application-api',
+              notDependOnLibsWithTags: ['type:admin-custom'],
+            },
+            {
               sourceTag: '*',
               onlyDependOnLibsWithTags: ['*'],
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['libs/api/custom/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/api/generated-crud/**'],
+              message:
+                'Application APIs must define explicit inputs and Prisma queries. Move intentional generated CRUD composition to api-admin-custom.',
+            },
+            {
+              group: ['**/api/core/helpers', '**/api/core/helpers/**'],
+              message:
+                'The legacy recursive selection compiler was removed. Build an explicit Prisma select instead.',
             },
           ],
         },

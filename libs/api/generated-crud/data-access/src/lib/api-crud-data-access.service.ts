@@ -1,8 +1,502 @@
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
-import { createSelect } from '@nestled-template/api/core/helpers'
+import graphqlFields from 'graphql-fields'
 import type { GraphQLResolveInfo } from 'graphql'
+import { DATABASE_MODELS_BY_NAME, DatabaseField, DatabaseModel } from './database-models'
 import * as dto from './dto'
+
+type FieldTree = Record<string, unknown>
+type SelectTree = Record<string, true | { select: SelectTree }>
+
+function getNamedType(type: GraphQLResolveInfo['returnType']): string {
+  if ('ofType' in type) return getNamedType(type.ofType)
+  return type.name
+}
+
+function getModelFromTypeName(typeName: string): DatabaseModel | undefined {
+  return DATABASE_MODELS_BY_NAME[typeName]
+}
+
+const isFieldTree = (value: unknown): value is FieldTree =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+function buildSelectTree(fieldTree: FieldTree, model: DatabaseModel): SelectTree {
+  const result: SelectTree = {}
+
+  for (const key in fieldTree) {
+    const field = model.fields.find((candidate: DatabaseField) => candidate.name === key)
+    if (!field) continue
+
+    if (field.relationName && isFieldTree(fieldTree[key])) {
+      const relatedModel = DATABASE_MODELS_BY_NAME[field.type]
+      if (relatedModel) {
+        result[key] = {
+          select: buildSelectTree(fieldTree[key], relatedModel),
+        }
+      }
+    } else {
+      result[key] = true
+    }
+  }
+
+  return result
+}
+
+/** Internal selection compiler for generated admin CRUD. Deliberately not exported. */
+function buildAdminSelect(info: GraphQLResolveInfo): SelectTree {
+  const returnTypeName = getNamedType(info.returnType)
+  const model = getModelFromTypeName(returnTypeName)
+
+  if (!model) {
+    throw new Error(
+      `Model "${returnTypeName}" not found in generated CRUD metadata. Run the CRUD generator.`,
+    )
+  }
+
+  return buildSelectTree(graphqlFields(info) as FieldTree, model)
+}
+
+interface FilterRelation {
+  targetModel: string
+  isList: boolean
+}
+
+type FilterObject = Record<string, unknown>
+
+const FILTER_RELATIONS = {
+  Address: {
+    country: {
+      targetModel: 'Country',
+      isList: false,
+    },
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  ApiToken: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  AuditLog: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  Country: {
+    addresses: {
+      targetModel: 'Address',
+      isList: true,
+    },
+  },
+  Email: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  Invite: {
+    inviter: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+    role: {
+      targetModel: 'Role',
+      isList: false,
+    },
+  },
+  Link: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  LoginAttempt: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+  },
+  OAuthAccount: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+  },
+  Organization: {
+    logo: {
+      targetModel: 'StoredFile',
+      isList: false,
+    },
+    emails: {
+      targetModel: 'Email',
+      isList: true,
+    },
+    links: {
+      targetModel: 'Link',
+      isList: true,
+    },
+    phoneNumbers: {
+      targetModel: 'PhoneNumber',
+      isList: true,
+    },
+    images: {
+      targetModel: 'StoredFile',
+      isList: true,
+    },
+    members: {
+      targetModel: 'OrganizationMember',
+      isList: true,
+    },
+    addresses: {
+      targetModel: 'Address',
+      isList: true,
+    },
+    invites: {
+      targetModel: 'Invite',
+      isList: true,
+    },
+    AuditLog: {
+      targetModel: 'AuditLog',
+      isList: true,
+    },
+    Team: {
+      targetModel: 'Team',
+      isList: true,
+    },
+    subscription: {
+      targetModel: 'Subscription',
+      isList: false,
+    },
+    roles: {
+      targetModel: 'Role',
+      isList: true,
+    },
+    apiTokens: {
+      targetModel: 'ApiToken',
+      isList: true,
+    },
+  },
+  OrganizationMember: {
+    role: {
+      targetModel: 'Role',
+      isList: false,
+    },
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  Permission: {
+    roles: {
+      targetModel: 'Role',
+      isList: true,
+    },
+  },
+  PhoneNumber: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  Plan: {
+    subscriptions: {
+      targetModel: 'Subscription',
+      isList: true,
+    },
+  },
+  Role: {
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+    permissions: {
+      targetModel: 'Permission',
+      isList: true,
+    },
+    members: {
+      targetModel: 'OrganizationMember',
+      isList: true,
+    },
+    teamMembers: {
+      targetModel: 'TeamMember',
+      isList: true,
+    },
+    invites: {
+      targetModel: 'Invite',
+      isList: true,
+    },
+  },
+  SecurityEvent: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+  },
+  Subscription: {
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+    plan: {
+      targetModel: 'Plan',
+      isList: false,
+    },
+  },
+  Team: {
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+    members: {
+      targetModel: 'TeamMember',
+      isList: true,
+    },
+  },
+  TeamMember: {
+    team: {
+      targetModel: 'Team',
+      isList: false,
+    },
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    role: {
+      targetModel: 'Role',
+      isList: false,
+    },
+  },
+  StoredFile: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organization: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+    userAvatar: {
+      targetModel: 'User',
+      isList: false,
+    },
+    organizationLogo: {
+      targetModel: 'Organization',
+      isList: false,
+    },
+  },
+  User: {
+    emails: {
+      targetModel: 'Email',
+      isList: true,
+    },
+    links: {
+      targetModel: 'Link',
+      isList: true,
+    },
+    phoneNumbers: {
+      targetModel: 'PhoneNumber',
+      isList: true,
+    },
+    avatar: {
+      targetModel: 'StoredFile',
+      isList: false,
+    },
+    images: {
+      targetModel: 'StoredFile',
+      isList: true,
+    },
+    organizations: {
+      targetModel: 'OrganizationMember',
+      isList: true,
+    },
+    addresses: {
+      targetModel: 'Address',
+      isList: true,
+    },
+    invitesSent: {
+      targetModel: 'Invite',
+      isList: true,
+    },
+    activeSessions: {
+      targetModel: 'UserSession',
+      isList: true,
+    },
+    loginAttempts: {
+      targetModel: 'LoginAttempt',
+      isList: true,
+    },
+    AuditLog: {
+      targetModel: 'AuditLog',
+      isList: true,
+    },
+    UserPreference: {
+      targetModel: 'UserPreference',
+      isList: true,
+    },
+    TeamMember: {
+      targetModel: 'TeamMember',
+      isList: true,
+    },
+    SecurityEvent: {
+      targetModel: 'SecurityEvent',
+      isList: true,
+    },
+    apiTokens: {
+      targetModel: 'ApiToken',
+      isList: true,
+    },
+    oAuthAccounts: {
+      targetModel: 'OAuthAccount',
+      isList: true,
+    },
+  },
+  UserPreference: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+  },
+  UserSession: {
+    user: {
+      targetModel: 'User',
+      isList: false,
+    },
+  },
+} as Record<string, Record<string, FilterRelation>>
+
+const LOGICAL_FILTER_OPERATORS = ['AND', 'OR', 'NOT'] as const
+const LIST_RELATION_OPERATORS = ['some', 'every', 'none'] as const
+
+function isFilterObject(value: unknown): value is FilterObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function normalizeLogicalFilters(
+  modelName: string,
+  filter: FilterObject,
+  normalized: FilterObject,
+): void {
+  for (const operator of LOGICAL_FILTER_OPERATORS) {
+    const operands = filter[operator]
+    if (Array.isArray(operands)) {
+      normalized[operator] = operands.map(operand => normalizeModelFilter(modelName, operand))
+    }
+  }
+}
+
+function normalizeListRelationFilter(targetModel: string, filter: FilterObject): FilterObject {
+  const normalized = { ...filter }
+  for (const operator of LIST_RELATION_OPERATORS) {
+    if (filter[operator] !== undefined) {
+      normalized[operator] = normalizeModelFilter(targetModel, filter[operator])
+    }
+  }
+  return normalized
+}
+
+function directRelationEntries(filter: FilterObject): [string, unknown][] {
+  return Object.entries(filter).filter(
+    ([name, value]) => name !== 'is' && name !== 'isNot' && value !== undefined,
+  )
+}
+
+function normalizeNullableModelFilter(modelName: string, value: unknown): unknown {
+  return value === null ? null : normalizeModelFilter(modelName, value)
+}
+
+function normalizeToOneRelationFilter(targetModel: string, filter: FilterObject): FilterObject {
+  const hasIs = filter['is'] !== undefined
+  const hasIsNot = filter['isNot'] !== undefined
+  const directEntries = directRelationEntries(filter)
+  const directFilter = Object.fromEntries(directEntries)
+
+  if (!hasIs && !hasIsNot) {
+    return directEntries.length === 0 ? {} : { is: normalizeModelFilter(targetModel, directFilter) }
+  }
+
+  const normalized: FilterObject = {}
+  if (hasIs) normalized['is'] = normalizeNullableModelFilter(targetModel, filter['is'])
+  if (hasIsNot) normalized['isNot'] = normalizeNullableModelFilter(targetModel, filter['isNot'])
+  if (directEntries.length === 0) return normalized
+
+  if (filter['is'] === null) {
+    throw new BadRequestException(
+      'A to-one relation filter cannot combine is: null with direct field predicates',
+    )
+  }
+
+  const normalizedDirect = normalizeModelFilter(targetModel, directFilter)
+  normalized['is'] = hasIs ? { AND: [normalized['is'], normalizedDirect] } : normalizedDirect
+  return normalized
+}
+
+function normalizeRelationFilters(
+  modelName: string,
+  filter: FilterObject,
+  normalized: FilterObject,
+): void {
+  for (const [fieldName, relation] of Object.entries(FILTER_RELATIONS[modelName] ?? {})) {
+    const relationFilter = filter[fieldName]
+    if (!isFilterObject(relationFilter)) continue
+
+    normalized[fieldName] = relation.isList
+      ? normalizeListRelationFilter(relation.targetModel, relationFilter)
+      : normalizeToOneRelationFilter(relation.targetModel, relationFilter)
+  }
+}
+
+function normalizeModelFilter(modelName: string, value: unknown): unknown {
+  if (!isFilterObject(value)) return value
+
+  const normalized = { ...value }
+  normalizeLogicalFilters(modelName, value, normalized)
+  normalizeRelationFilters(modelName, value, normalized)
+  return normalized
+}
+
+function normalizeListInputFilters<T extends { filters?: unknown }>(
+  modelName: string,
+  input?: T,
+): T | undefined {
+  if (!input || input.filters === undefined) return input
+  return { ...input, filters: normalizeModelFilter(modelName, input.filters) } as T
+}
 
 @Injectable()
 export class ApiCrudDataAccessService {
@@ -37,20 +531,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['address'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async addresses(info: GraphQLResolveInfo, input?: dto.ListAddressInput) {
     return this.data['address'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Address', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async addressesCount(input?: dto.ListAddressInput) {
     const total = await this.data['address'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Address', input))
     const filteredTotal = await this.data['address'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -73,7 +571,7 @@ export class ApiCrudDataAccessService {
   async address(info: GraphQLResolveInfo, id: string) {
     return this.data['address'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -110,7 +608,7 @@ export class ApiCrudDataAccessService {
     return this.data['address'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -148,20 +646,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['apiToken'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async apiTokens(info: GraphQLResolveInfo, input?: dto.ListApiTokenInput) {
     return this.data['apiToken'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('ApiToken', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async apiTokensCount(input?: dto.ListApiTokenInput) {
     const total = await this.data['apiToken'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('ApiToken', input))
     const filteredTotal = await this.data['apiToken'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -184,7 +686,7 @@ export class ApiCrudDataAccessService {
   async apiToken(info: GraphQLResolveInfo, id: string) {
     return this.data['apiToken'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -220,7 +722,7 @@ export class ApiCrudDataAccessService {
     return this.data['apiToken'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -258,20 +760,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['auditLog'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async auditLogs(info: GraphQLResolveInfo, input?: dto.ListAuditLogInput) {
     return this.data['auditLog'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('AuditLog', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async auditLogsCount(input?: dto.ListAuditLogInput) {
     const total = await this.data['auditLog'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('AuditLog', input))
     const filteredTotal = await this.data['auditLog'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -294,7 +800,7 @@ export class ApiCrudDataAccessService {
   async auditLog(info: GraphQLResolveInfo, id: string) {
     return this.data['auditLog'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -330,7 +836,7 @@ export class ApiCrudDataAccessService {
     return this.data['auditLog'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -367,20 +873,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['country'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async countries(info: GraphQLResolveInfo, input?: dto.ListCountryInput) {
     return this.data['country'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Country', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async countriesCount(input?: dto.ListCountryInput) {
     const total = await this.data['country'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Country', input))
     const filteredTotal = await this.data['country'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -403,7 +913,7 @@ export class ApiCrudDataAccessService {
   async country(info: GraphQLResolveInfo, id: string) {
     return this.data['country'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -438,7 +948,7 @@ export class ApiCrudDataAccessService {
     return this.data['country'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -476,20 +986,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['email'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async emails(info: GraphQLResolveInfo, input?: dto.ListEmailInput) {
     return this.data['email'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Email', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async emailsCount(input?: dto.ListEmailInput) {
     const total = await this.data['email'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Email', input))
     const filteredTotal = await this.data['email'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -512,7 +1026,7 @@ export class ApiCrudDataAccessService {
   async email(info: GraphQLResolveInfo, id: string) {
     return this.data['email'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -548,7 +1062,7 @@ export class ApiCrudDataAccessService {
     return this.data['email'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -587,20 +1101,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['invite'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async invites(info: GraphQLResolveInfo, input?: dto.ListInviteInput) {
     return this.data['invite'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Invite', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async invitesCount(input?: dto.ListInviteInput) {
     const total = await this.data['invite'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Invite', input))
     const filteredTotal = await this.data['invite'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -623,7 +1141,7 @@ export class ApiCrudDataAccessService {
   async invite(info: GraphQLResolveInfo, id: string) {
     return this.data['invite'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -660,7 +1178,7 @@ export class ApiCrudDataAccessService {
     return this.data['invite'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -698,20 +1216,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['link'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async links(info: GraphQLResolveInfo, input?: dto.ListLinkInput) {
     return this.data['link'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Link', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async linksCount(input?: dto.ListLinkInput) {
     const total = await this.data['link'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Link', input))
     const filteredTotal = await this.data['link'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -734,7 +1256,7 @@ export class ApiCrudDataAccessService {
   async link(info: GraphQLResolveInfo, id: string) {
     return this.data['link'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -770,7 +1292,7 @@ export class ApiCrudDataAccessService {
     return this.data['link'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -807,20 +1329,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['loginAttempt'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async loginAttempts(info: GraphQLResolveInfo, input?: dto.ListLoginAttemptInput) {
     return this.data['loginAttempt'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('LoginAttempt', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async loginAttemptsCount(input?: dto.ListLoginAttemptInput) {
     const total = await this.data['loginAttempt'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('LoginAttempt', input))
     const filteredTotal = await this.data['loginAttempt'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -843,7 +1369,7 @@ export class ApiCrudDataAccessService {
   async loginAttempt(info: GraphQLResolveInfo, id: string) {
     return this.data['loginAttempt'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -882,7 +1408,7 @@ export class ApiCrudDataAccessService {
     return this.data['loginAttempt'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -919,20 +1445,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['oAuthAccount'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async oAuthAccounts(info: GraphQLResolveInfo, input?: dto.ListOAuthAccountInput) {
     return this.data['oAuthAccount'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('OAuthAccount', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async oAuthAccountsCount(input?: dto.ListOAuthAccountInput) {
     const total = await this.data['oAuthAccount'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('OAuthAccount', input))
     const filteredTotal = await this.data['oAuthAccount'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -955,7 +1485,7 @@ export class ApiCrudDataAccessService {
   async oAuthAccount(info: GraphQLResolveInfo, id: string) {
     return this.data['oAuthAccount'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -994,7 +1524,7 @@ export class ApiCrudDataAccessService {
     return this.data['oAuthAccount'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1058,20 +1588,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['organization'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async organizations(info: GraphQLResolveInfo, input?: dto.ListOrganizationInput) {
     return this.data['organization'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Organization', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async organizationsCount(input?: dto.ListOrganizationInput) {
     const total = await this.data['organization'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Organization', input))
     const filteredTotal = await this.data['organization'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1094,7 +1628,7 @@ export class ApiCrudDataAccessService {
   async organization(info: GraphQLResolveInfo, id: string) {
     return this.data['organization'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1160,7 +1694,7 @@ export class ApiCrudDataAccessService {
     return this.data['organization'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1202,20 +1736,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['organizationMember'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async organizationMembers(info: GraphQLResolveInfo, input?: dto.ListOrganizationMemberInput) {
     return this.data['organizationMember'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('OrganizationMember', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async organizationMembersCount(input?: dto.ListOrganizationMemberInput) {
     const total = await this.data['organizationMember'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('OrganizationMember', input))
     const filteredTotal = await this.data['organizationMember'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1238,7 +1776,7 @@ export class ApiCrudDataAccessService {
   async organizationMember(info: GraphQLResolveInfo, id: string) {
     return this.data['organizationMember'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1279,7 +1817,7 @@ export class ApiCrudDataAccessService {
     return this.data['organizationMember'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1316,20 +1854,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['permission'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async permissions(info: GraphQLResolveInfo, input?: dto.ListPermissionInput) {
     return this.data['permission'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Permission', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async permissionsCount(input?: dto.ListPermissionInput) {
     const total = await this.data['permission'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Permission', input))
     const filteredTotal = await this.data['permission'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1352,7 +1894,7 @@ export class ApiCrudDataAccessService {
   async permission(info: GraphQLResolveInfo, id: string) {
     return this.data['permission'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1387,7 +1929,7 @@ export class ApiCrudDataAccessService {
     return this.data['permission'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1425,20 +1967,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['phoneNumber'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async phoneNumbers(info: GraphQLResolveInfo, input?: dto.ListPhoneNumberInput) {
     return this.data['phoneNumber'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('PhoneNumber', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async phoneNumbersCount(input?: dto.ListPhoneNumberInput) {
     const total = await this.data['phoneNumber'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('PhoneNumber', input))
     const filteredTotal = await this.data['phoneNumber'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1461,7 +2007,7 @@ export class ApiCrudDataAccessService {
   async phoneNumber(info: GraphQLResolveInfo, id: string) {
     return this.data['phoneNumber'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1497,7 +2043,7 @@ export class ApiCrudDataAccessService {
     return this.data['phoneNumber'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1534,20 +2080,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['plan'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async plans(info: GraphQLResolveInfo, input?: dto.ListPlanInput) {
     return this.data['plan'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Plan', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async plansCount(input?: dto.ListPlanInput) {
     const total = await this.data['plan'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Plan', input))
     const filteredTotal = await this.data['plan'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1570,7 +2120,7 @@ export class ApiCrudDataAccessService {
   async plan(info: GraphQLResolveInfo, id: string) {
     return this.data['plan'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1605,7 +2155,7 @@ export class ApiCrudDataAccessService {
     return this.data['plan'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1653,20 +2203,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['role'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async roles(info: GraphQLResolveInfo, input?: dto.ListRoleInput) {
     return this.data['role'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Role', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async rolesCount(input?: dto.ListRoleInput) {
     const total = await this.data['role'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Role', input))
     const filteredTotal = await this.data['role'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1689,7 +2243,7 @@ export class ApiCrudDataAccessService {
   async role(info: GraphQLResolveInfo, id: string) {
     return this.data['role'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1735,7 +2289,7 @@ export class ApiCrudDataAccessService {
     return this.data['role'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1772,20 +2326,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['securityEvent'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async securityEvents(info: GraphQLResolveInfo, input?: dto.ListSecurityEventInput) {
     return this.data['securityEvent'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('SecurityEvent', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async securityEventsCount(input?: dto.ListSecurityEventInput) {
     const total = await this.data['securityEvent'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('SecurityEvent', input))
     const filteredTotal = await this.data['securityEvent'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1808,7 +2366,7 @@ export class ApiCrudDataAccessService {
   async securityEvent(info: GraphQLResolveInfo, id: string) {
     return this.data['securityEvent'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1847,7 +2405,7 @@ export class ApiCrudDataAccessService {
     return this.data['securityEvent'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1885,20 +2443,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['subscription'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async subscriptions(info: GraphQLResolveInfo, input?: dto.ListSubscriptionInput) {
     return this.data['subscription'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Subscription', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async subscriptionsCount(input?: dto.ListSubscriptionInput) {
     const total = await this.data['subscription'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Subscription', input))
     const filteredTotal = await this.data['subscription'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -1921,7 +2483,7 @@ export class ApiCrudDataAccessService {
   async subscription(info: GraphQLResolveInfo, id: string) {
     return this.data['subscription'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1961,7 +2523,7 @@ export class ApiCrudDataAccessService {
     return this.data['subscription'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -1999,20 +2561,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['team'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async teams(info: GraphQLResolveInfo, input?: dto.ListTeamInput) {
     return this.data['team'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('Team', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async teamsCount(input?: dto.ListTeamInput) {
     const total = await this.data['team'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('Team', input))
     const filteredTotal = await this.data['team'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -2035,7 +2601,7 @@ export class ApiCrudDataAccessService {
   async team(info: GraphQLResolveInfo, id: string) {
     return this.data['team'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2071,7 +2637,7 @@ export class ApiCrudDataAccessService {
     return this.data['team'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2110,20 +2676,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['teamMember'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async teamMembers(info: GraphQLResolveInfo, input?: dto.ListTeamMemberInput) {
     return this.data['teamMember'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('TeamMember', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async teamMembersCount(input?: dto.ListTeamMemberInput) {
     const total = await this.data['teamMember'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('TeamMember', input))
     const filteredTotal = await this.data['teamMember'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -2146,7 +2716,7 @@ export class ApiCrudDataAccessService {
   async teamMember(info: GraphQLResolveInfo, id: string) {
     return this.data['teamMember'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2183,7 +2753,7 @@ export class ApiCrudDataAccessService {
     return this.data['teamMember'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2228,20 +2798,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['storedFile'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async storedFiles(info: GraphQLResolveInfo, input?: dto.ListStoredFileInput) {
     return this.data['storedFile'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('StoredFile', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async storedFilesCount(input?: dto.ListStoredFileInput) {
     const total = await this.data['storedFile'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('StoredFile', input))
     const filteredTotal = await this.data['storedFile'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -2264,7 +2838,7 @@ export class ApiCrudDataAccessService {
   async storedFile(info: GraphQLResolveInfo, id: string) {
     return this.data['storedFile'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2307,7 +2881,7 @@ export class ApiCrudDataAccessService {
     return this.data['storedFile'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2377,20 +2951,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['user'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async users(info: GraphQLResolveInfo, input?: dto.ListUserInput) {
     return this.data['user'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('User', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async usersCount(input?: dto.ListUserInput) {
     const total = await this.data['user'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('User', input))
     const filteredTotal = await this.data['user'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -2413,7 +2991,7 @@ export class ApiCrudDataAccessService {
   async user(info: GraphQLResolveInfo, id: string) {
     return this.data['user'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2481,7 +3059,7 @@ export class ApiCrudDataAccessService {
     return this.data['user'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2518,20 +3096,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['userPreference'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async userPreferences(info: GraphQLResolveInfo, input?: dto.ListUserPreferenceInput) {
     return this.data['userPreference'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('UserPreference', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async userPreferencesCount(input?: dto.ListUserPreferenceInput) {
     const total = await this.data['userPreference'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('UserPreference', input))
     const filteredTotal = await this.data['userPreference'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -2554,7 +3136,7 @@ export class ApiCrudDataAccessService {
   async userPreference(info: GraphQLResolveInfo, id: string) {
     return this.data['userPreference'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2593,7 +3175,7 @@ export class ApiCrudDataAccessService {
     return this.data['userPreference'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2630,20 +3212,24 @@ export class ApiCrudDataAccessService {
 
     return this.data['userSession'].create({
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
   async userSessions(info: GraphQLResolveInfo, input?: dto.ListUserSessionInput) {
     return this.data['userSession'].findMany({
-      ...this.data.filter(input),
-      select: createSelect(info),
+      ...this.data.filter(normalizeListInputFilters('UserSession', input)),
+      select: buildAdminSelect(info),
     })
   }
 
   async userSessionsCount(input?: dto.ListUserSessionInput) {
     const total = await this.data['userSession'].count()
-    const { where, take = 10, skip = 0 } = this.data.filter(input)
+    const {
+      where,
+      take = 10,
+      skip = 0,
+    } = this.data.filter(normalizeListInputFilters('UserSession', input))
     const filteredTotal = await this.data['userSession'].count({ where })
     const page = Math.floor(skip / take)
     const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
@@ -2666,7 +3252,7 @@ export class ApiCrudDataAccessService {
   async userSession(info: GraphQLResolveInfo, id: string) {
     return this.data['userSession'].findUnique({
       where: { id },
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 
@@ -2701,7 +3287,7 @@ export class ApiCrudDataAccessService {
     return this.data['userSession'].update({
       where: { id },
       data,
-      select: createSelect(info),
+      select: buildAdminSelect(info),
     })
   }
 

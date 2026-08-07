@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { Invite } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => Invite)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedInviteResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Invite], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   invites(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListInviteInput, nullable: true }) input?: ListInviteInput,
@@ -26,8 +26,6 @@ export class GeneratedInviteResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   invitesCount(
     @Args({ name: 'input', type: () => ListInviteInput, nullable: true }) input?: ListInviteInput,
   ) {
@@ -35,22 +33,16 @@ export class GeneratedInviteResolver {
   }
 
   @Query(() => Invite, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   invite(@Info() info: GraphQLResolveInfo, @Args('inviteId') inviteId: string) {
     return this.generatedService.invite(info, inviteId)
   }
 
   @Mutation(() => Invite, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createInvite(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateInviteInput) {
     return this.generatedService.createInvite(info, input)
   }
 
   @Mutation(() => Invite, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateInvite(
     @Info() info: GraphQLResolveInfo,
     @Args('inviteId') inviteId: string,
@@ -60,8 +52,6 @@ export class GeneratedInviteResolver {
   }
 
   @Mutation(() => Invite, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteInvite(@Args('inviteId') inviteId: string) {
     return this.generatedService.deleteInvite(inviteId)
   }

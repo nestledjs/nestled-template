@@ -1,4 +1,4 @@
-mutation userCreateOrganization($input: CreateOrganizationInput!) {
+mutation userCreateOrganization($input: UserCreateOrganizationInput!) {
   userCreateOrganization(input: $input) {
     ...OrganizationDetails
   }
@@ -8,7 +8,7 @@ mutation userDeleteOrganization($organizationId: String!) {
   userDeleteOrganization(organizationId: $organizationId)
 }
 
-mutation userUpdateOrganization($input: UpdateOrganizationInput!) {
+mutation userUpdateOrganization($input: UserUpdateOrganizationInput!) {
   userUpdateOrganization(input: $input) {
     ...OrganizationDetails
   }

@@ -30,7 +30,7 @@ export class SessionService {
   async createSession(
     userId: string,
     sessionInfo: SessionInfo,
-    twoFactorVerified: boolean = false,
+    twoFactorVerified = false,
   ): Promise<string> {
     // Check concurrent session limit
     await this.enforceSessionLimit(userId)
@@ -153,7 +153,7 @@ export class SessionService {
   /**
    * Clean up old invalid sessions (can be run as cron job)
    */
-  async cleanupOldSessions(daysOld: number = 30): Promise<number> {
+  async cleanupOldSessions(daysOld = 30): Promise<number> {
     const cutoffDate = new Date()
     cutoffDate.setDate(cutoffDate.getDate() - daysOld)
 

@@ -21,6 +21,9 @@ export class AddressTypeFilterInput {
 
   @Field(() => [AddressType], { nullable: true })
   in?: AddressType[]
+
+  @Field(() => AddressType, { nullable: true })
+  not?: AddressType
 }
 
 @InputType()
@@ -30,6 +33,9 @@ export class BooleanFilterInput {
 
   @Field(() => [Boolean], { nullable: true })
   in?: boolean[]
+
+  @Field(() => Boolean, { nullable: true })
+  not?: boolean
 }
 
 @InputType()
@@ -39,6 +45,9 @@ export class DateTimeFilterInput {
 
   @Field(() => [GraphQLISODateTime], { nullable: true })
   in?: Date[]
+
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  not?: Date
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   lt?: Date
@@ -60,6 +69,9 @@ export class EmailTypeFilterInput {
 
   @Field(() => [EmailType], { nullable: true })
   in?: EmailType[]
+
+  @Field(() => EmailType, { nullable: true })
+  not?: EmailType
 }
 
 @InputType()
@@ -69,6 +81,9 @@ export class FailureReasonFilterInput {
 
   @Field(() => [FailureReason], { nullable: true })
   in?: FailureReason[]
+
+  @Field(() => FailureReason, { nullable: true })
+  not?: FailureReason
 }
 
 @InputType()
@@ -78,6 +93,9 @@ export class FloatFilterInput {
 
   @Field(() => [Float], { nullable: true })
   in?: number[]
+
+  @Field(() => Float, { nullable: true })
+  not?: number
 
   @Field(() => Float, { nullable: true })
   lt?: number
@@ -101,6 +119,9 @@ export class IntFilterInput {
   in?: number[]
 
   @Field(() => Int, { nullable: true })
+  not?: number
+
+  @Field(() => Int, { nullable: true })
   lt?: number
 
   @Field(() => Int, { nullable: true })
@@ -120,6 +141,9 @@ export class InviteStatusFilterInput {
 
   @Field(() => [InviteStatus], { nullable: true })
   in?: InviteStatus[]
+
+  @Field(() => InviteStatus, { nullable: true })
+  not?: InviteStatus
 }
 
 @InputType()
@@ -129,6 +153,9 @@ export class PhoneTypeFilterInput {
 
   @Field(() => [PhoneType], { nullable: true })
   in?: PhoneType[]
+
+  @Field(() => PhoneType, { nullable: true })
+  not?: PhoneType
 }
 
 @InputType()
@@ -138,6 +165,9 @@ export class SecurityEventTypeFilterInput {
 
   @Field(() => [SecurityEventType], { nullable: true })
   in?: SecurityEventType[]
+
+  @Field(() => SecurityEventType, { nullable: true })
+  not?: SecurityEventType
 }
 
 @InputType()
@@ -147,6 +177,9 @@ export class StorageProviderFilterInput {
 
   @Field(() => [StorageProvider], { nullable: true })
   in?: StorageProvider[]
+
+  @Field(() => StorageProvider, { nullable: true })
+  not?: StorageProvider
 }
 
 @InputType()
@@ -156,6 +189,9 @@ export class StringFilterInput {
 
   @Field(() => [String], { nullable: true })
   in?: string[]
+
+  @Field(() => String, { nullable: true })
+  not?: string
 
   @Field(() => String, { nullable: true })
   contains?: string
@@ -174,6 +210,9 @@ export class SubscriptionStatusFilterInput {
 
   @Field(() => [SubscriptionStatus], { nullable: true })
   in?: SubscriptionStatus[]
+
+  @Field(() => SubscriptionStatus, { nullable: true })
+  not?: SubscriptionStatus
 }
 
 @InputType()
@@ -183,6 +222,9 @@ export class TwoFactorMethodFilterInput {
 
   @Field(() => [TwoFactorMethod], { nullable: true })
   in?: TwoFactorMethod[]
+
+  @Field(() => TwoFactorMethod, { nullable: true })
+  not?: TwoFactorMethod
 }
 
 @InputType()
@@ -1119,6 +1161,354 @@ export class UserSessionListRelationFilterInput2 {
 }
 
 @InputType()
+export class CountryRelationFilterInput2 {
+  @Field(() => CountryFilterInput3, { nullable: true })
+  is?: CountryFilterInput3 | null
+
+  @Field(() => CountryFilterInput3, { nullable: true })
+  isNot?: CountryFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  alpha2?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  alpha3?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  countryCode?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  iso3166_2?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  region?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  subRegion?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  intermediateRegion?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  regionCode?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  subRegionCode?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  intermediateRegionCode?: StringFilterInput
+}
+
+@InputType()
+export class OrganizationRelationFilterInput2 {
+  @Field(() => OrganizationFilterInput3, { nullable: true })
+  is?: OrganizationFilterInput3 | null
+
+  @Field(() => OrganizationFilterInput3, { nullable: true })
+  isNot?: OrganizationFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  logoId?: StringFilterInput
+}
+
+@InputType()
+export class PlanRelationFilterInput2 {
+  @Field(() => PlanFilterInput3, { nullable: true })
+  is?: PlanFilterInput3 | null
+
+  @Field(() => PlanFilterInput3, { nullable: true })
+  isNot?: PlanFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  description?: StringFilterInput
+
+  @Field(() => FloatFilterInput, { nullable: true })
+  price?: FloatFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  interval?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  active?: BooleanFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripeProductId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripePriceId?: StringFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  trialPeriodDays?: IntFilterInput
+}
+
+@InputType()
+export class RoleRelationFilterInput2 {
+  @Field(() => RoleFilterInput3, { nullable: true })
+  is?: RoleFilterInput3 | null
+
+  @Field(() => RoleFilterInput3, { nullable: true })
+  isNot?: RoleFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  description?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+}
+
+@InputType()
+export class StoredFileRelationFilterInput2 {
+  @Field(() => StoredFileFilterInput3, { nullable: true })
+  is?: StoredFileFilterInput3 | null
+
+  @Field(() => StoredFileFilterInput3, { nullable: true })
+  isNot?: StoredFileFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StorageProviderFilterInput, { nullable: true })
+  provider?: StorageProviderFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  providerFileId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  folder?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  filename?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  originalName?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  mimeType?: StringFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  size?: IntFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  url?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  publicUrl?: StringFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  width?: IntFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  height?: IntFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  userId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+}
+
+@InputType()
+export class SubscriptionRelationFilterInput2 {
+  @Field(() => SubscriptionFilterInput3, { nullable: true })
+  is?: SubscriptionFilterInput3 | null
+
+  @Field(() => SubscriptionFilterInput3, { nullable: true })
+  isNot?: SubscriptionFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  planId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripeCustomerId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripeSubscriptionId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripePriceId?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  stripeCurrentPeriodEnd?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  trialStart?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  trialEnd?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  cancelAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  canceledAt?: DateTimeFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  cancelAtPeriodEnd?: BooleanFilterInput
+
+  @Field(() => SubscriptionStatusFilterInput, { nullable: true })
+  status?: SubscriptionStatusFilterInput
+}
+
+@InputType()
+export class TeamRelationFilterInput2 {
+  @Field(() => TeamFilterInput3, { nullable: true })
+  is?: TeamFilterInput3 | null
+
+  @Field(() => TeamFilterInput3, { nullable: true })
+  isNot?: TeamFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  description?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+}
+
+@InputType()
+export class UserRelationFilterInput2 {
+  @Field(() => UserFilterInput3, { nullable: true })
+  is?: UserFilterInput3 | null
+
+  @Field(() => UserFilterInput3, { nullable: true })
+  isNot?: UserFilterInput3 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  firstName?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  lastName?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isSuperAdmin?: BooleanFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  bio?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  displayName?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  emailValidated?: BooleanFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  avatarId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  activeOrganizationId?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  twoFactorEnabled?: BooleanFilterInput
+
+  @Field(() => TwoFactorMethodFilterInput, { nullable: true })
+  twoFactorMethod?: TwoFactorMethodFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  lastSuccessfulLogin?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  lastFailedLogin?: DateTimeFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  failedLoginCount?: IntFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  lockedUntil?: DateTimeFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isActive?: BooleanFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  deactivatedAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  termsAcceptedAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  privacyPolicyAcceptedAt?: DateTimeFilterInput
+}
+
+@InputType()
 export class AddressFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   id?: StringFilterInput
@@ -1153,20 +1543,29 @@ export class AddressFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   countryId?: StringFilterInput
 
-  @Field(() => CountryFilterInput3, { nullable: true })
-  country?: CountryFilterInput3
+  @Field(() => CountryRelationFilterInput2, { nullable: true })
+  country?: CountryRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => [AddressFilterInput3], { nullable: true })
+  AND?: AddressFilterInput3[]
+
+  @Field(() => [AddressFilterInput3], { nullable: true })
+  OR?: AddressFilterInput3[]
+
+  @Field(() => [AddressFilterInput3], { nullable: true })
+  NOT?: AddressFilterInput3[]
 }
 
 @InputType()
@@ -1183,8 +1582,8 @@ export class ApiTokenFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   name?: StringFilterInput
@@ -1201,8 +1600,17 @@ export class ApiTokenFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => [ApiTokenFilterInput3], { nullable: true })
+  AND?: ApiTokenFilterInput3[]
+
+  @Field(() => [ApiTokenFilterInput3], { nullable: true })
+  OR?: ApiTokenFilterInput3[]
+
+  @Field(() => [ApiTokenFilterInput3], { nullable: true })
+  NOT?: ApiTokenFilterInput3[]
 }
 
 @InputType()
@@ -1228,14 +1636,23 @@ export class AuditLogFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => [AuditLogFilterInput3], { nullable: true })
+  AND?: AuditLogFilterInput3[]
+
+  @Field(() => [AuditLogFilterInput3], { nullable: true })
+  OR?: AuditLogFilterInput3[]
+
+  @Field(() => [AuditLogFilterInput3], { nullable: true })
+  NOT?: AuditLogFilterInput3[]
 }
 
 @InputType()
@@ -1284,6 +1701,15 @@ export class CountryFilterInput2 {
 
   @Field(() => AddressListRelationFilterInput2, { nullable: true })
   addresses?: AddressListRelationFilterInput2
+
+  @Field(() => [CountryFilterInput3], { nullable: true })
+  AND?: CountryFilterInput3[]
+
+  @Field(() => [CountryFilterInput3], { nullable: true })
+  OR?: CountryFilterInput3[]
+
+  @Field(() => [CountryFilterInput3], { nullable: true })
+  NOT?: CountryFilterInput3[]
 }
 
 @InputType()
@@ -1321,11 +1747,20 @@ export class EmailFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => [EmailFilterInput3], { nullable: true })
+  AND?: EmailFilterInput3[]
+
+  @Field(() => [EmailFilterInput3], { nullable: true })
+  OR?: EmailFilterInput3[]
+
+  @Field(() => [EmailFilterInput3], { nullable: true })
+  NOT?: EmailFilterInput3[]
 }
 
 @InputType()
@@ -1351,14 +1786,14 @@ export class InviteFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   inviterId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  inviter?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  inviter?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
 
   @Field(() => InviteStatusFilterInput, { nullable: true })
   status?: InviteStatusFilterInput
@@ -1366,8 +1801,17 @@ export class InviteFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   roleId?: StringFilterInput
 
-  @Field(() => RoleFilterInput3, { nullable: true })
-  role?: RoleFilterInput3
+  @Field(() => RoleRelationFilterInput2, { nullable: true })
+  role?: RoleRelationFilterInput2
+
+  @Field(() => [InviteFilterInput3], { nullable: true })
+  AND?: InviteFilterInput3[]
+
+  @Field(() => [InviteFilterInput3], { nullable: true })
+  OR?: InviteFilterInput3[]
+
+  @Field(() => [InviteFilterInput3], { nullable: true })
+  NOT?: InviteFilterInput3[]
 }
 
 @InputType()
@@ -1393,11 +1837,20 @@ export class LinkFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => [LinkFilterInput3], { nullable: true })
+  AND?: LinkFilterInput3[]
+
+  @Field(() => [LinkFilterInput3], { nullable: true })
+  OR?: LinkFilterInput3[]
+
+  @Field(() => [LinkFilterInput3], { nullable: true })
+  NOT?: LinkFilterInput3[]
 }
 
 @InputType()
@@ -1414,8 +1867,8 @@ export class LoginAttemptFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   email?: StringFilterInput
@@ -1434,6 +1887,15 @@ export class LoginAttemptFilterInput2 {
 
   @Field(() => FailureReasonFilterInput, { nullable: true })
   reason?: FailureReasonFilterInput
+
+  @Field(() => [LoginAttemptFilterInput3], { nullable: true })
+  AND?: LoginAttemptFilterInput3[]
+
+  @Field(() => [LoginAttemptFilterInput3], { nullable: true })
+  OR?: LoginAttemptFilterInput3[]
+
+  @Field(() => [LoginAttemptFilterInput3], { nullable: true })
+  NOT?: LoginAttemptFilterInput3[]
 }
 
 @InputType()
@@ -1456,8 +1918,17 @@ export class OAuthAccountFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
+
+  @Field(() => [OAuthAccountFilterInput3], { nullable: true })
+  AND?: OAuthAccountFilterInput3[]
+
+  @Field(() => [OAuthAccountFilterInput3], { nullable: true })
+  OR?: OAuthAccountFilterInput3[]
+
+  @Field(() => [OAuthAccountFilterInput3], { nullable: true })
+  NOT?: OAuthAccountFilterInput3[]
 }
 
 @InputType()
@@ -1477,8 +1948,8 @@ export class OrganizationFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   logoId?: StringFilterInput
 
-  @Field(() => StoredFileFilterInput3, { nullable: true })
-  logo?: StoredFileFilterInput3
+  @Field(() => StoredFileRelationFilterInput2, { nullable: true })
+  logo?: StoredFileRelationFilterInput2
 
   @Field(() => EmailListRelationFilterInput2, { nullable: true })
   emails?: EmailListRelationFilterInput2
@@ -1507,14 +1978,23 @@ export class OrganizationFilterInput2 {
   @Field(() => TeamListRelationFilterInput2, { nullable: true })
   Team?: TeamListRelationFilterInput2
 
-  @Field(() => SubscriptionFilterInput3, { nullable: true })
-  subscription?: SubscriptionFilterInput3
+  @Field(() => SubscriptionRelationFilterInput2, { nullable: true })
+  subscription?: SubscriptionRelationFilterInput2
 
   @Field(() => RoleListRelationFilterInput2, { nullable: true })
   roles?: RoleListRelationFilterInput2
 
   @Field(() => ApiTokenListRelationFilterInput2, { nullable: true })
   apiTokens?: ApiTokenListRelationFilterInput2
+
+  @Field(() => [OrganizationFilterInput3], { nullable: true })
+  AND?: OrganizationFilterInput3[]
+
+  @Field(() => [OrganizationFilterInput3], { nullable: true })
+  OR?: OrganizationFilterInput3[]
+
+  @Field(() => [OrganizationFilterInput3], { nullable: true })
+  NOT?: OrganizationFilterInput3[]
 }
 
 @InputType()
@@ -1531,20 +2011,29 @@ export class OrganizationMemberFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   roleId?: StringFilterInput
 
-  @Field(() => RoleFilterInput3, { nullable: true })
-  role?: RoleFilterInput3
+  @Field(() => RoleRelationFilterInput2, { nullable: true })
+  role?: RoleRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => [OrganizationMemberFilterInput3], { nullable: true })
+  AND?: OrganizationMemberFilterInput3[]
+
+  @Field(() => [OrganizationMemberFilterInput3], { nullable: true })
+  OR?: OrganizationMemberFilterInput3[]
+
+  @Field(() => [OrganizationMemberFilterInput3], { nullable: true })
+  NOT?: OrganizationMemberFilterInput3[]
 }
 
 @InputType()
@@ -1563,6 +2052,15 @@ export class PermissionFilterInput2 {
 
   @Field(() => RoleListRelationFilterInput2, { nullable: true })
   roles?: RoleListRelationFilterInput2
+
+  @Field(() => [PermissionFilterInput3], { nullable: true })
+  AND?: PermissionFilterInput3[]
+
+  @Field(() => [PermissionFilterInput3], { nullable: true })
+  OR?: PermissionFilterInput3[]
+
+  @Field(() => [PermissionFilterInput3], { nullable: true })
+  NOT?: PermissionFilterInput3[]
 }
 
 @InputType()
@@ -1591,11 +2089,20 @@ export class PhoneNumberFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => [PhoneNumberFilterInput3], { nullable: true })
+  AND?: PhoneNumberFilterInput3[]
+
+  @Field(() => [PhoneNumberFilterInput3], { nullable: true })
+  OR?: PhoneNumberFilterInput3[]
+
+  @Field(() => [PhoneNumberFilterInput3], { nullable: true })
+  NOT?: PhoneNumberFilterInput3[]
 }
 
 @InputType()
@@ -1635,6 +2142,15 @@ export class PlanFilterInput2 {
 
   @Field(() => SubscriptionListRelationFilterInput2, { nullable: true })
   subscriptions?: SubscriptionListRelationFilterInput2
+
+  @Field(() => [PlanFilterInput3], { nullable: true })
+  AND?: PlanFilterInput3[]
+
+  @Field(() => [PlanFilterInput3], { nullable: true })
+  OR?: PlanFilterInput3[]
+
+  @Field(() => [PlanFilterInput3], { nullable: true })
+  NOT?: PlanFilterInput3[]
 }
 
 @InputType()
@@ -1651,8 +2167,8 @@ export class RoleFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
 
   @Field(() => PermissionListRelationFilterInput2, { nullable: true })
   permissions?: PermissionListRelationFilterInput2
@@ -1665,6 +2181,15 @@ export class RoleFilterInput2 {
 
   @Field(() => InviteListRelationFilterInput2, { nullable: true })
   invites?: InviteListRelationFilterInput2
+
+  @Field(() => [RoleFilterInput3], { nullable: true })
+  AND?: RoleFilterInput3[]
+
+  @Field(() => [RoleFilterInput3], { nullable: true })
+  OR?: RoleFilterInput3[]
+
+  @Field(() => [RoleFilterInput3], { nullable: true })
+  NOT?: RoleFilterInput3[]
 }
 
 @InputType()
@@ -1681,8 +2206,8 @@ export class SecurityEventFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => SecurityEventTypeFilterInput, { nullable: true })
   eventType?: SecurityEventTypeFilterInput
@@ -1692,6 +2217,15 @@ export class SecurityEventFilterInput2 {
 
   @Field(() => StringFilterInput, { nullable: true })
   userAgent?: StringFilterInput
+
+  @Field(() => [SecurityEventFilterInput3], { nullable: true })
+  AND?: SecurityEventFilterInput3[]
+
+  @Field(() => [SecurityEventFilterInput3], { nullable: true })
+  OR?: SecurityEventFilterInput3[]
+
+  @Field(() => [SecurityEventFilterInput3], { nullable: true })
+  NOT?: SecurityEventFilterInput3[]
 }
 
 @InputType()
@@ -1708,14 +2242,14 @@ export class SubscriptionFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   planId?: StringFilterInput
 
-  @Field(() => PlanFilterInput3, { nullable: true })
-  plan?: PlanFilterInput3
+  @Field(() => PlanRelationFilterInput2, { nullable: true })
+  plan?: PlanRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   stripeCustomerId?: StringFilterInput
@@ -1746,6 +2280,15 @@ export class SubscriptionFilterInput2 {
 
   @Field(() => SubscriptionStatusFilterInput, { nullable: true })
   status?: SubscriptionStatusFilterInput
+
+  @Field(() => [SubscriptionFilterInput3], { nullable: true })
+  AND?: SubscriptionFilterInput3[]
+
+  @Field(() => [SubscriptionFilterInput3], { nullable: true })
+  OR?: SubscriptionFilterInput3[]
+
+  @Field(() => [SubscriptionFilterInput3], { nullable: true })
+  NOT?: SubscriptionFilterInput3[]
 }
 
 @InputType()
@@ -1768,11 +2311,20 @@ export class TeamFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
 
   @Field(() => TeamMemberListRelationFilterInput2, { nullable: true })
   members?: TeamMemberListRelationFilterInput2
+
+  @Field(() => [TeamFilterInput3], { nullable: true })
+  AND?: TeamFilterInput3[]
+
+  @Field(() => [TeamFilterInput3], { nullable: true })
+  OR?: TeamFilterInput3[]
+
+  @Field(() => [TeamFilterInput3], { nullable: true })
+  NOT?: TeamFilterInput3[]
 }
 
 @InputType()
@@ -1789,20 +2341,29 @@ export class TeamMemberFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   teamId?: StringFilterInput
 
-  @Field(() => TeamFilterInput3, { nullable: true })
-  team?: TeamFilterInput3
+  @Field(() => TeamRelationFilterInput2, { nullable: true })
+  team?: TeamRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   roleId?: StringFilterInput
 
-  @Field(() => RoleFilterInput3, { nullable: true })
-  role?: RoleFilterInput3
+  @Field(() => RoleRelationFilterInput2, { nullable: true })
+  role?: RoleRelationFilterInput2
+
+  @Field(() => [TeamMemberFilterInput3], { nullable: true })
+  AND?: TeamMemberFilterInput3[]
+
+  @Field(() => [TeamMemberFilterInput3], { nullable: true })
+  OR?: TeamMemberFilterInput3[]
+
+  @Field(() => [TeamMemberFilterInput3], { nullable: true })
+  NOT?: TeamMemberFilterInput3[]
 }
 
 @InputType()
@@ -1855,17 +2416,26 @@ export class StoredFileFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organization?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  userAvatar?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  userAvatar?: UserRelationFilterInput2
 
-  @Field(() => OrganizationFilterInput3, { nullable: true })
-  organizationLogo?: OrganizationFilterInput3
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organizationLogo?: OrganizationRelationFilterInput2
+
+  @Field(() => [StoredFileFilterInput3], { nullable: true })
+  AND?: StoredFileFilterInput3[]
+
+  @Field(() => [StoredFileFilterInput3], { nullable: true })
+  OR?: StoredFileFilterInput3[]
+
+  @Field(() => [StoredFileFilterInput3], { nullable: true })
+  NOT?: StoredFileFilterInput3[]
 }
 
 @InputType()
@@ -1909,8 +2479,8 @@ export class UserFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   avatarId?: StringFilterInput
 
-  @Field(() => StoredFileFilterInput3, { nullable: true })
-  avatar?: StoredFileFilterInput3
+  @Field(() => StoredFileRelationFilterInput2, { nullable: true })
+  avatar?: StoredFileRelationFilterInput2
 
   @Field(() => StoredFileListRelationFilterInput2, { nullable: true })
   images?: StoredFileListRelationFilterInput2
@@ -1980,6 +2550,15 @@ export class UserFilterInput2 {
 
   @Field(() => OAuthAccountListRelationFilterInput2, { nullable: true })
   oAuthAccounts?: OAuthAccountListRelationFilterInput2
+
+  @Field(() => [UserFilterInput3], { nullable: true })
+  AND?: UserFilterInput3[]
+
+  @Field(() => [UserFilterInput3], { nullable: true })
+  OR?: UserFilterInput3[]
+
+  @Field(() => [UserFilterInput3], { nullable: true })
+  NOT?: UserFilterInput3[]
 }
 
 @InputType()
@@ -1996,14 +2575,23 @@ export class UserPreferenceFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   key?: StringFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   value?: StringFilterInput
+
+  @Field(() => [UserPreferenceFilterInput3], { nullable: true })
+  AND?: UserPreferenceFilterInput3[]
+
+  @Field(() => [UserPreferenceFilterInput3], { nullable: true })
+  OR?: UserPreferenceFilterInput3[]
+
+  @Field(() => [UserPreferenceFilterInput3], { nullable: true })
+  NOT?: UserPreferenceFilterInput3[]
 }
 
 @InputType()
@@ -2023,8 +2611,8 @@ export class UserSessionFilterInput2 {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput3, { nullable: true })
-  user?: UserFilterInput3
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
 
   @Field(() => StringFilterInput, { nullable: true })
   deviceInfo?: StringFilterInput
@@ -2037,6 +2625,15 @@ export class UserSessionFilterInput2 {
 
   @Field(() => BooleanFilterInput, { nullable: true })
   twoFactorVerified?: BooleanFilterInput
+
+  @Field(() => [UserSessionFilterInput3], { nullable: true })
+  AND?: UserSessionFilterInput3[]
+
+  @Field(() => [UserSessionFilterInput3], { nullable: true })
+  OR?: UserSessionFilterInput3[]
+
+  @Field(() => [UserSessionFilterInput3], { nullable: true })
+  NOT?: UserSessionFilterInput3[]
 }
 
 @InputType()
@@ -2268,6 +2865,558 @@ export class UserSessionListRelationFilterInput {
 }
 
 @InputType()
+export class CountryRelationFilterInput {
+  @Field(() => CountryFilterInput2, { nullable: true })
+  is?: CountryFilterInput2 | null
+
+  @Field(() => CountryFilterInput2, { nullable: true })
+  isNot?: CountryFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  alpha2?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  alpha3?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  countryCode?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  iso3166_2?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  region?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  subRegion?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  intermediateRegion?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  regionCode?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  subRegionCode?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  intermediateRegionCode?: StringFilterInput
+
+  @Field(() => AddressListRelationFilterInput2, { nullable: true })
+  addresses?: AddressListRelationFilterInput2
+
+  @Field(() => [CountryFilterInput3], { nullable: true })
+  AND?: CountryFilterInput3[]
+
+  @Field(() => [CountryFilterInput3], { nullable: true })
+  OR?: CountryFilterInput3[]
+
+  @Field(() => [CountryFilterInput3], { nullable: true })
+  NOT?: CountryFilterInput3[]
+}
+
+@InputType()
+export class OrganizationRelationFilterInput {
+  @Field(() => OrganizationFilterInput2, { nullable: true })
+  is?: OrganizationFilterInput2 | null
+
+  @Field(() => OrganizationFilterInput2, { nullable: true })
+  isNot?: OrganizationFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  logoId?: StringFilterInput
+
+  @Field(() => StoredFileRelationFilterInput2, { nullable: true })
+  logo?: StoredFileRelationFilterInput2
+
+  @Field(() => EmailListRelationFilterInput2, { nullable: true })
+  emails?: EmailListRelationFilterInput2
+
+  @Field(() => LinkListRelationFilterInput2, { nullable: true })
+  links?: LinkListRelationFilterInput2
+
+  @Field(() => PhoneNumberListRelationFilterInput2, { nullable: true })
+  phoneNumbers?: PhoneNumberListRelationFilterInput2
+
+  @Field(() => StoredFileListRelationFilterInput2, { nullable: true })
+  images?: StoredFileListRelationFilterInput2
+
+  @Field(() => OrganizationMemberListRelationFilterInput2, { nullable: true })
+  members?: OrganizationMemberListRelationFilterInput2
+
+  @Field(() => AddressListRelationFilterInput2, { nullable: true })
+  addresses?: AddressListRelationFilterInput2
+
+  @Field(() => InviteListRelationFilterInput2, { nullable: true })
+  invites?: InviteListRelationFilterInput2
+
+  @Field(() => AuditLogListRelationFilterInput2, { nullable: true })
+  AuditLog?: AuditLogListRelationFilterInput2
+
+  @Field(() => TeamListRelationFilterInput2, { nullable: true })
+  Team?: TeamListRelationFilterInput2
+
+  @Field(() => SubscriptionRelationFilterInput2, { nullable: true })
+  subscription?: SubscriptionRelationFilterInput2
+
+  @Field(() => RoleListRelationFilterInput2, { nullable: true })
+  roles?: RoleListRelationFilterInput2
+
+  @Field(() => ApiTokenListRelationFilterInput2, { nullable: true })
+  apiTokens?: ApiTokenListRelationFilterInput2
+
+  @Field(() => [OrganizationFilterInput3], { nullable: true })
+  AND?: OrganizationFilterInput3[]
+
+  @Field(() => [OrganizationFilterInput3], { nullable: true })
+  OR?: OrganizationFilterInput3[]
+
+  @Field(() => [OrganizationFilterInput3], { nullable: true })
+  NOT?: OrganizationFilterInput3[]
+}
+
+@InputType()
+export class PlanRelationFilterInput {
+  @Field(() => PlanFilterInput2, { nullable: true })
+  is?: PlanFilterInput2 | null
+
+  @Field(() => PlanFilterInput2, { nullable: true })
+  isNot?: PlanFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  description?: StringFilterInput
+
+  @Field(() => FloatFilterInput, { nullable: true })
+  price?: FloatFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  interval?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  active?: BooleanFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripeProductId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripePriceId?: StringFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  trialPeriodDays?: IntFilterInput
+
+  @Field(() => SubscriptionListRelationFilterInput2, { nullable: true })
+  subscriptions?: SubscriptionListRelationFilterInput2
+
+  @Field(() => [PlanFilterInput3], { nullable: true })
+  AND?: PlanFilterInput3[]
+
+  @Field(() => [PlanFilterInput3], { nullable: true })
+  OR?: PlanFilterInput3[]
+
+  @Field(() => [PlanFilterInput3], { nullable: true })
+  NOT?: PlanFilterInput3[]
+}
+
+@InputType()
+export class RoleRelationFilterInput {
+  @Field(() => RoleFilterInput2, { nullable: true })
+  is?: RoleFilterInput2 | null
+
+  @Field(() => RoleFilterInput2, { nullable: true })
+  isNot?: RoleFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  description?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => PermissionListRelationFilterInput2, { nullable: true })
+  permissions?: PermissionListRelationFilterInput2
+
+  @Field(() => OrganizationMemberListRelationFilterInput2, { nullable: true })
+  members?: OrganizationMemberListRelationFilterInput2
+
+  @Field(() => TeamMemberListRelationFilterInput2, { nullable: true })
+  teamMembers?: TeamMemberListRelationFilterInput2
+
+  @Field(() => InviteListRelationFilterInput2, { nullable: true })
+  invites?: InviteListRelationFilterInput2
+
+  @Field(() => [RoleFilterInput3], { nullable: true })
+  AND?: RoleFilterInput3[]
+
+  @Field(() => [RoleFilterInput3], { nullable: true })
+  OR?: RoleFilterInput3[]
+
+  @Field(() => [RoleFilterInput3], { nullable: true })
+  NOT?: RoleFilterInput3[]
+}
+
+@InputType()
+export class StoredFileRelationFilterInput {
+  @Field(() => StoredFileFilterInput2, { nullable: true })
+  is?: StoredFileFilterInput2 | null
+
+  @Field(() => StoredFileFilterInput2, { nullable: true })
+  isNot?: StoredFileFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StorageProviderFilterInput, { nullable: true })
+  provider?: StorageProviderFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  providerFileId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  folder?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  filename?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  originalName?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  mimeType?: StringFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  size?: IntFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  url?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  publicUrl?: StringFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  width?: IntFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  height?: IntFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  userId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  user?: UserRelationFilterInput2
+
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => UserRelationFilterInput2, { nullable: true })
+  userAvatar?: UserRelationFilterInput2
+
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organizationLogo?: OrganizationRelationFilterInput2
+
+  @Field(() => [StoredFileFilterInput3], { nullable: true })
+  AND?: StoredFileFilterInput3[]
+
+  @Field(() => [StoredFileFilterInput3], { nullable: true })
+  OR?: StoredFileFilterInput3[]
+
+  @Field(() => [StoredFileFilterInput3], { nullable: true })
+  NOT?: StoredFileFilterInput3[]
+}
+
+@InputType()
+export class SubscriptionRelationFilterInput {
+  @Field(() => SubscriptionFilterInput2, { nullable: true })
+  is?: SubscriptionFilterInput2 | null
+
+  @Field(() => SubscriptionFilterInput2, { nullable: true })
+  isNot?: SubscriptionFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => StringFilterInput, { nullable: true })
+  planId?: StringFilterInput
+
+  @Field(() => PlanRelationFilterInput2, { nullable: true })
+  plan?: PlanRelationFilterInput2
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripeCustomerId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripeSubscriptionId?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  stripePriceId?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  stripeCurrentPeriodEnd?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  trialStart?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  trialEnd?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  cancelAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  canceledAt?: DateTimeFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  cancelAtPeriodEnd?: BooleanFilterInput
+
+  @Field(() => SubscriptionStatusFilterInput, { nullable: true })
+  status?: SubscriptionStatusFilterInput
+
+  @Field(() => [SubscriptionFilterInput3], { nullable: true })
+  AND?: SubscriptionFilterInput3[]
+
+  @Field(() => [SubscriptionFilterInput3], { nullable: true })
+  OR?: SubscriptionFilterInput3[]
+
+  @Field(() => [SubscriptionFilterInput3], { nullable: true })
+  NOT?: SubscriptionFilterInput3[]
+}
+
+@InputType()
+export class TeamRelationFilterInput {
+  @Field(() => TeamFilterInput2, { nullable: true })
+  is?: TeamFilterInput2 | null
+
+  @Field(() => TeamFilterInput2, { nullable: true })
+  isNot?: TeamFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  name?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  description?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  organizationId?: StringFilterInput
+
+  @Field(() => OrganizationRelationFilterInput2, { nullable: true })
+  organization?: OrganizationRelationFilterInput2
+
+  @Field(() => TeamMemberListRelationFilterInput2, { nullable: true })
+  members?: TeamMemberListRelationFilterInput2
+
+  @Field(() => [TeamFilterInput3], { nullable: true })
+  AND?: TeamFilterInput3[]
+
+  @Field(() => [TeamFilterInput3], { nullable: true })
+  OR?: TeamFilterInput3[]
+
+  @Field(() => [TeamFilterInput3], { nullable: true })
+  NOT?: TeamFilterInput3[]
+}
+
+@InputType()
+export class UserRelationFilterInput {
+  @Field(() => UserFilterInput2, { nullable: true })
+  is?: UserFilterInput2 | null
+
+  @Field(() => UserFilterInput2, { nullable: true })
+  isNot?: UserFilterInput2 | null
+
+  @Field(() => StringFilterInput, { nullable: true })
+  id?: StringFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  createdAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  updatedAt?: DateTimeFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  firstName?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  lastName?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isSuperAdmin?: BooleanFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  bio?: StringFilterInput
+
+  @Field(() => StringFilterInput, { nullable: true })
+  displayName?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  emailValidated?: BooleanFilterInput
+
+  @Field(() => EmailListRelationFilterInput2, { nullable: true })
+  emails?: EmailListRelationFilterInput2
+
+  @Field(() => LinkListRelationFilterInput2, { nullable: true })
+  links?: LinkListRelationFilterInput2
+
+  @Field(() => PhoneNumberListRelationFilterInput2, { nullable: true })
+  phoneNumbers?: PhoneNumberListRelationFilterInput2
+
+  @Field(() => StringFilterInput, { nullable: true })
+  avatarId?: StringFilterInput
+
+  @Field(() => StoredFileRelationFilterInput2, { nullable: true })
+  avatar?: StoredFileRelationFilterInput2
+
+  @Field(() => StoredFileListRelationFilterInput2, { nullable: true })
+  images?: StoredFileListRelationFilterInput2
+
+  @Field(() => OrganizationMemberListRelationFilterInput2, { nullable: true })
+  organizations?: OrganizationMemberListRelationFilterInput2
+
+  @Field(() => StringFilterInput, { nullable: true })
+  activeOrganizationId?: StringFilterInput
+
+  @Field(() => AddressListRelationFilterInput2, { nullable: true })
+  addresses?: AddressListRelationFilterInput2
+
+  @Field(() => InviteListRelationFilterInput2, { nullable: true })
+  invitesSent?: InviteListRelationFilterInput2
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  twoFactorEnabled?: BooleanFilterInput
+
+  @Field(() => TwoFactorMethodFilterInput, { nullable: true })
+  twoFactorMethod?: TwoFactorMethodFilterInput
+
+  @Field(() => UserSessionListRelationFilterInput2, { nullable: true })
+  activeSessions?: UserSessionListRelationFilterInput2
+
+  @Field(() => LoginAttemptListRelationFilterInput2, { nullable: true })
+  loginAttempts?: LoginAttemptListRelationFilterInput2
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  lastSuccessfulLogin?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  lastFailedLogin?: DateTimeFilterInput
+
+  @Field(() => IntFilterInput, { nullable: true })
+  failedLoginCount?: IntFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  lockedUntil?: DateTimeFilterInput
+
+  @Field(() => AuditLogListRelationFilterInput2, { nullable: true })
+  AuditLog?: AuditLogListRelationFilterInput2
+
+  @Field(() => UserPreferenceListRelationFilterInput2, { nullable: true })
+  UserPreference?: UserPreferenceListRelationFilterInput2
+
+  @Field(() => TeamMemberListRelationFilterInput2, { nullable: true })
+  TeamMember?: TeamMemberListRelationFilterInput2
+
+  @Field(() => SecurityEventListRelationFilterInput2, { nullable: true })
+  SecurityEvent?: SecurityEventListRelationFilterInput2
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isActive?: BooleanFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  deactivatedAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  termsAcceptedAt?: DateTimeFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  privacyPolicyAcceptedAt?: DateTimeFilterInput
+
+  @Field(() => ApiTokenListRelationFilterInput2, { nullable: true })
+  apiTokens?: ApiTokenListRelationFilterInput2
+
+  @Field(() => OAuthAccountListRelationFilterInput2, { nullable: true })
+  oAuthAccounts?: OAuthAccountListRelationFilterInput2
+
+  @Field(() => [UserFilterInput3], { nullable: true })
+  AND?: UserFilterInput3[]
+
+  @Field(() => [UserFilterInput3], { nullable: true })
+  OR?: UserFilterInput3[]
+
+  @Field(() => [UserFilterInput3], { nullable: true })
+  NOT?: UserFilterInput3[]
+}
+
+@InputType()
 export class AddressFilterInput {
   [key: string]: unknown
 
@@ -2304,20 +3453,29 @@ export class AddressFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   countryId?: StringFilterInput
 
-  @Field(() => CountryFilterInput2, { nullable: true })
-  country?: CountryFilterInput2
+  @Field(() => CountryRelationFilterInput, { nullable: true })
+  country?: CountryRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
+
+  @Field(() => [AddressFilterInput2], { nullable: true })
+  AND?: AddressFilterInput2[]
+
+  @Field(() => [AddressFilterInput2], { nullable: true })
+  OR?: AddressFilterInput2[]
+
+  @Field(() => [AddressFilterInput2], { nullable: true })
+  NOT?: AddressFilterInput2[]
 }
 
 @InputType()
@@ -2336,8 +3494,8 @@ export class ApiTokenFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   name?: StringFilterInput
@@ -2354,8 +3512,17 @@ export class ApiTokenFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
+
+  @Field(() => [ApiTokenFilterInput2], { nullable: true })
+  AND?: ApiTokenFilterInput2[]
+
+  @Field(() => [ApiTokenFilterInput2], { nullable: true })
+  OR?: ApiTokenFilterInput2[]
+
+  @Field(() => [ApiTokenFilterInput2], { nullable: true })
+  NOT?: ApiTokenFilterInput2[]
 }
 
 @InputType()
@@ -2383,14 +3550,23 @@ export class AuditLogFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
+
+  @Field(() => [AuditLogFilterInput2], { nullable: true })
+  AND?: AuditLogFilterInput2[]
+
+  @Field(() => [AuditLogFilterInput2], { nullable: true })
+  OR?: AuditLogFilterInput2[]
+
+  @Field(() => [AuditLogFilterInput2], { nullable: true })
+  NOT?: AuditLogFilterInput2[]
 }
 
 @InputType()
@@ -2441,6 +3617,15 @@ export class CountryFilterInput {
 
   @Field(() => AddressListRelationFilterInput, { nullable: true })
   addresses?: AddressListRelationFilterInput
+
+  @Field(() => [CountryFilterInput2], { nullable: true })
+  AND?: CountryFilterInput2[]
+
+  @Field(() => [CountryFilterInput2], { nullable: true })
+  OR?: CountryFilterInput2[]
+
+  @Field(() => [CountryFilterInput2], { nullable: true })
+  NOT?: CountryFilterInput2[]
 }
 
 @InputType()
@@ -2480,11 +3665,20 @@ export class EmailFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
+
+  @Field(() => [EmailFilterInput2], { nullable: true })
+  AND?: EmailFilterInput2[]
+
+  @Field(() => [EmailFilterInput2], { nullable: true })
+  OR?: EmailFilterInput2[]
+
+  @Field(() => [EmailFilterInput2], { nullable: true })
+  NOT?: EmailFilterInput2[]
 }
 
 @InputType()
@@ -2512,14 +3706,14 @@ export class InviteFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   inviterId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  inviter?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  inviter?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
 
   @Field(() => InviteStatusFilterInput, { nullable: true })
   status?: InviteStatusFilterInput
@@ -2527,8 +3721,17 @@ export class InviteFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   roleId?: StringFilterInput
 
-  @Field(() => RoleFilterInput2, { nullable: true })
-  role?: RoleFilterInput2
+  @Field(() => RoleRelationFilterInput, { nullable: true })
+  role?: RoleRelationFilterInput
+
+  @Field(() => [InviteFilterInput2], { nullable: true })
+  AND?: InviteFilterInput2[]
+
+  @Field(() => [InviteFilterInput2], { nullable: true })
+  OR?: InviteFilterInput2[]
+
+  @Field(() => [InviteFilterInput2], { nullable: true })
+  NOT?: InviteFilterInput2[]
 }
 
 @InputType()
@@ -2556,11 +3759,20 @@ export class LinkFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
+
+  @Field(() => [LinkFilterInput2], { nullable: true })
+  AND?: LinkFilterInput2[]
+
+  @Field(() => [LinkFilterInput2], { nullable: true })
+  OR?: LinkFilterInput2[]
+
+  @Field(() => [LinkFilterInput2], { nullable: true })
+  NOT?: LinkFilterInput2[]
 }
 
 @InputType()
@@ -2579,8 +3791,8 @@ export class LoginAttemptFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   email?: StringFilterInput
@@ -2599,6 +3811,15 @@ export class LoginAttemptFilterInput {
 
   @Field(() => FailureReasonFilterInput, { nullable: true })
   reason?: FailureReasonFilterInput
+
+  @Field(() => [LoginAttemptFilterInput2], { nullable: true })
+  AND?: LoginAttemptFilterInput2[]
+
+  @Field(() => [LoginAttemptFilterInput2], { nullable: true })
+  OR?: LoginAttemptFilterInput2[]
+
+  @Field(() => [LoginAttemptFilterInput2], { nullable: true })
+  NOT?: LoginAttemptFilterInput2[]
 }
 
 @InputType()
@@ -2623,8 +3844,17 @@ export class OAuthAccountFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
+
+  @Field(() => [OAuthAccountFilterInput2], { nullable: true })
+  AND?: OAuthAccountFilterInput2[]
+
+  @Field(() => [OAuthAccountFilterInput2], { nullable: true })
+  OR?: OAuthAccountFilterInput2[]
+
+  @Field(() => [OAuthAccountFilterInput2], { nullable: true })
+  NOT?: OAuthAccountFilterInput2[]
 }
 
 @InputType()
@@ -2646,8 +3876,8 @@ export class OrganizationFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   logoId?: StringFilterInput
 
-  @Field(() => StoredFileFilterInput2, { nullable: true })
-  logo?: StoredFileFilterInput2
+  @Field(() => StoredFileRelationFilterInput, { nullable: true })
+  logo?: StoredFileRelationFilterInput
 
   @Field(() => EmailListRelationFilterInput, { nullable: true })
   emails?: EmailListRelationFilterInput
@@ -2676,14 +3906,23 @@ export class OrganizationFilterInput {
   @Field(() => TeamListRelationFilterInput, { nullable: true })
   Team?: TeamListRelationFilterInput
 
-  @Field(() => SubscriptionFilterInput2, { nullable: true })
-  subscription?: SubscriptionFilterInput2
+  @Field(() => SubscriptionRelationFilterInput, { nullable: true })
+  subscription?: SubscriptionRelationFilterInput
 
   @Field(() => RoleListRelationFilterInput, { nullable: true })
   roles?: RoleListRelationFilterInput
 
   @Field(() => ApiTokenListRelationFilterInput, { nullable: true })
   apiTokens?: ApiTokenListRelationFilterInput
+
+  @Field(() => [OrganizationFilterInput2], { nullable: true })
+  AND?: OrganizationFilterInput2[]
+
+  @Field(() => [OrganizationFilterInput2], { nullable: true })
+  OR?: OrganizationFilterInput2[]
+
+  @Field(() => [OrganizationFilterInput2], { nullable: true })
+  NOT?: OrganizationFilterInput2[]
 }
 
 @InputType()
@@ -2702,20 +3941,29 @@ export class OrganizationMemberFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   roleId?: StringFilterInput
 
-  @Field(() => RoleFilterInput2, { nullable: true })
-  role?: RoleFilterInput2
+  @Field(() => RoleRelationFilterInput, { nullable: true })
+  role?: RoleRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
+
+  @Field(() => [OrganizationMemberFilterInput2], { nullable: true })
+  AND?: OrganizationMemberFilterInput2[]
+
+  @Field(() => [OrganizationMemberFilterInput2], { nullable: true })
+  OR?: OrganizationMemberFilterInput2[]
+
+  @Field(() => [OrganizationMemberFilterInput2], { nullable: true })
+  NOT?: OrganizationMemberFilterInput2[]
 }
 
 @InputType()
@@ -2736,6 +3984,15 @@ export class PermissionFilterInput {
 
   @Field(() => RoleListRelationFilterInput, { nullable: true })
   roles?: RoleListRelationFilterInput
+
+  @Field(() => [PermissionFilterInput2], { nullable: true })
+  AND?: PermissionFilterInput2[]
+
+  @Field(() => [PermissionFilterInput2], { nullable: true })
+  OR?: PermissionFilterInput2[]
+
+  @Field(() => [PermissionFilterInput2], { nullable: true })
+  NOT?: PermissionFilterInput2[]
 }
 
 @InputType()
@@ -2766,11 +4023,20 @@ export class PhoneNumberFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
+
+  @Field(() => [PhoneNumberFilterInput2], { nullable: true })
+  AND?: PhoneNumberFilterInput2[]
+
+  @Field(() => [PhoneNumberFilterInput2], { nullable: true })
+  OR?: PhoneNumberFilterInput2[]
+
+  @Field(() => [PhoneNumberFilterInput2], { nullable: true })
+  NOT?: PhoneNumberFilterInput2[]
 }
 
 @InputType()
@@ -2812,6 +4078,15 @@ export class PlanFilterInput {
 
   @Field(() => SubscriptionListRelationFilterInput, { nullable: true })
   subscriptions?: SubscriptionListRelationFilterInput
+
+  @Field(() => [PlanFilterInput2], { nullable: true })
+  AND?: PlanFilterInput2[]
+
+  @Field(() => [PlanFilterInput2], { nullable: true })
+  OR?: PlanFilterInput2[]
+
+  @Field(() => [PlanFilterInput2], { nullable: true })
+  NOT?: PlanFilterInput2[]
 }
 
 @InputType()
@@ -2830,8 +4105,8 @@ export class RoleFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
 
   @Field(() => PermissionListRelationFilterInput, { nullable: true })
   permissions?: PermissionListRelationFilterInput
@@ -2844,6 +4119,15 @@ export class RoleFilterInput {
 
   @Field(() => InviteListRelationFilterInput, { nullable: true })
   invites?: InviteListRelationFilterInput
+
+  @Field(() => [RoleFilterInput2], { nullable: true })
+  AND?: RoleFilterInput2[]
+
+  @Field(() => [RoleFilterInput2], { nullable: true })
+  OR?: RoleFilterInput2[]
+
+  @Field(() => [RoleFilterInput2], { nullable: true })
+  NOT?: RoleFilterInput2[]
 }
 
 @InputType()
@@ -2862,8 +4146,8 @@ export class SecurityEventFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => SecurityEventTypeFilterInput, { nullable: true })
   eventType?: SecurityEventTypeFilterInput
@@ -2873,6 +4157,15 @@ export class SecurityEventFilterInput {
 
   @Field(() => StringFilterInput, { nullable: true })
   userAgent?: StringFilterInput
+
+  @Field(() => [SecurityEventFilterInput2], { nullable: true })
+  AND?: SecurityEventFilterInput2[]
+
+  @Field(() => [SecurityEventFilterInput2], { nullable: true })
+  OR?: SecurityEventFilterInput2[]
+
+  @Field(() => [SecurityEventFilterInput2], { nullable: true })
+  NOT?: SecurityEventFilterInput2[]
 }
 
 @InputType()
@@ -2891,14 +4184,14 @@ export class SubscriptionFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   planId?: StringFilterInput
 
-  @Field(() => PlanFilterInput2, { nullable: true })
-  plan?: PlanFilterInput2
+  @Field(() => PlanRelationFilterInput, { nullable: true })
+  plan?: PlanRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   stripeCustomerId?: StringFilterInput
@@ -2929,6 +4222,15 @@ export class SubscriptionFilterInput {
 
   @Field(() => SubscriptionStatusFilterInput, { nullable: true })
   status?: SubscriptionStatusFilterInput
+
+  @Field(() => [SubscriptionFilterInput2], { nullable: true })
+  AND?: SubscriptionFilterInput2[]
+
+  @Field(() => [SubscriptionFilterInput2], { nullable: true })
+  OR?: SubscriptionFilterInput2[]
+
+  @Field(() => [SubscriptionFilterInput2], { nullable: true })
+  NOT?: SubscriptionFilterInput2[]
 }
 
 @InputType()
@@ -2953,11 +4255,20 @@ export class TeamFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
 
   @Field(() => TeamMemberListRelationFilterInput, { nullable: true })
   members?: TeamMemberListRelationFilterInput
+
+  @Field(() => [TeamFilterInput2], { nullable: true })
+  AND?: TeamFilterInput2[]
+
+  @Field(() => [TeamFilterInput2], { nullable: true })
+  OR?: TeamFilterInput2[]
+
+  @Field(() => [TeamFilterInput2], { nullable: true })
+  NOT?: TeamFilterInput2[]
 }
 
 @InputType()
@@ -2976,20 +4287,29 @@ export class TeamMemberFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   teamId?: StringFilterInput
 
-  @Field(() => TeamFilterInput2, { nullable: true })
-  team?: TeamFilterInput2
+  @Field(() => TeamRelationFilterInput, { nullable: true })
+  team?: TeamRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   roleId?: StringFilterInput
 
-  @Field(() => RoleFilterInput2, { nullable: true })
-  role?: RoleFilterInput2
+  @Field(() => RoleRelationFilterInput, { nullable: true })
+  role?: RoleRelationFilterInput
+
+  @Field(() => [TeamMemberFilterInput2], { nullable: true })
+  AND?: TeamMemberFilterInput2[]
+
+  @Field(() => [TeamMemberFilterInput2], { nullable: true })
+  OR?: TeamMemberFilterInput2[]
+
+  @Field(() => [TeamMemberFilterInput2], { nullable: true })
+  NOT?: TeamMemberFilterInput2[]
 }
 
 @InputType()
@@ -3044,17 +4364,26 @@ export class StoredFileFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organization?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organization?: OrganizationRelationFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  userAvatar?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  userAvatar?: UserRelationFilterInput
 
-  @Field(() => OrganizationFilterInput2, { nullable: true })
-  organizationLogo?: OrganizationFilterInput2
+  @Field(() => OrganizationRelationFilterInput, { nullable: true })
+  organizationLogo?: OrganizationRelationFilterInput
+
+  @Field(() => [StoredFileFilterInput2], { nullable: true })
+  AND?: StoredFileFilterInput2[]
+
+  @Field(() => [StoredFileFilterInput2], { nullable: true })
+  OR?: StoredFileFilterInput2[]
+
+  @Field(() => [StoredFileFilterInput2], { nullable: true })
+  NOT?: StoredFileFilterInput2[]
 }
 
 @InputType()
@@ -3100,8 +4429,8 @@ export class UserFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   avatarId?: StringFilterInput
 
-  @Field(() => StoredFileFilterInput2, { nullable: true })
-  avatar?: StoredFileFilterInput2
+  @Field(() => StoredFileRelationFilterInput, { nullable: true })
+  avatar?: StoredFileRelationFilterInput
 
   @Field(() => StoredFileListRelationFilterInput, { nullable: true })
   images?: StoredFileListRelationFilterInput
@@ -3171,6 +4500,15 @@ export class UserFilterInput {
 
   @Field(() => OAuthAccountListRelationFilterInput, { nullable: true })
   oAuthAccounts?: OAuthAccountListRelationFilterInput
+
+  @Field(() => [UserFilterInput2], { nullable: true })
+  AND?: UserFilterInput2[]
+
+  @Field(() => [UserFilterInput2], { nullable: true })
+  OR?: UserFilterInput2[]
+
+  @Field(() => [UserFilterInput2], { nullable: true })
+  NOT?: UserFilterInput2[]
 }
 
 @InputType()
@@ -3189,14 +4527,23 @@ export class UserPreferenceFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   key?: StringFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   value?: StringFilterInput
+
+  @Field(() => [UserPreferenceFilterInput2], { nullable: true })
+  AND?: UserPreferenceFilterInput2[]
+
+  @Field(() => [UserPreferenceFilterInput2], { nullable: true })
+  OR?: UserPreferenceFilterInput2[]
+
+  @Field(() => [UserPreferenceFilterInput2], { nullable: true })
+  NOT?: UserPreferenceFilterInput2[]
 }
 
 @InputType()
@@ -3218,8 +4565,8 @@ export class UserSessionFilterInput {
   @Field(() => StringFilterInput, { nullable: true })
   userId?: StringFilterInput
 
-  @Field(() => UserFilterInput2, { nullable: true })
-  user?: UserFilterInput2
+  @Field(() => UserRelationFilterInput, { nullable: true })
+  user?: UserRelationFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   deviceInfo?: StringFilterInput
@@ -3232,6 +4579,15 @@ export class UserSessionFilterInput {
 
   @Field(() => BooleanFilterInput, { nullable: true })
   twoFactorVerified?: BooleanFilterInput
+
+  @Field(() => [UserSessionFilterInput2], { nullable: true })
+  AND?: UserSessionFilterInput2[]
+
+  @Field(() => [UserSessionFilterInput2], { nullable: true })
+  OR?: UserSessionFilterInput2[]
+
+  @Field(() => [UserSessionFilterInput2], { nullable: true })
+  NOT?: UserSessionFilterInput2[]
 }
 
 @InputType()
@@ -3321,7 +4677,7 @@ export class UpdateAddressInput {
 @InputType()
 export class ListAddressInput extends CorePagingInput {
   @Field(() => AddressFilterInput, { nullable: true })
-  filters?: AddressFilterInput
+  filters?: AddressFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -3426,7 +4782,7 @@ export class UpdateApiTokenInput {
 @InputType()
 export class ListApiTokenInput extends CorePagingInput {
   @Field(() => ApiTokenFilterInput, { nullable: true })
-  filters?: ApiTokenFilterInput
+  filters?: ApiTokenFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -3519,7 +4875,7 @@ export class UpdateAuditLogInput {
 @InputType()
 export class ListAuditLogInput extends CorePagingInput {
   @Field(() => AuditLogFilterInput, { nullable: true })
-  filters?: AuditLogFilterInput
+  filters?: AuditLogFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -3648,7 +5004,7 @@ export class UpdateCountryInput {
 @InputType()
 export class ListCountryInput extends CorePagingInput {
   @Field(() => CountryFilterInput, { nullable: true })
-  filters?: CountryFilterInput
+  filters?: CountryFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -3771,7 +5127,7 @@ export class UpdateEmailInput {
 @InputType()
 export class ListEmailInput extends CorePagingInput {
   @Field(() => EmailFilterInput, { nullable: true })
-  filters?: EmailFilterInput
+  filters?: EmailFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -3876,7 +5232,7 @@ export class UpdateInviteInput {
 @InputType()
 export class ListInviteInput extends CorePagingInput {
   @Field(() => InviteFilterInput, { nullable: true })
-  filters?: InviteFilterInput
+  filters?: InviteFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -3960,7 +5316,7 @@ export class UpdateLinkInput {
 @InputType()
 export class ListLinkInput extends CorePagingInput {
   @Field(() => LinkFilterInput, { nullable: true })
-  filters?: LinkFilterInput
+  filters?: LinkFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4053,7 +5409,7 @@ export class UpdateLoginAttemptInput {
 @InputType()
 export class ListLoginAttemptInput extends CorePagingInput {
   @Field(() => LoginAttemptFilterInput, { nullable: true })
-  filters?: LoginAttemptFilterInput
+  filters?: LoginAttemptFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4131,7 +5487,7 @@ export class UpdateOAuthAccountInput {
 @InputType()
 export class ListOAuthAccountInput extends CorePagingInput {
   @Field(() => OAuthAccountFilterInput, { nullable: true })
-  filters?: OAuthAccountFilterInput
+  filters?: OAuthAccountFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4263,7 +5619,7 @@ export class UpdateOrganizationInput {
 @InputType()
 export class ListOrganizationInput extends CorePagingInput {
   @Field(() => OrganizationFilterInput, { nullable: true })
-  filters?: OrganizationFilterInput
+  filters?: OrganizationFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4362,7 +5718,7 @@ export class UpdateOrganizationMemberInput {
 @InputType()
 export class ListOrganizationMemberInput extends CorePagingInput {
   @Field(() => OrganizationMemberFilterInput, { nullable: true })
-  filters?: OrganizationMemberFilterInput
+  filters?: OrganizationMemberFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4422,7 +5778,7 @@ export class UpdatePermissionInput {
 @InputType()
 export class ListPermissionInput extends CorePagingInput {
   @Field(() => PermissionFilterInput, { nullable: true })
-  filters?: PermissionFilterInput
+  filters?: PermissionFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4497,7 +5853,7 @@ export class UpdatePhoneNumberInput {
 @InputType()
 export class ListPhoneNumberInput extends CorePagingInput {
   @Field(() => PhoneNumberFilterInput, { nullable: true })
-  filters?: PhoneNumberFilterInput
+  filters?: PhoneNumberFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4617,7 +5973,7 @@ export class UpdatePlanInput {
 @InputType()
 export class ListPlanInput extends CorePagingInput {
   @Field(() => PlanFilterInput, { nullable: true })
-  filters?: PlanFilterInput
+  filters?: PlanFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4719,7 +6075,7 @@ export class UpdateRoleInput {
 @InputType()
 export class ListRoleInput extends CorePagingInput {
   @Field(() => RoleFilterInput, { nullable: true })
-  filters?: RoleFilterInput
+  filters?: RoleFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4803,7 +6159,7 @@ export class UpdateSecurityEventInput {
 @InputType()
 export class ListSecurityEventInput extends CorePagingInput {
   @Field(() => SecurityEventFilterInput, { nullable: true })
-  filters?: SecurityEventFilterInput
+  filters?: SecurityEventFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -4929,7 +6285,7 @@ export class UpdateSubscriptionInput {
 @InputType()
 export class ListSubscriptionInput extends CorePagingInput {
   @Field(() => SubscriptionFilterInput, { nullable: true })
-  filters?: SubscriptionFilterInput
+  filters?: SubscriptionFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -5028,7 +6384,7 @@ export class UpdateTeamInput {
 @InputType()
 export class ListTeamInput extends CorePagingInput {
   @Field(() => TeamFilterInput, { nullable: true })
-  filters?: TeamFilterInput
+  filters?: TeamFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -5097,7 +6453,7 @@ export class UpdateTeamMemberInput {
 @InputType()
 export class ListTeamMemberInput extends CorePagingInput {
   @Field(() => TeamMemberFilterInput, { nullable: true })
-  filters?: TeamMemberFilterInput
+  filters?: TeamMemberFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -5241,7 +6597,7 @@ export class UpdateStoredFileInput {
 @InputType()
 export class ListStoredFileInput extends CorePagingInput {
   @Field(() => StoredFileFilterInput, { nullable: true })
-  filters?: StoredFileFilterInput
+  filters?: StoredFileFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -5526,7 +6882,7 @@ export class UpdateUserInput {
 @InputType()
 export class ListUserInput extends CorePagingInput {
   @Field(() => UserFilterInput, { nullable: true })
-  filters?: UserFilterInput
+  filters?: UserFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -5682,7 +7038,7 @@ export class UpdateUserPreferenceInput {
 @InputType()
 export class ListUserPreferenceInput extends CorePagingInput {
   @Field(() => UserPreferenceFilterInput, { nullable: true })
-  filters?: UserPreferenceFilterInput
+  filters?: UserPreferenceFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string
@@ -5766,7 +7122,7 @@ export class UpdateUserSessionInput {
 @InputType()
 export class ListUserSessionInput extends CorePagingInput {
   @Field(() => UserSessionFilterInput, { nullable: true })
-  filters?: UserSessionFilterInput
+  filters?: UserSessionFilterInput = undefined
 
   @Field({ nullable: true })
   id?: string

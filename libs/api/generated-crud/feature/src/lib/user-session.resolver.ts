@@ -1,5 +1,5 @@
-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
+import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
 import type { GraphQLResolveInfo } from 'graphql'
 import { CorePaging } from '@nestled-template/api/core/data-access'
 import { UserSession } from '@nestled-template/api/core/models'
@@ -12,12 +12,12 @@ import {
 import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
 
 @Resolver(() => UserSession)
+@UseGuards(GqlAuthAdminGuard)
+@AdminOnly()
 export class GeneratedUserSessionResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [UserSession], { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   userSessions(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListUserSessionInput, nullable: true })
@@ -27,8 +27,6 @@ export class GeneratedUserSessionResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   userSessionsCount(
     @Args({ name: 'input', type: () => ListUserSessionInput, nullable: true })
     input?: ListUserSessionInput,
@@ -37,15 +35,11 @@ export class GeneratedUserSessionResolver {
   }
 
   @Query(() => UserSession, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   userSession(@Info() info: GraphQLResolveInfo, @Args('userSessionId') userSessionId: string) {
     return this.generatedService.userSession(info, userSessionId)
   }
 
   @Mutation(() => UserSession, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   createUserSession(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateUserSessionInput,
@@ -54,8 +48,6 @@ export class GeneratedUserSessionResolver {
   }
 
   @Mutation(() => UserSession, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   updateUserSession(
     @Info() info: GraphQLResolveInfo,
     @Args('userSessionId') userSessionId: string,
@@ -65,8 +57,6 @@ export class GeneratedUserSessionResolver {
   }
 
   @Mutation(() => UserSession, { nullable: true })
-  @AdminOnly()
-  @UseGuards(GqlAuthAdminGuard)
   deleteUserSession(@Args('userSessionId') userSessionId: string) {
     return this.generatedService.deleteUserSession(userSessionId)
   }
