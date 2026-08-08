@@ -1883,6 +1883,7 @@ type Mutation {
   updateInvite(input: UpdateInviteInput!, inviteId: String!): Invite
   updateLink(input: UpdateLinkInput!, linkId: String!): Link
   updateLoginAttempt(input: UpdateLoginAttemptInput!, loginAttemptId: String!): LoginAttempt
+  updateMyProfile(input: UpdateMyProfileInput!): User!
   updateOAuthAccount(input: UpdateOAuthAccountInput!, oAuthAccountId: String!): OAuthAccount
   updateOrganization(input: UpdateOrganizationInput!, organizationId: String!): Organization
   updateOrganizationMember(input: UpdateOrganizationMemberInput!, organizationMemberId: String!): OrganizationMember
@@ -3368,6 +3369,12 @@ input UpdateMemberRoleInput {
   organizationId: String!
   roleId: String!
   userId: String!
+}
+
+input UpdateMyProfileInput {
+  displayName: String
+  firstName: String
+  lastName: String
 }
 
 input UpdateOAuthAccountInput {

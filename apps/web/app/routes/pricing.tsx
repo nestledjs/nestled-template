@@ -3,9 +3,9 @@ import { Link } from 'react-router'
 import { CheckIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { useMutation, useQuery } from '@apollo/client/react'
 import {
-  ActivePlans,
+  AvailablePlans,
   CreateCheckoutSession,
-  type ActivePlansQuery,
+  type AvailablePlansQuery,
   type CreateCheckoutSessionMutation,
 } from '@nestled-template/shared/sdk'
 import { useSubscription, useGlobalCtx } from '@nestled-template/web'
@@ -18,7 +18,7 @@ type PricingFeature = {
 export default function PricingPage() {
   const { user } = useGlobalCtx()
   const { plan: currentPlan } = useSubscription()
-  const { data, loading } = useQuery<ActivePlansQuery>(ActivePlans)
+  const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
   const [createCheckoutSession, { loading: checkoutLoading }] =
     useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession)
 

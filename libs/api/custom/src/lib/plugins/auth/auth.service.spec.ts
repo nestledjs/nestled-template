@@ -705,6 +705,20 @@ describe('AuthService', () => {
       })
     })
 
+    it('updates only purpose-built profile fields for the authenticated user', async () => {
+      const input = { firstName: 'Ada', lastName: 'Lovelace', displayName: 'ada.lovelace' }
+      const updatedUser = { id: 'user-123', ...input }
+      mockData.user.update.mockResolvedValue(updatedUser)
+
+      await expect(service.updateMyProfile('user-123', input)).resolves.toBe(updatedUser)
+
+      expect(mockData.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: input,
+        include: expectedAuthUserInclude,
+      })
+    })
+
     it('should include the dedicated avatar relation when loading a user from a token', async () => {
       mockJwtService.decode.mockReturnValue({ userId: 'user-123' })
 

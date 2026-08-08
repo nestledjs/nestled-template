@@ -22,6 +22,7 @@ import {
   Enable2FAOutput,
   Setup2FAOutput,
   UserSessionOutput,
+  UpdateMyProfileInput,
 } from './dto'
 import { CookieOptions, Response } from 'express'
 import {
@@ -1254,6 +1255,18 @@ export class AuthService {
   validateUser(userId: string) {
     return this.data.user.findUnique({
       where: { id: userId },
+      include: authUserRelations,
+    })
+  }
+
+  updateMyProfile(userId: string, input: UpdateMyProfileInput): Promise<User> {
+    return this.data.user.update({
+      where: { id: userId },
+      data: {
+        firstName: input.firstName,
+        lastName: input.lastName,
+        displayName: input.displayName,
+      },
       include: authUserRelations,
     })
   }

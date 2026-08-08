@@ -5,12 +5,12 @@ import { apolloLoader } from '@nestled-template/shared/apollo'
 import {
   Me,
   type MeQuery,
-  UpdateUser,
+  UpdateMyProfile,
   ChangeEmail,
   ResendVerificationEmail,
   UploadUserAvatar,
   RemoveUserAvatar,
-  type UpdateUserMutation,
+  type UpdateMyProfileMutation,
   type ChangeEmailMutation,
   type ResendVerificationEmailMutation,
   type UploadUserAvatarMutation,
@@ -166,7 +166,7 @@ export default function ProfileSettings() {
   const user = data?.me
   const client = useApolloClient()
 
-  const [updateUser] = useMutation<UpdateUserMutation>(UpdateUser)
+  const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile)
   const [changeEmail] = useMutation<ChangeEmailMutation>(ChangeEmail)
   const [resendVerificationEmail] =
     useMutation<ResendVerificationEmailMutation>(ResendVerificationEmail)
@@ -349,10 +349,9 @@ export default function ProfileSettings() {
 
       // Update user fields if changed
       const updates = collectUserUpdates(values, user)
-      if (Object.keys(updates).length > 0 && user?.id) {
-        await updateUser({
+      if (Object.keys(updates).length > 0) {
+        await updateMyProfile({
           variables: {
-            userId: user.id,
             input: updates,
           },
         })

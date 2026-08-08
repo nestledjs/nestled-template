@@ -1,6 +1,6 @@
 import { Resolver, Query } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
+import { Authenticated, CtxUser, GqlAuthGuard, Public } from '@nestled-template/api/utils'
 import { Plan, User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 
@@ -10,9 +10,7 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
  * Provides user-facing queries for viewing available plans.
  * This is separate from the generated admin Plan resolver.
  */
-@Authenticated()
 @Resolver(() => Plan)
-@UseGuards(GqlAuthGuard)
 export class UserPlanResolver {
   constructor(private readonly prisma: ApiCoreDataAccessService) {}
 
@@ -20,6 +18,7 @@ export class UserPlanResolver {
    * Get all active plans available for purchase
    */
   @Query(() => [Plan])
+  @Public()
   async availablePlans(): Promise<Plan[]> {
     return this.prisma.plan.findMany({
       where: { active: true },
@@ -31,6 +30,8 @@ export class UserPlanResolver {
    * Get the current organization's plan
    */
   @Query(() => Plan, { nullable: true })
+  @UseGuards(GqlAuthGuard)
+  @Authenticated()
   async currentPlan(@CtxUser() user: User): Promise<Plan | null> {
     if (!user.activeOrganizationId) {
       return null

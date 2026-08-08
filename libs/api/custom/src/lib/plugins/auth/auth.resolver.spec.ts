@@ -24,6 +24,7 @@ describe('AuthResolver', () => {
   beforeEach(() => {
     authService = {
       validateUser: jest.fn().mockResolvedValue(user),
+      updateMyProfile: jest.fn().mockResolvedValue(user),
       login: jest.fn().mockResolvedValue(token),
       complete2FALogin: jest.fn().mockResolvedValue(token),
       setCookie: jest.fn(),
@@ -173,6 +174,14 @@ describe('AuthResolver', () => {
       sessionInfo,
       'session-1',
     )
+  })
+
+  it('updates only the authenticated user profile', async () => {
+    const input = { firstName: 'Ada', lastName: 'Lovelace', displayName: 'ada.lovelace' }
+
+    await expect(resolver.updateMyProfile(user, input)).resolves.toBe(user)
+
+    expect(authService.updateMyProfile).toHaveBeenCalledWith('user-1', input)
   })
 
   it('ends emulation only for emulated sessions with a cookie token', async () => {

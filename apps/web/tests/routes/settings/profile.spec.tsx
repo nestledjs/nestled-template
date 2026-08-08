@@ -28,7 +28,7 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   return {
     ...actual,
     Me: { kind: 'Document', definitions: [], __name: 'Me' },
-    UpdateUser: { kind: 'Document', definitions: [], __name: 'UpdateUser' },
+    UpdateMyProfile: { kind: 'Document', definitions: [], __name: 'UpdateMyProfile' },
     ChangeEmail: { kind: 'Document', definitions: [], __name: 'ChangeEmail' },
     ResendVerificationEmail: {
       kind: 'Document',
@@ -81,7 +81,7 @@ vi.mock('../../../app/routes/settings/_shared-sections', () => ({
 describe('ProfileSettings avatar handling', () => {
   const uploadUserAvatar = vi.fn()
   const removeUserAvatar = vi.fn()
-  const updateUser = vi.fn()
+  const updateMyProfile = vi.fn()
   const changeEmail = vi.fn()
   const resendVerificationEmail = vi.fn()
   const refetchQueries = vi.fn()
@@ -111,7 +111,7 @@ describe('ProfileSettings avatar handling', () => {
 
     mockUseMutation.mockImplementation((document: { __name?: string }) => {
       const mutations: Record<string, unknown> = {
-        UpdateUser: updateUser,
+        UpdateMyProfile: updateMyProfile,
         ChangeEmail: changeEmail,
         ResendVerificationEmail: resendVerificationEmail,
         UploadUserAvatar: uploadUserAvatar,

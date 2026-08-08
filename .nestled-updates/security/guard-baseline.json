@@ -5,10 +5,6 @@
   "libs/api/core/feature/src/lib/api-core-feature.controller.ts": {
     "uptime": []
   },
-  "libs/api/custom/src/lib/default/email/email.resolver.ts": {
-    "staffUpdateEmail": ["GqlAuthAdminGuard"],
-    "staffDeleteEmail": ["GqlAuthAdminGuard"]
-  },
   "libs/api/custom/src/lib/default/organization/organization.resolver.ts": {
     "userCreateOrganization": ["GqlAuthGuard"],
     "userUpdateOrganization": ["GqlOrganizationScopedGuard"],
@@ -31,7 +27,7 @@
     "members": ["GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/default/plan/user-plan.resolver.ts": {
-    "availablePlans": ["GqlAuthGuard"],
+    "availablePlans": [],
     "currentPlan": ["GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts": {
@@ -70,6 +66,7 @@
   },
   "libs/api/custom/src/lib/plugins/auth/auth.resolver.ts": {
     "me": ["GqlAuthGuard"],
+    "updateMyProfile": ["GqlAuthGuard"],
     "login": [],
     "complete2FALogin": [],
     "logout": [],

@@ -61,7 +61,7 @@ export function usePlan() {
  * }
  * ```
  */
-export function useLimit(limitKey: string, currentValue: number = 0) {
+export function useLimit(limitKey: string, currentValue = 0) {
   const context = useSubscriptionContext()
   const { limit, hasLimit } = context.checkLimit(limitKey)
   const isWithin = context.isWithinLimit(limitKey, currentValue)

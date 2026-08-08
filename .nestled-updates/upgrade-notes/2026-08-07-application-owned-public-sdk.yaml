@@ -1,0 +1,86 @@
+id: 2026-08-07-application-owned-public-sdk
+title: Keep public SDK documents application-owned
+priority: high
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  Upgrade to @nestledjs/generators 3.0.3 and separate SDK document ownership. The generator must
+  recreate complete admin CRUD documents only under libs/shared/sdk/src/__admin. Documents under
+  libs/shared/sdk/src/graphql are application-owned and must call explicit application resolvers,
+  never generated admin CRUD root fields.
+
+why: >
+  Generator 3 made generated CRUD permanently admin-only, but earlier SDK generators still seeded
+  unprefixed public copies of every generated query and mutation. Those documents did not bypass
+  server guards, but they exposed a misleading client surface and allowed active frontend features
+  to depend accidentally on admin-only operations. Removing the duplicate documents makes client
+  ownership match server ownership and forces user workflows to use scoped inputs and resolvers.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - .nestled-updates/security/**
+  - libs/shared/sdk/src/graphql/**
+  - libs/shared/sdk/src/generated/graphql.ts
+  - libs/api/custom/**
+  - apps/web/**
+  - libs/web/**
+  - scripts/doctor.ts
+  - scripts/doctor-crud-boundary-analysis.ts
+  - scripts/doctor-crud-boundary-analysis.spec.ts
+  - AGENTS.md
+  - docs/dev/api-extension-methodology.md
+  - docs/dev/doctor.md
+
+packageReleases: []
+
+skipIf:
+  - The project has no generated CRUD or GraphQL SDK.
+  - The project already uses @nestledjs/generators 3.0.3 or newer, has no application SDK document
+    that calls a generated CRUD root field, and exposes user workflows through explicit resolvers.
+
+verification:
+  - pnpm install
+  - pnpm db-update
+  - pnpm sdk
+  - pnpm template:test-doctor-auth
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+  - pnpm nx test api-custom
+  - pnpm nx test web
+  - pnpm nx test web-components
+  - pnpm nx run-many -t typecheck -p api-custom,sdk,web,web-components
+  - pnpm nx build api --skip-nx-cache
+
+agentHints:
+  - >
+    Pin @nestledjs/generators to exact 3.0.3 before cleanup. Version 3.0.2 and earlier create public
+    per-model CRUD documents whenever the matching directory is absent, so deleting legacy files
+    first allows the next db-update to recreate them.
+  - >
+    Inventory every operation under libs/shared/sdk/src/graphql that calls a generated root field:
+    <model>, <models>, <models>Count, create<Model>, update<Model>, or delete<Model>. The GraphQL
+    operation name, response alias, inline fragment, and named fragment spread do not change which
+    server field executes.
+  - >
+    Delete unused legacy documents. For every active caller, add or use a purpose-built resolver,
+    DTO, authenticated user or tenant scope, and explicit Prisma query. Update the frontend
+    document and caller together. Never move a user-facing call into __admin merely to make SDK
+    generation succeed.
+  - >
+    Preserve the caller's intended reachability only after narrowing the resolver. A pre-login
+    catalog such as availablePlans may be @Public when it applies a fixed server-side active filter
+    and returns no user or organization data. Document the exception in public-operations.json and
+    refresh the guard baseline deliberately. Keep every identity- or tenant-scoped replacement
+    authenticated.
+  - >
+    Preserve real fragments and custom operations under libs/shared/sdk/src/graphql. Generator
+    3.0.3 deliberately does not create or delete per-model/feature documents. The shared generated
+    graphql/core/core.graphql file is the only infrastructure needed; do not create empty GraphQL
+    placeholders because an empty document is invalid syntax.
+  - >
+    Run db-update, refresh api-schema.graphql through the normal API schema-generation path, then
+    run pnpm sdk. Search the remaining application documents again and verify Doctor reports no
+    generated CRUD calls outside __admin.

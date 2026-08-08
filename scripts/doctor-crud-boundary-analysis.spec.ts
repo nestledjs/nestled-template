@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   getCrudAuthAnnotationLines,
   getCustomCrudImportViolations,
+  getGraphqlRootFieldNames,
   getLegacyCoreHelpersImportViolations,
   getNonAdminOperationViolations,
+  getPublicSdkGeneratedCrudViolations,
   supportsAdminOnlyGeneratorBoundary,
 } from './doctor-crud-boundary-analysis'
 
@@ -12,7 +14,8 @@ describe('generated CRUD boundary analysis', () => {
     expect(supportsAdminOnlyGeneratorBoundary('2.0.0')).toBe(false)
     expect(supportsAdminOnlyGeneratorBoundary('3.0.0')).toBe(false)
     expect(supportsAdminOnlyGeneratorBoundary('3.0.1')).toBe(false)
-    expect(supportsAdminOnlyGeneratorBoundary('3.0.2')).toBe(true)
+    expect(supportsAdminOnlyGeneratorBoundary('3.0.2')).toBe(false)
+    expect(supportsAdminOnlyGeneratorBoundary('3.0.3')).toBe(true)
     expect(supportsAdminOnlyGeneratorBoundary('3.1.0')).toBe(true)
     expect(supportsAdminOnlyGeneratorBoundary('4.1.0-beta.1')).toBe(true)
     expect(supportsAdminOnlyGeneratorBoundary('workspace:*')).toBe(false)
@@ -53,6 +56,113 @@ describe('generated CRUD boundary analysis', () => {
         /// @crudAuth: { "readMany": "public" }
       `),
     ).toEqual([2, 4])
+  })
+
+  it('rejects application SDK operations that call generated admin CRUD fields', () => {
+    const generatedFields = getGraphqlRootFieldNames(`
+      query __AdminUsers($input: ListUserInput) {
+        users(input: $input) { id }
+        count: usersCount(input: $input) { count }
+      }
+    `)
+
+    expect(
+      getPublicSdkGeneratedCrudViolations(
+        `
+          query ActiveUsers {
+            results: users(input: { filters: { isActive: { equals: true } } }) { id }
+          }
+        `,
+        generatedFields,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        line: 3,
+        message: expect.stringContaining('ActiveUsers calls generated admin CRUD field users'),
+      }),
+    ])
+  })
+
+  it('rejects generated admin CRUD fields behind root-level inline fragments', () => {
+    expect(
+      getPublicSdkGeneratedCrudViolations(
+        `
+          query ActiveUsers {
+            ... on Query {
+              users { id }
+            }
+          }
+        `,
+        new Set(['users']),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        line: 4,
+        message: expect.stringContaining('ActiveUsers calls generated admin CRUD field users'),
+      }),
+    ])
+  })
+
+  it('rejects generated admin CRUD fields behind root-level named fragments', () => {
+    expect(
+      getPublicSdkGeneratedCrudViolations(
+        `
+          query ActiveUsers {
+            ...GeneratedUsers
+          }
+          fragment GeneratedUsers on Query {
+            users { id }
+          }
+        `,
+        new Set(['users']),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        line: 3,
+        message: expect.stringContaining('ActiveUsers calls generated admin CRUD field users'),
+      }),
+    ])
+  })
+
+  it('rejects generated admin CRUD fields from root fragments in another SDK file', () => {
+    expect(
+      getPublicSdkGeneratedCrudViolations(
+        `
+          query ActiveUsers {
+            ...GeneratedUsers
+          }
+        `,
+        new Set(['users']),
+        [
+          `
+            fragment GeneratedUsers on Query {
+              users { id }
+            }
+          `,
+        ],
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        line: 3,
+        message: expect.stringContaining('ActiveUsers calls generated admin CRUD field users'),
+      }),
+    ])
+  })
+
+  it('accepts purpose-built application SDK operations and fragments', () => {
+    const generatedFields = new Set(['users', 'usersCount', 'updateUser'])
+    expect(
+      getPublicSdkGeneratedCrudViolations(
+        `
+          query MyProfile { me { ...UserDetails } }
+          mutation UpdateMyProfile($input: UpdateMyProfileInput!) {
+            updateMyProfile(input: $input) { ...UserDetails }
+          }
+          fragment UserDetails on User { id }
+        `,
+        generatedFields,
+      ),
+    ).toEqual([])
   })
 
   it('accepts class-level admin protection for every resolver operation', () => {
