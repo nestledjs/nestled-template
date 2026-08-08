@@ -42,5 +42,8 @@
   },
   "libs/api/custom/src/lib/default/organization/organization.resolver.ts": {
     "getInvitationDetails": "Renders the invitation acceptance screen before the invitee has an account. Authorized by the invitation token argument."
+  },
+  "libs/api/custom/src/lib/default/plan/user-plan.resolver.ts": {
+    "availablePlans": "Public pricing catalog. Returns only active plans through a fixed server-side filter and exposes no user or organization data."
   }
 }

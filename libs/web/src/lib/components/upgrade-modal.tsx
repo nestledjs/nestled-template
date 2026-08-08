@@ -3,9 +3,9 @@ import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from '@
 import { XMarkIcon, CheckIcon } from '@heroicons/react/24/outline'
 import { useQuery, useMutation } from '@apollo/client/react'
 import {
-  ActivePlans,
+  AvailablePlans,
   CreateCheckoutSession,
-  type ActivePlansQuery,
+  type AvailablePlansQuery,
   type CreateCheckoutSessionMutation,
 } from '@nestled-template/shared/sdk'
 import { useSubscription } from '../hooks/use-subscription'
@@ -36,7 +36,7 @@ interface UpgradeModalProps {
  */
 export function UpgradeModal({ isOpen, onClose, feature, reason }: UpgradeModalProps) {
   const { plan: currentPlan } = useSubscription()
-  const { data, loading } = useQuery<ActivePlansQuery>(ActivePlans)
+  const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
   const [createCheckout, { loading: checkoutLoading }] =
     useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession)
 

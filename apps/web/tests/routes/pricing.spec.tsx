@@ -19,7 +19,7 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
   return {
     ...actual,
-    ActivePlans: { kind: 'Document', definitions: [] },
+    AvailablePlans: { kind: 'Document', definitions: [] },
     CreateCheckoutSession: { kind: 'Document', definitions: [] },
   }
 })
@@ -75,7 +75,7 @@ describe('Pricing Page', () => {
 
     mockCreateCheckoutSession = vi.fn()
 
-    // Mock useQuery for ActivePlans
+    // Mock useQuery for AvailablePlans
     mockUseQuery.mockReturnValue({
       data: { plans: mockPlans },
       loading: false,

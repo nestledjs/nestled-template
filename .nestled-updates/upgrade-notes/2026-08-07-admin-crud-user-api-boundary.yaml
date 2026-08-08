@@ -73,7 +73,7 @@ verification:
 agentHints:
   - >
     Apply this only after the generated CRUD module-composition migration. The project should use
-    @nestledjs/generators 3.0.2 or newer, register one ApiGeneratedCrudFeatureModule, and have no
+    @nestledjs/generators 3.0.3 or newer, register one ApiGeneratedCrudFeatureModule, and have no
     custom resolver inheritance from Generated<Model>Resolver.
   - >
     Inventory every @crudAuth operation before deleting annotations. For each operation previously
@@ -105,7 +105,7 @@ agentHints:
     GraphQLJSONObject filters field to CorePagingInput. User operations may expose only explicit,
     bounded filter fields they actually support.
   - >
-    Upgrade to @nestledjs/generators 3.0.2 before regenerating. Generator 3 inlines the recursive
+    Upgrade to @nestledjs/generators 3.0.3 before regenerating. Generator 3 inlines the recursive
     selector as a non-exported generated CRUD implementation detail. Remove
     ViewerContextInterceptor, delete the complete libs/api/core/helpers project, and remove its
     tsconfig, path-alias, and Sonar references. Keep Doctor and ESLint migration guards so legacy

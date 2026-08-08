@@ -1,26 +1,5 @@
-query Plan($planId: String!) {
-  plan(planId: $planId) {
-    ...PlanDetails
-  }
-}
-
-query Plans($input: ListPlanInput) {
-  plans(input: $input) {
-    ...PlanList
-  }
-  counters: plansCount(input: $input) {
-    ...CorePagingDetails
-  }
-}
-
-query PlanPagination($input: ListPlanInput) {
-  counters: plansCount(input: $input) {
-    ...CorePagingDetails
-  }
-}
-
-query ActivePlans {
-  plans(input: { active: true }) {
+query AvailablePlans {
+  plans: availablePlans {
     ...PlanList
   }
 }

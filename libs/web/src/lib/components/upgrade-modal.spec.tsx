@@ -13,7 +13,7 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 vi.mock('@nestled-template/shared/sdk', () => ({
-  ActivePlans: { kind: 'Document', definitions: [] },
+  AvailablePlans: { kind: 'Document', definitions: [] },
   CreateCheckoutSession: { kind: 'Document', definitions: [] },
 }))
 

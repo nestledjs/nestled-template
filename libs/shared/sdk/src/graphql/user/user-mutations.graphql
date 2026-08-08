@@ -1,17 +1,5 @@
-mutation createUser($input: CreateUserInput!) {
-  createUser(input: $input) {
-    ...UserDetails
-  }
-}
-
-mutation deleteUser($userId: String!) {
-  deleteUser(userId: $userId) {
-    id
-  }
-}
-
-mutation updateUser($userId: String!, $input: UpdateUserInput!) {
-  updateUser(userId: $userId, input: $input) {
+mutation UpdateMyProfile($input: UpdateMyProfileInput!) {
+  updateMyProfile(input: $input) {
     ...UserDetails
   }
 }

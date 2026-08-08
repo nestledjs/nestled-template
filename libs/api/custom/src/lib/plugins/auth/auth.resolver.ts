@@ -46,6 +46,7 @@ import {
   UserSessionOutput,
   ExportUserDataOutput,
   TransferOwnershipInput,
+  UpdateMyProfileInput,
 } from './dto'
 import { ConfigService } from '@nestjs/config'
 import { normalizeEmail } from './auth.helper'
@@ -89,6 +90,16 @@ export class AuthResolver {
     }
 
     return validatedUser
+  }
+
+  @Mutation(() => User)
+  @UseGuards(GqlAuthGuard)
+  @Authenticated()
+  updateMyProfile(
+    @CtxUser() user: User,
+    @Args('input') input: UpdateMyProfileInput,
+  ): Promise<User> {
+    return this.service.updateMyProfile(user.id, input)
   }
 
   @Mutation(() => UserToken, { nullable: true })

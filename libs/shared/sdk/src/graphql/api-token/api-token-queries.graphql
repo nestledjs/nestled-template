@@ -1,26 +1,5 @@
-query ApiToken($apiTokenId: String!) {
-  apiToken(apiTokenId: $apiTokenId) {
-    ...ApiTokenDetails
-  }
-}
-
-query ApiTokens($input: ListApiTokenInput) {
-  apiTokens(input: $input) {
-    ...ApiTokenList
-  }
-  counters: apiTokensCount(input: $input) {
-    ...CorePagingDetails
-  }
-}
-
 query ListApiTokens {
   listApiTokens {
     ...ApiTokenList
-  }
-}
-
-query ApiTokenPagination($input: ListApiTokenInput) {
-  counters: apiTokensCount(input: $input) {
-    ...CorePagingDetails
   }
 }

@@ -11,8 +11,10 @@ import {
 import {
   getCrudAuthAnnotationLines,
   getCustomCrudImportViolations,
+  getGraphqlRootFieldNames,
   getLegacyCoreHelpersImportViolations,
   getNonAdminOperationViolations,
+  getPublicSdkGeneratedCrudViolations,
   supportsAdminOnlyGeneratorBoundary,
 } from './doctor-crud-boundary-analysis'
 
@@ -787,7 +789,7 @@ const checkGeneratorAdminBoundaryVersion = () => {
   if (!existsSync(generatorPackagePath)) {
     fail(
       'admin-crud-boundary',
-      '@nestledjs/generators is not installed; run pnpm install with version 3.0.2 or newer',
+      '@nestledjs/generators is not installed; run pnpm install with version 3.0.3 or newer',
       generatorPackagePath,
     )
     return
@@ -800,7 +802,7 @@ const checkGeneratorAdminBoundaryVersion = () => {
   if (!supportsAdminOnlyGeneratorBoundary(version)) {
     fail(
       'admin-crud-boundary',
-      `@nestledjs/generators ${version || '(unknown version)'} cannot enforce the permanent admin-only CRUD boundary with strict TypeScript compatibility; upgrade to 3.0.2 or newer before running db-update`,
+      `@nestledjs/generators ${version || '(unknown version)'} cannot enforce the permanent admin-only CRUD and application-owned SDK boundary; upgrade to 3.0.3 or newer before running db-update`,
       generatorPackagePath,
     )
   }
@@ -871,6 +873,35 @@ const checkHandwrittenAdminSdkOperations = () => {
         'Hand-written __Admin* SDK operations belong under libs/shared/sdk/src/__admin',
         file,
       )
+    }
+  }
+}
+
+const checkApplicationSdkCrudBoundary = () => {
+  const generatedRootFields = new Set<string>()
+  const adminFiles = walkFiles('libs/shared/sdk/src/__admin', path => path.endsWith('.graphql'))
+
+  for (const file of adminFiles) {
+    const source = readFileSync(file, 'utf8')
+    for (const fieldName of getGraphqlRootFieldNames(source)) generatedRootFields.add(fieldName)
+  }
+
+  const applicationFiles = walkFiles('libs/shared/sdk/src/graphql', path =>
+    path.endsWith('.graphql'),
+  )
+  const applicationDocuments = applicationFiles.map(file => ({
+    file,
+    source: readFileSync(file, 'utf8'),
+  }))
+  const applicationSources = applicationDocuments.map(document => document.source)
+
+  for (const document of applicationDocuments) {
+    for (const violation of getPublicSdkGeneratedCrudViolations(
+      document.source,
+      generatedRootFields,
+      applicationSources,
+    )) {
+      fail('admin-crud-boundary', violation.message, document.file, violation.line)
     }
   }
 }
@@ -1799,6 +1830,7 @@ checkApplicationCrudImports()
 checkAdminCustomResolvers()
 checkDefaultResolverGeneratedNameCollisions()
 checkHandwrittenAdminSdkOperations()
+checkApplicationSdkCrudBoundary()
 checkPluginExportsAndRegistration()
 checkIntegrationExports()
 checkSkipCrudDocumentation()

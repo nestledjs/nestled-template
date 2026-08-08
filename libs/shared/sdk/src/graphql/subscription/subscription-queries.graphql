@@ -1,24 +1,3 @@
-query Subscription($subscriptionId: String!) {
-  subscription(subscriptionId: $subscriptionId) {
-    ...SubscriptionDetails
-  }
-}
-
-query Subscriptions($input: ListSubscriptionInput) {
-  subscriptions(input: $input) {
-    ...SubscriptionList
-  }
-  counters: subscriptionsCount(input: $input) {
-    ...CorePagingDetails
-  }
-}
-
-query SubscriptionPagination($input: ListSubscriptionInput) {
-  counters: subscriptionsCount(input: $input) {
-    ...CorePagingDetails
-  }
-}
-
 query CurrentSubscription {
   currentSubscription {
     ...SubscriptionDetails
