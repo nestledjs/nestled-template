@@ -5,6 +5,10 @@
   "libs/api/core/feature/src/lib/api-core-feature.controller.ts": {
     "uptime": []
   },
+  "libs/api/custom/src/lib/default/email/email.resolver.ts": {
+    "staffUpdateEmail": ["GqlAuthAdminGuard"],
+    "staffDeleteEmail": ["GqlAuthAdminGuard"]
+  },
   "libs/api/custom/src/lib/default/organization/organization.resolver.ts": {
     "userCreateOrganization": ["GqlAuthGuard"],
     "userUpdateOrganization": ["GqlOrganizationScopedGuard"],

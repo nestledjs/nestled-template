@@ -18,9 +18,10 @@ with purpose-built inputs, non-colliding names, explicit Prisma queries, and sco
 from `@CtxUser()` and verified memberships.
 
 The recursive GraphQL-selection-to-Prisma compiler belongs exclusively to generated admin CRUD.
-Application resolvers under `libs/api/custom` may use `ApiCoreDataAccessService`, but may not import
-generated CRUD inputs or runtime services. Rare admin-only compositions live in
-`libs/api/admin-custom` and declare admin protection at class level.
+The API app module imports `ApiGeneratedCrudFeatureModule` only to register that sealed surface.
+Handwritten resolvers may use `ApiCoreDataAccessService`, but may never import or compose generated
+CRUD inputs, resolvers, or runtime services. This includes admin-only workflows, which must define
+their own input and explicit Prisma query.
 
 ## Consequences
 

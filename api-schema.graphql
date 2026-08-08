@@ -1865,7 +1865,7 @@ type Mutation {
   rotateApiToken(input: RotateApiTokenInput!): GenerateApiTokenOutput!
   setup2FA: Setup2FAOutput!
   staffDeleteEmail(emailId: String!): Email
-  staffUpdateEmail(emailId: String!, input: UpdateEmailInput!): Email
+  staffUpdateEmail(emailId: String!, input: StaffUpdateEmailInput!): Email
   switchActiveOrganization(input: SwitchOrganizationInput!): User!
   syncStripePrice(priceId: String!): Boolean!
   syncStripePrices: Boolean!
@@ -2743,6 +2743,14 @@ type Setup2FAOutput {
   otpauthUrl: String!
   qrCode: String!
   secret: String!
+}
+
+input StaffUpdateEmailInput {
+  email: String
+  emailType: EmailType
+  primary: Boolean
+  public: Boolean
+  verified: Boolean
 }
 
 """The storage provider used for file uploads"""

@@ -1,5 +1,4 @@
 import { ApiGeneratedCrudFeatureModule } from '@nestled-template/api/generated-crud/feature'
-import { ApiAdminCustomModule } from '@nestled-template/api/admin-custom'
 import { ApiCoreDataAccessModule } from '@nestled-template/api/core/data-access'
 import {
   AdminModule,
@@ -18,6 +17,7 @@ import {
   TenancyMiddleware,
   TenancyModule,
   UserPreferenceModule,
+  EmailModule,
 } from '@nestled-template/api/custom'
 import { StripeModule } from '@nestled-template/api/integrations'
 import { GlobalAuthGuard, GuardsModule } from '@nestled-template/api/utils'
@@ -40,8 +40,6 @@ export const coreModules = [
   ApiCoreDataAccessModule,
   ApiGeneratedCrudFeatureModule,
 ]
-// Admin-only custom workflows that intentionally compose generated CRUD.
-export const adminModules = [ApiAdminCustomModule]
 // Explicit model-adjacent application extensions.
 export const defaultModules = [
   // Explicit model-adjacent extensions. Generated CRUD is registered by
@@ -50,6 +48,7 @@ export const defaultModules = [
   UserPreferenceModule,
   PlanModule,
   SubscriptionModule,
+  EmailModule,
 ]
 // Manually maintained plugin modules (never overwritten by generator)
 export const pluginModules = [
@@ -66,7 +65,7 @@ export const pluginModules = [
   McpModule,
 ]
 // Combined modules used in the app
-export const appModules = [...coreModules, ...adminModules, ...defaultModules, ...pluginModules]
+export const appModules = [...coreModules, ...defaultModules, ...pluginModules]
 
 @Module({
   imports: [

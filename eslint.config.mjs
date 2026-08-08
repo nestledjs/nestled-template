@@ -24,10 +24,6 @@ export default [
           allow: [String.raw`^.*/eslint(\.base)?\.config\.[cm]?[jt]s$`],
           depConstraints: [
             {
-              sourceTag: 'type:application-api',
-              notDependOnLibsWithTags: ['type:admin-custom'],
-            },
-            {
               sourceTag: '*',
               onlyDependOnLibsWithTags: ['*'],
             },
@@ -37,7 +33,8 @@ export default [
     },
   },
   {
-    files: ['libs/api/custom/src/**/*.ts'],
+    files: ['libs/api/**/*.ts', 'apps/api/src/**/*.ts'],
+    ignores: ['libs/api/generated-crud/**/*.ts', 'apps/api/src/app.module.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -46,7 +43,7 @@ export default [
             {
               group: ['**/api/generated-crud/**'],
               message:
-                'Application APIs must define explicit inputs and Prisma queries. Move intentional generated CRUD composition to api-admin-custom.',
+                'Handwritten APIs must never compose generated CRUD. Define an explicit input and Prisma query instead.',
             },
             {
               group: ['**/api/core/helpers', '**/api/core/helpers/**'],

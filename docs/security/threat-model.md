@@ -34,8 +34,8 @@ system, organization tenancy, billing integration, file upload/delivery, and adm
 - API to external providers: webhook signatures and provider identifiers must be validated before
   state changes.
 - Generated CRUD to custom workflows: generated CRUD is always admin-only; user workflows belong in
-  custom resolvers with explicit inputs, scope checks, and Prisma queries. Admin-only composition is
-  isolated in `api-admin-custom`.
+  custom resolvers with explicit inputs, scope checks, and Prisma queries. Handwritten workflows
+  never compose generated CRUD, even when they are admin-only.
 - Admin to super admin: admin-only tooling must not become a path to assume equal or higher
   privilege.
 
@@ -46,7 +46,8 @@ system, organization tenancy, billing integration, file upload/delivery, and adm
 - A user can never read or mutate another organization's data by supplying a different
   `organizationId` or related entity ID.
 - Generated CRUD operations remain admin-only without exceptions.
-- User-facing resolvers cannot import generated CRUD inputs, data-access services, or the recursive
+- Apart from app-module registration of the generated feature module, handwritten resolvers and
+  services cannot import generated CRUD inputs, data-access services, resolvers, or the recursive
   GraphQL selection compiler.
 - User-facing custom resolvers derive scope from `@CtxUser()` and verified memberships, not from
   caller-supplied IDs alone.

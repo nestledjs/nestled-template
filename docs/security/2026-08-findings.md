@@ -186,9 +186,9 @@ Planned, in order of value:
 
 The request-scoped traversal authorization described below was the first fix. It is no longer the
 template architecture: generated CRUD and its recursive selector are now exclusively admin-only,
-while user-facing operations define their own inputs and explicit Prisma queries. Doctor and ESLint
-prevent `libs/api/custom` from importing generated CRUD or `createSelect`; intentional admin-only
-composition lives in `libs/api/admin-custom`.
+while handwritten operations define their own inputs and explicit Prisma queries. Doctor and ESLint
+prevent handwritten API code from importing generated CRUD or `createSelect`; there is no
+admin-only composition exception.
 
 This removes the lower-privilege generic query compiler instead of maintaining a second model-level
 authorization language for it. The historical finding and original fix design remain below because

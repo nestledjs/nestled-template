@@ -51,6 +51,18 @@ const getModuleReferences = (source: string, fileName: string): ModuleReference[
 const isGeneratedCrudModule = (moduleName: string): boolean =>
   moduleName.includes('/generated-crud/') || moduleName.endsWith('/generated-crud')
 
+export const isHandwrittenApiFile = (filePath: string): boolean => {
+  const normalizedPath = filePath.replaceAll('\\', '/')
+
+  return (
+    normalizedPath.endsWith('.ts') &&
+    normalizedPath !== 'apps/api/src/app.module.ts' &&
+    !normalizedPath.includes('libs/api/generated-crud/') &&
+    !normalizedPath.endsWith('.spec.ts') &&
+    !normalizedPath.endsWith('.test.ts')
+  )
+}
+
 export const supportsAdminOnlyGeneratorBoundary = (version: string): boolean => {
   const versionMatch = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
   if (versionMatch === null) return false
@@ -171,7 +183,7 @@ export const getPublicSdkGeneratedCrudViolations = (
   return violations
 }
 
-export const getCustomCrudImportViolations = (
+export const getGeneratedCrudImportViolations = (
   source: string,
   fileName = 'source.ts',
 ): CrudBoundaryViolation[] =>
@@ -180,8 +192,8 @@ export const getCustomCrudImportViolations = (
     .map(reference => ({
       line: reference.line,
       message:
-        `Application API code must not import generated admin CRUD (${reference.moduleName}); ` +
-        'define an explicit input/query or move an admin-only composition into api-admin-custom',
+        `Handwritten resolvers and services must not import generated admin CRUD (${reference.moduleName}); ` +
+        'define an explicit input and Prisma query instead; there is no admin-only exception',
     }))
 
 export const getLegacyCoreHelpersImportViolations = (
@@ -201,6 +213,18 @@ export const getCrudAuthAnnotationLines = (schema: string): number[] =>
     .split('\n')
     .map((line, index) => (line.includes('@crudAuth') ? index + 1 : undefined))
     .filter((line): line is number => line !== undefined)
+
+export const getCustomResolverNameViolations = (
+  source: string,
+  generatedMethodNames: ReadonlySet<string>,
+  fileName = 'source.ts',
+): CrudBoundaryViolation[] =>
+  getAuthOperations(source, fileName)
+    .filter(operation => operation.kind === 'graphql' && generatedMethodNames.has(operation.name))
+    .map(operation => ({
+      line: operation.line,
+      message: `Custom resolver method "${operation.name}" collides with a generated CRUD field name`,
+    }))
 
 const declaresAdminOnly = (classDecorators: string, methodDecorators: string): boolean =>
   `${classDecorators}\n${methodDecorators}`.includes('@AdminOnly')
