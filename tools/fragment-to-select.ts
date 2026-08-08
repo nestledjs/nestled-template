@@ -26,7 +26,7 @@ const walkGraphqlFiles = (directory: string): string[] => {
     if (stat.isDirectory()) files.push(...walkGraphqlFiles(path))
     else if (stat.isFile() && path.endsWith('.graphql')) files.push(path)
   }
-  return files.sort()
+  return files.sort((a, b) => a.localeCompare(b))
 }
 
 const toGraphqlSource = (file: string): GraphqlSource => ({
@@ -50,11 +50,13 @@ const renderSelect = (select: PrismaSelect, indent = 2): string => {
     if (value === true) {
       lines.push(`${padding}${fieldName}: true,`)
     } else {
-      lines.push(`${padding}${fieldName}: {`)
-      lines.push(`${padding}  select: {`)
-      lines.push(renderSelect(value.select, indent + 4))
-      lines.push(`${padding}  },`)
-      lines.push(`${padding}},`)
+      lines.push(
+        `${padding}${fieldName}: {`,
+        `${padding}  select: {`,
+        renderSelect(value.select, indent + 4),
+        `${padding}  },`,
+        `${padding}},`,
+      )
     }
   }
   return lines.join('\n')

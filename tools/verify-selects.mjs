@@ -74,6 +74,31 @@ const modelsFromDmmf = dmmf =>
     ]),
   )
 
+/** `name Type[]?` -> [name, relationTarget|null]. Null for scalars, comments and block attributes. */
+const parseFieldLine = line => {
+  const trimmed = line.trim()
+  if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('@@')) return null
+
+  const [name, rawType] = trimmed.split(/\s+/)
+  if (!rawType) return null
+
+  const type = rawType.replaceAll('[', '').replaceAll(']', '').replaceAll('?', '')
+  return [name, /^[A-Z]/.test(type) ? type : null]
+}
+
+/**
+ * A capitalised type is only a relation if the model it names was actually parsed. Enums and
+ * unresolvable types look identical to relations at this level, so they are demoted to scalars.
+ */
+const pruneUnresolvedRelations = models => {
+  for (const fields of Object.values(models)) {
+    for (const [field, relationTarget] of Object.entries(fields)) {
+      if (relationTarget && !models[relationTarget]) fields[field] = null
+    }
+  }
+  return models
+}
+
 export const parseDatamodelFallback = datamodel => {
   const models = {}
   let modelName
@@ -96,20 +121,11 @@ export const parseDatamodelFallback = datamodel => {
       continue
     }
 
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('@@')) continue
-    const [name, rawType] = trimmed.split(/\s+/)
-    if (!rawType) continue
-    const type = rawType.replaceAll('[', '').replaceAll(']', '').replaceAll('?', '')
-    fields[name] = /^[A-Z]/.test(type) ? type : null
+    const parsed = parseFieldLine(line)
+    if (parsed) fields[parsed[0]] = parsed[1]
   }
 
-  for (const fields of Object.values(models)) {
-    for (const [field, relationTarget] of Object.entries(fields)) {
-      if (relationTarget && !models[relationTarget]) fields[field] = null
-    }
-  }
-  return models
+  return pruneUnresolvedRelations(models)
 }
 
 const defaultInternalsLoader = () => import('@prisma/internals')
