@@ -1,0 +1,66 @@
+id: 2026-08-09-fragment-select-coverage
+title: Verify SDK fragments against the selects that must produce them
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Add a CI-gated checker for the opposite direction from verify-selects. Every field an SDK fragment
+  requests must be produced by the resolver's Prisma select, or by a ResolveField on that model. The
+  checker derives the required select from the fragments with buildPrismaSelectFromFragments, parses
+  the select constants the API declares, and fails when a fragment field is produced by none of the
+  selects for its model. Fields a resolver computes with ResolveField are excluded, and models with
+  no named select constant are reported as not checked rather than counted as clean.
+
+why: >
+  verify-selects proves a select names real columns. It cannot prove a select names enough of them,
+  and a too-narrow select is legal: Prisma does not load the omitted column, GraphQL resolves it to
+  null, and the client renders a blank field. Nothing throws and nothing logs, so the only symptom is
+  missing data on a screen. This is the dominant failure mode when resolvers move from generic
+  info-driven selection to handwritten explicit selects, because an explicit select is only as
+  complete as the person who typed it. Run against the first project to complete that migration, the
+  checker found nine requested columns that no select produced, in a codebase whose selects already
+  passed verify-selects completely. One was a contact blacklist flag, where a blank value reads as
+  not blacklisted rather than as an error.
+
+affectedPaths:
+  - package.json
+  - tools/verify-fragment-coverage.ts
+  - tools/verify-fragment-coverage.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project has no Prisma API or no SDK fragments.
+  - The project already fails CI when an SDK fragment requests a field no resolver select produces.
+
+verification:
+  - pnpm verify:fragments
+  - pnpm verify:selects
+  - pnpm template:test-migration-tools
+  - pnpm template:validate-upgrade-notes
+  - pnpm typecheck
+
+agentHints:
+  - >
+    Port tools/verify-fragment-coverage.ts and its spec together, and add the verify:fragments
+    script. The spec exists because the parser is the whole tool; keep it green. Extend the
+    template:test-migration-tools glob to include tools/*.spec.ts, which the .spec.mjs glob misses.
+  - >
+    A field served by ResolveField is correctly absent from the select and must stay excluded. The
+    first version of this tool did not exclude them and reported 584 findings where the real count
+    was nine. A checker that reports hundreds is wrong about the repository, not the reverse, and one
+    that is ignored is worse than none.
+  - >
+    Adapt SEARCH_ROOTS and SELECT_FILE_SUFFIXES to the downstream layout, as with verify-selects. A
+    project that keeps selects beside resolvers rather than in *.select.ts files needs the resolver
+    suffix or the tool silently parses nothing.
+  - >
+    Always read the trailing not-checked count. Models whose selects are inline at the call site
+    rather than in a named constant are outside what this tool can attribute, so a clean run over
+    many unchecked models is not a clean project. Say so when reporting results.
+  - >
+    Fix a reported field by adding it to the select constant for that model, never by removing it
+    from the fragment. A schema check does not authorize a field: confirm the caller is allowed to
+    read it before widening a select.

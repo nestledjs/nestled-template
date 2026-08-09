@@ -9,7 +9,7 @@ name: nestled-template
 # --env-file; compose on its own would read .dev/.env instead.
 services:
   postgres:
-    image: postgres:15
+    image: postgres:16
     container_name: nestled-template_postgres_dev
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   postgres-test:
-    image: postgres:15
+    image: postgres:16
     container_name: nestled-template_postgres_test
     ports:
       - '${POSTGRES_TEST_PORT:-5433}:5432' # Different port for test DB

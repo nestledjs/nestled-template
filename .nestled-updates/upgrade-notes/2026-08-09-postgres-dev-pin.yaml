@@ -1,0 +1,77 @@
+id: 2026-08-09-postgres-dev-pin
+title: Align the Postgres image pin with the version production actually runs
+priority: normal
+area: infra
+type: infra
+
+delivery: code-patch
+
+intent: >
+  Raise the pinned Postgres image from 15 to 16 in both compose services and in the CI workflow, so
+  the local development stack, the disposable test database and CI all run the same major version as
+  the project's production database. Downstream projects must read their own production version and
+  pin to that: the point of this note is that the pin agrees with production, not that the number is
+  16. Projects are hosted on different providers and provisioned at different times, so the versions
+  legitimately differ from one project to the next.
+
+why: >
+  Two failures, and the quieter one is the more serious. First, CI can exercise a different major
+  version from the one that serves traffic. That is invisible until behavior diverges, and no test
+  can catch it, because every test ran on the wrong version. Second, a Postgres data directory cannot
+  be opened by an older server, so where a developer's local volume was initialised by a newer
+  Postgres than the compose file pins, the container refuses to start with "database files are
+  incompatible with server" and restarts forever. The dev script appears to hang rather than fail,
+  because compose reports the container as created while it crash-loops.
+
+affectedPaths:
+  - .dev/docker-compose.yml
+  - .github/workflows/ci.yml
+
+packageReleases: []
+
+skipIf:
+  - The project does not use the .dev compose stack.
+  - The pinned image already matches the Postgres major version of the project's production database.
+
+verification:
+  - ./scripts/dev-docker.sh up -d
+  - docker ps
+  - pnpm test:api
+
+agentHints:
+  - >
+    Establish the production version first and pin to that. Do not infer it from a hosting
+    provider's stated default, and do not copy the number from another project or from this note.
+    The authoritative answer comes from the running server: connect and run SHOW server_version.
+    That reads a server setting, not application data.
+  - >
+    How to reach the server depends on the host, so consult the project's own deployment
+    documentation. Managed providers commonly expose either a connection string in the service
+    configuration or a CLI that opens a session, and some publish the version in a dashboard.
+    Service environment variables and runtime logs are often NOT reliable sources: the version
+    usually appears only in the startup banner, which has typically aged out of log retention on a
+    long-running database.
+  - >
+    Pin the version, do not change the image. A project using a derived image such as a vector or
+    PostGIS build must move to that image's equivalent tag rather than to the plain Postgres image,
+    or it silently loses the extension it was chosen for.
+  - >
+    The production version and the local data directory version are separate facts. Read
+    .dev/tmp/postgres/PG_VERSION for the local volume. When the local volume is NEWER than
+    production, the pin still follows production and the volume must be rebuilt: dump it with a
+    server matching its own version, move the old directory aside, let a fresh one initialise at the
+    pinned version, then restore. Restore with a client at least as new as the server that produced
+    the dump, since recent pg_dump emits meta-commands an older client rejects. An error about a
+    configuration parameter the older server does not recognise is benign.
+  - >
+    Never delete the development volume to satisfy a pin change without capturing a dump first. The
+    test volume under .dev/tmp/postgres-test is disposable and should simply be removed so it
+    re-initialises.
+  - >
+    Change every reference together. Both services in .dev/docker-compose.yml, the CI workflow
+    service, and any version quoted in e2e documentation. A partial bump moves the failure rather
+    than fixing it. Remove stopped containers built from the old image afterwards, or the next
+    developer reads a stale tag in Docker and assumes the change did not apply.
+  - >
+    Verify by bringing the stack up and confirming the container reports healthy rather than
+    restarting, then confirm the expected tables are still present and migrations still apply.

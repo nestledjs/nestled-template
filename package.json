@@ -73,9 +73,10 @@
     "typecheck": "pnpm nx run-many -t typecheck",
     "typecheck:watch": "cd apps/web && react-router typegen --watch",
     "storybook:web-ui": "nx storybook web-ui",
-    "template:test-migration-tools": "vitest run tools/*.spec.mjs",
+    "template:test-migration-tools": "vitest run tools/*.spec.mjs tools/*.spec.ts",
     "sdk:update-contract-baseline": "tsx scripts/doctor.ts --update-sdk-contract-baseline",
-    "verify:selects": "node tools/verify-selects.mjs"
+    "verify:selects": "node tools/verify-selects.mjs",
+    "verify:fragments": "tsx tools/verify-fragment-coverage.ts"
   },
   "private": true,
   "dependencies": {
