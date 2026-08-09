@@ -1,0 +1,75 @@
+id: 2026-08-08-sdk-contract-doctor
+title: Check the API to SDK to client contract
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Add a baseline-aware Doctor check that connects the checked-in GraphQL schema, generated admin
+  and maintained application SDK documents, and in-repository TypeScript clients. New API roots
+  without SDK coverage, SDK documents that call missing API roots, and inline client operations
+  outside the application SDK fail. Application SDK operations with no statically visible consumer
+  remain warning-only because external and dynamic consumers require human review.
+
+why: >
+  Once public SDK documents are application-owned, generation no longer creates one operation for
+  every API field automatically. That is the safer ownership model, but it makes drift possible in
+  both directions: a resolver can be added without a document, or frontend behavior can disappear
+  while its SDK and API remain indefinitely. A static contract check catches deterministic gaps and
+  presents likely dead operations without pretending it can prove runtime usage.
+
+affectedPaths:
+  - package.json
+  - scripts/doctor.ts
+  - scripts/doctor-sdk-contract-analysis.ts
+  - scripts/doctor-sdk-contract-analysis.spec.ts
+  - .nestled-updates/sdk-contract-baseline.json
+  - .nestled-updates/sdk-contract-exceptions.json
+  - AGENTS.md
+  - docs/dev/api-contract-lifecycle.md
+  - docs/dev/api-extension-methodology.md
+  - docs/dev/doctor.md
+
+packageReleases: []
+
+skipIf:
+  - The project has no GraphQL schema, maintained GraphQL SDK documents, or TypeScript client.
+  - The project already enforces equivalent schema-to-document and document-to-client contract
+    checks and has a documented deprecation/removal lifecycle.
+
+verification:
+  - pnpm template:test-doctor-auth
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+  - pnpm nx run sdk:typecheck --skip-nx-cache
+  - pnpm typecheck
+
+agentHints:
+  - >
+    Copy the analysis, tests, Doctor integration, baseline, exceptions, documentation, and package
+    script together. Adapt the client source roots and SDK import alias to the downstream workspace
+    if its layout differs.
+  - >
+    Do not copy this template's baseline entries. On initial adoption, review the downstream
+    project's current report and run `pnpm sdk:update-contract-baseline` once to snapshot only
+    trusted pre-existing drift. New findings must fail, and stale baseline entries should be
+    removed as debt is fixed.
+  - >
+    Baseline is migration debt; exceptions are intentional contract. Put external, internal,
+    dynamic, or deprecated behavior in sdk-contract-exceptions.json with a reason naming its owner,
+    consumer, and removal condition. Do not routinely regenerate the baseline to make CI pass.
+  - >
+    Treat unused application SDK operations as review warnings, not automatic deletion authority.
+    Static analysis cannot see separately deployed clients, scripts, computed property access, or
+    partner integrations. Use named-operation and client-release telemetry before removing a
+    contract used outside the repository.
+  - >
+    Refresh api-schema.graphql through the normal API boot path before pnpm sdk and Doctor whenever
+    resolver or DTO shapes change. A stale checked-in schema makes every later contract result
+    misleading.
+  - >
+    During a compatibility window, add the replacement first, mark the old GraphQL field with a
+    deprecationReason, migrate known clients, and retain the old implementation until supported
+    client versions and observed runtime operation traffic are clear. Do not use the app version as
+    an API selector unless genuinely incompatible API cohorts must coexist.

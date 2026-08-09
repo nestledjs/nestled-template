@@ -15,7 +15,6 @@
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@nestled-template/api/admin-custom": ["libs/api/admin-custom/src/index.ts"],
       "@nestled-template/api/config": ["libs/api/config/src/index.ts"],
       "@nestled-template/api/core/data-access": ["libs/api/core/data-access/src/index.ts"],
       "@nestled-template/api/core/feature": ["libs/api/core/feature/src/index.ts"],

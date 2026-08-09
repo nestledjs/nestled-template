@@ -1,0 +1,83 @@
+id: 2026-08-07-forbid-generated-crud-composition
+title: Forbid generated CRUD composition in all handwritten API code
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Remove the legacy admin-custom exception. Apart from app-module registration of
+  ApiGeneratedCrudFeatureModule, no handwritten resolver, service, module, or helper may import,
+  inject, extend, wrap, or compose generated CRUD, even when the workflow is super-admin only.
+  Custom workflows must define purpose-built GraphQL inputs and explicit Prisma queries through
+  ApiCoreDataAccessService.
+
+why: >
+  A separate admin-only exception kept generated inputs and the recursive selection compiler in
+  handwritten code, made review rules conditional on location, and encouraged custom workflows to
+  inherit the generic data-browser contract. One absolute boundary is clearer: generated CRUD is a
+  sealed admin management surface, while every handwritten workflow owns its input, query, returned
+  fields, authorization, validation, and side effects.
+
+affectedPaths:
+  - libs/api/admin-custom/**
+  - libs/api/custom/**
+  - apps/api/src/app.module.ts
+  - apps/api/tsconfig.json
+  - tsconfig.base.json
+  - eslint.config.mjs
+  - sonar-project.properties
+  - scripts/doctor.ts
+  - scripts/doctor-crud-boundary-analysis.ts
+  - AGENTS.md
+  - docs/decisions/0001-generated-crud-admin-default.md
+  - docs/blueprints/**
+  - docs/dev/api-extension-methodology.md
+  - docs/dev/framework-conventions.md
+  - docs/dev/doctor.md
+  - docs/security/**
+
+packageReleases: []
+
+skipIf:
+  - No handwritten API file imports generated CRUD, no dedicated admin-custom project exists, and
+    repository rules state that generated CRUD composition has no admin-only exception.
+
+verification:
+  - rg -n "ApiCrudDataAccessService|ApiCrudDataAccessModule|api/generated-crud" libs/api --glob '!libs/api/generated-crud/**'
+  - pnpm template:test-doctor-auth
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+  - pnpm nx test api-custom
+  - pnpm nx run api-custom:eslint:lint
+  - pnpm nx build api --skip-nx-cache
+
+agentHints:
+  - >
+    Inventory every legacy admin-custom operation and its callers before removing the project. Move
+    model-specific workflows into libs/api/custom/src/lib/default/<model> and cross-model workflows
+    into libs/api/custom/src/lib/plugins/<feature>. Authorization level does not determine the
+    folder: public, authenticated, staff, and super-admin operations follow the same ownership rule.
+    Custom admin* names are allowed when they do not collide with the plain generated CRUD fields;
+    keep __Admin* SDK document names reserved for generated documents.
+  - >
+    Do not recreate libs/api/admin-custom to work around a Doctor error that says admin* names are
+    reserved under custom/default. That restriction was stale: authorization does not determine
+    source ownership, and Doctor should reject only actual generated CRUD field-name collisions.
+  - >
+    Do not move generated DTOs or services with the workflow. Define a local input containing only
+    the fields the custom operation supports, remove GraphQLResolveInfo-driven recursive selection,
+    and implement the mutation or query directly through ApiCoreDataAccessService.
+  - >
+    Preserve admin authorization independently of the data-access rewrite. Super-admin-only custom
+    resolvers still require GqlAuthAdminGuard and @AdminOnly() at class or method level.
+  - >
+    Remove the legacy project, path alias, app-module registration, TypeScript project reference,
+    Sonar source entry, Nx tag exception, Doctor exception, and documentation section. Expand the
+    generated-import lint and Doctor checks to all handwritten API libraries.
+  - >
+    Regenerate the GraphQL schema and SDK after replacing any generated input type on a custom
+    operation, then update its maintained application GraphQL documents and callers together.
+  - >
+    Keep third-party provider clients in libs/api/integrations as thin injectable adapters. Product
+    resolvers, authorization, and workflow decisions remain in custom/default or custom/plugins.

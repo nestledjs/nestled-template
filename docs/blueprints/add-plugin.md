@@ -79,9 +79,8 @@ delete<Model>
 __Admin*
 ```
 
-Use `admin*` only for framework/admin surfaces, not app-specific role behavior.
-For role-scoped behavior, prefer role names such as `staff*`, `owner*`, or
-domain verbs.
+Use `admin*` for explicit custom super-admin workflows and `staff*`, `owner*`, or another role name
+for lower-privilege role-scoped behavior. Keep `__Admin*` exclusively for generated SDK documents.
 
 ## Integration Usage
 

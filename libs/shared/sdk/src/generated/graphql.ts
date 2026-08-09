@@ -2258,7 +2258,7 @@ export type MutationStaffDeleteEmailArgs = {
 
 export type MutationStaffUpdateEmailArgs = {
   emailId: Scalars['String']['input']
-  input: UpdateEmailInput
+  input: StaffUpdateEmailInput
 }
 
 export type MutationSwitchActiveOrganizationArgs = {
@@ -3648,6 +3648,14 @@ export type Setup2FaOutput = {
   otpauthUrl: Scalars['String']['output']
   qrCode: Scalars['String']['output']
   secret: Scalars['String']['output']
+}
+
+export type StaffUpdateEmailInput = {
+  email?: InputMaybe<Scalars['String']['input']>
+  emailType?: InputMaybe<EmailType>
+  primary?: InputMaybe<Scalars['Boolean']['input']>
+  public?: InputMaybe<Scalars['Boolean']['input']>
+  verified?: InputMaybe<Scalars['Boolean']['input']>
 }
 
 /** The storage provider used for file uploads */

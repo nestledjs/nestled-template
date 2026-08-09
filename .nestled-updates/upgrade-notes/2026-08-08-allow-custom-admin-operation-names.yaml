@@ -1,0 +1,56 @@
+id: 2026-08-08-allow-custom-admin-operation-names
+title: Allow model-owned admin operations in custom default resolvers
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Correct the api-names Doctor check so explicit admin-prefixed operations are allowed under
+  libs/api/custom/src/lib/default when they do not collide with generated CRUD field names.
+
+why: >
+  Authorization level does not determine code ownership. Model-specific anonymous, user, staff,
+  and super-admin workflows all belong in custom/default, while cross-model capabilities belong in
+  custom/plugins. The stale Doctor rule rejected every admin* method under custom/default and
+  pushed downstream migrations to recreate libs/api/admin-custom, contradicting the template's
+  documented ownership model and the removal of the generated-CRUD composition exception.
+
+affectedPaths:
+  - scripts/doctor.ts
+  - scripts/doctor-crud-boundary-analysis.ts
+  - scripts/doctor-crud-boundary-analysis.spec.ts
+  - .nestled-updates/upgrade-notes/2026-08-07-forbid-generated-crud-composition.yaml
+  - AGENTS.md
+  - docs/dev/api-extension-methodology.md
+
+packageReleases: []
+
+skipIf:
+  - Doctor already allows non-colliding admin* operations in custom/default and the repository has
+    no dedicated admin-custom project or generated CRUD composition exception.
+
+verification:
+  - pnpm template:test-doctor-auth
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+  - pnpm format:check
+  - pnpm typecheck
+
+agentHints:
+  - >
+    Remove only the blanket admin* naming rejection. Continue discovering generated CRUD resolver
+    field names and reject exact collisions such as updateUser, deleteUser, user, users, and
+    usersCount.
+  - >
+    Do not create or retain libs/api/admin-custom. Move a model-owned admin operation to
+    custom/default/<model> and a cross-model or larger product capability to
+    custom/plugins/<feature>. Protect super-admin operations independently with GqlAuthAdminGuard
+    and @AdminOnly().
+  - >
+    The admin* prefix communicates audience but grants no authorization. Verify the resolver still
+    carries the canonical guard and access-level metadata after moving it.
+  - >
+    Never solve the naming failure by composing generated CRUD. Handwritten admin workflows define
+    their own input and explicit Prisma query through ApiCoreDataAccessService, just like every
+    other application resolver.

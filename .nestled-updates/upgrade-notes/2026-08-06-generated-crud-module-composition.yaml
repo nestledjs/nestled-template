@@ -12,9 +12,9 @@ intent: >
   api-generated-crud-feature.module.ts replaces the duplicate legacy module, and remove
   `extends Generated<Model>Resolver`, generated resolver imports, generated-service constructor
   injection, and super(...) calls from custom model resolvers. Preserve real custom operations as
-  independent resolvers, using generated data access through composition when a custom workflow
-  intentionally reuses it. Delete default-model resolver/service/module shells that contain no
-  custom behavior.
+  independent resolvers. Rewrite any custom workflow that called inherited generated behavior with
+  a purpose-built input and explicit ApiCoreDataAccessService query. Delete default-model
+  resolver/service/module shells that contain no custom behavior.
 
 why: >
   The old generator produced both an empty api-generated-crud-feature.module.ts and a populated
@@ -57,9 +57,9 @@ agentHints:
   - Do not delete a model folder merely because its conventional <model>.resolver.ts is empty.
     Inspect every sibling resolver, service, DTO, test, and module provider first. Plan and
     subscription modules commonly contain separately named user-facing resolvers that must remain.
-  - A custom method that previously called super.update<Model> or super.delete<Model> must inject
-    ApiCrudDataAccessService and call it directly. Keep ApiCrudDataAccessModule imported only in
-    modules that still inject that service.
+  - A custom method that previously called super.update<Model> or super.delete<Model> must define a
+    purpose-built input and explicit ApiCoreDataAccessService query. Handwritten code must never
+    inject ApiCrudDataAccessService or import ApiCrudDataAccessModule.
   - After migration, use
     `pnpm nx g @nestledjs/generators:model-extension <Model> --no-interactive` when a Prisma model
     first needs custom model-adjacent behavior. The conventional artifact name defaults to the model;

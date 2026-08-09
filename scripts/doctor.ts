@@ -10,13 +10,22 @@ import {
 } from './doctor-auth-analysis'
 import {
   getCrudAuthAnnotationLines,
-  getCustomCrudImportViolations,
+  getCustomResolverNameViolations,
+  getGeneratedCrudImportViolations,
   getGraphqlRootFieldNames,
   getLegacyCoreHelpersImportViolations,
   getNonAdminOperationViolations,
   getPublicSdkGeneratedCrudViolations,
+  isHandwrittenApiFile,
   supportsAdminOnlyGeneratorBoundary,
 } from './doctor-crud-boundary-analysis'
+import {
+  getSdkContractReport,
+  normalizeContractPath,
+  type GraphqlSource,
+  type SdkContractReport,
+  type TypeScriptSource,
+} from './doctor-sdk-contract-analysis'
 
 type Finding = {
   check: string
@@ -35,15 +44,29 @@ const generatorPackagePath = 'node_modules/@nestledjs/generators/package.json'
 const notesDir = '.nestled-updates/upgrade-notes'
 const guardBaselinePath = '.nestled-updates/security/guard-baseline.json'
 const publicOperationsPath = '.nestled-updates/security/public-operations.json'
+const sdkContractBaselinePath = '.nestled-updates/sdk-contract-baseline.json'
+const sdkContractExceptionsPath = '.nestled-updates/sdk-contract-exceptions.json'
 const resolverSourceRoots = ['libs/api', 'apps/api/src']
 const gitBaseRef = process.env.NX_BASE || process.env.GITHUB_BASE_REF || 'develop'
 const shouldUpdateGuardBaseline = process.argv.includes('--update-guard-baseline')
+const shouldUpdateSdkContractBaseline = process.argv.includes('--update-sdk-contract-baseline')
 const sourceTemplateRemotePattern = /github\.com[:/]nestledjs\/nestled-(?:dev-)?template(?:\.git)?$/
 
 type GuardBaseline = Record<string, Record<string, string[]>>
 
 // file -> operation name -> reason the operation is intentionally reachable without a guard.
 type PublicOperationAllowlist = Record<string, Record<string, string>>
+
+type SdkContractBaseline = {
+  apiWithoutSdk?: string[]
+  inlineClientOperations?: string[]
+}
+
+type SdkContractExceptions = {
+  apiWithoutSdk?: Record<string, string>
+  inlineClientOperations?: Record<string, string>
+  sdkWithoutConsumer?: Record<string, string>
+}
 
 const fail = (check: string, message: string, file?: string, line?: number) => {
   failures.push({ check, message, file, line })
@@ -621,34 +644,12 @@ const checkDefaultResolverComposition = (file: string, source: string) => {
   )
 }
 
-const checkResolverMethodName = (
-  file: string,
-  methodName: string,
-  generatedMethodNames: Set<string>,
-) => {
-  if (generatedMethodNames.has(methodName)) {
-    fail(
-      'api-names',
-      `Custom resolver method "${methodName}" collides with a generated CRUD field name`,
-      file,
-    )
-  }
-
-  if (/^admin[A-Z]/.test(methodName)) {
-    fail(
-      'api-names',
-      `Custom default resolver method "${methodName}" uses reserved admin* naming`,
-      file,
-    )
-  }
-}
-
 const checkDefaultResolverFile = (file: string, generatedMethodNames: Set<string>) => {
-  const source = stripComments(readFileSync(file, 'utf8'))
-  checkDefaultResolverComposition(file, source)
+  const source = readFileSync(file, 'utf8')
+  checkDefaultResolverComposition(file, stripComments(source))
 
-  for (const methodName of getGraphqlResolverMethods(source)) {
-    checkResolverMethodName(file, methodName, generatedMethodNames)
+  for (const violation of getCustomResolverNameViolations(source, generatedMethodNames, file)) {
+    fail('api-names', violation.message, file, violation.line)
   }
 }
 
@@ -808,39 +809,21 @@ const checkGeneratorAdminBoundaryVersion = () => {
   }
 }
 
-const checkApplicationCrudImports = () => {
-  const customFiles = walkFiles(
-    'libs/api/custom/src',
-    path => path.endsWith('.ts') && !path.endsWith('.spec.ts') && !path.endsWith('.test.ts'),
-  )
+const checkHandwrittenCrudImports = () => {
+  const handwrittenApiFiles = [
+    ...walkFiles('libs/api', isHandwrittenApiFile),
+    ...walkFiles('apps/api/src', isHandwrittenApiFile),
+  ]
 
-  for (const file of customFiles) {
+  for (const file of handwrittenApiFiles) {
     const source = readFileSync(file, 'utf8')
     const violations = [
-      ...getCustomCrudImportViolations(source, file),
+      ...getGeneratedCrudImportViolations(source, file),
       ...getLegacyCoreHelpersImportViolations(source, file),
     ]
 
     for (const violation of violations) {
       fail('admin-crud-boundary', violation.message, file, violation.line)
-    }
-  }
-}
-
-const checkAdminCustomResolvers = () => {
-  const resolverFiles = walkFiles('libs/api/admin-custom/src', path =>
-    path.endsWith('.resolver.ts'),
-  )
-
-  for (const file of resolverFiles) {
-    const source = readFileSync(file, 'utf8')
-    for (const violation of getNonAdminOperationViolations(source, file)) {
-      fail(
-        'admin-crud-boundary',
-        `Admin CRUD composition must remain admin-only: ${violation.message}`,
-        file,
-        violation.line,
-      )
     }
   }
 }
@@ -904,6 +887,181 @@ const checkApplicationSdkCrudBoundary = () => {
       fail('admin-crud-boundary', violation.message, document.file, violation.line)
     }
   }
+}
+
+const readSdkContractBaseline = (): SdkContractBaseline => {
+  if (!existsSync(sdkContractBaselinePath)) return {}
+  return JSON.parse(readFileSync(sdkContractBaselinePath, 'utf8')) as SdkContractBaseline
+}
+
+const readSdkContractExceptions = (): SdkContractExceptions => {
+  if (!existsSync(sdkContractExceptionsPath)) return {}
+  return JSON.parse(readFileSync(sdkContractExceptionsPath, 'utf8')) as SdkContractExceptions
+}
+
+const writeSdkContractBaseline = (
+  report: ReturnType<typeof getSdkContractReport>,
+  exceptions: SdkContractExceptions,
+): SdkContractBaseline => {
+  const baseline: SdkContractBaseline = {
+    apiWithoutSdk: report.apiWithoutSdk.filter(field => !exceptions.apiWithoutSdk?.[field]),
+    inlineClientOperations: report.inlineClientOperations
+      .map(operation => `${operation.file}#${operation.name}`)
+      .filter(operation => !exceptions.inlineClientOperations?.[operation]),
+  }
+  mkdirSync(dirname(sdkContractBaselinePath), { recursive: true })
+  writeFileSync(sdkContractBaselinePath, `${JSON.stringify(baseline, null, 2)}\n`)
+  return baseline
+}
+
+const graphqlSourcesUnder = (root: string): GraphqlSource[] =>
+  walkFiles(root, path => path.endsWith('.graphql')).map(file => ({
+    file: normalizeContractPath(file),
+    source: readFileSync(file, 'utf8'),
+  }))
+
+const isClientContractSource = (path: string): boolean => {
+  const contractPath = normalizeContractPath(path)
+  return (
+    (contractPath.endsWith('.ts') || contractPath.endsWith('.tsx')) &&
+    !contractPath.startsWith('apps/api/') &&
+    !contractPath.startsWith('libs/api/') &&
+    !contractPath.startsWith('libs/shared/sdk/') &&
+    !contractPath.endsWith('.spec.ts') &&
+    !contractPath.endsWith('.spec.tsx') &&
+    !contractPath.endsWith('.test.ts') &&
+    !contractPath.endsWith('.test.tsx')
+  )
+}
+
+const clientContractSources = (): TypeScriptSource[] =>
+  ['apps', 'libs'].flatMap(root =>
+    walkFiles(root, isClientContractSource).map(file => ({
+      file: normalizeContractPath(file),
+      source: readFileSync(file, 'utf8'),
+    })),
+  )
+
+const reportSdkWithoutApi = (report: SdkContractReport): void => {
+  for (const mismatch of report.sdkWithoutApi) {
+    fail(
+      'sdk-contract',
+      `SDK operation ${mismatch.operation} references missing GraphQL root field(s): ` +
+        mismatch.rootFields.join(', '),
+      mismatch.file,
+    )
+  }
+}
+
+const reportApiWithoutSdk = (
+  report: SdkContractReport,
+  exceptions: SdkContractExceptions,
+  baselineApiFields: ReadonlySet<string>,
+): void => {
+  for (const field of report.apiWithoutSdk) {
+    if (exceptions.apiWithoutSdk?.[field]) continue
+    const message =
+      `GraphQL root field ${field} has no SDK operation document; add one under ` +
+      'libs/shared/sdk/src/graphql or document an external/internal/deprecated exception'
+    if (baselineApiFields.has(field)) warn('sdk-contract', `Existing drift: ${message}`)
+    else fail('sdk-contract', message, 'api-schema.graphql')
+  }
+}
+
+const reportInlineClientOperations = (
+  report: SdkContractReport,
+  exceptions: SdkContractExceptions,
+  baselineInlineOperations: ReadonlySet<string>,
+): void => {
+  for (const operation of report.inlineClientOperations) {
+    const key = `${operation.file}#${operation.name}`
+    if (exceptions.inlineClientOperations?.[key]) continue
+    const message =
+      `Client operation ${operation.name} bypasses the application SDK; move it to ` +
+      'libs/shared/sdk/src/graphql and regenerate the SDK'
+    if (baselineInlineOperations.has(key)) {
+      warn('sdk-contract', `Existing drift: ${message}`, operation.file, operation.line)
+    } else {
+      fail('sdk-contract', message, operation.file, operation.line)
+    }
+  }
+}
+
+const reportResolvedSdkBaselineEntries = (
+  report: SdkContractReport,
+  baselineApiFields: ReadonlySet<string>,
+  baselineInlineOperations: ReadonlySet<string>,
+): void => {
+  const currentApiFields = new Set(report.apiWithoutSdk)
+  for (const field of baselineApiFields) {
+    if (!currentApiFields.has(field)) {
+      warn('sdk-contract', `Remove resolved API-without-SDK baseline entry: ${field}`)
+    }
+  }
+
+  const currentInlineOperations = new Set(
+    report.inlineClientOperations.map(operation => `${operation.file}#${operation.name}`),
+  )
+  for (const operation of baselineInlineOperations) {
+    if (!currentInlineOperations.has(operation)) {
+      warn('sdk-contract', `Remove resolved inline-operation baseline entry: ${operation}`)
+    }
+  }
+}
+
+const unusedSdkOperationsByFile = (
+  report: SdkContractReport,
+  exceptions: SdkContractExceptions,
+): Map<string, string[]> => {
+  const unusedByFile = new Map<string, string[]>()
+  for (const operation of report.sdkWithoutConsumer) {
+    const key = `${operation.file}#${operation.name}`
+    if (exceptions.sdkWithoutConsumer?.[key]) continue
+    const names = unusedByFile.get(operation.file) ?? []
+    names.push(operation.name)
+    unusedByFile.set(operation.file, names)
+  }
+  return unusedByFile
+}
+
+const operationNameCompare = (left: string, right: string): number => left.localeCompare(right)
+
+const reportUnusedSdkOperations = (
+  report: SdkContractReport,
+  exceptions: SdkContractExceptions,
+): void => {
+  for (const [file, operationNames] of unusedSdkOperationsByFile(report, exceptions)) {
+    operationNames.sort(operationNameCompare)
+    warn(
+      'sdk-contract',
+      `SDK operations have no in-repo value consumer: ${operationNames.join(', ')}; ` +
+        'remove them, document an external consumer, or begin API deprecation',
+      file,
+    )
+  }
+}
+
+const checkSdkContract = () => {
+  if (!existsSync('api-schema.graphql')) return
+
+  const report = getSdkContractReport({
+    adminSources: graphqlSourcesUnder('libs/shared/sdk/src/__admin'),
+    applicationSources: graphqlSourcesUnder('libs/shared/sdk/src/graphql'),
+    clientSources: clientContractSources(),
+    schemaSource: readFileSync('api-schema.graphql', 'utf8'),
+  })
+  const exceptions = readSdkContractExceptions()
+  const baseline = shouldUpdateSdkContractBaseline
+    ? writeSdkContractBaseline(report, exceptions)
+    : readSdkContractBaseline()
+  const baselineApiFields = new Set(baseline.apiWithoutSdk ?? [])
+  const baselineInlineOperations = new Set(baseline.inlineClientOperations ?? [])
+
+  reportSdkWithoutApi(report)
+  reportApiWithoutSdk(report, exceptions, baselineApiFields)
+  reportInlineClientOperations(report, exceptions, baselineInlineOperations)
+  reportResolvedSdkBaselineEntries(report, baselineApiFields, baselineInlineOperations)
+  reportUnusedSdkOperations(report, exceptions)
 }
 
 const pascalCase = (value: string): string =>
@@ -1826,11 +1984,11 @@ checkGeneratedCrudModuleRegistration()
 checkGeneratedCrudAlwaysAdmin()
 checkCrudAuthAnnotations()
 checkGeneratorAdminBoundaryVersion()
-checkApplicationCrudImports()
-checkAdminCustomResolvers()
+checkHandwrittenCrudImports()
 checkDefaultResolverGeneratedNameCollisions()
 checkHandwrittenAdminSdkOperations()
 checkApplicationSdkCrudBoundary()
+checkSdkContract()
 checkPluginExportsAndRegistration()
 checkIntegrationExports()
 checkSkipCrudDocumentation()

@@ -15,7 +15,8 @@ Custom model resolvers are additive and must not extend generated resolvers.
 
 Use this for:
 
-- user-facing operations for one model
+- application-facing operations for one model at any authorization level
+- model-specific staff or super-admin workflows
 - model-specific membership or permission checks
 - model-specific DTOs
 - custom relation fields or computed fields
@@ -69,10 +70,13 @@ currentSubscription
 acceptOrganizationInvitation
 switchActiveOrganization
 transferOrganizationOwnership
+staffUsersList
+adminDeleteUser
 ```
 
-Avoid app-specific `admin*` names. Keep `admin` and `__Admin` for framework
-admin/generator surfaces.
+Use `admin*` only for a custom operation that truly requires super-admin access. Use `staff*` for
+application staff roles. Keep `__Admin*` exclusively for generated SDK documents, and never reuse
+the plain generated schema field names.
 
 ## Steps
 
@@ -91,7 +95,7 @@ admin/generator surfaces.
 
 ## Security Checks
 
-- Use `GqlAuthGuard` or a stronger guard on user-facing operations.
+- Use the guard and access metadata required by the operation's actual audience.
 - Validate organization membership before reading or mutating tenant data.
 - Check permissions for role/member/billing/security workflows.
 - Do not expose credential material or provider secrets.

@@ -1,0 +1,72 @@
+id: 2026-08-08-explicit-prisma-select-verification
+title: Verify explicit Prisma selects against the schema
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Add a CI-gated verifier for reusable explicit Prisma selects introduced while removing generic
+  createSelect(info) behavior. The verifier scans *.select.ts constants, resolves their Prisma
+  model by convention or a scoped override, recursively follows relation models, and fails on
+  fields Prisma cannot select, empty nested selects, and unresolved constants.
+
+why: >
+  The legacy selection compiler filtered GraphQL-only @ResolveField values against generated model
+  metadata before querying Prisma. An explicit object has no equivalent runtime filter. TypeScript
+  can accept extra select keys, unit tests commonly mock Prisma, and authenticated operations are
+  difficult to exercise exhaustively, so invalid columns and empty selects can survive until a real
+  production query runs. The fragment converter now prevents known generation errors; this verifier
+  also catches handwritten constants and later drift.
+
+affectedPaths:
+  - package.json
+  - .github/workflows/ci.yml
+  - tools/verify-selects.mjs
+  - tools/verify-selects.spec.mjs
+  - tools/fragment-to-select.py
+  - tools/fragment-to-select.ts
+  - scripts/doctor-sdk-contract-analysis.spec.ts
+  - AGENTS.md
+  - docs/dev/README.md
+  - docs/dev/api-extension-methodology.md
+  - docs/dev/doctor.md
+
+packageReleases: []
+
+skipIf:
+  - The project has no Prisma API or reusable explicit select constants.
+  - The project already validates every explicit Prisma select recursively against authoritative
+    schema metadata and rejects empty nested selects and unresolved model ownership in CI.
+
+verification:
+  - pnpm template:test-migration-tools
+  - pnpm verify:selects
+  - pnpm verify:selects --json
+  - pnpm template:validate-upgrade-notes
+  - pnpm format:check
+  - pnpm typecheck
+
+agentHints:
+  - >
+    Port tools/verify-selects.mjs and its tests together. Keep the schema-directory candidates and
+    default select search roots at the top of the tool and adapt only those project-specific lists
+    when the downstream layout differs. Add verify:selects and template:test-migration-tools package
+    scripts and run both in CI.
+  - >
+    Prefer @prisma/internals getDMMF and retain the reported regex fallback. Do not validate against
+    GraphQL-filtered DATABASE_MODELS: the verifier must recognize legitimate database columns that
+    are intentionally omitted from GraphQL. Its output must state which schema source it used.
+  - >
+    Convention resolves a model from the constant name, an unambiguous relation name, and then the
+    *.select.ts filename. Do not silently skip an ambiguous constant. Add
+    `/** @prisma-model ModelName */` immediately before that constant; the override is scoped to that
+    constant and must not leak to later declarations.
+  - >
+    Treat both finding kinds as runtime correctness failures: a field absent from the current model
+    at that relation depth, and an empty nested select. Use --json for migration automation and
+    require a non-zero exit when either problems or unresolved constants remain.
+  - >
+    Run the verifier after each fragment-to-select regeneration and after manual changes to reusable
+    select constants. A successful schema check does not authorize the selected fields; review user,
+    tenant, and role scope separately.
