@@ -32,6 +32,33 @@ export const SCHEMA_DIRECTORY_CANDIDATES = [
 
 export const DEFAULT_SEARCH_ROOTS = ['libs/api/custom/src', 'libs/api/core', 'apps/api/src']
 
+/**
+ * Keys whose object value contains model FIELDS, so their contents are validated as columns.
+ *
+ * `where` and `orderBy` are deliberately absent: their contents are Prisma filter/sort grammar,
+ * not a field namespace. Recursing into `where: { id: { equals: x } }` validated `equals` as a
+ * column of the model and reported it as not-a-column. They are skipped wholesale by
+ * SKIPPED_STRUCTURAL_KEYS below.
+ */
+const FIELD_BEARING_KEYS = new Set(['select', 'include'])
+
+/** Structural keys whose contents are not model fields and must not be walked. */
+const SKIPPED_STRUCTURAL_KEYS = new Set([
+  'where',
+  'orderBy',
+  'take',
+  'skip',
+  'cursor',
+  'distinct',
+  'by',
+  'having',
+  '_count',
+  '_avg',
+  '_sum',
+  '_min',
+  '_max',
+])
+
 const STRUCTURAL_KEYS = new Set([
   'select',
   'where',
@@ -271,7 +298,13 @@ const checkProperty = (source, index, context, problems) => {
 
   const field = match[1]
   const valueStart = index + match[0].length
-  if (STRUCTURAL_KEYS.has(field)) {
+  if (SKIPPED_STRUCTURAL_KEYS.has(field)) {
+    // Skip the whole value. Its contents are Prisma grammar, not columns.
+    if (source[valueStart] !== '{') return valueStart
+    const close = closingBrace(source, valueStart)
+    return close === -1 ? source.length : close + 1
+  }
+  if (FIELD_BEARING_KEYS.has(field) || STRUCTURAL_KEYS.has(field)) {
     return source[valueStart] === '{'
       ? checkBlock(source, valueStart + 1, context, problems)
       : valueStart
@@ -364,8 +397,15 @@ export const resolveModel = (models, constantName, file, annotatedModel) => {
   return models[fromFile] ? fromFile : null
 }
 
-const annotationBefore = (rawSource, constantOffset, previousConstantOffset) => {
-  const gap = rawSource.slice(previousConstantOffset, constantOffset)
+/**
+ * The nearest `@prisma-model` annotation that is genuinely *before* this constant.
+ *
+ * `previousEnd` is the closing brace of the previous constant, not its start. Scanning from the
+ * start would include the previous constant's whole body, so a `@prisma-model` mentioned inside
+ * it — in a comment or a string — would silently resolve THIS constant to that model.
+ */
+const annotationBefore = (rawSource, constantOffset, previousEnd) => {
+  const gap = rawSource.slice(previousEnd, constantOffset)
   return [...gap.matchAll(/@prisma-model\s+(\w+)/g)].pop()?.[1]
 }
 
@@ -374,13 +414,19 @@ const verifyFile = ({ absolutePath, file }, models) => {
   const source = sanitizeSource(rawSource)
   const problems = []
   const unresolved = []
-  let previousConstantOffset = 0
+  let previousConstantEnd = 0
 
   for (const match of source.matchAll(/(?:export\s+)?const\s+(\w+)\s*=\s*\{/g)) {
     const constantOffset = match.index
-    const annotatedModel = annotationBefore(rawSource, constantOffset, previousConstantOffset)
+    const annotatedModel = annotationBefore(rawSource, constantOffset, previousConstantEnd)
     const model = resolveModel(models, match[1], file, annotatedModel)
-    previousConstantOffset = constantOffset
+    // Count braces on the SANITIZED source: closingBrace() is not comment- or string-aware, and
+    // a `}` inside either would end the constant early, putting part of its body back into the
+    // next constant's annotation window. sanitizeSource() masks with spaces and is
+    // length-preserving, so these offsets are interchangeable with rawSource's.
+    const bodyStart = match.index + match[0].length - 1
+    const bodyEnd = closingBrace(source, bodyStart)
+    previousConstantEnd = bodyEnd === -1 ? constantOffset : bodyEnd
 
     if (!model) {
       unresolved.push({ file, const: match[1] })

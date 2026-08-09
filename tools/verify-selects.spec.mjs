@@ -179,4 +179,142 @@ describe('verify-selects', () => {
       }),
     ).not.toThrow()
   })
+
+  it('does not validate Prisma filter grammar inside where/orderBy as columns', async () => {
+    const workspace = createWorkspace()
+    writeFixture(
+      workspace,
+      'custom-selects/user.select.ts',
+      `
+        export const USER_SELECT = {
+          id: true,
+          posts: {
+            where: { id: { equals: 'x' }, author: { is: { id: 'y' } } },
+            orderBy: { id: 'desc' },
+            take: 5,
+            select: { id: true },
+          },
+        }
+      `,
+    )
+
+    const result = await verifySelects({ cwd: workspace, roots: ['custom-selects'] })
+
+    // `equals` and `is` are filter operators, not columns on Post. Walking them reported them
+    // as not-a-column, which made the tool unusable on any select carrying a where clause.
+    expect(result.problems).toEqual([])
+  })
+
+  it('still reports a genuine bad column that sits alongside a where clause', async () => {
+    const workspace = createWorkspace()
+    writeFixture(
+      workspace,
+      'custom-selects/user.select.ts',
+      `
+        export const USER_SELECT = {
+          posts: {
+            where: { id: { equals: 'x' } },
+            select: { likesCount: true },
+          },
+        }
+      `,
+    )
+
+    const result = await verifySelects({ cwd: workspace, roots: ['custom-selects'] })
+
+    // Skipping `where` must not blind the tool to the select beside it.
+    expect(result.problems).toEqual([
+      {
+        file: 'custom-selects/user.select.ts',
+        path: 'USER_SELECT.posts.likesCount',
+        model: 'Post',
+        kind: 'not-a-column',
+      },
+    ])
+  })
+
+  it('does not let a @prisma-model inside one constant resolve the next one', async () => {
+    const workspace = createWorkspace()
+    writeFixture(
+      workspace,
+      'custom-selects/misc.select.ts',
+      `
+        export const FIRST_SELECT = {
+          id: true,
+          // @prisma-model User  <- mentioned INSIDE this constant, not before the next one
+        }
+
+        export const TOTALLY_UNKNOWN_THING = {
+          id: true,
+        }
+      `,
+    )
+
+    const result = await verifySelects({ cwd: workspace, roots: ['custom-selects'] })
+
+    // Both are unresolvable by name. Scanning from the previous constant's START swept up the
+    // annotation in its body and silently validated TOTALLY_UNKNOWN_THING against User.
+    expect(result.unresolved.map(entry => entry.const).sort()).toEqual([
+      'FIRST_SELECT',
+      'TOTALLY_UNKNOWN_THING',
+    ])
+  })
+
+  it('still honours a @prisma-model annotation placed before its constant', async () => {
+    const workspace = createWorkspace()
+    writeFixture(
+      workspace,
+      'custom-selects/misc.select.ts',
+      `
+        export const FIRST_SELECT = { id: true }
+
+        // @prisma-model Post
+        export const TOTALLY_UNKNOWN_THING = {
+          likesCount: true,
+        }
+      `,
+    )
+
+    const result = await verifySelects({ cwd: workspace, roots: ['custom-selects'] })
+
+    // Tightening the scan window must not break the annotation's actual purpose.
+    expect(result.unresolved.map(entry => entry.const)).toEqual(['FIRST_SELECT'])
+    expect(result.problems).toEqual([
+      {
+        file: 'custom-selects/misc.select.ts',
+        path: 'TOTALLY_UNKNOWN_THING.likesCount',
+        model: 'Post',
+        kind: 'not-a-column',
+      },
+    ])
+  })
+
+  it('is not fooled by a closing brace inside a comment or string', async () => {
+    const workspace = createWorkspace()
+    writeFixture(
+      workspace,
+      'custom-selects/misc.select.ts',
+      `
+        export const FIRST_SELECT = {
+          id: true,
+          // a closing brace in a comment: }  then @prisma-model User
+        }
+
+        export const TOTALLY_UNKNOWN_THING = {
+          id: true,
+        }
+      `,
+    )
+
+    const result = await verifySelects({ cwd: workspace, roots: ['custom-selects'] })
+
+    // closingBrace() is not comment-aware, so counting braces on the raw source ended the first
+    // constant at the `}` in that comment — putting the rest of its body, annotation included,
+    // back into the next constant's window. Counting on the sanitized source fixes it; the mask
+    // is length-preserving, so the offsets still line up with rawSource for the annotation scan.
+    expect(result.unresolved.map(entry => entry.const).sort()).toEqual([
+      'FIRST_SELECT',
+      'TOTALLY_UNKNOWN_THING',
+    ])
+  })
 })
