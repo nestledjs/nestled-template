@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing'
-import { BadRequestException, Logger } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import { AuthService } from './auth.service'
@@ -9,6 +9,7 @@ import { SecurityEventsService } from '../security'
 import { SessionService } from './session.service'
 import { EmailHygieneService, TurnstileService } from './signup-protection'
 import { hashPassword, validatePassword } from './auth.helper'
+import { PlatformAccessControlService } from '../access-control'
 // Mock the helper functions
 jest.mock('./auth.helper', () => ({
   ...jest.requireActual('./auth.helper'),
@@ -41,6 +42,7 @@ describe('AuthService', () => {
   let mockSessionService: jest.Mocked<SessionService>
   let mockTurnstile: jest.Mocked<TurnstileService>
   let mockEmailHygiene: jest.Mocked<EmailHygieneService>
+  let mockAccessControl: { assertCanManagePrincipal: jest.Mock }
   beforeEach(async () => {
     // Create mock Prisma data access service - cast to any to avoid TypeScript strictness
     mockData = {
@@ -167,6 +169,7 @@ describe('AuthService', () => {
     // signup-protection/*.spec.ts. Individual tests override these to assert the gate is applied.
     mockTurnstile = { assertValid: jest.fn().mockResolvedValue(undefined), enabled: false } as any
     mockEmailHygiene = { assertUsableForSignup: jest.fn().mockResolvedValue(undefined) } as any
+    mockAccessControl = { assertCanManagePrincipal: jest.fn().mockResolvedValue(undefined) }
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -178,6 +181,7 @@ describe('AuthService', () => {
         { provide: SessionService, useValue: mockSessionService },
         { provide: TurnstileService, useValue: mockTurnstile },
         { provide: EmailHygieneService, useValue: mockEmailHygiene },
+        { provide: PlatformAccessControlService, useValue: mockAccessControl },
       ],
     }).compile()
     service = module.get<AuthService>(AuthService)
@@ -1841,9 +1845,12 @@ describe('AuthService', () => {
         isSuperAdmin: true,
         emails: [{ email: 'target-admin@example.com', primary: true }],
       } as any)
+      mockAccessControl.assertCanManagePrincipal.mockRejectedValue(
+        new ForbiddenException('You cannot act on a user with higher platform access'),
+      )
 
       await expect(service.emulateUser({ userId: targetUserId }, adminId)).rejects.toThrow(
-        'Cannot emulate a user with equal or higher privileges',
+        'You cannot act on a user with higher platform access',
       )
       expect(mockData.auditLog.create).not.toHaveBeenCalled()
       expect(mockJwtService.sign).not.toHaveBeenCalled()

@@ -18,6 +18,7 @@ import {
   TenancyModule,
   UserPreferenceModule,
   EmailModule,
+  PlatformAccessControlModule,
 } from '@nestled-template/api/custom'
 import { StripeModule } from '@nestled-template/api/integrations'
 import { GlobalAuthGuard, GuardsModule } from '@nestled-template/api/utils'
@@ -63,6 +64,7 @@ export const pluginModules = [
   StripeModule,
   BillingModule,
   McpModule,
+  PlatformAccessControlModule,
 ]
 // Combined modules used in the app
 export const appModules = [...coreModules, ...defaultModules, ...pluginModules]

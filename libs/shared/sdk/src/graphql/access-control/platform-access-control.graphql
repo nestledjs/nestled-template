@@ -1,0 +1,163 @@
+query MyPlatformPermissions {
+  myPlatformPermissions
+}
+
+query PlatformAccessControl {
+  platformAccessControl {
+    permissions {
+      id
+      key
+      namespace
+      action
+      description
+    }
+    roles {
+      id
+      key
+      name
+      description
+      isSystem
+      permissions {
+        id
+        key
+        namespace
+        action
+        description
+      }
+      assignments {
+        id
+        createdAt
+        principal {
+          id
+          displayName
+          email
+          isSuperAdmin
+        }
+      }
+    }
+  }
+}
+
+query PlatformAccessControlPrincipals($search: String, $skip: Int, $take: Int) {
+  platformAccessControlPrincipals(search: $search, skip: $skip, take: $take) {
+    principals {
+      id
+      displayName
+      email
+      isSuperAdmin
+    }
+    total
+  }
+}
+
+mutation CreatePlatformAccessRole($input: CreatePlatformAccessRoleInput!) {
+  createPlatformAccessRole(input: $input) {
+    id
+    key
+    name
+    description
+    isSystem
+    permissions {
+      id
+      key
+      namespace
+      action
+      description
+    }
+    assignments {
+      id
+      createdAt
+      principal {
+        id
+        displayName
+        email
+        isSuperAdmin
+      }
+    }
+  }
+}
+
+mutation UpdatePlatformAccessRole($input: UpdatePlatformAccessRoleInput!) {
+  updatePlatformAccessRole(input: $input) {
+    id
+    key
+    name
+    description
+    isSystem
+    permissions {
+      id
+      key
+      namespace
+      action
+      description
+    }
+    assignments {
+      id
+      createdAt
+      principal {
+        id
+        displayName
+        email
+        isSuperAdmin
+      }
+    }
+  }
+}
+
+mutation DeletePlatformAccessRole($roleId: String!) {
+  deletePlatformAccessRole(roleId: $roleId)
+}
+
+mutation AssignPlatformAccessRole($input: PlatformAccessRoleAssignmentInput!) {
+  assignPlatformAccessRole(input: $input) {
+    id
+    key
+    name
+    description
+    isSystem
+    permissions {
+      id
+      key
+      namespace
+      action
+      description
+    }
+    assignments {
+      id
+      createdAt
+      principal {
+        id
+        displayName
+        email
+        isSuperAdmin
+      }
+    }
+  }
+}
+
+mutation RevokePlatformAccessRole($input: PlatformAccessRoleAssignmentInput!) {
+  revokePlatformAccessRole(input: $input) {
+    id
+    key
+    name
+    description
+    isSystem
+    permissions {
+      id
+      key
+      namespace
+      action
+      description
+    }
+    assignments {
+      id
+      createdAt
+      principal {
+        id
+        displayName
+        email
+        isSuperAdmin
+      }
+    }
+  }
+}

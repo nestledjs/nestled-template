@@ -45,6 +45,7 @@ Published packages managed by this repo:
 
 - `@nestledjs/data-browser` from `libs/data-browser`
 - `@nestledjs/shared-components` from `libs/shared-components`
+- `@nestledjs/access-control` from `libs/access-control`
 
 Recommended fields:
 

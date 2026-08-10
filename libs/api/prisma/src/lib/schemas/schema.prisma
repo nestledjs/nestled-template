@@ -222,10 +222,62 @@ model Plan {
   subscriptions   Subscription[]
 }
 
+/// @skipCrud
+/// Security-sensitive internal authorization catalog; definitions are code-owned and may only be
+/// changed through deployments.
+/// Generic CRUD would bypass the permission-catalog and grant-ceiling invariants.
+model PlatformPermission {
+  id          String         @id @default(uuid())
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  key         String         @unique
+  namespace   String
+  action      String
+  description String?
+  roles       PlatformRole[] @relation("PlatformRolePermissions")
+
+  @@index([namespace])
+}
+
+/// @skipCrud
+/// Security-sensitive internal authorization roles. Manage them through the purpose-built
+/// access-control API so grant ceilings, immutable system roles, and auditing cannot be bypassed.
+model PlatformRole {
+  id          String                   @id @default(uuid())
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  key         String                   @unique
+  name        String                   @unique
+  description String?
+  isSystem    Boolean                  @default(false)
+  permissions PlatformPermission[]     @relation("PlatformRolePermissions")
+  assignments PlatformRoleAssignment[]
+}
+
+/// @skipCrud
+/// Security-sensitive internal authorization assignments must pass the purpose-built grant,
+/// privilege-ceiling, and recovery protections.
+model PlatformRoleAssignment {
+  id           String       @id @default(uuid())
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  userId       String
+  user         User         @relation("PlatformRoleAssignment_user", fields: [userId], references: [id], onDelete: Cascade)
+  roleId       String
+  role         PlatformRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  assignedById String?
+  assignedBy   User?        @relation("PlatformRoleAssignment_assignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@index([assignedById])
+}
+
 model Role {
   id             String               @id @default(uuid())
   name           String
   description    String?
+  isSystem       Boolean              @default(false)
   organizationId String?
   organization   Organization?        @relation(fields: [organizationId], references: [id])
   permissions    Permission[]         @relation("RolePermissions")
@@ -342,58 +394,60 @@ model StoredFile {
 }
 
 model User {
-  id                        String               @id @default(uuid())
-  createdAt                 DateTime             @default(now())
-  updatedAt                 DateTime             @updatedAt
+  id                        String                   @id @default(uuid())
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
   firstName                 String?
   lastName                  String?
-  isSuperAdmin              Boolean              @default(false)
+  isSuperAdmin              Boolean                  @default(false)
   bio                       String?
-  displayName               String?              @unique
+  displayName               String?                  @unique
   /// @graphqlOmit
   password                  String?
   /// @graphqlOmit
   passwordResetToken        String?
   /// @graphqlOmit
   passwordResetExpires      DateTime?
-  emailValidated            Boolean              @default(false)
+  emailValidated            Boolean                  @default(false)
   /// @graphqlOmit
-  validateEmailToken        String?              @unique
+  validateEmailToken        String?                  @unique
   /// @graphqlOmit
   validateEmailTokenExpires DateTime?
-  emails                    Email[]              @relation("Email_belongsTo_User")
-  links                     Link[]               @relation("Link_belongsTo_User")
-  phoneNumbers              PhoneNumber[]        @relation("PhoneNumber_belongsTo_User")
-  avatarId                  String?              @unique
-  avatar                    StoredFile?          @relation("User_avatar", fields: [avatarId], references: [id], onDelete: SetNull)
-  images                    StoredFile[]         @relation("StoredFile_belongsTo_User")
-  organizations             OrganizationMember[] @relation("OrganizationMember_belongsTo_User")
+  emails                    Email[]                  @relation("Email_belongsTo_User")
+  links                     Link[]                   @relation("Link_belongsTo_User")
+  phoneNumbers              PhoneNumber[]            @relation("PhoneNumber_belongsTo_User")
+  avatarId                  String?                  @unique
+  avatar                    StoredFile?              @relation("User_avatar", fields: [avatarId], references: [id], onDelete: SetNull)
+  images                    StoredFile[]             @relation("StoredFile_belongsTo_User")
+  organizations             OrganizationMember[]     @relation("OrganizationMember_belongsTo_User")
   activeOrganizationId      String?
-  addresses                 Address[]            @relation("Address_belongsTo_User")
-  invitesSent               Invite[]             @relation("Invite_sentBy_User")
-  twoFactorEnabled          Boolean              @default(false)
+  addresses                 Address[]                @relation("Address_belongsTo_User")
+  invitesSent               Invite[]                 @relation("Invite_sentBy_User")
+  twoFactorEnabled          Boolean                  @default(false)
   /// @graphqlOmit
   twoFactorSecret           String?
   /// @graphqlOmit
   twoFactorRecoveryCodes    String[]
-  twoFactorMethod           TwoFactorMethod      @default(NONE)
+  twoFactorMethod           TwoFactorMethod          @default(NONE)
   activeSessions            UserSession[]
   passwordHistory           PasswordHistory[]
   loginAttempts             LoginAttempt[]
   lastSuccessfulLogin       DateTime?
   lastFailedLogin           DateTime?
-  failedLoginCount          Int                  @default(0)
+  failedLoginCount          Int                      @default(0)
   lockedUntil               DateTime?
   AuditLog                  AuditLog[]
   UserPreference            UserPreference[]
   TeamMember                TeamMember[]
   SecurityEvent             SecurityEvent[]
-  isActive                  Boolean              @default(true)
+  isActive                  Boolean                  @default(true)
   deactivatedAt             DateTime?
   termsAcceptedAt           DateTime?
   privacyPolicyAcceptedAt   DateTime?
-  apiTokens                 ApiToken[]           @relation("User_hasMany_APITokens")
-  oAuthAccounts             OAuthAccount[]       @relation("User_hasMany_OAuthAccounts")
+  apiTokens                 ApiToken[]               @relation("User_hasMany_APITokens")
+  oAuthAccounts             OAuthAccount[]           @relation("User_hasMany_OAuthAccounts")
+  platformRoleAssignments   PlatformRoleAssignment[] @relation("PlatformRoleAssignment_user")
+  platformRolesGranted      PlatformRoleAssignment[] @relation("PlatformRoleAssignment_assignedBy")
 }
 
 model UserPreference {

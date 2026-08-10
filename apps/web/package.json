@@ -7,6 +7,7 @@
   "dependencies": {
     "@mdx-js/react": "^3.1.0",
     "@mdx-js/rollup": "^3.1.0",
+    "@nestledjs/access-control": "^0.0.1",
     "@radix-ui/react-slot": "^1.2.3",
     "@react-router/node": "7.14.2",
     "@react-router/serve": "7.14.2",

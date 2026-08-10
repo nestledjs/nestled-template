@@ -8,6 +8,7 @@ import { GqlAuthGuard } from './gql-auth.guard'
 import { GqlOrganizationScopedGuard } from './gql-organization-scoped.guard'
 import { PermissionsGuard } from './permissions.guard'
 import { SubscriptionGuard } from './subscription.guard'
+import { AccessPolicyGuard } from './access-policy.guard'
 
 @Global()
 @Module({
@@ -21,6 +22,7 @@ import { SubscriptionGuard } from './subscription.guard'
     GqlOrganizationScopedGuard,
     PermissionsGuard,
     SubscriptionGuard,
+    AccessPolicyGuard,
   ],
   exports: [
     AuthCacheService,
@@ -31,6 +33,7 @@ import { SubscriptionGuard } from './subscription.guard'
     GqlOrganizationScopedGuard,
     PermissionsGuard,
     SubscriptionGuard,
+    AccessPolicyGuard,
   ],
 })
 export class GuardsModule {}

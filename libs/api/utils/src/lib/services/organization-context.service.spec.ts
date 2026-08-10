@@ -88,6 +88,27 @@ describe('OrganizationContextService', () => {
     )
   })
 
+  it('reuses an attached organization context when no explicit organization is requested', async () => {
+    const { authCache, data, service } = createService()
+    const organizationContext = {
+      organizationId: 'org-1',
+      userId: 'user-1',
+      roleId: 'role-1',
+      roleName: 'Owner',
+      permissions: [{ subject: 'organization', action: 'update' }],
+    }
+
+    const context = await service.attach({
+      headers: {},
+      user: { id: 'user-1', isSuperAdmin: false },
+      organizationContext,
+    } as never)
+
+    expect(context).toBe(organizationContext)
+    expect(authCache.getUserActiveOrganization).not.toHaveBeenCalled()
+    expect(data.organizationMember.findFirst).not.toHaveBeenCalled()
+  })
+
   it('adds all:manage for super admins without mutating cached permissions', async () => {
     const { authCache, service } = createService()
     const cachedContext = {

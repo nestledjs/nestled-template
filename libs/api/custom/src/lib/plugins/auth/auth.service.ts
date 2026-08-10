@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { EmailType, User } from '@nestled-template/api/core/models'
@@ -55,6 +49,7 @@ import {
   decryptSecret,
   hashBackupCode,
 } from './twofa.helper'
+import { PlatformAccessControlService } from '../access-control'
 
 const authUserRelations = {
   emails: true,
@@ -86,6 +81,7 @@ export class AuthService {
     private readonly sessionService: SessionService,
     private readonly turnstile: TurnstileService,
     private readonly emailHygiene: EmailHygieneService,
+    private readonly accessControl: PlatformAccessControlService,
   ) {}
 
   /**
@@ -229,6 +225,7 @@ export class AuthService {
         data: {
           name: roleTemplate.name,
           description: roleTemplate.description,
+          isSystem: true,
           organizationId,
           permissions: {
             connect: rolePermissions.map(p => ({ id: p.id })),
@@ -993,10 +990,7 @@ export class AuthService {
       throw new NotFoundException(`No user found for id: ${input?.userId}`)
     }
 
-    if (user.isSuperAdmin) {
-      Logger.warn(`EmulateUser rejected: admin ${adminId} attempted to emulate admin ${user.id}`)
-      throw new ForbiddenException('Cannot emulate a user with equal or higher privileges')
-    }
+    await this.accessControl.assertCanManagePrincipal(adminId, user.id, 'emulate')
 
     Logger.log(`✅ EmulateUser: User found - ${user.firstName} ${user.lastName}`)
 

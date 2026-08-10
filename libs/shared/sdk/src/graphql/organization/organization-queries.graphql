@@ -9,6 +9,7 @@ query organizationRoles($organizationId: String!) {
     id
     name
     description
+    isSystem
     permissions {
       id
       action

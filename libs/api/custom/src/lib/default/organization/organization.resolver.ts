@@ -7,6 +7,7 @@ import {
   GqlAuthGuard,
   GqlOrganizationScopedGuard,
   Public,
+  RequireOrganizationPermission,
 } from '@nestled-template/api/utils'
 import {
   Organization,
@@ -30,6 +31,9 @@ import {
   InvitationDetails,
   UserCreateOrganizationInput,
   UserUpdateOrganizationInput,
+  CreateOrganizationRoleInput,
+  UpdateOrganizationRoleInput,
+  DeleteOrganizationRoleInput,
 } from './dto'
 
 @Resolver(() => Organization)
@@ -50,8 +54,8 @@ export class OrganizationResolver {
   }
 
   @Mutation(() => Organization)
+  @RequireOrganizationPermission(['organization:update'])
   @UseGuards(GqlOrganizationScopedGuard)
-  @Authenticated()
   async userUpdateOrganization(
     @CtxUser() user: User,
     @CtxOrganizationId() organizationId: string,
@@ -61,8 +65,9 @@ export class OrganizationResolver {
   }
 
   @Mutation(() => Boolean)
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['organization:delete'], {
+    organizationIdPath: 'organizationId',
+  })
   async userDeleteOrganization(
     @CtxUser() user: User,
     @Args('organizationId') organizationId: string,
@@ -73,8 +78,9 @@ export class OrganizationResolver {
   // Member Management
 
   @Mutation(() => Boolean)
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['member:invite'], {
+    organizationIdPath: 'input.organizationId',
+  })
   async addOrganizationMember(
     @CtxUser() user: User,
     @Args('input') input: AddOrganizationMemberInput,
@@ -83,8 +89,9 @@ export class OrganizationResolver {
   }
 
   @Mutation(() => Boolean)
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['member:remove'], {
+    organizationIdPath: 'input.organizationId',
+  })
   async removeOrganizationMember(
     @CtxUser() user: User,
     @Args('input') input: RemoveOrganizationMemberInput,
@@ -93,8 +100,9 @@ export class OrganizationResolver {
   }
 
   @Mutation(() => Boolean)
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['member:update'], {
+    organizationIdPath: 'input.organizationId',
+  })
   async updateOrganizationMemberRole(
     @CtxUser() user: User,
     @Args('input') input: UpdateMemberRoleInput,
@@ -105,8 +113,9 @@ export class OrganizationResolver {
   // Invitation Management
 
   @Mutation(() => String)
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['member:invite'], {
+    organizationIdPath: 'input.organizationId',
+  })
   async createOrganizationInvitation(
     @CtxUser() user: User,
     @Args('input') input: CreateInvitationInput,
@@ -169,8 +178,9 @@ export class OrganizationResolver {
   // Organization Ownership Transfer
 
   @Mutation(() => Boolean)
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['organization:update'], {
+    organizationIdPath: 'input.organizationId',
+  })
   async transferOrganizationOwnership(
     @CtxUser() user: User,
     @Args('input') input: TransferOrganizationOwnershipInput,
@@ -188,8 +198,9 @@ export class OrganizationResolver {
   }
 
   @Query(() => [OrganizationMember])
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['member:read'], {
+    organizationIdPath: 'organizationId',
+  })
   async userOrganizationMembers(
     @CtxUser() user: User,
     @Args('organizationId') organizationId: string,
@@ -198,8 +209,9 @@ export class OrganizationResolver {
   }
 
   @Query(() => [Invite])
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['member:read'], {
+    organizationIdPath: 'organizationId',
+  })
   async organizationInvitations(
     @CtxUser() user: User,
     @Args('organizationId') organizationId: string,
@@ -208,10 +220,42 @@ export class OrganizationResolver {
   }
 
   @Query(() => [Role])
-  @UseGuards(GqlAuthGuard)
-  @Authenticated()
+  @RequireOrganizationPermission(['role:read'], { organizationIdPath: 'organizationId' })
   async organizationRoles(@CtxUser() user: User, @Args('organizationId') organizationId: string) {
     return this.customService.getOrganizationRoles(user.id, organizationId)
+  }
+
+  @Mutation(() => Role)
+  @RequireOrganizationPermission(['role:create'], {
+    organizationIdPath: 'input.organizationId',
+  })
+  async userCreateOrganizationRole(
+    @CtxUser() user: User,
+    @Args('input') input: CreateOrganizationRoleInput,
+  ) {
+    return this.customService.userCreateOrganizationRole(user.id, input)
+  }
+
+  @Mutation(() => Role)
+  @RequireOrganizationPermission(['role:update'], {
+    organizationIdPath: 'input.organizationId',
+  })
+  async userUpdateOrganizationRole(
+    @CtxUser() user: User,
+    @Args('input') input: UpdateOrganizationRoleInput,
+  ) {
+    return this.customService.userUpdateOrganizationRole(user.id, input)
+  }
+
+  @Mutation(() => Boolean)
+  @RequireOrganizationPermission(['role:delete'], {
+    organizationIdPath: 'input.organizationId',
+  })
+  async userDeleteOrganizationRole(
+    @CtxUser() user: User,
+    @Args('input') input: DeleteOrganizationRoleInput,
+  ): Promise<boolean> {
+    return this.customService.userDeleteOrganizationRole(user.id, input)
   }
 
   // Public queries (no authentication required)

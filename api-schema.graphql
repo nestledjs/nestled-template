@@ -674,6 +674,13 @@ input CreateOrganizationMemberInput {
   userId: String!
 }
 
+input CreateOrganizationRoleInput {
+  description: String
+  name: String!
+  organizationId: String!
+  permissionKeys: [String!]!
+}
+
 input CreatePermissionInput {
   action: String!
   description: String
@@ -710,10 +717,17 @@ input CreatePlanInput {
   updatedAt: DateTime
 }
 
+input CreatePlatformAccessRoleInput {
+  description: String
+  name: String!
+  permissionKeys: [String!]!
+}
+
 input CreateRoleInput {
   description: String
   id: String
   invitesIds: [String!]
+  isSystem: Boolean
   membersIds: [String!]
   name: String!
   organizationId: String
@@ -868,6 +882,11 @@ input DateTimeFilterInput {
 
 """An arbitrary-precision Decimal type"""
 scalar Decimal
+
+input DeleteOrganizationRoleInput {
+  organizationId: String!
+  roleId: String!
+}
 
 input Disable2FAInput {
   password: String!
@@ -1499,6 +1518,7 @@ input ListRoleInput {
   filters: RoleFilterInput
   id: String
   invitesIds: [String!]
+  isSystem: Boolean
   membersIds: [String!]
   name: String
   orderBy: String
@@ -1784,6 +1804,7 @@ type Mutation {
   adminDeactivateUser(userId: String!): User!
   adminForcePasswordReset(userId: String!): User!
   adminVerifyEmail(emailId: String!, userId: String!): User!
+  assignPlatformAccessRole(input: PlatformAccessRoleAssignmentInput!): PlatformAccessRole!
   cancelOrganizationInvitation(input: CancelInvitationInput!): Boolean!
   cancelSubscription: Subscription!
   changeEmail(input: ChangeEmailInput!): Boolean!
@@ -1805,6 +1826,7 @@ type Mutation {
   createPermission(input: CreatePermissionInput!): Permission
   createPhoneNumber(input: CreatePhoneNumberInput!): PhoneNumber
   createPlan(input: CreatePlanInput!): Plan
+  createPlatformAccessRole(input: CreatePlatformAccessRoleInput!): PlatformAccessRole!
   createPortalSession: String!
   createRole(input: CreateRoleInput!): Role
   createSecurityEvent(input: CreateSecurityEventInput!): SecurityEvent
@@ -1830,6 +1852,7 @@ type Mutation {
   deletePermission(permissionId: String!): Permission
   deletePhoneNumber(phoneNumberId: String!): PhoneNumber
   deletePlan(planId: String!): Plan
+  deletePlatformAccessRole(roleId: String!): Boolean!
   deleteRole(roleId: String!): Role
   deleteSecurityEvent(securityEventId: String!): SecurityEvent
   deleteStoredFile(storedFileId: String!): StoredFile
@@ -1862,6 +1885,7 @@ type Mutation {
   resendVerificationEmail(captchaToken: String, email: String!): Boolean!
   resetPassword(input: ResetPasswordInput!): User
   revokeApiToken(tokenId: String!): ApiToken!
+  revokePlatformAccessRole(input: PlatformAccessRoleAssignmentInput!): PlatformAccessRole!
   rotateApiToken(input: RotateApiTokenInput!): GenerateApiTokenOutput!
   setup2FA: Setup2FAOutput!
   staffDeleteEmail(emailId: String!): Email
@@ -1891,6 +1915,7 @@ type Mutation {
   updatePermission(input: UpdatePermissionInput!, permissionId: String!): Permission
   updatePhoneNumber(input: UpdatePhoneNumberInput!, phoneNumberId: String!): PhoneNumber
   updatePlan(input: UpdatePlanInput!, planId: String!): Plan
+  updatePlatformAccessRole(input: UpdatePlatformAccessRoleInput!): PlatformAccessRole!
   updateRole(input: UpdateRoleInput!, roleId: String!): Role
   updateSecurityEvent(input: UpdateSecurityEventInput!, securityEventId: String!): SecurityEvent
   updateStoredFile(input: UpdateStoredFileInput!, storedFileId: String!): StoredFile
@@ -1904,10 +1929,13 @@ type Mutation {
   uploadOrganizationLogo(file: Upload!): UploadedFile!
   uploadUserAvatar(file: Upload!): UploadedFile!
   userCreateOrganization(input: UserCreateOrganizationInput!): Organization!
+  userCreateOrganizationRole(input: CreateOrganizationRoleInput!): Role!
   userCreateUserPreference(input: SecureCreateUserPreferenceInput!): UserPreference
   userDeleteOrganization(organizationId: String!): Boolean!
+  userDeleteOrganizationRole(input: DeleteOrganizationRoleInput!): Boolean!
   userDeleteUserPreference(userPreferenceId: String!): UserPreference
   userUpdateOrganization(input: UserUpdateOrganizationInput!): Organization!
+  userUpdateOrganizationRole(input: UpdateOrganizationRoleInput!): Role!
   userUpdateUserPreference(input: SecureUpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
   verify2FACode(input: Verify2FAInput!): Boolean!
   verifyEmail(input: VerifyEmailInput!): User!
@@ -2392,6 +2420,52 @@ input PlanRelationFilterInput2 {
   updatedAt: DateTimeFilterInput
 }
 
+type PlatformAccessAssignment {
+  createdAt: DateTime!
+  id: String!
+  principal: PlatformAccessPrincipal!
+}
+
+type PlatformAccessPermission {
+  action: String!
+  description: String
+  id: String!
+  key: String!
+  namespace: String!
+}
+
+type PlatformAccessPrincipal {
+  displayName: String
+  email: String
+  id: String!
+  isSuperAdmin: Boolean!
+}
+
+type PlatformAccessPrincipalPage {
+  principals: [PlatformAccessPrincipal!]!
+  total: Int!
+}
+
+type PlatformAccessRole {
+  assignments: [PlatformAccessAssignment!]!
+  description: String
+  id: String!
+  isSystem: Boolean!
+  key: String!
+  name: String!
+  permissions: [PlatformAccessPermission!]!
+}
+
+input PlatformAccessRoleAssignmentInput {
+  roleId: String!
+  userId: String!
+}
+
+type PlatformAccessSnapshot {
+  permissions: [PlatformAccessPermission!]!
+  roles: [PlatformAccessRole!]!
+}
+
 type Query {
   address(addressId: String!): Address
   addresses(input: ListAddressInput): [Address!]
@@ -2437,6 +2511,7 @@ type Query {
   loginAttemptsCount(input: ListLoginAttemptInput): CorePaging
   me: User
   myOrganizations: [Organization!]!
+  myPlatformPermissions: [String!]!
   mySecurityEvents(input: SecurityEventPagingInput): [SecurityEvent!]!
   oAuthAccount(oAuthAccountId: String!): OAuthAccount
   oAuthAccounts(input: ListOAuthAccountInput): [OAuthAccount!]
@@ -2459,6 +2534,8 @@ type Query {
   plan(planId: String!): Plan
   plans(input: ListPlanInput): [Plan!]
   plansCount(input: ListPlanInput): CorePaging
+  platformAccessControl: PlatformAccessSnapshot!
+  platformAccessControlPrincipals(search: String, skip: Int, take: Int): PlatformAccessPrincipalPage!
   role(roleId: String!): Role
   roles(input: ListRoleInput): [Role!]
   rolesCount(input: ListRoleInput): CorePaging
@@ -2540,6 +2617,7 @@ type Role {
   description: String
   id: String!
   invites: [Invite!]
+  isSystem: Boolean!
   members: [OrganizationMember!]
   name: String!
   organization: Organization
@@ -2555,6 +2633,7 @@ input RoleFilterInput {
   description: StringFilterInput
   id: StringFilterInput
   invites: InviteListRelationFilterInput
+  isSystem: BooleanFilterInput
   members: OrganizationMemberListRelationFilterInput
   name: StringFilterInput
   organization: OrganizationRelationFilterInput
@@ -2570,6 +2649,7 @@ input RoleFilterInput2 {
   description: StringFilterInput
   id: StringFilterInput
   invites: InviteListRelationFilterInput2
+  isSystem: BooleanFilterInput
   members: OrganizationMemberListRelationFilterInput2
   name: StringFilterInput
   organization: OrganizationRelationFilterInput2
@@ -2581,6 +2661,7 @@ input RoleFilterInput2 {
 input RoleFilterInput3 {
   description: StringFilterInput
   id: StringFilterInput
+  isSystem: BooleanFilterInput
   name: StringFilterInput
   organizationId: StringFilterInput
 }
@@ -2606,6 +2687,7 @@ input RoleRelationFilterInput {
   invites: InviteListRelationFilterInput2
   is: RoleFilterInput2
   isNot: RoleFilterInput2
+  isSystem: BooleanFilterInput
   members: OrganizationMemberListRelationFilterInput2
   name: StringFilterInput
   organization: OrganizationRelationFilterInput2
@@ -2619,6 +2701,7 @@ input RoleRelationFilterInput2 {
   id: StringFilterInput
   is: RoleFilterInput3
   isNot: RoleFilterInput3
+  isSystem: BooleanFilterInput
   name: StringFilterInput
   organizationId: StringFilterInput
 }
@@ -3423,6 +3506,14 @@ input UpdateOrganizationMemberInput {
   userId: String
 }
 
+input UpdateOrganizationRoleInput {
+  description: String
+  name: String!
+  organizationId: String!
+  permissionKeys: [String!]!
+  roleId: String!
+}
+
 input UpdatePermissionInput {
   action: String
   description: String
@@ -3459,10 +3550,18 @@ input UpdatePlanInput {
   updatedAt: DateTime
 }
 
+input UpdatePlatformAccessRoleInput {
+  description: String
+  name: String!
+  permissionKeys: [String!]!
+  roleId: String!
+}
+
 input UpdateRoleInput {
   description: String
   id: String
   invitesIds: [String!]
+  isSystem: Boolean
   membersIds: [String!]
   name: String
   organizationId: String

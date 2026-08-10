@@ -16,6 +16,7 @@ import { ApiTokensModule } from '../api-tokens/api-tokens.module'
 import { EmailHygieneService, TurnstileService } from './signup-protection'
 import { ThrottlerModule } from '@nestjs/throttler'
 import { ConfigModule, ConfigService } from '@nestjs/config'
+import { PlatformAccessControlModule } from '../access-control'
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config'
     EmailIntegrationModule,
     SecurityEventsModule,
     ApiTokensModule,
+    PlatformAccessControlModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     HttpModule,
     JwtModule.register({

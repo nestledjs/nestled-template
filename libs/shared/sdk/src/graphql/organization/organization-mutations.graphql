@@ -48,6 +48,38 @@ mutation updateOrganizationMemberRole($input: UpdateMemberRoleInput!) {
   updateOrganizationMemberRole(input: $input)
 }
 
+mutation userCreateOrganizationRole($input: CreateOrganizationRoleInput!) {
+  userCreateOrganizationRole(input: $input) {
+    id
+    name
+    description
+    isSystem
+    permissions {
+      id
+      action
+      subject
+    }
+  }
+}
+
+mutation userUpdateOrganizationRole($input: UpdateOrganizationRoleInput!) {
+  userUpdateOrganizationRole(input: $input) {
+    id
+    name
+    description
+    isSystem
+    permissions {
+      id
+      action
+      subject
+    }
+  }
+}
+
+mutation userDeleteOrganizationRole($input: DeleteOrganizationRoleInput!) {
+  userDeleteOrganizationRole(input: $input)
+}
+
 mutation switchActiveOrganization($input: SwitchOrganizationInput!) {
   switchActiveOrganization(input: $input) {
     id

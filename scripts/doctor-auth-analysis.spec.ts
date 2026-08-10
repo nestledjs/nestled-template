@@ -135,4 +135,26 @@ describe('getAuthOperations', () => {
     expect(getOperationGuardNames(operation)).toEqual(['AuthGuard', 'RolesGuard'])
     expect(hasAuthenticationGuard(operation)).toBe(true)
   })
+
+  it('understands that scoped policy decorators compose authentication and enforcement', () => {
+    const operations = getAuthOperations(`
+      @Resolver()
+      class AccessResolver {
+        @Query(() => [String])
+        @RequirePlatformPermission('platform.users.read')
+        platformUsers() {}
+
+        @Mutation(() => Boolean)
+        @RequireOrganizationPermission(['member:update'], {
+          organizationIdPath: 'input.organizationId',
+        })
+        updateMember() {}
+      }
+    `)
+
+    expect(operations.every(declaresAuthLevel)).toBe(true)
+    expect(operations.every(hasAuthenticationGuard)).toBe(true)
+    expect(getOperationGuardNames(operations[0])).toEqual(['AccessPolicyGuard', 'GqlAuthGuard'])
+    expect(getGuardRank(getOperationGuardNames(operations[0]))).toBe(3)
+  })
 })

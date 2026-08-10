@@ -6,6 +6,7 @@ import {
   Cog6ToothIcon,
   CreditCardIcon,
   KeyIcon,
+  RectangleGroupIcon,
   ShieldCheckIcon,
   SparklesIcon,
   UserCircleIcon,
@@ -126,6 +127,13 @@ export default function SettingsLayout() {
       icon: UsersIcon,
       permission: 'member:read',
       description: 'Manage team members and invitations',
+    },
+    {
+      name: 'Roles & Permissions',
+      href: '/settings/roles',
+      icon: RectangleGroupIcon,
+      permission: 'role:read',
+      description: 'Customize organization access',
     },
     {
       name: 'Billing',

@@ -6,19 +6,19 @@ GraphQL resolvers and REST controllers.
 
 ## Resolver Classes
 
-| Surface                        | Expected Guard                                 | Scope Source                              | Notes                                                                               |
-| ------------------------------ | ---------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| Generated CRUD resolvers       | `GqlAuthAdminGuard` by default                 | Admin role                                | Generated CRUD is the super-admin management surface.                               |
-| Custom default model resolvers | Operation-specific                             | `@CtxUser()` plus service checks          | Independent additive resolvers; never inherit or collide with generated CRUD.       |
-| User organization workflows    | `GqlAuthGuard` or `GqlOrganizationScopedGuard` | `@CtxUser()` membership and role checks   | Caller-supplied organization IDs require membership verification before use.        |
-| Billing admin sync             | `GqlAuthAdminGuard`                            | Admin role and Stripe IDs                 | Provider IDs are untrusted until fetched/validated with Stripe.                     |
-| User billing workflows         | `GqlAuthGuard`                                 | Current user's active organization        | Price IDs are provider references; organization scope comes from the user.          |
-| Auth public workflows          | No GraphQL guard                               | Token or credential-specific verification | Login, register, reset, and verification flows must validate their own tokens.      |
-| Auth user workflows            | `GqlAuthGuard`                                 | `@CtxUser()`                              | Profile/session/password changes apply to the current user unless explicitly admin. |
-| Emulation                      | `GqlAuthAdminGuard`                            | Admin user plus target privilege ceiling  | Service must reject equal or higher privilege targets.                              |
-| Storage user uploads           | `GqlAuthGuard`                                 | `@CtxUser()`                              | User-owned uploads cannot accept arbitrary user IDs.                                |
-| Storage organization uploads   | `GqlOrganizationScopedGuard`                   | Verified organization scope               | Organization ID input must match a verified membership.                             |
-| Admin dashboard operations     | `GqlAuthAdminGuard`                            | Admin role                                | Admin reads and account actions are privileged operational tooling.                 |
+| Surface                        | Expected Guard                            | Scope Source                              | Notes                                                                               |
+| ------------------------------ | ----------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| Generated CRUD resolvers       | `GqlAuthAdminGuard`                       | Root super administrator                  | Generated CRUD is the root-only management surface.                                 |
+| Custom default model resolvers | Operation-specific                        | `@CtxUser()` plus service checks          | Independent additive resolvers; never inherit or collide with generated CRUD.       |
+| User organization workflows    | Organization policy or organization guard | `@CtxUser()` membership and role checks   | Caller-supplied organization IDs require membership verification before use.        |
+| Billing admin sync             | `GqlAuthAdminGuard`                       | Root administrator and Stripe IDs         | Provider IDs are untrusted until fetched/validated with Stripe.                     |
+| User billing workflows         | `GqlAuthGuard`                            | Current user's active organization        | Price IDs are provider references; organization scope comes from the user.          |
+| Auth public workflows          | No GraphQL guard                          | Token or credential-specific verification | Login, register, reset, and verification flows must validate their own tokens.      |
+| Auth user workflows            | `GqlAuthGuard`                            | `@CtxUser()`                              | Profile/session/password changes apply to the current user unless explicitly admin. |
+| Emulation                      | `platform.users.emulate` or root guard    | Actor plus target privilege ceiling       | Service must reject equal or higher privilege targets and every root target.        |
+| Storage user uploads           | `GqlAuthGuard`                            | `@CtxUser()`                              | User-owned uploads cannot accept arbitrary user IDs.                                |
+| Storage organization uploads   | `GqlOrganizationScopedGuard`              | Verified organization scope               | Organization ID input must match a verified membership.                             |
+| Platform operations            | Platform policy decorator                 | Code-owned platform role grants           | Delegated capabilities never imply generated CRUD or data-browser access.           |
 
 ## REST Controllers
 
@@ -35,9 +35,9 @@ GraphQL resolvers and REST controllers.
 - If a resolver accepts an ID in `@Args()`, the service must prove the current user can access that
   entity before using the ID in a read or write.
 - If a guard level becomes less restrictive, treat it as a security review item even when tests pass.
-- Every resolver operation and controller route must declare `@Public()`, `@Authenticated()`, or
-  `@AdminOnly()` at the method or class level. Protected operations also require an actual auth
-  guard; declarations only state intent.
+- Every resolver operation and controller route must declare `@Public()`, `@Authenticated()`,
+  `@AdminOnly()`, or a scoped policy decorator at the method or class level. Protected operations
+  also require an actual auth guard; declarations only state intent.
 - Every operation without an auth guard must have a written reason in
   `.nestled-updates/security/public-operations.json`.
 - If a resolver name looks like generated CRUD (`create<Model>`, `update<Model>`, `<models>Count`,

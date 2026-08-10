@@ -656,6 +656,9 @@ importers:
       '@mdx-js/rollup':
         specifier: ^3.1.0
         version: 3.1.0(acorn@8.16.0)(rollup@4.44.0)
+      '@nestledjs/access-control':
+        specifier: ^0.0.1
+        version: 0.0.1(react@19.1.0)
       '@radix-ui/react-slot':
         specifier: ^1.2.3
         version: 1.2.3(@types/react@19.1.0)(react@19.1.0)
@@ -3942,6 +3945,11 @@ packages:
       '@nestjs/common': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0
       '@nestjs/core': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0
       reflect-metadata: ^0.1.13 || ^0.2.0
+
+  '@nestledjs/access-control@0.0.1':
+    resolution: {integrity: sha512-DbEARNc5dea0zGhZPm51pUNLTDbLBQh5/Hgs5mIIvz4Dtnx+BwBceMNpI9i7qYc3dpUeyrGm/KiY3WCskxi2KA==}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
 
   '@nestledjs/data-browser@1.0.20':
     resolution: {integrity: sha512-w1hYleOqhBQMgHR3OxOqn3yefyCp5DD7+h5ieOSqoyUKh+3QcXP0EF38GYBkJz68Br6hRi2ZsdBYNpC+0xAr3w==}
@@ -19001,6 +19009,10 @@ snapshots:
       '@nestjs/common': 11.1.19(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/core': 11.1.19(@nestjs/common@11.1.19(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.19)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
+
+  '@nestledjs/access-control@0.0.1(react@19.1.0)':
+    dependencies:
+      react: 19.1.0
 
   '@nestledjs/data-browser@1.0.20(3a0c9fa460494bbd85c223875951afac)':
     dependencies:

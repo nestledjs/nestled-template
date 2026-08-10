@@ -715,6 +715,13 @@ export type CreateOrganizationMemberInput = {
   userId: Scalars['String']['input']
 }
 
+export type CreateOrganizationRoleInput = {
+  description?: InputMaybe<Scalars['String']['input']>
+  name: Scalars['String']['input']
+  organizationId: Scalars['String']['input']
+  permissionKeys: Array<Scalars['String']['input']>
+}
+
 export type CreatePermissionInput = {
   action: Scalars['String']['input']
   description?: InputMaybe<Scalars['String']['input']>
@@ -751,10 +758,17 @@ export type CreatePlanInput = {
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
 }
 
+export type CreatePlatformAccessRoleInput = {
+  description?: InputMaybe<Scalars['String']['input']>
+  name: Scalars['String']['input']
+  permissionKeys: Array<Scalars['String']['input']>
+}
+
 export type CreateRoleInput = {
   description?: InputMaybe<Scalars['String']['input']>
   id?: InputMaybe<Scalars['String']['input']>
   invitesIds?: InputMaybe<Array<Scalars['String']['input']>>
+  isSystem?: InputMaybe<Scalars['Boolean']['input']>
   membersIds?: InputMaybe<Array<Scalars['String']['input']>>
   name: Scalars['String']['input']
   organizationId?: InputMaybe<Scalars['String']['input']>
@@ -900,6 +914,11 @@ export type DateTimeFilterInput = {
   lt?: InputMaybe<Scalars['DateTime']['input']>
   lte?: InputMaybe<Scalars['DateTime']['input']>
   not?: InputMaybe<Scalars['DateTime']['input']>
+}
+
+export type DeleteOrganizationRoleInput = {
+  organizationId: Scalars['String']['input']
+  roleId: Scalars['String']['input']
 }
 
 export type Disable2FaInput = {
@@ -1528,6 +1547,7 @@ export type ListRoleInput = {
   filters?: InputMaybe<RoleFilterInput>
   id?: InputMaybe<Scalars['String']['input']>
   invitesIds?: InputMaybe<Array<Scalars['String']['input']>>
+  isSystem?: InputMaybe<Scalars['Boolean']['input']>
   membersIds?: InputMaybe<Array<Scalars['String']['input']>>
   name?: InputMaybe<Scalars['String']['input']>
   orderBy?: InputMaybe<Scalars['String']['input']>
@@ -1815,6 +1835,7 @@ export type Mutation = {
   adminDeactivateUser: User
   adminForcePasswordReset: User
   adminVerifyEmail: User
+  assignPlatformAccessRole: PlatformAccessRole
   cancelOrganizationInvitation: Scalars['Boolean']['output']
   cancelSubscription: Subscription
   changeEmail: Scalars['Boolean']['output']
@@ -1836,6 +1857,7 @@ export type Mutation = {
   createPermission?: Maybe<Permission>
   createPhoneNumber?: Maybe<PhoneNumber>
   createPlan?: Maybe<Plan>
+  createPlatformAccessRole: PlatformAccessRole
   createPortalSession: Scalars['String']['output']
   createRole?: Maybe<Role>
   createSecurityEvent?: Maybe<SecurityEvent>
@@ -1861,6 +1883,7 @@ export type Mutation = {
   deletePermission?: Maybe<Permission>
   deletePhoneNumber?: Maybe<PhoneNumber>
   deletePlan?: Maybe<Plan>
+  deletePlatformAccessRole: Scalars['Boolean']['output']
   deleteRole?: Maybe<Role>
   deleteSecurityEvent?: Maybe<SecurityEvent>
   deleteStoredFile?: Maybe<StoredFile>
@@ -1893,6 +1916,7 @@ export type Mutation = {
   resendVerificationEmail: Scalars['Boolean']['output']
   resetPassword?: Maybe<User>
   revokeApiToken: ApiToken
+  revokePlatformAccessRole: PlatformAccessRole
   rotateApiToken: GenerateApiTokenOutput
   setup2FA: Setup2FaOutput
   staffDeleteEmail?: Maybe<Email>
@@ -1922,6 +1946,7 @@ export type Mutation = {
   updatePermission?: Maybe<Permission>
   updatePhoneNumber?: Maybe<PhoneNumber>
   updatePlan?: Maybe<Plan>
+  updatePlatformAccessRole: PlatformAccessRole
   updateRole?: Maybe<Role>
   updateSecurityEvent?: Maybe<SecurityEvent>
   updateStoredFile?: Maybe<StoredFile>
@@ -1935,10 +1960,13 @@ export type Mutation = {
   uploadOrganizationLogo: UploadedFile
   uploadUserAvatar: UploadedFile
   userCreateOrganization: Organization
+  userCreateOrganizationRole: Role
   userCreateUserPreference?: Maybe<UserPreference>
   userDeleteOrganization: Scalars['Boolean']['output']
+  userDeleteOrganizationRole: Scalars['Boolean']['output']
   userDeleteUserPreference?: Maybe<UserPreference>
   userUpdateOrganization: Organization
+  userUpdateOrganizationRole: Role
   userUpdateUserPreference?: Maybe<UserPreference>
   verify2FACode: Scalars['Boolean']['output']
   verifyEmail: User
@@ -1968,6 +1996,10 @@ export type MutationAdminForcePasswordResetArgs = {
 export type MutationAdminVerifyEmailArgs = {
   emailId: Scalars['String']['input']
   userId: Scalars['String']['input']
+}
+
+export type MutationAssignPlatformAccessRoleArgs = {
+  input: PlatformAccessRoleAssignmentInput
 }
 
 export type MutationCancelOrganizationInvitationArgs = {
@@ -2049,6 +2081,10 @@ export type MutationCreatePhoneNumberArgs = {
 
 export type MutationCreatePlanArgs = {
   input: CreatePlanInput
+}
+
+export type MutationCreatePlatformAccessRoleArgs = {
+  input: CreatePlatformAccessRoleInput
 }
 
 export type MutationCreateRoleArgs = {
@@ -2145,6 +2181,10 @@ export type MutationDeletePhoneNumberArgs = {
 
 export type MutationDeletePlanArgs = {
   planId: Scalars['String']['input']
+}
+
+export type MutationDeletePlatformAccessRoleArgs = {
+  roleId: Scalars['String']['input']
 }
 
 export type MutationDeleteRoleArgs = {
@@ -2246,6 +2286,10 @@ export type MutationResetPasswordArgs = {
 
 export type MutationRevokeApiTokenArgs = {
   tokenId: Scalars['String']['input']
+}
+
+export type MutationRevokePlatformAccessRoleArgs = {
+  input: PlatformAccessRoleAssignmentInput
 }
 
 export type MutationRotateApiTokenArgs = {
@@ -2367,6 +2411,10 @@ export type MutationUpdatePlanArgs = {
   planId: Scalars['String']['input']
 }
 
+export type MutationUpdatePlatformAccessRoleArgs = {
+  input: UpdatePlatformAccessRoleInput
+}
+
 export type MutationUpdateRoleArgs = {
   input: UpdateRoleInput
   roleId: Scalars['String']['input']
@@ -2429,6 +2477,10 @@ export type MutationUserCreateOrganizationArgs = {
   input: UserCreateOrganizationInput
 }
 
+export type MutationUserCreateOrganizationRoleArgs = {
+  input: CreateOrganizationRoleInput
+}
+
 export type MutationUserCreateUserPreferenceArgs = {
   input: SecureCreateUserPreferenceInput
 }
@@ -2437,12 +2489,20 @@ export type MutationUserDeleteOrganizationArgs = {
   organizationId: Scalars['String']['input']
 }
 
+export type MutationUserDeleteOrganizationRoleArgs = {
+  input: DeleteOrganizationRoleInput
+}
+
 export type MutationUserDeleteUserPreferenceArgs = {
   userPreferenceId: Scalars['String']['input']
 }
 
 export type MutationUserUpdateOrganizationArgs = {
   input: UserUpdateOrganizationInput
+}
+
+export type MutationUserUpdateOrganizationRoleArgs = {
+  input: UpdateOrganizationRoleInput
 }
 
 export type MutationUserUpdateUserPreferenceArgs = {
@@ -2947,6 +3007,58 @@ export type PlanRelationFilterInput2 = {
   updatedAt?: InputMaybe<DateTimeFilterInput>
 }
 
+export type PlatformAccessAssignment = {
+  __typename?: 'PlatformAccessAssignment'
+  createdAt: Scalars['DateTime']['output']
+  id: Scalars['String']['output']
+  principal: PlatformAccessPrincipal
+}
+
+export type PlatformAccessPermission = {
+  __typename?: 'PlatformAccessPermission'
+  action: Scalars['String']['output']
+  description?: Maybe<Scalars['String']['output']>
+  id: Scalars['String']['output']
+  key: Scalars['String']['output']
+  namespace: Scalars['String']['output']
+}
+
+export type PlatformAccessPrincipal = {
+  __typename?: 'PlatformAccessPrincipal'
+  displayName?: Maybe<Scalars['String']['output']>
+  email?: Maybe<Scalars['String']['output']>
+  id: Scalars['String']['output']
+  isSuperAdmin: Scalars['Boolean']['output']
+}
+
+export type PlatformAccessPrincipalPage = {
+  __typename?: 'PlatformAccessPrincipalPage'
+  principals: Array<PlatformAccessPrincipal>
+  total: Scalars['Int']['output']
+}
+
+export type PlatformAccessRole = {
+  __typename?: 'PlatformAccessRole'
+  assignments: Array<PlatformAccessAssignment>
+  description?: Maybe<Scalars['String']['output']>
+  id: Scalars['String']['output']
+  isSystem: Scalars['Boolean']['output']
+  key: Scalars['String']['output']
+  name: Scalars['String']['output']
+  permissions: Array<PlatformAccessPermission>
+}
+
+export type PlatformAccessRoleAssignmentInput = {
+  roleId: Scalars['String']['input']
+  userId: Scalars['String']['input']
+}
+
+export type PlatformAccessSnapshot = {
+  __typename?: 'PlatformAccessSnapshot'
+  permissions: Array<PlatformAccessPermission>
+  roles: Array<PlatformAccessRole>
+}
+
 export type Query = {
   __typename?: 'Query'
   address?: Maybe<Address>
@@ -2993,6 +3105,7 @@ export type Query = {
   loginAttemptsCount?: Maybe<CorePaging>
   me?: Maybe<User>
   myOrganizations: Array<Organization>
+  myPlatformPermissions: Array<Scalars['String']['output']>
   mySecurityEvents: Array<SecurityEvent>
   oAuthAccount?: Maybe<OAuthAccount>
   oAuthAccounts?: Maybe<Array<OAuthAccount>>
@@ -3015,6 +3128,8 @@ export type Query = {
   plan?: Maybe<Plan>
   plans?: Maybe<Array<Plan>>
   plansCount?: Maybe<CorePaging>
+  platformAccessControl: PlatformAccessSnapshot
+  platformAccessControlPrincipals: PlatformAccessPrincipalPage
   role?: Maybe<Role>
   roles?: Maybe<Array<Role>>
   rolesCount?: Maybe<CorePaging>
@@ -3267,6 +3382,12 @@ export type QueryPlansCountArgs = {
   input?: InputMaybe<ListPlanInput>
 }
 
+export type QueryPlatformAccessControlPrincipalsArgs = {
+  search?: InputMaybe<Scalars['String']['input']>
+  skip?: InputMaybe<Scalars['Int']['input']>
+  take?: InputMaybe<Scalars['Int']['input']>
+}
+
 export type QueryRoleArgs = {
   roleId: Scalars['String']['input']
 }
@@ -3442,6 +3563,7 @@ export type Role = {
   description?: Maybe<Scalars['String']['output']>
   id: Scalars['String']['output']
   invites?: Maybe<Array<Invite>>
+  isSystem: Scalars['Boolean']['output']
   members?: Maybe<Array<OrganizationMember>>
   name: Scalars['String']['output']
   organization?: Maybe<Organization>
@@ -3457,6 +3579,7 @@ export type RoleFilterInput = {
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
   invites?: InputMaybe<InviteListRelationFilterInput>
+  isSystem?: InputMaybe<BooleanFilterInput>
   members?: InputMaybe<OrganizationMemberListRelationFilterInput>
   name?: InputMaybe<StringFilterInput>
   organization?: InputMaybe<OrganizationRelationFilterInput>
@@ -3472,6 +3595,7 @@ export type RoleFilterInput2 = {
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
   invites?: InputMaybe<InviteListRelationFilterInput2>
+  isSystem?: InputMaybe<BooleanFilterInput>
   members?: InputMaybe<OrganizationMemberListRelationFilterInput2>
   name?: InputMaybe<StringFilterInput>
   organization?: InputMaybe<OrganizationRelationFilterInput2>
@@ -3483,6 +3607,7 @@ export type RoleFilterInput2 = {
 export type RoleFilterInput3 = {
   description?: InputMaybe<StringFilterInput>
   id?: InputMaybe<StringFilterInput>
+  isSystem?: InputMaybe<BooleanFilterInput>
   name?: InputMaybe<StringFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
 }
@@ -3508,6 +3633,7 @@ export type RoleRelationFilterInput = {
   invites?: InputMaybe<InviteListRelationFilterInput2>
   is?: InputMaybe<RoleFilterInput2>
   isNot?: InputMaybe<RoleFilterInput2>
+  isSystem?: InputMaybe<BooleanFilterInput>
   members?: InputMaybe<OrganizationMemberListRelationFilterInput2>
   name?: InputMaybe<StringFilterInput>
   organization?: InputMaybe<OrganizationRelationFilterInput2>
@@ -3521,6 +3647,7 @@ export type RoleRelationFilterInput2 = {
   id?: InputMaybe<StringFilterInput>
   is?: InputMaybe<RoleFilterInput3>
   isNot?: InputMaybe<RoleFilterInput3>
+  isSystem?: InputMaybe<BooleanFilterInput>
   name?: InputMaybe<StringFilterInput>
   organizationId?: InputMaybe<StringFilterInput>
 }
@@ -4332,6 +4459,14 @@ export type UpdateOrganizationMemberInput = {
   userId?: InputMaybe<Scalars['String']['input']>
 }
 
+export type UpdateOrganizationRoleInput = {
+  description?: InputMaybe<Scalars['String']['input']>
+  name: Scalars['String']['input']
+  organizationId: Scalars['String']['input']
+  permissionKeys: Array<Scalars['String']['input']>
+  roleId: Scalars['String']['input']
+}
+
 export type UpdatePermissionInput = {
   action?: InputMaybe<Scalars['String']['input']>
   description?: InputMaybe<Scalars['String']['input']>
@@ -4368,10 +4503,18 @@ export type UpdatePlanInput = {
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
 }
 
+export type UpdatePlatformAccessRoleInput = {
+  description?: InputMaybe<Scalars['String']['input']>
+  name: Scalars['String']['input']
+  permissionKeys: Array<Scalars['String']['input']>
+  roleId: Scalars['String']['input']
+}
+
 export type UpdateRoleInput = {
   description?: InputMaybe<Scalars['String']['input']>
   id?: InputMaybe<Scalars['String']['input']>
   invitesIds?: InputMaybe<Array<Scalars['String']['input']>>
+  isSystem?: InputMaybe<Scalars['Boolean']['input']>
   membersIds?: InputMaybe<Array<Scalars['String']['input']>>
   name?: InputMaybe<Scalars['String']['input']>
   organizationId?: InputMaybe<Scalars['String']['input']>
@@ -8613,6 +8756,232 @@ export type __AdminUserPaginationQuery = {
   } | null
 }
 
+export type MyPlatformPermissionsQueryVariables = Exact<{ [key: string]: never }>
+
+export type MyPlatformPermissionsQuery = {
+  __typename?: 'Query'
+  myPlatformPermissions: Array<string>
+}
+
+export type PlatformAccessControlQueryVariables = Exact<{ [key: string]: never }>
+
+export type PlatformAccessControlQuery = {
+  __typename?: 'Query'
+  platformAccessControl: {
+    __typename?: 'PlatformAccessSnapshot'
+    permissions: Array<{
+      __typename?: 'PlatformAccessPermission'
+      id: string
+      key: string
+      namespace: string
+      action: string
+      description?: string | null
+    }>
+    roles: Array<{
+      __typename?: 'PlatformAccessRole'
+      id: string
+      key: string
+      name: string
+      description?: string | null
+      isSystem: boolean
+      permissions: Array<{
+        __typename?: 'PlatformAccessPermission'
+        id: string
+        key: string
+        namespace: string
+        action: string
+        description?: string | null
+      }>
+      assignments: Array<{
+        __typename?: 'PlatformAccessAssignment'
+        id: string
+        createdAt: any
+        principal: {
+          __typename?: 'PlatformAccessPrincipal'
+          id: string
+          displayName?: string | null
+          email?: string | null
+          isSuperAdmin: boolean
+        }
+      }>
+    }>
+  }
+}
+
+export type PlatformAccessControlPrincipalsQueryVariables = Exact<{
+  search?: InputMaybe<Scalars['String']['input']>
+  skip?: InputMaybe<Scalars['Int']['input']>
+  take?: InputMaybe<Scalars['Int']['input']>
+}>
+
+export type PlatformAccessControlPrincipalsQuery = {
+  __typename?: 'Query'
+  platformAccessControlPrincipals: {
+    __typename?: 'PlatformAccessPrincipalPage'
+    total: number
+    principals: Array<{
+      __typename?: 'PlatformAccessPrincipal'
+      id: string
+      displayName?: string | null
+      email?: string | null
+      isSuperAdmin: boolean
+    }>
+  }
+}
+
+export type CreatePlatformAccessRoleMutationVariables = Exact<{
+  input: CreatePlatformAccessRoleInput
+}>
+
+export type CreatePlatformAccessRoleMutation = {
+  __typename?: 'Mutation'
+  createPlatformAccessRole: {
+    __typename?: 'PlatformAccessRole'
+    id: string
+    key: string
+    name: string
+    description?: string | null
+    isSystem: boolean
+    permissions: Array<{
+      __typename?: 'PlatformAccessPermission'
+      id: string
+      key: string
+      namespace: string
+      action: string
+      description?: string | null
+    }>
+    assignments: Array<{
+      __typename?: 'PlatformAccessAssignment'
+      id: string
+      createdAt: any
+      principal: {
+        __typename?: 'PlatformAccessPrincipal'
+        id: string
+        displayName?: string | null
+        email?: string | null
+        isSuperAdmin: boolean
+      }
+    }>
+  }
+}
+
+export type UpdatePlatformAccessRoleMutationVariables = Exact<{
+  input: UpdatePlatformAccessRoleInput
+}>
+
+export type UpdatePlatformAccessRoleMutation = {
+  __typename?: 'Mutation'
+  updatePlatformAccessRole: {
+    __typename?: 'PlatformAccessRole'
+    id: string
+    key: string
+    name: string
+    description?: string | null
+    isSystem: boolean
+    permissions: Array<{
+      __typename?: 'PlatformAccessPermission'
+      id: string
+      key: string
+      namespace: string
+      action: string
+      description?: string | null
+    }>
+    assignments: Array<{
+      __typename?: 'PlatformAccessAssignment'
+      id: string
+      createdAt: any
+      principal: {
+        __typename?: 'PlatformAccessPrincipal'
+        id: string
+        displayName?: string | null
+        email?: string | null
+        isSuperAdmin: boolean
+      }
+    }>
+  }
+}
+
+export type DeletePlatformAccessRoleMutationVariables = Exact<{
+  roleId: Scalars['String']['input']
+}>
+
+export type DeletePlatformAccessRoleMutation = {
+  __typename?: 'Mutation'
+  deletePlatformAccessRole: boolean
+}
+
+export type AssignPlatformAccessRoleMutationVariables = Exact<{
+  input: PlatformAccessRoleAssignmentInput
+}>
+
+export type AssignPlatformAccessRoleMutation = {
+  __typename?: 'Mutation'
+  assignPlatformAccessRole: {
+    __typename?: 'PlatformAccessRole'
+    id: string
+    key: string
+    name: string
+    description?: string | null
+    isSystem: boolean
+    permissions: Array<{
+      __typename?: 'PlatformAccessPermission'
+      id: string
+      key: string
+      namespace: string
+      action: string
+      description?: string | null
+    }>
+    assignments: Array<{
+      __typename?: 'PlatformAccessAssignment'
+      id: string
+      createdAt: any
+      principal: {
+        __typename?: 'PlatformAccessPrincipal'
+        id: string
+        displayName?: string | null
+        email?: string | null
+        isSuperAdmin: boolean
+      }
+    }>
+  }
+}
+
+export type RevokePlatformAccessRoleMutationVariables = Exact<{
+  input: PlatformAccessRoleAssignmentInput
+}>
+
+export type RevokePlatformAccessRoleMutation = {
+  __typename?: 'Mutation'
+  revokePlatformAccessRole: {
+    __typename?: 'PlatformAccessRole'
+    id: string
+    key: string
+    name: string
+    description?: string | null
+    isSystem: boolean
+    permissions: Array<{
+      __typename?: 'PlatformAccessPermission'
+      id: string
+      key: string
+      namespace: string
+      action: string
+      description?: string | null
+    }>
+    assignments: Array<{
+      __typename?: 'PlatformAccessAssignment'
+      id: string
+      createdAt: any
+      principal: {
+        __typename?: 'PlatformAccessPrincipal'
+        id: string
+        displayName?: string | null
+        email?: string | null
+        isSuperAdmin: boolean
+      }
+    }>
+  }
+}
+
 export type AdminDeactivateUserMutationVariables = Exact<{
   userId: Scalars['String']['input']
 }>
@@ -10351,6 +10720,57 @@ export type UpdateOrganizationMemberRoleMutation = {
   updateOrganizationMemberRole: boolean
 }
 
+export type UserCreateOrganizationRoleMutationVariables = Exact<{
+  input: CreateOrganizationRoleInput
+}>
+
+export type UserCreateOrganizationRoleMutation = {
+  __typename?: 'Mutation'
+  userCreateOrganizationRole: {
+    __typename?: 'Role'
+    id: string
+    name: string
+    description?: string | null
+    isSystem: boolean
+    permissions?: Array<{
+      __typename?: 'Permission'
+      id: string
+      action: string
+      subject: string
+    }> | null
+  }
+}
+
+export type UserUpdateOrganizationRoleMutationVariables = Exact<{
+  input: UpdateOrganizationRoleInput
+}>
+
+export type UserUpdateOrganizationRoleMutation = {
+  __typename?: 'Mutation'
+  userUpdateOrganizationRole: {
+    __typename?: 'Role'
+    id: string
+    name: string
+    description?: string | null
+    isSystem: boolean
+    permissions?: Array<{
+      __typename?: 'Permission'
+      id: string
+      action: string
+      subject: string
+    }> | null
+  }
+}
+
+export type UserDeleteOrganizationRoleMutationVariables = Exact<{
+  input: DeleteOrganizationRoleInput
+}>
+
+export type UserDeleteOrganizationRoleMutation = {
+  __typename?: 'Mutation'
+  userDeleteOrganizationRole: boolean
+}
+
 export type SwitchActiveOrganizationMutationVariables = Exact<{
   input: SwitchOrganizationInput
 }>
@@ -10408,6 +10828,7 @@ export type OrganizationRolesQuery = {
     id: string
     name: string
     description?: string | null
+    isSystem: boolean
     permissions?: Array<{
       __typename?: 'Permission'
       id: string
@@ -25385,6 +25806,584 @@ export const __AdminUserPagination = {
     },
   ],
 } as unknown as DocumentNode<__AdminUserPaginationQuery, __AdminUserPaginationQueryVariables>
+export const MyPlatformPermissions = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'MyPlatformPermissions' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [{ kind: 'Field', name: { kind: 'Name', value: 'myPlatformPermissions' } }],
+      },
+    },
+  ],
+} as unknown as DocumentNode<MyPlatformPermissionsQuery, MyPlatformPermissionsQueryVariables>
+export const PlatformAccessControl = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'PlatformAccessControl' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'platformAccessControl' },
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'permissions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'namespace' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                    ],
+                  },
+                },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'roles' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'permissions' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'namespace' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                          ],
+                        },
+                      },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'assignments' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+                            {
+                              kind: 'Field',
+                              name: { kind: 'Name', value: 'principal' },
+                              selectionSet: {
+                                kind: 'SelectionSet',
+                                selections: [
+                                  { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                                  { kind: 'Field', name: { kind: 'Name', value: 'displayName' } },
+                                  { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                                  { kind: 'Field', name: { kind: 'Name', value: 'isSuperAdmin' } },
+                                ],
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<PlatformAccessControlQuery, PlatformAccessControlQueryVariables>
+export const PlatformAccessControlPrincipals = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'PlatformAccessControlPrincipals' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'search' } },
+          type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
+        },
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'skip' } },
+          type: { kind: 'NamedType', name: { kind: 'Name', value: 'Int' } },
+        },
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'take' } },
+          type: { kind: 'NamedType', name: { kind: 'Name', value: 'Int' } },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'platformAccessControlPrincipals' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'search' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'search' } },
+              },
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'skip' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'skip' } },
+              },
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'take' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'take' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'principals' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'displayName' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'isSuperAdmin' } },
+                    ],
+                  },
+                },
+                { kind: 'Field', name: { kind: 'Name', value: 'total' } },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  PlatformAccessControlPrincipalsQuery,
+  PlatformAccessControlPrincipalsQueryVariables
+>
+export const CreatePlatformAccessRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'CreatePlatformAccessRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NonNullType',
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'CreatePlatformAccessRoleInput' },
+            },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'createPlatformAccessRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'permissions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'namespace' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                    ],
+                  },
+                },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'assignments' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'principal' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'displayName' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'isSuperAdmin' } },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  CreatePlatformAccessRoleMutation,
+  CreatePlatformAccessRoleMutationVariables
+>
+export const UpdatePlatformAccessRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'UpdatePlatformAccessRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NonNullType',
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'UpdatePlatformAccessRoleInput' },
+            },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'updatePlatformAccessRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'permissions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'namespace' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                    ],
+                  },
+                },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'assignments' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'principal' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'displayName' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'isSuperAdmin' } },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  UpdatePlatformAccessRoleMutation,
+  UpdatePlatformAccessRoleMutationVariables
+>
+export const DeletePlatformAccessRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'DeletePlatformAccessRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'roleId' } },
+          type: {
+            kind: 'NonNullType',
+            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'deletePlatformAccessRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'roleId' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'roleId' } },
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  DeletePlatformAccessRoleMutation,
+  DeletePlatformAccessRoleMutationVariables
+>
+export const AssignPlatformAccessRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'AssignPlatformAccessRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NonNullType',
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'PlatformAccessRoleAssignmentInput' },
+            },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'assignPlatformAccessRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'permissions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'namespace' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                    ],
+                  },
+                },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'assignments' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'principal' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'displayName' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'isSuperAdmin' } },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  AssignPlatformAccessRoleMutation,
+  AssignPlatformAccessRoleMutationVariables
+>
+export const RevokePlatformAccessRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'RevokePlatformAccessRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NonNullType',
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'PlatformAccessRoleAssignmentInput' },
+            },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'revokePlatformAccessRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'permissions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'key' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'namespace' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                    ],
+                  },
+                },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'assignments' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'principal' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'displayName' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'isSuperAdmin' } },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  RevokePlatformAccessRoleMutation,
+  RevokePlatformAccessRoleMutationVariables
+>
 export const AdminDeactivateUser = {
   kind: 'Document',
   definitions: [
@@ -29411,6 +30410,174 @@ export const UpdateOrganizationMemberRole = {
   UpdateOrganizationMemberRoleMutation,
   UpdateOrganizationMemberRoleMutationVariables
 >
+export const UserCreateOrganizationRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'userCreateOrganizationRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NonNullType',
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'CreateOrganizationRoleInput' },
+            },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'userCreateOrganizationRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'permissions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'subject' } },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  UserCreateOrganizationRoleMutation,
+  UserCreateOrganizationRoleMutationVariables
+>
+export const UserUpdateOrganizationRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'userUpdateOrganizationRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NonNullType',
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'UpdateOrganizationRoleInput' },
+            },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'userUpdateOrganizationRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'permissions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'action' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'subject' } },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  UserUpdateOrganizationRoleMutation,
+  UserUpdateOrganizationRoleMutationVariables
+>
+export const UserDeleteOrganizationRole = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'userDeleteOrganizationRole' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NonNullType',
+            type: {
+              kind: 'NamedType',
+              name: { kind: 'Name', value: 'DeleteOrganizationRoleInput' },
+            },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'userDeleteOrganizationRole' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  UserDeleteOrganizationRoleMutation,
+  UserDeleteOrganizationRoleMutationVariables
+>
 export const SwitchActiveOrganization = {
   kind: 'Document',
   definitions: [
@@ -29564,6 +30731,7 @@ export const OrganizationRoles = {
                 { kind: 'Field', name: { kind: 'Name', value: 'id' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'name' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
                 {
                   kind: 'Field',
                   name: { kind: 'Name', value: 'permissions' },

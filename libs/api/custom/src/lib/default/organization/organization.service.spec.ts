@@ -24,6 +24,8 @@ describe('OrganizationService', () => {
       },
       role: {
         create: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
         findFirst: jest.fn(),
         findMany: jest.fn(),
         deleteMany: jest.fn(),
@@ -1416,6 +1418,135 @@ describe('OrganizationService', () => {
       await expect(service.acceptOrganizationInvitation(userId, input)).rejects.toThrow(
         'You are already a member of this organization',
       )
+    })
+  })
+
+  describe('organization role management', () => {
+    const permission = { id: 'permission-1', subject: 'member', action: 'read' }
+
+    it('creates a custom role within the caller grant ceiling and audits it transactionally', async () => {
+      data.role.findFirst.mockResolvedValue(null)
+      data.permission.findMany.mockResolvedValue([permission])
+      data.user.findUnique.mockResolvedValue({
+        isSuperAdmin: false,
+        organizations: [{ role: { permissions: [permission] } }],
+      })
+      data.role.create.mockResolvedValue({
+        id: 'role-custom',
+        name: 'Observer',
+        description: null,
+        isSystem: false,
+        permissions: [permission],
+      })
+
+      await expect(
+        service.userCreateOrganizationRole('user-1', {
+          organizationId: 'org-1',
+          name: 'Observer',
+          permissionKeys: ['member:read'],
+        }),
+      ).resolves.toMatchObject({ id: 'role-custom' })
+      expect(data.role.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            organizationId: 'org-1',
+            permissions: { connect: [{ id: 'permission-1' }] },
+          }),
+        }),
+      )
+      expect(data.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ action: 'ORGANIZATION_ROLE_CREATED' }),
+        }),
+      )
+    })
+
+    it('rejects permissions above the caller organization role', async () => {
+      data.role.findFirst.mockResolvedValue(null)
+      data.permission.findMany.mockResolvedValue([permission])
+      data.user.findUnique.mockResolvedValue({
+        isSuperAdmin: false,
+        organizations: [{ role: { permissions: [] } }],
+      })
+
+      await expect(
+        service.userCreateOrganizationRole('user-1', {
+          organizationId: 'org-1',
+          name: 'Observer',
+          permissionKeys: ['member:read'],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+      expect(data.role.create).not.toHaveBeenCalled()
+    })
+
+    it('treats the legacy all:manage permission as the organization grant ceiling', async () => {
+      data.role.findFirst.mockResolvedValue(null)
+      data.permission.findMany.mockResolvedValue([permission])
+      data.user.findUnique.mockResolvedValue({
+        isSuperAdmin: false,
+        organizations: [
+          { role: { permissions: [{ id: 'all-manage', subject: 'all', action: 'manage' }] } },
+        ],
+      })
+      data.role.create.mockResolvedValue({
+        id: 'role-custom',
+        name: 'Observer',
+        description: null,
+        isSystem: false,
+        permissions: [permission],
+      })
+
+      await expect(
+        service.userCreateOrganizationRole('user-1', {
+          organizationId: 'org-1',
+          name: 'Observer',
+          permissionKeys: ['member:read'],
+        }),
+      ).resolves.toMatchObject({ id: 'role-custom' })
+    })
+
+    it('keeps default organization roles immutable', async () => {
+      data.role.findFirst.mockResolvedValue({
+        id: 'owner-role',
+        isSystem: true,
+        permissions: [],
+        members: [],
+        teamMembers: [],
+        invites: [],
+      })
+
+      await expect(
+        service.userUpdateOrganizationRole('user-1', {
+          organizationId: 'org-1',
+          roleId: 'owner-role',
+          name: 'Different owner',
+          permissionKeys: [],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+    })
+
+    it('does not delete a custom role that is still assigned', async () => {
+      data.role.findFirst.mockResolvedValue({
+        id: 'custom-role',
+        name: 'Observer',
+        isSystem: false,
+        permissions: [],
+        members: [{ userId: 'member-1' }],
+        teamMembers: [],
+        invites: [],
+      })
+      data.user.findUnique.mockResolvedValue({
+        isSuperAdmin: true,
+        organizations: [],
+      })
+
+      await expect(
+        service.userDeleteOrganizationRole('root-1', {
+          organizationId: 'org-1',
+          roleId: 'custom-role',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      expect(data.role.delete).not.toHaveBeenCalled()
     })
   })
 })

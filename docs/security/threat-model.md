@@ -52,8 +52,8 @@ system, organization tenancy, billing integration, file upload/delivery, and adm
 - User-facing custom resolvers derive scope from `@CtxUser()` and verified memberships, not from
   caller-supplied IDs alone.
 - Security-sensitive mutations are auditable, either through audit logs or security events.
-- Emulation can only be started by a super-admin guarded resolver and cannot target a user with
-  equal or higher privilege.
+- Emulation requires the code-owned `platform.users.emulate` capability or the root bypass and
+  cannot target a user with equal or higher platform privilege.
 - Token, session, reset, OAuth, webhook, and upload inputs are rejected when expired, replayed,
   malformed, or unauthenticated.
 
