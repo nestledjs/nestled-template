@@ -1,0 +1,77 @@
+id: 2026-08-10-select-coverage-tooling-fixes
+title: Fix select verifier blind spots and gate GraphQL type coverage
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Fix three false-clean or false-positive paths in verify-fragment-coverage, add regression tests
+  for each parser shape, and add verify-select-coverage so explicit Prisma selects are checked
+  against the non-nullable scalar surface exposed by their GraphQL return types. Run both coverage
+  directions in CI alongside verify-selects.
+
+why: >
+  Annotated constants were silently dropped because model annotations were looked up from an
+  offset moved into the blanked comment; nested helper annotations were incorrectly treated as a
+  promise to cover every fragment on that model; and relation selects stored in named constants
+  were parsed as empty. Separately, a schema-valid select may omit a real field and return a silent
+  null or fail a whole GraphQL query when that field is requested. Typecheck and mocked unit tests
+  cannot prove this runtime SDL-to-Prisma contract.
+
+affectedPaths:
+  - package.json
+  - .github/workflows/ci.yml
+  - tools/verify-fragment-coverage.ts
+  - tools/verify-fragment-coverage.spec.ts
+  - tools/verify-select-coverage.mjs
+  - tools/verify-select-coverage.spec.mjs
+  - AGENTS.md
+  - docs/dev/README.md
+  - docs/dev/doctor.md
+  - docs/dev/api-extension-methodology.md
+
+packageReleases: []
+
+skipIf:
+  - The project has no Prisma API, no application SDK fragments, and no reusable explicit selects.
+  - The project already has regression-tested equivalent checks in CI for both fragment-requested
+    paths and the complete non-nullable GraphQL scalar surface of explicit selects.
+
+verification:
+  - pnpm template:test-migration-tools
+  - pnpm verify:selects
+  - pnpm verify:select-coverage
+  - pnpm verify:select-coverage --json
+  - pnpm verify:fragments
+  - pnpm template:validate-upgrade-notes
+  - pnpm format:check
+  - pnpm typecheck
+
+agentHints:
+  - >
+    Port both verifier files and both specs together. Prove the regressions against the old parser:
+    a non-name-derived constant with @prisma-model must be attributed; relation: IDENT and relation:
+    { select: IDENT } must resolve; a parameterized select factory must resolve without cycling.
+  - >
+    Anchor annotation lookup on the const keyword in sanitized source. match.index can point to the
+    start of a preceding JSDoc because sanitizing turns the whole comment into whitespace consumed
+    by the declaration regex.
+  - >
+    Use @fragment-partial only for a nested helper that needs @prisma-model so verify-selects can
+    validate its columns but does not independently back a GraphQL operation. Keep the helper in
+    the same-file spread map so complete selects can still inherit its fields.
+  - >
+    verify-select-coverage requires a current api-schema.graphql emitted by a booted API. It gates
+    top-level non-nullable omissions, reports nullable gaps only with --warn-nullable, and keeps
+    nested omissions advisory unless --strict-nested is requested. Use @select-omits for a reviewed,
+    deliberate security omission instead of silently suppressing the finding.
+  - >
+    Keep select-coverage model inference generic: try model words from the constant name, then the
+    *.select.ts filename, with @prisma-model as the explicit override. Read annotations only from
+    the nearest directly preceding JSDoc so an older helper annotation cannot leak across a newer
+    documentation block and silently validate the constant against the wrong model.
+  - >
+    Fragment coverage remains model-wide. It cannot attribute a related-model contribution nested
+    inside another model's select, and named identifiers or spreads are followed only within one
+    file. Preserve these limits in the tool header and read NOT CHECKED before calling a run clean.

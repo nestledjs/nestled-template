@@ -381,6 +381,41 @@ describe('ApiTokensService', () => {
       const result = await service.validateApiToken('invalid-token')
       expect(result).toBeNull()
     })
+    it('should validate current membership for an organization-scoped token', async () => {
+      const plainToken = 'a'.repeat(64)
+      mockData.apiToken.findFirst.mockResolvedValue({
+        id: 'token-123',
+        userId: 'user-123',
+        organizationId: 'org-123',
+        revoked: false,
+        expiresAt: null,
+      } as any)
+      mockData.organizationMember.findFirst.mockResolvedValue({ id: 'membership-123' })
+      mockData.apiToken.update.mockResolvedValue({} as any)
+
+      await expect(service.validateApiToken(plainToken)).resolves.toEqual({
+        userId: 'user-123',
+        tokenId: 'token-123',
+        organizationId: 'org-123',
+      })
+      expect(mockData.organizationMember.findFirst).toHaveBeenCalledWith({
+        where: { userId: 'user-123', organizationId: 'org-123' },
+        select: { id: true },
+      })
+    })
+    it('should reject an organization-scoped token after membership is removed', async () => {
+      mockData.apiToken.findFirst.mockResolvedValue({
+        id: 'token-123',
+        userId: 'user-123',
+        organizationId: 'org-123',
+        revoked: false,
+        expiresAt: null,
+      } as any)
+      mockData.organizationMember.findFirst.mockResolvedValue(null)
+
+      await expect(service.validateApiToken('a'.repeat(64))).resolves.toBeNull()
+      expect(mockData.apiToken.update).not.toHaveBeenCalled()
+    })
     it('should return null for expired token', async () => {
       const plainToken = 'a'.repeat(64)
       const tokenHash = createHash('sha256').update(plainToken).digest('hex')

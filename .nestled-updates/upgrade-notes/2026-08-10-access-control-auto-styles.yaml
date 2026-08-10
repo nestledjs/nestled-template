@@ -1,0 +1,54 @@
+id: 2026-08-10-access-control-auto-styles
+title: Load access-control styles from the package entry
+priority: high
+area: web
+type: correctness
+delivery: package-release
+
+intent: >
+  Publish @nestledjs/access-control with a static side-effect import from its JavaScript entry to
+  its extracted stylesheet so every consumer receives the complete component without remembering
+  a separate CSS import.
+
+why: >
+  Version 0.0.2 ships index.css and exports ./styles.css, but its built index.js does not import the
+  stylesheet. Consumers therefore render structurally correct but completely unstyled access-control
+  markup unless they discover and add an extra import. The failure is silent and mirrored route
+  promotion can overwrite a downstream-only fix.
+
+affectedPaths:
+  - libs/access-control/build-css-import.mts
+  - libs/access-control/vite.config.mts
+  - libs/access-control/vite.config.spec.mts
+  - libs/access-control/package.json
+  - libs/access-control/README.md
+
+packageReleases:
+  - name: '@nestledjs/access-control'
+    sourcePath: libs/access-control
+    targetVersion: 0.0.3
+    versionRange: ^0.0.3
+
+skipIf:
+  - The downstream project does not use @nestledjs/access-control.
+  - The downstream project already uses @nestledjs/access-control 0.0.3 or newer.
+
+verification:
+  - pnpm nx test access-control --skip-nx-cache
+  - pnpm nx build access-control --skip-nx-cache
+  - Confirm dist/libs/access-control/index.js imports ./index.css.
+  - Pack the built package and run the downstream web production build with the tarball installed.
+  - pnpm template:validate-upgrade-notes
+
+agentHints:
+  - >
+    Upgrade the published package; do not add a CSS import to the mirrored access-control route.
+    Route-only edits are overwritten by promotion and repeat the same silent failure elsewhere.
+  - >
+    Keep CSS as a normal extracted asset and retain a static import from index.js. Do not inject a
+    runtime style element: that introduces SSR flashes, content-security-policy problems, and less
+    predictable host override ordering.
+  - >
+    Preserve the ./styles.css export for tools and explicit preloading. The main application entry
+    now loads the same asset automatically, and the package sideEffects declaration must continue
+    to mark CSS as effectful so consumer tree shaking cannot remove it.

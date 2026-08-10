@@ -193,6 +193,16 @@ export class ApiTokensService {
       return null
     }
 
+    if (
+      apiToken.organizationId &&
+      !(await this.hasOrganizationMembership(apiToken.userId, apiToken.organizationId))
+    ) {
+      this.logger.warn(
+        `Organization-scoped API token no longer has a valid membership: ${apiToken.id}`,
+      )
+      return null
+    }
+
     // Update last used timestamp (async, don't block)
     setImmediate(async () => {
       try {
@@ -223,13 +233,20 @@ export class ApiTokensService {
     userId: string,
     organizationId: string,
   ): Promise<void> {
+    if (!(await this.hasOrganizationMembership(userId, organizationId))) {
+      throw new ForbiddenException('You are not a member of this organization')
+    }
+  }
+
+  private async hasOrganizationMembership(
+    userId: string,
+    organizationId: string,
+  ): Promise<boolean> {
     const membership = await this.data.organizationMember.findFirst({
       where: { userId, organizationId },
       select: { id: true },
     })
 
-    if (!membership) {
-      throw new ForbiddenException('You are not a member of this organization')
-    }
+    return Boolean(membership)
   }
 }
