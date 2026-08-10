@@ -627,6 +627,15 @@ describe('AdminService', () => {
       )
       expect(mockData.email.update).not.toHaveBeenCalled()
     })
+
+    it('reports a missing email separately from an ownership mismatch', async () => {
+      mockData.email.findUnique.mockResolvedValue(null)
+
+      await expect(service.verifyEmail('actor-1', 'user-123', 'missing-email')).rejects.toThrow(
+        'Email missing-email not found',
+      )
+      expect(mockData.email.update).not.toHaveBeenCalled()
+    })
   })
   describe('forcePasswordReset', () => {
     it('should force password reset for a user', async () => {

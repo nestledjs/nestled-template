@@ -100,8 +100,10 @@ agentHints:
     their names resemble Owner, Admin, or Member.
   - >
     Consume the published @nestledjs/access-control package and provide a local adapter for the
-    purpose-built API. Keep the organization/client management route application-local; downstream
-    products are expected to change its language and workflows while preserving the API ceilings.
+    purpose-built API. Its sourcePath is relative to the upstream nestled-dev-template promotion
+    source; public-template and downstream checkouts intentionally do not contain libs/access-control.
+    Keep the organization/client management route application-local; downstream products are
+    expected to change its language and workflows while preserving the API ceilings.
   - >
     Refresh api-schema.graphql through the project's normal API boot path, then run pnpm sdk. Add
     the application-owned access-control documents and route clients together so the SDK contract

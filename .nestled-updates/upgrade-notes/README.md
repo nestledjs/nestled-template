@@ -34,18 +34,23 @@ Propagating notes require:
 Use `delivery: code-patch` when downstream projects should adapt local source files.
 Code-patch notes require `affectedPaths`.
 
-Use `delivery: package-release` when the change is shipped by publishing one of this
-repo's Nestled packages and downstream projects should update dependencies instead of
-copying library source. Package-release notes require `packageReleases`.
+Use `delivery: package-release` when the change is shipped by publishing one of Nestled's
+upstream-managed packages and downstream projects should update dependencies instead of copying
+library source. Package-release notes require `packageReleases`.
 
 Use `delivery: hybrid` when downstream projects need both a dependency update and a
 local source adaptation. Hybrid notes require both `affectedPaths` and `packageReleases`.
 
-Published packages managed by this repo:
+Published packages managed by the `nestled-dev-template` promotion source:
 
 - `@nestledjs/data-browser` from `libs/data-browser`
 - `@nestledjs/shared-components` from `libs/shared-components`
 - `@nestledjs/access-control` from `libs/access-control`
+
+Those source paths are relative to `nestled-dev-template`. The public `nestled-template` checkout
+and downstream projects intentionally omit these package sources and consume their published npm
+versions instead. Keep `packageReleases` in promoted notes so the upgrader can apply that dependency
+boundary.
 
 Recommended fields:
 

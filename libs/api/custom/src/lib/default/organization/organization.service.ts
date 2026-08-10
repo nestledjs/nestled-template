@@ -1220,9 +1220,16 @@ export class OrganizationService {
     permissionKeys: string[],
   ) {
     const requested = new Set(permissionKeys)
-    const permissions = (await this.data.permission.findMany()).filter(permission =>
-      requested.has(`${permission.subject}:${permission.action}`),
-    )
+    const requestedPermissions = permissionKeys.map(key => {
+      const separator = key.indexOf(':')
+      if (separator <= 0 || separator === key.length - 1) {
+        throw new BadRequestException('One or more organization permissions are not in the catalog')
+      }
+      return { subject: key.slice(0, separator), action: key.slice(separator + 1) }
+    })
+    const permissions = requestedPermissions.length
+      ? await this.data.permission.findMany({ where: { OR: requestedPermissions } })
+      : []
     if (permissions.length !== requested.size) {
       throw new BadRequestException('One or more organization permissions are not in the catalog')
     }

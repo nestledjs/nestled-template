@@ -40,7 +40,9 @@ const types = new Set([
   'cleanup',
 ])
 const deliveries = new Set(['code-patch', 'package-release', 'hybrid'])
-const publishedPackages = new Map([
+// These paths identify package sources in the upstream nestled-dev-template promotion source.
+// The public nestled-template checkout intentionally imports the packages and omits their source.
+const upstreamPublishedPackages = new Map([
   ['@nestledjs/data-browser', 'libs/data-browser'],
   ['@nestledjs/shared-components', 'libs/shared-components'],
   ['@nestledjs/access-control', 'libs/access-control'],
@@ -80,10 +82,10 @@ const validatePackageReleaseName = (
     return undefined
   }
 
-  const expectedSourcePath = publishedPackages.get(packageRelease.name)
+  const expectedSourcePath = upstreamPublishedPackages.get(packageRelease.name)
   if (!expectedSourcePath) {
     errors.push(
-      `packageReleases[${index}].name must be one of: ${Array.from(publishedPackages.keys()).join(', ')}`,
+      `packageReleases[${index}].name must be one of: ${Array.from(upstreamPublishedPackages.keys()).join(', ')}`,
     )
   }
 
