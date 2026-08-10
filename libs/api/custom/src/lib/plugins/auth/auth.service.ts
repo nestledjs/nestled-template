@@ -1297,7 +1297,18 @@ export class AuthService {
 
   public clearCookie(res: Response): Response {
     const cookie = this.config.getOrThrow<{ name: string; options: CookieOptions }>('api.cookie')
-    return res.clearCookie(cookie.name, cookie.options)
+    const response = res.clearCookie(cookie.name, cookie.options)
+
+    // A deployment may have changed from an API-host-only cookie to a shared parent-domain
+    // cookie. Browsers retain both because they have different scopes, so clear the legacy
+    // host-only variant as well whenever the configured cookie has a domain.
+    if (cookie.options.domain) {
+      const hostOnlyOptions = { ...cookie.options }
+      delete hostOnlyOptions.domain
+      response.clearCookie(cookie.name, hostOnlyOptions)
+    }
+
+    return response
   }
 
   public getCookieName(): string {

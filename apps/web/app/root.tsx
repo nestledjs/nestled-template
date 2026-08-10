@@ -17,10 +17,12 @@ import {
   type MetaFunction,
   Scripts,
   ScrollRestoration,
+  isRouteErrorResponse,
   useLoaderData,
 } from 'react-router'
 import { GTMNoScript, GTMScript } from './gtm'
 import App from './app'
+import { AccessDenied } from './access-denied'
 
 export const meta: MetaFunction = () => [
   {
@@ -196,12 +198,15 @@ type ErrorWithGraphQLErrors = Error & {
   graphQLErrors?: GraphQLErrorLike[]
 }
 
-export function ErrorBoundary({ error }: Readonly<{ error: Error }>) {
+export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   // Auth errors should send the user through logout to clear their session
-  const graphQLError = error as ErrorWithGraphQLErrors
+  const normalizedError = error instanceof Error ? error : new Error('An unexpected error occurred')
+  const graphQLError = normalizedError as ErrorWithGraphQLErrors
+  const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
   const isUnauthorized =
-    error.message?.includes('Unauthorized') ||
-    error.message?.includes('Session has been invalidated') ||
+    routeStatus === 401 ||
+    normalizedError.message.includes('Unauthorized') ||
+    normalizedError.message.includes('Session has been invalidated') ||
     graphQLError.graphQLErrors?.some(
       e =>
         (e.message || '').includes('Unauthorized') ||
@@ -210,11 +215,18 @@ export function ErrorBoundary({ error }: Readonly<{ error: Error }>) {
     )
 
   if (isUnauthorized && globalThis.window !== undefined) {
-    globalThis.location.href = '/force-logout'
+    const currentPath = `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`
+    const returnUrl =
+      currentPath && currentPath !== '/' ? `?return_url=${encodeURIComponent(currentPath)}` : ''
+    globalThis.location.href = `/force-logout${returnUrl}`
     return null
+  }
+
+  if (routeStatus === 403) {
+    return <AccessDenied />
   }
 
   // Layout always wraps this component and provides <html>/<head>/<body> —
   // do not render document-level tags here.
-  return <AppErrorBoundary error={error} autoRefresh={true} autoRefreshDelay={3000} />
+  return <AppErrorBoundary error={normalizedError} autoRefresh={true} autoRefreshDelay={3000} />
 }

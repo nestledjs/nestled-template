@@ -10,6 +10,7 @@ import { SessionService } from './session.service'
 import { EmailHygieneService, TurnstileService } from './signup-protection'
 import { hashPassword, validatePassword } from './auth.helper'
 import { PlatformAccessControlService } from '../access-control'
+import type { Response } from 'express'
 // Mock the helper functions
 jest.mock('./auth.helper', () => ({
   ...jest.requireActual('./auth.helper'),
@@ -2103,6 +2104,51 @@ describe('AuthService', () => {
       const result = await service.isSessionValid('session-123')
 
       expect(result).toBe(false)
+    })
+  })
+  describe('Session Cookies', () => {
+    it('clears both domain-scoped and legacy host-only cookies', () => {
+      const clearCookie = jest.fn()
+      const response = { clearCookie } as unknown as Response
+      clearCookie.mockReturnValue(response)
+      mockConfigService.getOrThrow.mockReturnValueOnce({
+        name: '__session',
+        options: {
+          domain: 'example.com',
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: true,
+          path: '/',
+        },
+      })
+
+      expect(service.clearCookie(response)).toBe(response)
+      expect(clearCookie).toHaveBeenNthCalledWith(1, '__session', {
+        domain: 'example.com',
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: true,
+        path: '/',
+      })
+      expect(clearCookie).toHaveBeenNthCalledWith(2, '__session', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: true,
+        path: '/',
+      })
+    })
+
+    it('clears a host-only cookie once when no domain is configured', () => {
+      const clearCookie = jest.fn()
+      const response = { clearCookie } as unknown as Response
+      clearCookie.mockReturnValue(response)
+      mockConfigService.getOrThrow.mockReturnValueOnce({
+        name: '__session',
+        options: { httpOnly: true, sameSite: 'lax', path: '/' },
+      })
+
+      expect(service.clearCookie(response)).toBe(response)
+      expect(clearCookie).toHaveBeenCalledTimes(1)
     })
   })
   describe('Register with Invitation', () => {
