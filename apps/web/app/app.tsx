@@ -1,10 +1,12 @@
-import { Outlet, useLoaderData } from 'react-router'
+import { Outlet, useLoaderData, useLocation } from 'react-router'
 import { GlobalContextProvider } from '@nestled-template/web'
 import { useReadQuery, type QueryRef } from '@apollo/client/react'
 import type { MeQuery } from '@nestled-template/shared/sdk'
 import { Component, type ReactNode, useEffect, useState } from 'react'
 import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils'
 import { ServiceUnavailable, ViteCacheError } from '@nestledjs/shared-components'
+import { APOLLO_ACCESS_FORBIDDEN_EVENT } from '@nestled-template/shared/apollo'
+import { AccessDenied } from './access-denied'
 
 class MeQueryErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
@@ -34,6 +36,7 @@ export function loader({ context }: { context: { meQueryRef?: QueryRef<MeQuery> 
 }
 
 export function App() {
+  const location = useLocation()
   const data = useLoaderData() as {
     meQueryRef?: QueryRef<MeQuery>
     serviceUnavailable?: boolean
@@ -41,12 +44,14 @@ export function App() {
   const { meQueryRef, serviceUnavailable: loaderServiceUnavailable } = data
   const [runtimeServiceUnavailable, setRuntimeServiceUnavailable] = useState(false)
   const [viteCacheError, setViteCacheError] = useState(false)
+  const [accessForbidden, setAccessForbidden] = useState(false)
 
   // Service unavailable can come from either the root loader or runtime Apollo errors
   const serviceUnavailable = loaderServiceUnavailable || runtimeServiceUnavailable
 
   useEffect(() => {
     const handleServiceUnavailable = () => setRuntimeServiceUnavailable(true)
+    const handleAccessForbidden = () => setAccessForbidden(true)
 
     const handleGlobalError = (event: ErrorEvent) => {
       const error = event.error
@@ -90,6 +95,7 @@ export function App() {
 
     // Listen for Apollo service unavailable events
     globalThis.addEventListener('apollo-service-unavailable', handleServiceUnavailable)
+    globalThis.addEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
 
     // Fallback: Listen for global errors
     globalThis.addEventListener('error', handleGlobalError)
@@ -98,10 +104,19 @@ export function App() {
     return () => {
       // noisy during normal usage
       globalThis.removeEventListener('apollo-service-unavailable', handleServiceUnavailable)
+      globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
       globalThis.removeEventListener('error', handleGlobalError)
       globalThis.removeEventListener('unhandledrejection', handleUnhandledRejection)
     }
   }, [])
+
+  // Keyed on the whole navigation, not the pathname. A route that changes only its query string
+  // -- switching the active organization, say -- is a new request that may well be permitted, and
+  // keying on pathname alone leaves the access-denied screen up over it with no way to clear it.
+  // location.key changes on every navigation, including same-path ones.
+  useEffect(() => {
+    setAccessForbidden(false)
+  }, [location.key])
 
   // Show Vite cache error UI if detected
   if (viteCacheError) {
@@ -116,6 +131,10 @@ export function App() {
         message="Our servers are currently unreachable. Please check your internet connection or refresh the page to try again."
       />
     )
+  }
+
+  if (accessForbidden) {
+    return <AccessDenied />
   }
 
   if (!meQueryRef) {

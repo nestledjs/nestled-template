@@ -42,6 +42,7 @@ Published packages:
 
 - `@nestledjs/data-browser` from `libs/data-browser`
 - `@nestledjs/shared-components` from `libs/shared-components`
+- `@nestledjs/access-control` from `libs/access-control`
 
 Required fields:
 
@@ -86,8 +87,8 @@ Upgrader behavior:
 
 ## Authoring Rules
 
-When a change touches only `libs/data-browser` or `libs/shared-components`, prefer
-`delivery: package-release`.
+When a change touches only `libs/data-browser`, `libs/shared-components`, or
+`libs/access-control`, prefer `delivery: package-release`.
 
 When a change touches a published package and also changes template app usage, use
 `delivery: hybrid`.

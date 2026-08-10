@@ -26,23 +26,62 @@ function headerAndCookieExtractor(req: Request): string | null {
   return null
 }
 
+function decodeCookieValue(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function jwtTimestamp(token: string): number | null {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
+      iat?: unknown
+      exp?: unknown
+    }
+    if (typeof payload.iat === 'number') return payload.iat
+    if (typeof payload.exp === 'number') return payload.exp
+    return 0
+  } catch {
+    return null
+  }
+}
+
+function pickNewestJwt(values: string[]): string {
+  let newest: { token: string; timestamp: number } | null = null
+  for (const token of values) {
+    const timestamp = jwtTimestamp(token)
+    if (timestamp !== null && (!newest || timestamp >= newest.timestamp)) {
+      newest = { token, timestamp }
+    }
+  }
+
+  return newest?.token ?? values[values.length - 1]
+}
+
+function cookieValues(cookieHeader: string, name: string): string[] {
+  const values: string[] = []
+  for (const pair of cookieHeader.split(';')) {
+    const separator = pair.indexOf('=')
+    if (separator < 0 || pair.slice(0, separator).trim() !== name) continue
+    values.push(decodeCookieValue(pair.slice(separator + 1)))
+  }
+  return values
+}
+
 function cookieExtractor(req: Request): string | undefined {
   const name = process.env['VITE_COOKIE_NAME'] || process.env['API_COOKIE_NAME'] || '__session'
-  if (req?.cookies?.[name]) {
-    return req.cookies[name]
-  }
-
   const rawCookie = (req?.headers as Record<string, string> | undefined)?.['cookie']
-  if (!rawCookie) {
-    return undefined
+  if (rawCookie) {
+    const values = cookieValues(rawCookie, name)
+    if (values.length > 0) return pickNewestJwt(values)
   }
 
-  const match = rawCookie
-    .split(';')
-    .map(value => value.trim())
-    .find(value => value.startsWith(`${name}=`))
-
-  return match ? match.slice(name.length + 1) : undefined
+  return req?.cookies?.[name]
 }
 
 @Injectable()

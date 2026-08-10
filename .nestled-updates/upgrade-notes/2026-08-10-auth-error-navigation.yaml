@@ -1,0 +1,53 @@
+id: 2026-08-10-auth-error-navigation
+title: Normalize expired-session and forbidden-page behavior
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  Route every client-side HTTP 401 through logout and back to login, including transport-level
+  failures from a page left open after its session expires. Present authenticated query-level and
+  route-level 403 failures as a clear access-denied page without clearing a valid session.
+
+why: >
+  GraphQL UNAUTHENTICATED errors already trigger logout, but an HTTP transport 401 bypassed that
+  path and could leak a raw error from admin tools. Conversely, treating a forbidden response like
+  an expired session makes authorization defects look like login failures and destroys a valid
+  session. Consistent 401 and 403 semantics make failures safer and understandable.
+
+affectedPaths:
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/app/access-denied.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/root.tsx
+  - apps/web/tests/auth-error-navigation.spec.tsx
+
+packageReleases: []
+
+skipIf:
+  - >
+    The application already redirects both GraphQL and HTTP transport 401 responses through its
+    canonical session-clearing login flow and renders query/route 403 responses as a dedicated
+    access-denied state.
+
+verification:
+  - pnpm nx test apollo
+  - pnpm nx test web
+  - pnpm nx build web
+  - pnpm template:validate-upgrade-notes
+
+agentHints:
+  - >
+    Keep 401 and 403 distinct. A 401 means the session must be cleared and the user sent to login
+    with the current route as return_url. A 403 means authentication succeeded; keep the session
+    and show a safe page explaining that the account lacks access.
+  - >
+    Handle transport-level statusCode/status/response.status in addition to GraphQL extension
+    codes. Long-lived admin pages can receive a bare HTTP 401 after the initial route loader has
+    already completed.
+  - >
+    Only promote forbidden query operations to the page-level access-denied state. Mutation
+    authorization errors should remain with the invoking form or action so a denied button click
+    does not replace the entire route.

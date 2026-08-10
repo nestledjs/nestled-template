@@ -44,8 +44,8 @@ affectedPaths:
 packageReleases:
   - name: '@nestledjs/access-control'
     sourcePath: libs/access-control
-    targetVersion: 0.0.1
-    versionRange: ^0.0.1
+    targetVersion: 0.0.2
+    versionRange: ^0.0.2
 
 skipIf:
   - >
@@ -102,6 +102,7 @@ agentHints:
     Consume the published @nestledjs/access-control package and provide a local adapter for the
     purpose-built API. Its sourcePath is relative to the upstream nestled-dev-template promotion
     source; public-template and downstream checkouts intentionally do not contain libs/access-control.
+    Require version 0.0.2 or newer: 0.0.1 contains development-only JSX that crashes in production.
     Keep the organization/client management route application-local; downstream products are
     expected to change its language and workflows while preserving the API ceilings.
   - >
