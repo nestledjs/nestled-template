@@ -22,3 +22,7 @@ export const PrismaClientKnownRequestError = PrismaNamespace.PrismaClientKnownRe
 export type PrismaClientKnownRequestError = PrismaNamespace.PrismaClientKnownRequestError
 
 export { defaultRoles, defaultPermissions } from './lib/seed/seed-data/seed-roles-permissions'
+export {
+  platformPermissions,
+  superAdministratorRole,
+} from './lib/seed/seed-data/seed-platform-access-control'

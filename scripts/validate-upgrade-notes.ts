@@ -43,6 +43,7 @@ const deliveries = new Set(['code-patch', 'package-release', 'hybrid'])
 const publishedPackages = new Map([
   ['@nestledjs/data-browser', 'libs/data-browser'],
   ['@nestledjs/shared-components', 'libs/shared-components'],
+  ['@nestledjs/access-control', 'libs/access-control'],
 ])
 
 const isNonEmptyString = (value: unknown): value is string =>

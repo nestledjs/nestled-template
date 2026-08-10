@@ -181,7 +181,7 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
       if (response.data.errors) {
         expect(response.data.errors).toBeDefined()
         expect(response.data.errors[0].message).toMatch(
-          /forbidden|unauthorized|not found|not a member/i,
+          /forbidden|unauthorized|permission|not found|not a member/i,
         )
       } else {
         // If no error, should return empty array (no access to org2 members)

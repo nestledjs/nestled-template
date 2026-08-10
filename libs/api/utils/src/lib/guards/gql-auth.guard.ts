@@ -14,6 +14,10 @@ export class GqlAuthGuard extends AuthGuard('jwt') {
   }
 
   override getRequest(context: ExecutionContext): Record<string, unknown> {
+    if (context.getType<string>() === 'http') {
+      return context.switchToHttp().getRequest<Record<string, unknown>>()
+    }
+
     const ctx = GqlExecutionContext.create(context)
     return ctx.getContext().req
   }

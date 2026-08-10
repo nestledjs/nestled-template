@@ -8,18 +8,26 @@ import {
   CreditCardIcon,
   DocumentMagnifyingGlassIcon,
   HomeIcon,
+  IdentificationIcon,
   ShieldCheckIcon,
   TableCellsIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline'
 import { useGlobalCtx } from '@nestled-template/web'
 import { cn } from '@nestled-template/shared/utils'
+import {
+  MyPlatformPermissions,
+  type MyPlatformPermissionsQuery,
+} from '@nestled-template/shared/sdk'
+import { useQuery } from '@apollo/client/react'
 
 interface NavItem {
   name: string
   href: string
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   description: string
+  permissions?: string[]
+  superAdminOnly?: boolean
 }
 
 interface NavSection {
@@ -30,9 +38,14 @@ interface NavSection {
 export default function AdminLayout() {
   const location = useLocation()
   const { user } = useGlobalCtx()
+  const { data: permissionData, loading: permissionsLoading } =
+    useQuery<MyPlatformPermissionsQuery>(MyPlatformPermissions, {
+      skip: !user || user.isSuperAdmin,
+    })
+  const platformPermissions = permissionData?.myPlatformPermissions ?? []
 
   // Show loading if no user data yet
-  if (!user) {
+  if (!user || (!user.isSuperAdmin && permissionsLoading)) {
     return (
       <div className="flex-1 flex items-center justify-center bg-gradient-to-b from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950">
         <div className="text-zinc-500 dark:text-zinc-400">Loading...</div>
@@ -40,8 +53,14 @@ export default function AdminLayout() {
     )
   }
 
-  // Redirect non-super admins
-  if (!user.isSuperAdmin) {
+  const grants = (required: string) =>
+    user.isSuperAdmin ||
+    platformPermissions.some(
+      grant =>
+        grant === required || (grant.endsWith('.*') && required.startsWith(grant.slice(0, -1))),
+    )
+
+  if (!user.isSuperAdmin && platformPermissions.length === 0) {
     return <Navigate to="/members/dashboard" replace />
   }
 
@@ -54,30 +73,42 @@ export default function AdminLayout() {
           href: '/admin',
           icon: HomeIcon,
           description: 'Overview and key metrics',
+          permissions: ['platform.analytics.read'],
         },
         {
           name: 'Users',
           href: '/admin/users',
           icon: UsersIcon,
           description: 'User management and emulation',
+          permissions: ['platform.users.read'],
         },
         {
           name: 'Organizations',
           href: '/admin/organizations',
           icon: BuildingOfficeIcon,
           description: 'Organization management',
+          permissions: ['platform.organizations.read'],
         },
         {
           name: 'Security Events',
           href: '/admin/security-events',
           icon: ShieldCheckIcon,
           description: 'Login attempts and 2FA',
+          permissions: ['platform.security.read'],
         },
         {
           name: 'Audit Logs',
           href: '/admin/audit-logs',
           icon: DocumentMagnifyingGlassIcon,
           description: 'Activity and event tracking',
+          permissions: ['platform.audit.read'],
+        },
+        {
+          name: 'Access Control',
+          href: '/admin/access-control',
+          icon: IdentificationIcon,
+          description: 'Platform roles and permissions',
+          permissions: ['platform.access-control.read', 'platform.access-control.manage'],
         },
       ],
     },
@@ -89,28 +120,42 @@ export default function AdminLayout() {
           href: '/admin/settings',
           icon: Cog6ToothIcon,
           description: 'Application preferences',
+          superAdminOnly: true,
         },
         {
           name: 'Billing',
           href: '/admin/billing',
           icon: CreditCardIcon,
           description: 'Plans and subscriptions',
+          superAdminOnly: true,
         },
         {
           name: 'Data Browser',
           href: '/admin/data',
           icon: TableCellsIcon,
           description: 'Database query tool',
+          superAdminOnly: true,
         },
         {
           name: 'Analytics',
           href: '/admin/analytics',
           icon: ChartBarSquareIcon,
           description: 'Platform metrics and reporting',
+          permissions: ['platform.analytics.read'],
         },
       ],
     },
   ]
+
+  const canViewItem = (item: NavItem) => {
+    if (item.superAdminOnly) return user.isSuperAdmin
+    return !item.permissions || item.permissions.some(grants)
+  }
+  const firstVisibleItem = navigationSections.flatMap(section => section.items).find(canViewItem)
+
+  if (location.pathname === '/admin' && firstVisibleItem?.href !== '/admin') {
+    return <Navigate to={firstVisibleItem?.href ?? '/members/dashboard'} replace />
+  }
 
   const isActive = (href: string) => {
     if (href === '/admin') {
@@ -154,7 +199,7 @@ export default function AdminLayout() {
                     </h3>
                   </div>
                   <ul className="space-y-1">
-                    {section.items.map(item => (
+                    {section.items.filter(canViewItem).map(item => (
                       <li key={item.name}>
                         <Link
                           to={item.href}

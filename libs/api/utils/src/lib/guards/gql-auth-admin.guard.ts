@@ -6,6 +6,10 @@ import { User } from '@nestled-template/api/core/models'
 @Injectable()
 export class GqlAuthAdminGuard extends AuthGuard('jwt') {
   override getRequest(context: ExecutionContext) {
+    if (context.getType<string>() === 'http') {
+      return context.switchToHttp().getRequest()
+    }
+
     const ctx = GqlExecutionContext.create(context)
 
     return ctx.getContext().req
@@ -17,8 +21,7 @@ export class GqlAuthAdminGuard extends AuthGuard('jwt') {
 
   override async canActivate(context: ExecutionContext): Promise<boolean> {
     await super.canActivate(context)
-    const ctx = GqlExecutionContext.create(context)
-    const req = ctx.getContext().req
+    const req = this.getRequest(context)
 
     if (!req?.user) {
       return false

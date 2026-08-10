@@ -4,6 +4,10 @@ import { PrismaPg } from '@prisma/adapter-pg'
 import { countries } from './seed-data/iso-3166-countries'
 import { seedUsers } from './seed-data/seed-users'
 import { defaultPermissions, defaultRoles } from './seed-data/seed-roles-permissions'
+import {
+  platformPermissions,
+  superAdministratorRole,
+} from './seed-data/seed-platform-access-control'
 import { hashSync } from 'bcryptjs'
 
 const adapter = new PrismaPg({ connectionString: process.env['DATABASE_URL']! })
@@ -44,15 +48,26 @@ async function reconnectOrgRolePermissions(prisma: PrismaClient): Promise<number
     const template = defaultRoles.find(t => t.name === role.name)
     if (!template) continue
     const existingKeys = new Set(role.permissions.map(p => `${p.subject}:${p.action}`))
-    const toConnect = allPermissions.filter(
-      p =>
-        template.permissions.includes(`${p.subject}:${p.action}`) &&
-        !existingKeys.has(`${p.subject}:${p.action}`),
-    )
-    if (toConnect.length === 0) continue
+    const hasExactDefaultPermissions =
+      existingKeys.size === template.permissions.length &&
+      template.permissions.every(permission => existingKeys.has(permission))
+    const toConnect = role.isSystem
+      ? allPermissions.filter(
+          p =>
+            template.permissions.includes(`${p.subject}:${p.action}`) &&
+            !existingKeys.has(`${p.subject}:${p.action}`),
+        )
+      : []
+    const shouldMarkSystem = !role.isSystem && hasExactDefaultPermissions
+    if (toConnect.length === 0 && !shouldMarkSystem) continue
     await prisma.role.update({
       where: { id: role.id },
-      data: { permissions: { connect: toConnect.map(p => ({ id: p.id })) } },
+      data: {
+        ...(shouldMarkSystem ? { isSystem: true } : {}),
+        ...(toConnect.length > 0
+          ? { permissions: { connect: toConnect.map(p => ({ id: p.id })) } }
+          : {}),
+      },
     })
     fixedCount++
   }
@@ -141,6 +156,66 @@ async function seedInitialUsers(): Promise<void> {
   }
 }
 
+async function seedPlatformAccessControl(): Promise<void> {
+  console.log('Seeding platform access control...')
+
+  for (const permission of platformPermissions) {
+    await prisma.platformPermission.upsert({
+      where: { key: permission.key },
+      update: {
+        namespace: permission.namespace,
+        action: permission.action,
+        description: permission.description,
+      },
+      create: permission,
+    })
+  }
+
+  const rootPermissions = await prisma.platformPermission.findMany({
+    where: { key: { in: [...superAdministratorRole.permissions] } },
+    select: { id: true },
+  })
+  const rootRole = await prisma.platformRole.upsert({
+    where: { key: superAdministratorRole.key },
+    update: {
+      name: superAdministratorRole.name,
+      description: superAdministratorRole.description,
+      isSystem: true,
+      permissions: { set: rootPermissions },
+    },
+    create: {
+      key: superAdministratorRole.key,
+      name: superAdministratorRole.name,
+      description: superAdministratorRole.description,
+      isSystem: true,
+      permissions: { connect: rootPermissions },
+    },
+  })
+
+  const superAdministrators = await prisma.user.findMany({
+    where: { isSuperAdmin: true },
+    select: { id: true },
+  })
+  const superAdministratorIds = superAdministrators.map(user => user.id)
+  await prisma.platformRoleAssignment.deleteMany({
+    where: {
+      roleId: rootRole.id,
+      ...(superAdministratorIds.length > 0 ? { userId: { notIn: superAdministratorIds } } : {}),
+    },
+  })
+  for (const user of superAdministrators) {
+    await prisma.platformRoleAssignment.upsert({
+      where: { userId_roleId: { userId: user.id, roleId: rootRole.id } },
+      update: {},
+      create: { userId: user.id, roleId: rootRole.id },
+    })
+  }
+
+  console.log(
+    `✓ ${platformPermissions.length} platform permissions and ${superAdministrators.length} root assignment(s) seeded`,
+  )
+}
+
 async function main() {
   await seedCountries()
   await seedGlobalPermissions()
@@ -153,10 +228,11 @@ async function main() {
   // See the auth service register function for automatic role creation
 
   await seedInitialUsers()
+  await seedPlatformAccessControl()
 }
 
 // Export for use in other modules
-export { defaultRoles, defaultPermissions }
+export { defaultRoles, defaultPermissions, platformPermissions, superAdministratorRole }
 main()
   .then(async () => {
     await prisma.$disconnect()

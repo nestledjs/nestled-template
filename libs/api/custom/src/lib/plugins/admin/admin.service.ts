@@ -1,13 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { AdminUserFiltersInput, AdminUsersResponse } from './dto'
 import { SecurityEventType } from '@nestled-template/api/core/models'
+import { PlatformAccessControlService } from '../access-control'
 
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name)
 
-  constructor(private readonly prisma: ApiCoreDataAccessService) {}
+  constructor(
+    private readonly prisma: ApiCoreDataAccessService,
+    private readonly accessControl: PlatformAccessControlService,
+  ) {}
 
   private buildSearchClause(search: string) {
     return [
@@ -439,16 +443,32 @@ export class AdminService {
   /**
    * Deactivate a user account
    */
-  async deactivateUser(userId: string) {
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        isActive: false,
-        deactivatedAt: new Date(),
-      },
-      include: {
-        emails: true,
-      },
+  async deactivateUser(actorUserId: string, userId: string) {
+    await this.accessControl.assertCanManagePrincipal(actorUserId, userId)
+    const user = await this.prisma.$transaction(async transaction => {
+      const updated = await transaction.user.update({
+        where: { id: userId },
+        data: {
+          isActive: false,
+          deactivatedAt: new Date(),
+        },
+        include: {
+          emails: true,
+        },
+      })
+      await transaction.userSession.updateMany({
+        where: { userId, isValid: true },
+        data: { isValid: false },
+      })
+      await transaction.auditLog.create({
+        data: {
+          userId: actorUserId,
+          entityId: userId,
+          entityType: 'User',
+          action: 'PLATFORM_USER_DEACTIVATED',
+        },
+      })
+      return updated
     })
 
     this.logger.log(`Admin deactivated user: ${userId}`)
@@ -458,16 +478,28 @@ export class AdminService {
   /**
    * Activate a user account
    */
-  async activateUser(userId: string) {
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        isActive: true,
-        deactivatedAt: null,
-      },
-      include: {
-        emails: true,
-      },
+  async activateUser(actorUserId: string, userId: string) {
+    await this.accessControl.assertCanManagePrincipal(actorUserId, userId)
+    const user = await this.prisma.$transaction(async transaction => {
+      const updated = await transaction.user.update({
+        where: { id: userId },
+        data: {
+          isActive: true,
+          deactivatedAt: null,
+        },
+        include: {
+          emails: true,
+        },
+      })
+      await transaction.auditLog.create({
+        data: {
+          userId: actorUserId,
+          entityId: userId,
+          entityType: 'User',
+          action: 'PLATFORM_USER_ACTIVATED',
+        },
+      })
+      return updated
     })
 
     this.logger.log(`Admin activated user: ${userId}`)
@@ -477,39 +509,50 @@ export class AdminService {
   /**
    * Manually verify a user's email
    */
-  async verifyEmail(userId: string, emailId: string) {
-    // Verify the email
-    await this.prisma.email.update({
-      where: { id: emailId },
-      data: {
-        verified: true,
-        verifyToken: null,
-        verifyExpires: null,
-      },
-    })
+  async verifyEmail(actorUserId: string, userId: string, emailId: string) {
+    await this.accessControl.assertCanManagePrincipal(actorUserId, userId)
+    const email = await this.prisma.email.findUnique({ where: { id: emailId } })
+    if (email?.userId !== userId) {
+      throw new BadRequestException('Email does not belong to the selected user')
+    }
 
-    // Update emailValidated flag on user if this is their primary email
-    const email = await this.prisma.email.findUnique({
-      where: { id: emailId },
-    })
-
-    if (email?.primary) {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { emailValidated: true },
+    const user = await this.prisma.$transaction(async transaction => {
+      await transaction.email.update({
+        where: { id: emailId },
+        data: {
+          verified: true,
+          verifyToken: null,
+          verifyExpires: null,
+        },
       })
-    }
 
-    // Fetch and return the updated user
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        emails: true,
-      },
+      if (email.primary) {
+        await transaction.user.update({
+          where: { id: userId },
+          data: { emailValidated: true },
+        })
+      }
+
+      const updated = await transaction.user.findUnique({
+        where: { id: userId },
+        include: {
+          emails: true,
+        },
+      })
+      if (!updated) {
+        throw new Error(`User ${userId} not found after email verification`)
+      }
+      await transaction.auditLog.create({
+        data: {
+          userId: actorUserId,
+          entityId: emailId,
+          entityType: 'Email',
+          action: 'PLATFORM_USER_EMAIL_VERIFIED',
+          changes: { targetUserId: userId },
+        },
+      })
+      return updated
     })
-    if (!user) {
-      throw new Error(`User ${userId} not found after email verification`)
-    }
 
     this.logger.log(`Admin verified email ${emailId} for user ${userId}`)
     return user
@@ -519,15 +562,16 @@ export class AdminService {
    * Force a password reset for a user
    * Invalidates all sessions and sets a password reset token
    */
-  async forcePasswordReset(userId: string) {
+  async forcePasswordReset(actorUserId: string, userId: string) {
+    await this.accessControl.assertCanManagePrincipal(actorUserId, userId)
     // Generate a reset token
     const crypto = await import('node:crypto')
     const resetToken = crypto.randomBytes(32).toString('hex')
     const resetExpires = new Date(Date.now() + 3600000) // 1 hour
 
     // Update user with reset token and invalidate all sessions
-    const [user] = await Promise.all([
-      this.prisma.user.update({
+    const user = await this.prisma.$transaction(async transaction => {
+      const updated = await transaction.user.update({
         where: { id: userId },
         data: {
           passwordResetToken: resetToken,
@@ -536,9 +580,8 @@ export class AdminService {
         include: {
           emails: true,
         },
-      }),
-      // Invalidate all active sessions
-      this.prisma.userSession.updateMany({
+      })
+      await transaction.userSession.updateMany({
         where: {
           userId,
           isValid: true,
@@ -546,8 +589,17 @@ export class AdminService {
         data: {
           isValid: false,
         },
-      }),
-    ])
+      })
+      await transaction.auditLog.create({
+        data: {
+          userId: actorUserId,
+          entityId: userId,
+          entityType: 'User',
+          action: 'PLATFORM_USER_PASSWORD_RESET_FORCED',
+        },
+      })
+      return updated
+    })
 
     this.logger.log(`Admin forced password reset for user: ${userId}`)
     return user

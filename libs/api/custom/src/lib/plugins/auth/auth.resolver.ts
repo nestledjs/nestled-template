@@ -14,13 +14,12 @@ import {
 import { Logger, UseGuards } from '@nestjs/common'
 import { GraphQLResolveInfo } from 'graphql/type'
 import {
-  AdminOnly,
   Authenticated,
   CtxUser,
-  GqlAuthAdminGuard,
   GqlAuthGuard,
   GqlThrottlerGuard,
   Public,
+  RequirePlatformPermission,
 } from '@nestled-template/api/utils'
 import type { NestContextType } from '@nestled-template/api/utils'
 import { UserToken } from './models'
@@ -281,8 +280,7 @@ export class AuthResolver {
   }
 
   @Mutation(() => UserToken, { nullable: true })
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.users.emulate')
   async emulateUser(
     @Context() context: NestContextType,
     @CtxUser() admin: User,

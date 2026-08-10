@@ -20,12 +20,16 @@ export class OrganizationContextService {
     @Optional() private readonly authCache?: AuthCacheService,
   ) {}
 
-  async attach(req: RequestWithOrganizationContext): Promise<OrganizationContext | undefined> {
+  async attach(
+    req: RequestWithOrganizationContext,
+    requestedOrganizationId?: string,
+  ): Promise<OrganizationContext | undefined> {
     if (!req.user) return undefined
-    if (req.organizationContext) return req.organizationContext
+    if (!requestedOrganizationId && req.organizationContext) return req.organizationContext
 
-    const organizationId = await this.resolveOrganizationId(req)
+    const organizationId = requestedOrganizationId ?? (await this.resolveOrganizationId(req))
     if (!organizationId) return undefined
+    if (req.organizationContext?.organizationId === organizationId) return req.organizationContext
 
     const cachedContext = await this.getCachedMembership(req.user.id, organizationId)
     if (cachedContext) {

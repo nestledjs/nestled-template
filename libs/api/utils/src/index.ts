@@ -1,4 +1,6 @@
 export * from './lib/guards/auth-level.decorator'
+export * from './lib/guards/access-policy.decorator'
+export * from './lib/guards/access-policy.guard'
 export * from './lib/guards/global-auth.guard'
 export * from './lib/guards/gql-auth.guard'
 export * from './lib/guards/gql-auth-admin.guard'

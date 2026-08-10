@@ -22,6 +22,9 @@ import {
   TransferOrganizationOwnershipInput,
   UserCreateOrganizationInput,
   UserUpdateOrganizationInput,
+  CreateOrganizationRoleInput,
+  UpdateOrganizationRoleInput,
+  DeleteOrganizationRoleInput,
 } from './dto'
 import { EmailService } from '@nestled-template/api/integrations'
 import { ConfigService } from '@nestjs/config'
@@ -82,6 +85,7 @@ export class OrganizationService {
         data: {
           name: roleTemplate.name,
           description: roleTemplate.description,
+          isSystem: true,
           organizationId,
           permissions: {
             connect: rolePermissions.map(p => ({ id: p.id })),
@@ -1039,6 +1043,240 @@ export class OrganizationService {
     })
 
     return roles
+  }
+
+  async userCreateOrganizationRole(userId: string, input: CreateOrganizationRoleInput) {
+    const name = await this.validateOrganizationRoleName(input.organizationId, input.name)
+    const description = this.normalizeRoleDescription(input.description)
+    const permissionKeys = this.uniquePermissionKeys(input.permissionKeys)
+    const permissions = await this.resolveGrantableOrganizationPermissions(
+      userId,
+      input.organizationId,
+      permissionKeys,
+    )
+
+    return this.data.$transaction(async transaction => {
+      const role = await transaction.role.create({
+        data: {
+          name,
+          description,
+          organizationId: input.organizationId,
+          permissions: { connect: permissions.map(permission => ({ id: permission.id })) },
+        },
+        include: { permissions: true },
+      })
+      await transaction.auditLog.create({
+        data: {
+          userId,
+          organizationId: input.organizationId,
+          entityId: role.id,
+          entityType: 'Role',
+          action: 'ORGANIZATION_ROLE_CREATED',
+          changes: { name, permissionKeys },
+        },
+      })
+      return role
+    })
+  }
+
+  async userUpdateOrganizationRole(userId: string, input: UpdateOrganizationRoleInput) {
+    const existing = await this.requireMutableOrganizationRole(input.organizationId, input.roleId)
+    await this.assertOrganizationGrantCeiling(
+      userId,
+      input.organizationId,
+      existing.permissions.map(permission => `${permission.subject}:${permission.action}`),
+    )
+    const name = await this.validateOrganizationRoleName(
+      input.organizationId,
+      input.name,
+      input.roleId,
+    )
+    const description = this.normalizeRoleDescription(input.description)
+    const permissionKeys = this.uniquePermissionKeys(input.permissionKeys)
+    const permissions = await this.resolveGrantableOrganizationPermissions(
+      userId,
+      input.organizationId,
+      permissionKeys,
+    )
+
+    const role = await this.data.$transaction(async transaction => {
+      const updated = await transaction.role.update({
+        where: { id: input.roleId },
+        data: {
+          name,
+          description,
+          permissions: { set: permissions.map(permission => ({ id: permission.id })) },
+        },
+        include: { permissions: true },
+      })
+      await transaction.auditLog.create({
+        data: {
+          userId,
+          organizationId: input.organizationId,
+          entityId: input.roleId,
+          entityType: 'Role',
+          action: 'ORGANIZATION_ROLE_UPDATED',
+          changes: {
+            name: { before: existing.name, after: name },
+            permissionKeys: {
+              before: existing.permissions.map(
+                permission => `${permission.subject}:${permission.action}`,
+              ),
+              after: permissionKeys,
+            },
+          },
+        },
+      })
+      return updated
+    })
+
+    const authCache = this.authCache
+    if (authCache?.isEnabled()) {
+      await Promise.all(
+        existing.members.map(member =>
+          authCache.invalidateMembership(member.userId, input.organizationId),
+        ),
+      )
+    }
+    return role
+  }
+
+  async userDeleteOrganizationRole(
+    userId: string,
+    input: DeleteOrganizationRoleInput,
+  ): Promise<boolean> {
+    const existing = await this.requireMutableOrganizationRole(input.organizationId, input.roleId)
+    await this.assertOrganizationGrantCeiling(
+      userId,
+      input.organizationId,
+      existing.permissions.map(permission => `${permission.subject}:${permission.action}`),
+    )
+    if (
+      existing.members.length > 0 ||
+      existing.teamMembers.length > 0 ||
+      existing.invites.length > 0
+    ) {
+      throw new BadRequestException(
+        'Move members, team members, and invitations to another role before deleting it',
+      )
+    }
+
+    await this.data.$transaction(async transaction => {
+      await transaction.role.delete({ where: { id: input.roleId } })
+      await transaction.auditLog.create({
+        data: {
+          userId,
+          organizationId: input.organizationId,
+          entityId: input.roleId,
+          entityType: 'Role',
+          action: 'ORGANIZATION_ROLE_DELETED',
+          changes: { name: existing.name },
+        },
+      })
+    })
+    return true
+  }
+
+  private uniquePermissionKeys(keys: readonly string[]): string[] {
+    const normalized = [...new Set(keys.map(key => key.trim()).filter(Boolean))]
+    if (normalized.length > 100 || normalized.some(key => key.length > 160)) {
+      throw new BadRequestException('The role permission list is too large')
+    }
+    return normalized
+  }
+
+  private normalizeRoleDescription(description?: string): string | null {
+    const normalized = description?.trim() || null
+    if (normalized && normalized.length > 500) {
+      throw new BadRequestException('Role description must be 500 characters or fewer')
+    }
+    return normalized
+  }
+
+  private async validateOrganizationRoleName(
+    organizationId: string,
+    value: string,
+    excludeRoleId?: string,
+  ): Promise<string> {
+    const name = value.trim().replace(/\s+/g, ' ')
+    if (name.length < 2 || name.length > 80) {
+      throw new BadRequestException('Role name must be between 2 and 80 characters')
+    }
+    const duplicate = await this.data.role.findFirst({
+      where: {
+        organizationId,
+        name: { equals: name, mode: 'insensitive' },
+        ...(excludeRoleId ? { id: { not: excludeRoleId } } : {}),
+      },
+      select: { id: true },
+    })
+    if (duplicate) throw new BadRequestException('A role with this name already exists')
+    return name
+  }
+
+  private async resolveGrantableOrganizationPermissions(
+    userId: string,
+    organizationId: string,
+    permissionKeys: string[],
+  ) {
+    const requested = new Set(permissionKeys)
+    const permissions = (await this.data.permission.findMany()).filter(permission =>
+      requested.has(`${permission.subject}:${permission.action}`),
+    )
+    if (permissions.length !== requested.size) {
+      throw new BadRequestException('One or more organization permissions are not in the catalog')
+    }
+    await this.assertOrganizationGrantCeiling(userId, organizationId, permissionKeys)
+    return permissions
+  }
+
+  private async assertOrganizationGrantCeiling(
+    userId: string,
+    organizationId: string,
+    permissionKeys: readonly string[],
+  ): Promise<void> {
+    const actor = await this.data.user.findUnique({
+      where: { id: userId },
+      select: {
+        isSuperAdmin: true,
+        organizations: {
+          where: { organizationId },
+          take: 1,
+          select: {
+            role: {
+              select: {
+                permissions: { select: { subject: true, action: true } },
+              },
+            },
+          },
+        },
+      },
+    })
+    if (actor?.isSuperAdmin) return
+    const grants =
+      actor?.organizations[0]?.role.permissions.map(
+        permission => `${permission.subject}:${permission.action}`,
+      ) ?? []
+    const hasUniversalGrant = grants.includes('all:manage')
+    const exceedsCeiling = permissionKeys.some(key => !hasUniversalGrant && !grants.includes(key))
+    if (exceedsCeiling) {
+      throw new ForbiddenException('You cannot grant permissions above your own organization role')
+    }
+  }
+
+  private async requireMutableOrganizationRole(organizationId: string, roleId: string) {
+    const role = await this.data.role.findFirst({
+      where: { id: roleId, organizationId },
+      include: {
+        permissions: true,
+        members: { select: { userId: true } },
+        teamMembers: { select: { id: true } },
+        invites: { select: { id: true } },
+      },
+    })
+    if (!role) throw new NotFoundException('Organization role not found')
+    if (role.isSystem) throw new ForbiddenException('System organization roles cannot be changed')
+    return role
   }
 
   /**

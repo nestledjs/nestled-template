@@ -1,6 +1,5 @@
 import { Args, Field, InputType, Int, ObjectType, Query, Resolver, Mutation } from '@nestjs/graphql'
-import { UseGuards } from '@nestjs/common'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import { CtxUser, RequirePlatformPermission } from '@nestled-template/api/utils'
 import {
   SecurityEvent,
   AuditLog,
@@ -227,11 +226,10 @@ export class AdminResolver {
 
   /**
    * Get paginated and filtered list of users
-   * Super admin only
+   * Requires platform.users.read.
    */
   @Query(() => AdminUsersResponse)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.users.read')
   async adminUsers(
     @Args('filters', { type: () => AdminUserFiltersInput, nullable: true })
     filters?: AdminUserFiltersInput,
@@ -241,22 +239,20 @@ export class AdminResolver {
 
   /**
    * Get detailed information about a specific user
-   * Super admin only
+   * Requires platform.users.read.
    */
   @Query(() => User)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.users.read')
   async adminUserDetails(@Args('userId', { type: () => String }) userId: string): Promise<any> {
     return this.service.getUserDetails(userId)
   }
 
   /**
    * Get paginated and filtered list of organizations
-   * Super admin only
+   * Requires platform.organizations.read.
    */
   @Query(() => AdminOrganizationsResponse)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.organizations.read')
   async adminOrganizations(
     @Args('filters', { type: () => AdminOrganizationFiltersInput, nullable: true })
     filters?: AdminOrganizationFiltersInput,
@@ -266,11 +262,10 @@ export class AdminResolver {
 
   /**
    * Get security events for admin monitoring (platform-wide)
-   * Super admin only
+   * Requires platform.security.read.
    */
   @Query(() => AdminSecurityEventsResponse)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.security.read')
   async adminSecurityEvents(
     @Args('filters', { type: () => AdminSecurityEventFiltersInput, nullable: true })
     filters?: AdminSecurityEventFiltersInput,
@@ -280,11 +275,10 @@ export class AdminResolver {
 
   /**
    * Get audit logs for admin monitoring (platform-wide)
-   * Super admin only
+   * Requires platform.audit.read.
    */
   @Query(() => AdminAuditLogsResponse)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.audit.read')
   async adminAuditLogs(
     @Args('filters', { type: () => AdminAuditLogFiltersInput, nullable: true })
     filters?: AdminAuditLogFiltersInput,
@@ -296,83 +290,84 @@ export class AdminResolver {
    * Distinct action/entityType values for the audit-log filter dropdowns.
    * Kept separate from the paged adminAuditLogs query so the UI can fetch it
    * once (cache-first) instead of recomputing the DISTINCT scans on every page
-   * or filter change. Super admin only.
+   * or filter change. Requires platform.audit.read.
    */
   @Query(() => AdminAuditLogFacets)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.audit.read')
   async adminAuditLogFacets(): Promise<AdminAuditLogFacets> {
     return this.service.getAuditLogFacets()
   }
 
   /**
    * Get dashboard statistics
-   * Super admin only
+   * Requires platform.analytics.read.
    */
   @Query(() => AdminDashboardStats)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.analytics.read')
   async adminDashboardStats(): Promise<AdminDashboardStats> {
     return this.service.getDashboardStats()
   }
 
   /**
    * Get comprehensive analytics data
-   * Super admin only
+   * Requires platform.analytics.read.
    */
   @Query(() => AdminAnalytics)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.analytics.read')
   async adminAnalytics(): Promise<AdminAnalytics> {
     return this.service.getAnalytics()
   }
 
   /**
    * Deactivate a user account
-   * Super admin only
+   * Requires platform.users.manage and the principal ceiling.
    */
   @Mutation(() => User)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
-  async adminDeactivateUser(@Args('userId', { type: () => String }) userId: string): Promise<User> {
-    return this.service.deactivateUser(userId)
+  @RequirePlatformPermission('platform.users.manage')
+  async adminDeactivateUser(
+    @CtxUser() actor: User,
+    @Args('userId', { type: () => String }) userId: string,
+  ): Promise<User> {
+    return this.service.deactivateUser(actor.id, userId)
   }
 
   /**
    * Activate a user account
-   * Super admin only
+   * Requires platform.users.manage and the principal ceiling.
    */
   @Mutation(() => User)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
-  async adminActivateUser(@Args('userId', { type: () => String }) userId: string): Promise<User> {
-    return this.service.activateUser(userId)
+  @RequirePlatformPermission('platform.users.manage')
+  async adminActivateUser(
+    @CtxUser() actor: User,
+    @Args('userId', { type: () => String }) userId: string,
+  ): Promise<User> {
+    return this.service.activateUser(actor.id, userId)
   }
 
   /**
    * Manually verify a user's email
-   * Super admin only
+   * Requires platform.users.manage and the principal ceiling.
    */
   @Mutation(() => User)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.users.manage')
   async adminVerifyEmail(
+    @CtxUser() actor: User,
     @Args('userId', { type: () => String }) userId: string,
     @Args('emailId', { type: () => String }) emailId: string,
   ): Promise<User> {
-    return this.service.verifyEmail(userId, emailId)
+    return this.service.verifyEmail(actor.id, userId, emailId)
   }
 
   /**
    * Force a password reset for a user
-   * Super admin only
+   * Requires platform.users.manage and the principal ceiling.
    */
   @Mutation(() => User)
-  @UseGuards(GqlAuthAdminGuard)
-  @AdminOnly()
+  @RequirePlatformPermission('platform.users.manage')
   async adminForcePasswordReset(
+    @CtxUser() actor: User,
     @Args('userId', { type: () => String }) userId: string,
   ): Promise<User> {
-    return this.service.forcePasswordReset(userId)
+    return this.service.forcePasswordReset(actor.id, userId)
   }
 }

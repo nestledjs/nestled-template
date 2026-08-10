@@ -27,7 +27,18 @@ const httpOperationDecorators = new Set([
   'Sse',
 ])
 
-const authLevelDecorators = new Set(['Public', 'Authenticated', 'AdminOnly'])
+const accessPolicyDecorators = new Set([
+  'RequirePlatformPermission',
+  'RequireAllPlatformPermissions',
+  'RequireOrganizationPermission',
+  'RequireAllOrganizationPermissions',
+])
+const authLevelDecorators = new Set([
+  'Public',
+  'Authenticated',
+  'AdminOnly',
+  ...accessPolicyDecorators,
+])
 const nonAuthGuardPattern = /Throttler|RateLimit/
 const guardNamePattern = /^[A-Z]\w*Guard$/
 
@@ -74,7 +85,13 @@ const getGuardNames = (decorators: readonly ts.Decorator[]): string[] => {
   const guards = new Set<string>()
 
   for (const decorator of decorators) {
-    if (getDecoratorName(decorator) !== 'UseGuards') continue
+    const decoratorName = getDecoratorName(decorator)
+    if (accessPolicyDecorators.has(decoratorName)) {
+      guards.add('GqlAuthGuard')
+      guards.add('AccessPolicyGuard')
+      continue
+    }
+    if (decoratorName !== 'UseGuards') continue
     if (!ts.isCallExpression(decorator.expression)) continue
 
     for (const argument of decorator.expression.arguments) {
@@ -93,6 +110,7 @@ export const isAuthenticationGuardName = (guard: string): boolean =>
 
 export const getGuardRank = (guards: string[]): number => {
   const authenticationGuards = guards.filter(isAuthenticationGuardName)
+  if (authenticationGuards.includes('AccessPolicyGuard')) return 3
   if (authenticationGuards.includes('GqlAuthAdminGuard')) return 3
   if (authenticationGuards.some(guard => guard.includes('Scoped') || guard.includes('Owner'))) {
     return 2

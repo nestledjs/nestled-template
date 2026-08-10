@@ -646,6 +646,9 @@ export class RoleFilterInput3 {
   @Field(() => StringFilterInput, { nullable: true })
   description?: StringFilterInput
 
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isSystem?: BooleanFilterInput
+
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
 }
@@ -1293,6 +1296,9 @@ export class RoleRelationFilterInput2 {
 
   @Field(() => StringFilterInput, { nullable: true })
   description?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isSystem?: BooleanFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
@@ -2163,6 +2169,9 @@ export class RoleFilterInput2 {
 
   @Field(() => StringFilterInput, { nullable: true })
   description?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isSystem?: BooleanFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
@@ -3069,6 +3078,9 @@ export class RoleRelationFilterInput {
 
   @Field(() => StringFilterInput, { nullable: true })
   description?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isSystem?: BooleanFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
@@ -4101,6 +4113,9 @@ export class RoleFilterInput {
 
   @Field(() => StringFilterInput, { nullable: true })
   description?: StringFilterInput
+
+  @Field(() => BooleanFilterInput, { nullable: true })
+  isSystem?: BooleanFilterInput
 
   @Field(() => StringFilterInput, { nullable: true })
   organizationId?: StringFilterInput
@@ -6030,6 +6045,9 @@ export class CreateRoleInput {
   description?: string
 
   @Field({ nullable: true })
+  isSystem?: boolean
+
+  @Field({ nullable: true })
   organizationId?: string
 
   @Field(() => [String], { nullable: true })
@@ -6055,6 +6073,9 @@ export class UpdateRoleInput {
 
   @Field({ nullable: true })
   description?: string
+
+  @Field({ nullable: true })
+  isSystem?: boolean
 
   @Field({ nullable: true })
   organizationId?: string
@@ -6085,6 +6106,9 @@ export class ListRoleInput extends CorePagingInput {
 
   @Field({ nullable: true })
   description?: string
+
+  @Field({ nullable: true })
+  isSystem?: boolean
 
   @Field({ nullable: true })
   organizationId?: string

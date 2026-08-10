@@ -3,10 +3,14 @@ import { AdminService } from './admin.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { AdminUserFiltersInput } from './dto'
 import { SecurityEventType } from '@nestled-template/api/core/models'
+import { PlatformAccessControlService } from '../access-control'
+import { ForbiddenException } from '@nestjs/common'
 describe('AdminService', () => {
   let service: AdminService
   let mockData: any
+  let mockAccessControl: { assertCanManagePrincipal: jest.Mock }
   beforeEach(async () => {
+    mockAccessControl = { assertCanManagePrincipal: jest.fn().mockResolvedValue(undefined) }
     mockData = {
       user: {
         findMany: jest.fn(),
@@ -25,6 +29,7 @@ describe('AdminService', () => {
         updateMany: jest.fn(),
       },
       auditLog: {
+        create: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
         groupBy: jest.fn(),
@@ -46,6 +51,7 @@ describe('AdminService', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      $transaction: jest.fn(callback => callback(mockData)),
     }
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -54,6 +60,7 @@ describe('AdminService', () => {
           provide: ApiCoreDataAccessService,
           useValue: mockData,
         },
+        { provide: PlatformAccessControlService, useValue: mockAccessControl },
       ],
     }).compile()
     service = module.get<AdminService>(AdminService)
@@ -485,7 +492,7 @@ describe('AdminService', () => {
         emails: [],
       }
       mockData.user.update.mockResolvedValue(mockUser as any)
-      const result = await service.deactivateUser('user-123')
+      const result = await service.deactivateUser('actor-1', 'user-123')
       expect(result.isActive).toBe(false)
       expect(result.deactivatedAt).toBeDefined()
       expect(mockData.user.update).toHaveBeenCalledWith({
@@ -497,6 +504,18 @@ describe('AdminService', () => {
         include: { emails: true },
       })
     })
+
+    it('does not mutate a user above the actor privilege ceiling', async () => {
+      mockAccessControl.assertCanManagePrincipal.mockRejectedValue(
+        new ForbiddenException('higher access'),
+      )
+
+      await expect(service.deactivateUser('actor-1', 'root-1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      )
+      expect(mockData.user.update).not.toHaveBeenCalled()
+      expect(mockData.userSession.updateMany).not.toHaveBeenCalled()
+    })
   })
   describe('activateUser', () => {
     it('should activate a user account', async () => {
@@ -507,7 +526,7 @@ describe('AdminService', () => {
         emails: [],
       }
       mockData.user.update.mockResolvedValue(mockUser as any)
-      const result = await service.activateUser('user-123')
+      const result = await service.activateUser('actor-1', 'user-123')
       expect(result.isActive).toBe(true)
       expect(result.deactivatedAt).toBeNull()
       expect(mockData.user.update).toHaveBeenCalledWith({
@@ -525,6 +544,7 @@ describe('AdminService', () => {
       const mockEmail = {
         id: 'email-123',
         email: 'user@example.com',
+        userId: 'user-123',
         primary: true,
         verified: true,
       }
@@ -537,7 +557,7 @@ describe('AdminService', () => {
       mockData.email.findUnique.mockResolvedValue(mockEmail as any)
       mockData.user.update.mockResolvedValue({} as any)
       mockData.user.findUnique.mockResolvedValue(mockUser as any)
-      const result = await service.verifyEmail('user-123', 'email-123')
+      const result = await service.verifyEmail('actor-1', 'user-123', 'email-123')
       expect(result.emailValidated).toBe(true)
       expect(mockData.email.update).toHaveBeenCalledWith({
         where: { id: 'email-123' },
@@ -551,6 +571,7 @@ describe('AdminService', () => {
     it('should update user emailValidated flag for primary email', async () => {
       const mockEmail = {
         id: 'email-123',
+        userId: 'user-123',
         primary: true,
       }
       mockData.email.update.mockResolvedValue({} as any)
@@ -560,7 +581,7 @@ describe('AdminService', () => {
         id: 'user-123',
         emails: [],
       } as any)
-      await service.verifyEmail('user-123', 'email-123')
+      await service.verifyEmail('actor-1', 'user-123', 'email-123')
       expect(mockData.user.update).toHaveBeenCalledWith({
         where: { id: 'user-123' },
         data: { emailValidated: true },
@@ -569,6 +590,7 @@ describe('AdminService', () => {
     it('should not update emailValidated for non-primary email', async () => {
       const mockEmail = {
         id: 'email-123',
+        userId: 'user-123',
         primary: false,
       }
       mockData.email.update.mockResolvedValue({} as any)
@@ -577,16 +599,33 @@ describe('AdminService', () => {
         id: 'user-123',
         emails: [],
       } as any)
-      await service.verifyEmail('user-123', 'email-123')
+      await service.verifyEmail('actor-1', 'user-123', 'email-123')
       expect(mockData.user.update).not.toHaveBeenCalled()
     })
     it('should throw if updated user cannot be loaded after verification', async () => {
       mockData.email.update.mockResolvedValue({} as any)
-      mockData.email.findUnique.mockResolvedValue({ id: 'email-123', primary: false } as any)
+      mockData.email.findUnique.mockResolvedValue({
+        id: 'email-123',
+        userId: 'user-123',
+        primary: false,
+      } as any)
       mockData.user.findUnique.mockResolvedValue(null)
-      await expect(service.verifyEmail('user-123', 'email-123')).rejects.toThrow(
+      await expect(service.verifyEmail('actor-1', 'user-123', 'email-123')).rejects.toThrow(
         'User user-123 not found after email verification',
       )
+    })
+
+    it('does not verify an email owned by another user', async () => {
+      mockData.email.findUnique.mockResolvedValue({
+        id: 'email-123',
+        userId: 'different-user',
+        primary: true,
+      })
+
+      await expect(service.verifyEmail('actor-1', 'user-123', 'email-123')).rejects.toThrow(
+        'Email does not belong to the selected user',
+      )
+      expect(mockData.email.update).not.toHaveBeenCalled()
     })
   })
   describe('forcePasswordReset', () => {
@@ -599,7 +638,7 @@ describe('AdminService', () => {
       }
       mockData.user.update.mockResolvedValue(mockUser as any)
       mockData.userSession.updateMany.mockResolvedValue({ count: 3 } as any)
-      const result = await service.forcePasswordReset('user-123')
+      const result = await service.forcePasswordReset('actor-1', 'user-123')
       expect(result.passwordResetToken).toBeDefined()
       expect(result.passwordResetExpires).toBeDefined()
       expect(mockData.user.update).toHaveBeenCalledWith(
@@ -618,7 +657,7 @@ describe('AdminService', () => {
         emails: [],
       } as any)
       mockData.userSession.updateMany.mockResolvedValue({ count: 5 } as any)
-      await service.forcePasswordReset('user-123')
+      await service.forcePasswordReset('actor-1', 'user-123')
       expect(mockData.userSession.updateMany).toHaveBeenCalledWith({
         where: {
           userId: 'user-123',
@@ -642,8 +681,8 @@ describe('AdminService', () => {
         return Promise.resolve({ id: 'user-123', passwordResetToken: token, emails: [] })
       })
       mockData.userSession.updateMany.mockResolvedValue({ count: 0 })
-      await service.forcePasswordReset('user-1')
-      await service.forcePasswordReset('user-2')
+      await service.forcePasswordReset('actor-1', 'user-1')
+      await service.forcePasswordReset('actor-1', 'user-2')
       expect(firstToken!).toBeDefined()
       expect(secondToken!).toBeDefined()
       expect(firstToken!).not.toEqual(secondToken!)

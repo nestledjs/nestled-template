@@ -555,6 +555,9 @@ export class Role {
   @Field(() => String, { nullable: true })
   description?: string | null
 
+  @Field(() => Boolean)
+  isSystem!: boolean
+
   @Field(() => String, { nullable: true })
   organizationId?: string | null
 

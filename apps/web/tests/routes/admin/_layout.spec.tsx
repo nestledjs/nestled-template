@@ -6,8 +6,12 @@ import { createTestRouter } from '../../helpers/createTestRouter'
 
 // Mock the GlobalContext
 const mockUseGlobalCtx = vi.fn()
+const mockUseQuery = vi.fn()
 vi.mock('@nestled-template/web', () => ({
   useGlobalCtx: () => mockUseGlobalCtx(),
+}))
+vi.mock('@apollo/client/react', () => ({
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }))
 
 describe('Admin Layout', () => {
@@ -29,6 +33,10 @@ describe('Admin Layout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUseQuery.mockReturnValue({
+      data: { myPlatformPermissions: [] },
+      loading: false,
+    })
   })
 
   const renderAdminLayout = (user: any, pathname = '/admin') => {
