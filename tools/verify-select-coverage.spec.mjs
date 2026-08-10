@@ -204,4 +204,144 @@ export const USER_SELECT = {
     expect(result.status).toBe(0)
     expect(JSON.parse(result.stdout)).toMatchObject({ problems: [], unresolved: [] })
   })
+
+  /**
+   * A spread whose base constant cannot be located contributes nothing, so its fields are reported
+   * missing even though they are selected. That is a false positive in a check that gates CI, and
+   * a check that fails builds over fields which are in fact present gets switched off — costing
+   * more than the check was ever worth. These cover the declaration shapes that previously did not
+   * resolve.
+   */
+  it('resolves a spread of an exported base constant', () => {
+    // The base carries every field and the spread carries all of them, so a passing run is only
+    // possible if the spread resolved. An exported base is itself checked as a select for the
+    // model its name resolves to, which is why it must be complete here rather than partial.
+    const workspace = createWorkspace(`
+export const USER_BASE = {
+  id: true,
+  email: true,
+} as const
+
+export const USER_SELECT = {
+  ...USER_BASE,
+} as const
+`)
+
+    const result = runTool(workspace)
+
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({ problems: [], unresolved: [] })
+  })
+
+  it('resolves a spread of a type-annotated base constant', () => {
+    const workspace = createWorkspace(`
+const USER_BASE: Record<string, boolean> = {
+  email: true,
+}
+
+export const USER_SELECT = {
+  ...USER_BASE,
+  id: true,
+} as const
+`)
+
+    const result = runTool(workspace)
+
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({ problems: [], unresolved: [] })
+  })
+
+  it('resolves a spread of a base constant declared without as const', () => {
+    // The base is declared AFTER the select and carries no `as const`. That ordering matters: the
+    // previous non-greedy scan searched forward for the next `\n} as const` in the file, so a base
+    // followed by another constant would silently capture that neighbour's body instead and could
+    // appear to work by accident. With nothing after it to span to, the old matcher found nothing.
+    const workspace = createWorkspace(`
+export const USER_SELECT = {
+  ...USER_BASE,
+  id: true,
+} as const
+
+const USER_BASE = {
+  email: true,
+}
+`)
+
+    const result = runTool(workspace)
+
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({ problems: [], unresolved: [] })
+  })
+
+  it('honours @select-omits on a type-annotated base constant', () => {
+    // The annotation reader and the body reader used separate declaration patterns, so widening
+    // the body reader to accept a type annotation left the annotation reader still blind to it.
+    // A base whose omissions are declared but not seen reports those fields as missing — the same
+    // false positive, one layer up.
+    const workspace = createWorkspace(`
+/** @select-omits email */
+const USER_BASE: Record<string, boolean> = {
+  id: true,
+}
+
+export const USER_SELECT = {
+  ...USER_BASE,
+} as const
+`)
+
+    const result = runTool(workspace)
+
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({ problems: [], unresolved: [] })
+  })
+
+  it('honours @prisma-model on a type-annotated constant', () => {
+    // The same reader resolves the model override. Annotating Post inside user.select.ts is what
+    // makes this discriminate: if the annotation is missed the constant falls back to the model
+    // implied by the filename, so the run still reports a problem — just against the wrong model,
+    // naming User's missing column rather than Post's. Asserting status alone would pass either way.
+    const workspace = createWorkspace(`
+/** @prisma-model Post */
+export const ACCOUNT_SELECT: Record<string, boolean> = {
+  id: true,
+}
+`)
+
+    const result = runTool(workspace)
+
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stdout).problems).toEqual([
+      {
+        file: 'libs/api/custom/src/lib/user/user.select.ts',
+        constant: 'ACCOUNT_SELECT',
+        model: 'Post',
+        missing: ['authorId', 'title'],
+      },
+    ])
+  })
+
+  it('still reports a genuinely missing field when the spread resolves', () => {
+    // The counterpart to the three above: resolution must not become a way to pass by accident.
+    const workspace = createWorkspace(`
+const USER_BASE = {
+  id: true,
+}
+
+export const USER_SELECT = {
+  ...USER_BASE,
+} as const
+`)
+
+    const result = runTool(workspace)
+
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stdout).problems).toEqual([
+      {
+        file: 'libs/api/custom/src/lib/user/user.select.ts',
+        constant: 'USER_SELECT',
+        model: 'User',
+        missing: ['email'],
+      },
+    ])
+  })
 })
