@@ -28,6 +28,7 @@ export function registerProfileTools(
           },
           createdAt: true,
           organizations: {
+            ...(auth.organizationId ? { where: { organizationId: auth.organizationId } } : {}),
             select: {
               organizationId: true,
               organization: { select: { id: true, name: true } },

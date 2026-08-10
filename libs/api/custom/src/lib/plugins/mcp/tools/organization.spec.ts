@@ -21,7 +21,7 @@ describe('registerOrganizationTools', () => {
     registerOrganizationTools(server as any, {} as any, {
       userId: 'user-1',
       organizationId: null,
-      isAdmin: false,
+      isSuperAdmin: false,
     })
 
     await expect(handlers.get('get_organization')?.({})).resolves.toEqual({
@@ -49,7 +49,7 @@ describe('registerOrganizationTools', () => {
     registerOrganizationTools(server as any, prisma as any, {
       userId: 'user-1',
       organizationId: null,
-      isAdmin: false,
+      isSuperAdmin: false,
     })
 
     expect(handlers.has('list_organizations')).toBe(true)
@@ -88,7 +88,7 @@ describe('registerOrganizationTools', () => {
     }
     const prisma = {
       organization: {
-        findUnique: jest.fn().mockResolvedValue(organization),
+        findFirst: jest.fn().mockResolvedValue(organization),
       },
     }
     const { server, handlers } = createServerMock()
@@ -96,13 +96,13 @@ describe('registerOrganizationTools', () => {
     registerOrganizationTools(server as any, prisma as any, {
       userId: 'user-1',
       organizationId: 'org-1',
-      isAdmin: false,
+      isSuperAdmin: false,
     })
 
     const result = await handlers.get('get_organization')?.({})
 
-    expect(prisma.organization.findUnique).toHaveBeenCalledWith({
-      where: { id: 'org-1' },
+    expect(prisma.organization.findFirst).toHaveBeenCalledWith({
+      where: { id: 'org-1', members: { some: { userId: 'user-1' } } },
       include: {
         members: {
           include: {
@@ -130,7 +130,7 @@ describe('registerOrganizationTools', () => {
   it('returns an error when the current organization is missing', async () => {
     const prisma = {
       organization: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
       },
     }
     const { server, handlers } = createServerMock()
@@ -138,13 +138,34 @@ describe('registerOrganizationTools', () => {
     registerOrganizationTools(server as any, prisma as any, {
       userId: 'user-1',
       organizationId: 'org-missing',
-      isAdmin: false,
+      isSuperAdmin: false,
     })
 
     await expect(handlers.get('get_organization')?.({})).resolves.toEqual({
       content: [{ type: 'text', text: 'Organization not found' }],
       isError: true,
     })
+  })
+
+  it('allows a super administrator to use an explicitly scoped organization token', async () => {
+    const prisma = {
+      organization: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Acme', members: [] }),
+      },
+    }
+    const { server, handlers } = createServerMock()
+
+    registerOrganizationTools(server as any, prisma as any, {
+      userId: 'root-1',
+      organizationId: 'org-1',
+      isSuperAdmin: true,
+    })
+
+    await handlers.get('get_organization')?.({})
+
+    expect(prisma.organization.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'org-1' } }),
+    )
   })
 
   it('registers admin organization listing only for unscoped admins', async () => {
@@ -159,7 +180,7 @@ describe('registerOrganizationTools', () => {
     registerOrganizationTools(server as any, prisma as any, {
       userId: 'admin-1',
       organizationId: null,
-      isAdmin: true,
+      isSuperAdmin: true,
     })
 
     expect(handlers.has('list_organizations')).toBe(true)

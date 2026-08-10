@@ -32,7 +32,7 @@ describe('registerProfileTools', () => {
     registerProfileTools(server as any, prisma as any, {
       userId: 'user-1',
       organizationId: 'org-1',
-      isAdmin: false,
+      isSuperAdmin: false,
     })
 
     const result = await handlers.get('get_profile')?.({})
@@ -51,6 +51,7 @@ describe('registerProfileTools', () => {
         },
         createdAt: true,
         organizations: {
+          where: { organizationId: 'org-1' },
           select: {
             organizationId: true,
             organization: { select: { id: true, name: true } },
@@ -73,7 +74,7 @@ describe('registerProfileTools', () => {
     registerProfileTools(server as any, prisma as any, {
       userId: 'missing-user',
       organizationId: null,
-      isAdmin: false,
+      isSuperAdmin: false,
     })
 
     await expect(handlers.get('get_profile')?.({})).resolves.toEqual({

@@ -82,7 +82,7 @@ describe('McpController', () => {
       body: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       user: {
         id: 'user-123',
-        organizations: [{ role: { permissions: [{ name: 'all:manage' }] } }],
+        isSuperAdmin: true,
       },
       apiTokenOrganizationId: 'org-123',
     }
@@ -92,7 +92,7 @@ describe('McpController', () => {
     expect(factory.create).toHaveBeenCalledWith({
       userId: 'user-123',
       organizationId: 'org-123',
-      isAdmin: true,
+      isSuperAdmin: true,
     })
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.header).toHaveBeenCalledWith('Content-Type', 'application/json')
@@ -100,7 +100,7 @@ describe('McpController', () => {
     expect(server.close).toHaveBeenCalled()
   })
 
-  it('treats subject/action all manage permissions as MCP admin access', async () => {
+  it('does not promote organization all-manage permissions to platform MCP access', async () => {
     const server = {
       connect: jest.fn(async (transport: any) => {
         transport.onmessage = (message: any) => {
@@ -126,7 +126,7 @@ describe('McpController', () => {
     expect(factory.create).toHaveBeenCalledWith({
       userId: 'user-123',
       organizationId: null,
-      isAdmin: true,
+      isSuperAdmin: false,
     })
   })
 

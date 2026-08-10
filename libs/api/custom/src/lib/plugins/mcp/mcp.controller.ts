@@ -11,21 +11,10 @@ interface UnrefableTimer {
   unref: () => void
 }
 
-type McpPermission = {
-  name?: string
-  subject?: string
-  action?: string
-}
-
 type McpAuthenticatedRequest = Request & {
   user?: {
     id: string
     isSuperAdmin?: boolean
-    organizations?: Array<{
-      role?: {
-        permissions?: McpPermission[]
-      }
-    }>
   }
   apiTokenOrganizationId?: string | null
 }
@@ -150,16 +139,7 @@ export class McpController {
     const auth: McpAuthContext = {
       userId: user.id,
       organizationId: mcpReq.apiTokenOrganizationId ?? null,
-      isAdmin: Boolean(
-        user.isSuperAdmin ||
-          user.organizations?.some(membership =>
-            membership.role?.permissions?.some(
-              permission =>
-                permission.name === 'all:manage' ||
-                (permission.subject === 'all' && permission.action === 'manage'),
-            ),
-          ),
-      ),
+      isSuperAdmin: Boolean(user.isSuperAdmin),
     }
 
     let server: McpServer | null = null

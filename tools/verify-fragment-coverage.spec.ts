@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   matchingBrace,
+  readSelectConstants,
   resolveSpreads,
   sanitize,
   scanObject,
@@ -16,6 +20,23 @@ import {
  */
 
 const openBraceOf = (source: string): number => source.indexOf('{')
+
+const workspaces: string[] = []
+
+const createSelectWorkspace = (source: string): string => {
+  const workspace = mkdtempSync(join(tmpdir(), 'verify-fragment-coverage-'))
+  const directory = join(workspace, 'libs/api/custom/src/lib/example')
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, 'example.select.ts'), source)
+  workspaces.push(workspace)
+  return workspace
+}
+
+afterEach(() => {
+  for (const workspace of workspaces.splice(0)) {
+    rmSync(workspace, { recursive: true, force: true })
+  }
+})
 
 describe('toSelect', () => {
   it('captures a relation whose select holds only plain columns', () => {
@@ -83,9 +104,109 @@ describe('toSelect', () => {
   })
 
   it('does not treat a false or computed value as a selected column', () => {
-    const source = `{ id: true, secret: false, computed: someHelper() }`
+    const source = `
+      { id: true, secret: false, computed: someHelper() }
+      const someHelper = { leaked: true }
+    `
 
     expect(toSelect(source, openBraceOf(source))).toEqual({ id: true })
+  })
+
+  it('resolves a relation whose select is a named constant', () => {
+    const source = `
+      const AUTHOR_SELECT = {
+        id: true,
+        name: true,
+      }
+
+      const POST_SELECT = {
+        id: true,
+        author: { select: AUTHOR_SELECT },
+      }
+    `
+
+    expect(toSelect(source, source.indexOf('{', source.indexOf('POST_SELECT')))).toEqual({
+      id: true,
+      author: { select: { id: true, name: true } },
+    })
+  })
+
+  it('resolves a relation whose whole value is a named select', () => {
+    const source = `
+      const AUTHOR_SELECT = { id: true }
+      const POST_SELECT = { author: AUTHOR_SELECT }
+    `
+
+    expect(toSelect(source, source.indexOf('{', source.indexOf('POST_SELECT')))).toEqual({
+      author: { select: { id: true } },
+    })
+  })
+
+  it('resolves a parameterized select factory and stops identifier cycles', () => {
+    const source = `
+      const USER_SELECT = (viewerId: string) => ({
+        id: true,
+        manager: { select: USER_SELECT },
+      })
+      const POST_SELECT = { author: { select: USER_SELECT } }
+    `
+
+    expect(toSelect(source, source.indexOf('{', source.indexOf('POST_SELECT')))).toEqual({
+      author: {
+        select: {
+          id: true,
+          manager: { select: {} },
+        },
+      },
+    })
+  })
+})
+
+describe('readSelectConstants', () => {
+  const models = [{ modelName: 'Download', fields: [] }]
+
+  it('attributes an annotated constant whose name does not imply its Prisma model', () => {
+    const workspace = createSelectWorkspace(`
+      /**
+       * @prisma-model Download
+       */
+      export const USER_DOWNLOADS_SELECT = {
+        id: true,
+      } as const
+    `)
+
+    expect(readSelectConstants(workspace, models)).toMatchObject([
+      {
+        model: 'Download',
+        name: 'USER_DOWNLOADS_SELECT',
+        select: { id: true },
+      },
+    ])
+  })
+
+  it('keeps a fragment-partial helper available to spreads without checking it independently', () => {
+    const workspace = createSelectWorkspace(`
+      /**
+       * @prisma-model Download
+       * @fragment-partial
+       */
+      export const USER_DOWNLOADS_SELECT = {
+        id: true,
+      } as const
+
+      export const DOWNLOAD_SELECT = {
+        ...USER_DOWNLOADS_SELECT,
+        url: true,
+      } as const
+    `)
+
+    expect(readSelectConstants(workspace, models)).toMatchObject([
+      {
+        model: 'Download',
+        name: 'DOWNLOAD_SELECT',
+        select: { id: true, url: true },
+      },
+    ])
   })
 })
 

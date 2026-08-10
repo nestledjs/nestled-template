@@ -25,11 +25,17 @@
  *            select is meant to be thinner than a detail select — so it is advisory, not a
  *            failure. Read it when a specific screen looks empty.
  *
+ * A helper annotated with `@fragment-partial` still contributes to a same-file `...SPREAD`, but is
+ * not treated as an operation select for model-wide fragment coverage. Use that marker for a
+ * nested helper that needs `@prisma-model` so verify-selects can validate its columns.
+ *
  * Only MISSING sets a non-zero exit code.
  *
  * Known blind spots, so nobody reads a clean run as more than it is:
  *   - inline selects written at a call site rather than as a named constant are not attributed
- *   - `...SPREAD` is resolved only within the same file
+ *   - `...SPREAD` and named select identifiers are resolved only within the same file
+ *   - attribution is by a constant's top-level model, so a relation block nested in another
+ *     model's select does not count as a separate select for the related model
  *   - models served entirely by generated CRUD have no select constant and are skipped (they are
  *     covered by generated-crud-guards.spec.ts instead)
  * Each of these is counted and printed, so the report says what it did not check.
@@ -138,6 +144,18 @@ interface RawEntry {
   kind: 'object' | 'true' | 'other'
   name: string
   open: number
+  /** For kind===other: the bare identifier, when the value is one. */
+  ident?: string
+}
+
+/** `const NAME = {` / `const NAME = (args) => ({` — where a named select's body starts. */
+export const findConstantBody = (source: string, name: string): number => {
+  const declaration = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*(?::[^=]+)?=\\s*`).exec(source)
+  if (!declaration) return -1
+  let cursor = declaration.index + declaration[0].length
+  const arrow = /^\([^)]*\)\s*(?::[^=]+)?=>\s*\(?\s*/.exec(source.slice(cursor))
+  if (arrow) cursor += arrow[0].length
+  return source[cursor] === '{' ? cursor : -1
 }
 
 interface ScannedObject {
@@ -184,8 +202,11 @@ export const scanObject = (source: string, open: number): ScannedObject => {
       index = nestedClose === -1 ? cursor + 1 : nestedClose + 1
       continue
     }
-    // `false`, a variable, a call — not a column selection we can attribute.
-    entries.push({ kind: 'other', name: key[1], open: cursor })
+    // `false`, a variable, a call — not a column selection we can attribute directly. Retain a
+    // BARE identifier so `select: SOME_SELECT` can resolve against a same-file constant. Requiring
+    // the comma/end boundary keeps `someHelper()` and property access from masquerading as one.
+    const identifier = /^([A-Za-z_$][\w$]*)\s*(?=,|$)/.exec(source.slice(cursor, close))
+    entries.push({ kind: 'other', name: key[1], open: cursor, ident: identifier?.[1] })
     index = cursor + 1
   }
 
@@ -201,18 +222,40 @@ export const scanObject = (source: string, open: number): ScannedObject => {
  * inside the columns themselves — the innermost `{ id: true }` has no `select` of its own, and
  * treating that as "not a relation" silently drops every relation in the file.
  */
-export const toSelect = (source: string, open: number): PrismaSelect => {
+export const toSelect = (
+  source: string,
+  open: number,
+  seen: ReadonlySet<string> = new Set(),
+): PrismaSelect => {
   const select: PrismaSelect = {}
   for (const entry of scanObject(source, open).entries) {
     if (entry.kind === 'true') {
       select[entry.name] = true
       continue
     }
+    if (entry.kind === 'other' && entry.ident && !seen.has(entry.ident)) {
+      const body = findConstantBody(source, entry.ident)
+      if (body !== -1) {
+        select[entry.name] = { select: toSelect(source, body, new Set([...seen, entry.ident])) }
+      }
+      continue
+    }
     if (entry.kind !== 'object') continue
     const inner = scanObject(source, entry.open).entries.find(
-      candidate => candidate.name === 'select' && candidate.kind === 'object',
+      candidate => candidate.name === 'select',
     )
-    select[entry.name] = { select: inner ? toSelect(source, inner.open) : {} }
+    if (inner?.kind === 'object') {
+      select[entry.name] = { select: toSelect(source, inner.open, seen) }
+      continue
+    }
+    if (inner?.kind === 'other' && inner.ident && !seen.has(inner.ident)) {
+      const body = findConstantBody(source, inner.ident)
+      select[entry.name] = {
+        select: body === -1 ? {} : toSelect(source, body, new Set([...seen, inner.ident])),
+      }
+      continue
+    }
+    select[entry.name] = { select: {} }
   }
   return select
 }
@@ -277,7 +320,7 @@ const annotationBefore = (raw: string, offset: number, previousEnd: number): str
   return matches.length > 0 ? matches[matches.length - 1][1] : undefined
 }
 
-const readSelectConstants = (
+export const readSelectConstants = (
   repo: string,
   models: readonly DatabaseModelMetadata[],
 ): SelectConstant[] => {
@@ -301,9 +344,18 @@ const readSelectConstants = (
         const select = toSelect(source, open)
         const { spreads } = scanObject(source, open)
         if (Object.keys(select).length === 0 && spreads.length === 0) continue
-        const annotated = annotationBefore(raw, match.index, previousEnd)
+        // The regex runs against sanitized source. A preceding JSDoc is whitespace there, so its
+        // leading `\s*` can move match.index to the top of the comment and put the annotation
+        // behind its own lookup window. The `const` keyword has the same offset in raw and
+        // sanitized source and is the stable anchor.
+        const declaration = match.index + match[0].indexOf('const')
+        const annotated = annotationBefore(raw, declaration, previousEnd)
+        const fragmentPartial = /@fragment-partial\b/.test(
+          raw.slice(Math.max(previousEnd, 0), declaration),
+        )
         previousEnd = matchingBrace(source, open)
         inFile.set(match[1], { select, spreads })
+        if (fragmentPartial) continue
         constants.push({
           file,
           model: modelForConstant(match[1], annotated, models),
@@ -349,7 +401,8 @@ export const resolveFieldsByModel = (repo: string): Map<string, Set<string>> => 
       for (let index = 0; index < classes.length; index++) {
         const modelName = classes[index][1]
         const start = classes[index].index ?? 0
-        const end = index + 1 < classes.length ? (classes[index + 1].index ?? source.length) : source.length
+        const end =
+          index + 1 < classes.length ? (classes[index + 1].index ?? source.length) : source.length
         const body = source.slice(start, end)
 
         const fields = served.get(modelName) ?? new Set<string>()
@@ -373,8 +426,9 @@ export const relationTarget = (
   modelName: string,
   fieldName: string,
 ): string | undefined => {
-  const field = models.find(model => model.modelName === modelName)?.fields
-    ?.find(entry => entry.name === fieldName)
+  const field = models
+    .find(model => model.modelName === modelName)
+    ?.fields?.find(entry => entry.name === fieldName)
   return field && field.kind === 'object' ? field.type : undefined
 }
 
@@ -503,7 +557,9 @@ const main = async (): Promise<void> => {
     for (const path of wanted) {
       const holders = provided.filter(set => set.has(path)).length
       if (holders === 0) {
-        missing.push(`${modelName}.${path} — produced by none of ${selects.map(s => s.name).join(', ')}`)
+        missing.push(
+          `${modelName}.${path} — produced by none of ${selects.map(s => s.name).join(', ')}`,
+        )
       } else if (holders < selects.length) {
         const without = selects.filter((_, index) => !provided[index].has(path)).map(s => s.name)
         partial.push(`${modelName}.${path} — absent from ${without.join(', ')}`)
@@ -518,15 +574,21 @@ const main = async (): Promise<void> => {
   )
 
   if (missing.length > 0) {
-    console.log(`\nMISSING (${missing.length}) — a fragment asks for these and nothing produces them:`)
+    console.log(
+      `\nMISSING (${missing.length}) — a fragment asks for these and nothing produces them:`,
+    )
     for (const entry of missing.sort(alphabetical)) console.log(`  ${entry}`)
   }
 
   if (verbose && partial.length > 0) {
-    console.log(`\nPARTIAL (${partial.length}) — advisory; thinner list selects are usually correct:`)
+    console.log(
+      `\nPARTIAL (${partial.length}) — advisory; thinner list selects are usually correct:`,
+    )
     for (const entry of partial.sort(alphabetical)) console.log(`  ${entry}`)
   } else if (partial.length > 0) {
-    console.log(`\nPARTIAL: ${partial.length} field(s) present in some selects but not others (--verbose to list).`)
+    console.log(
+      `\nPARTIAL: ${partial.length} field(s) present in some selects but not others (--verbose to list).`,
+    )
   }
 
   if (skipped.length > 0) {

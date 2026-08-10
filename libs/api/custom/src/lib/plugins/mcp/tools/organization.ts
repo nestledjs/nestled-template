@@ -21,8 +21,11 @@ export function registerOrganizationTools(
           isError: true,
         }
       }
-      const org = await prisma.organization.findUnique({
-        where: { id: auth.organizationId },
+      const org = await prisma.organization.findFirst({
+        where: {
+          id: auth.organizationId,
+          ...(auth.isSuperAdmin ? {} : { members: { some: { userId: auth.userId } } }),
+        },
         include: {
           members: {
             include: {
@@ -58,7 +61,7 @@ export function registerOrganizationTools(
     server.registerTool(
       'list_organizations',
       {
-        description: auth.isAdmin
+        description: auth.isSuperAdmin
           ? 'List all organizations (admin)'
           : 'List organizations you belong to',
         inputSchema: {
@@ -68,7 +71,7 @@ export function registerOrganizationTools(
         },
       },
       async ({ search, limit, offset }) => {
-        if (auth.isAdmin) {
+        if (auth.isSuperAdmin) {
           const where: any = {}
           if (search) where.name = { contains: search, mode: 'insensitive' }
 
