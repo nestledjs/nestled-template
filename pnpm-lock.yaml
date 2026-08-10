@@ -674,8 +674,8 @@ importers:
         specifier: ^3.1.1
         version: 3.1.1(acorn@8.16.0)(rollup@4.62.4)
       '@nestledjs/access-control':
-        specifier: ^0.0.2
-        version: 0.0.2(react@19.1.0)
+        specifier: ^0.0.3
+        version: 0.0.3(react@19.1.0)
       '@radix-ui/react-slot':
         specifier: ^1.3.3
         version: 1.3.3(@types/react@19.1.0)(react@19.1.0)
@@ -4120,6 +4120,11 @@ packages:
 
   '@nestledjs/access-control@0.0.2':
     resolution: {integrity: sha512-wj29IiNPVlvRst6yR/fbQqkPNzww6HR7JexT12M5CGo5zF3QUswV1jvzPEUTbEZEBIYUawcICGFpL+tXU0pCeQ==}
+    peerDependencies:
+      react: 19.1.0
+
+  '@nestledjs/access-control@0.0.3':
+    resolution: {integrity: sha512-tZroxpQAiGGZB/+AHew9DoZFxCH0OpFjrpZRCC5bi5HQcEOhcDMI82xNOayCPpZ19piAhECVAtY2w/j2FQzl2g==}
     peerDependencies:
       react: 19.1.0
 
@@ -19463,6 +19468,10 @@ snapshots:
       reflect-metadata: 0.2.2
 
   '@nestledjs/access-control@0.0.2(react@19.1.0)':
+    dependencies:
+      react: 19.1.0
+
+  '@nestledjs/access-control@0.0.3(react@19.1.0)':
     dependencies:
       react: 19.1.0
 
