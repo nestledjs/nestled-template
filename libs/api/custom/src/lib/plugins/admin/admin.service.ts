@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { AdminUserFiltersInput, AdminUsersResponse } from './dto'
 import { SecurityEventType } from '@nestled-template/api/core/models'
@@ -512,7 +512,10 @@ export class AdminService {
   async verifyEmail(actorUserId: string, userId: string, emailId: string) {
     await this.accessControl.assertCanManagePrincipal(actorUserId, userId)
     const email = await this.prisma.email.findUnique({ where: { id: emailId } })
-    if (email?.userId !== userId) {
+    if (!email) {
+      throw new NotFoundException(`Email ${emailId} not found`)
+    }
+    if (email.userId !== userId) {
       throw new BadRequestException('Email does not belong to the selected user')
     }
 

@@ -1446,6 +1446,9 @@ describe('OrganizationService', () => {
           permissionKeys: ['member:read'],
         }),
       ).resolves.toMatchObject({ id: 'role-custom' })
+      expect(data.permission.findMany).toHaveBeenCalledWith({
+        where: { OR: [{ subject: 'member', action: 'read' }] },
+      })
       expect(data.role.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
