@@ -1,4 +1,13 @@
-import { defaultApiOrigin, defaultOrigin, isHttpOrigin, normalizeApiOrigin } from './api-url'
+import {
+  defaultApiOrigin,
+  defaultOrigin,
+  isHttpOrigin,
+  isLoopbackHost,
+  isPublicApiOrigin,
+  isReachableApiOrigin,
+  isWildcardBindHost,
+  normalizeApiOrigin,
+} from './api-url'
 
 describe('defaultApiOrigin', () => {
   it('defaults host to localhost and port to 3000', () => {
@@ -12,7 +21,14 @@ describe('defaultApiOrigin', () => {
     expect(defaultApiOrigin('localhost', ' 3000 ')).toBe('http://localhost:3000')
   })
   it('honours an explicit host and port', () => {
-    expect(defaultApiOrigin('0.0.0.0', 8080)).toBe('http://0.0.0.0:8080')
+    expect(defaultApiOrigin('api.example.com', 8080)).toBe('http://api.example.com:8080')
+  })
+  it('replaces a wildcard bind host with loopback (never emits an unreachable origin)', () => {
+    // PIR-223: HOST=0.0.0.0 / PORT=8080 in a container made this default `http://0.0.0.0:8080`,
+    // which then surfaced as the member-facing CRM webhook URL. A bind address is never reachable.
+    expect(defaultApiOrigin('0.0.0.0', 8080)).toBe('http://localhost:8080')
+    expect(defaultApiOrigin('::', 8080)).toBe('http://localhost:8080')
+    expect(defaultApiOrigin('0.0.0.0', 8080)).not.toContain('0.0.0.0')
   })
 })
 
@@ -96,5 +112,90 @@ describe('defaultOrigin with IPv6 hosts', () => {
   it('leaves hostnames and IPv4 untouched', () => {
     expect(defaultOrigin('localhost', undefined, 3000)).toBe('http://localhost:3000')
     expect(defaultOrigin('127.0.0.1', undefined, 3000)).toBe('http://127.0.0.1:3000')
+  })
+})
+
+describe('isWildcardBindHost', () => {
+  it('is true for wildcard bind addresses, in every spelling', () => {
+    expect(isWildcardBindHost('0.0.0.0')).toBe(true)
+    expect(isWildcardBindHost('::')).toBe(true)
+    expect(isWildcardBindHost('[::]')).toBe(true)
+    expect(isWildcardBindHost('::0')).toBe(true)
+    expect(isWildcardBindHost(' 0.0.0.0 ')).toBe(true)
+  })
+  it('is true for the expanded IPv6 wildcard, padded or not, bracketed or not', () => {
+    // HOST validation accepts any Joi `.ip()` spelling, so every one of these can reach config.
+    expect(isWildcardBindHost('0:0:0:0:0:0:0:0')).toBe(true)
+    expect(isWildcardBindHost('[0:0:0:0:0:0:0:0]')).toBe(true)
+    expect(isWildcardBindHost('0000:0000:0000:0000:0000:0000:0000:0000')).toBe(true)
+    expect(isWildcardBindHost('[0000:0000:0000:0000:0000:0000:0000:0000]')).toBe(true)
+    expect(isWildcardBindHost('[::0]')).toBe(true)
+  })
+  it('is false for reachable hosts, including loopback', () => {
+    expect(isWildcardBindHost('localhost')).toBe(false)
+    expect(isWildcardBindHost('127.0.0.1')).toBe(false)
+    expect(isWildcardBindHost('api.muzebook.com')).toBe(false)
+  })
+  it('is false for IPv6 literals that merely contain zero hextets', () => {
+    expect(isWildcardBindHost('::1')).toBe(false)
+    expect(isWildcardBindHost('[::1]')).toBe(false)
+    expect(isWildcardBindHost('2001:0db8:0000:0000:0000:0000:0000:0001')).toBe(false)
+  })
+})
+
+describe('isReachableApiOrigin', () => {
+  it('rejects an origin built from a bind address', () => {
+    expect(isReachableApiOrigin('http://0.0.0.0:8080')).toBe(false)
+    // `new URL('http://[::]:8080').hostname` keeps the brackets, hence the bracketed entries.
+    expect(isReachableApiOrigin('http://[::]:8080')).toBe(false)
+  })
+  it('accepts real public origins and loopback (loopback is correct in local dev)', () => {
+    expect(isReachableApiOrigin('https://api.muzebook.com')).toBe(true)
+    expect(isReachableApiOrigin('http://localhost:3000')).toBe(true)
+    expect(isReachableApiOrigin('http://127.0.0.1:3000')).toBe(true)
+  })
+  it('rejects anything that is not an origin-only http(s) URL', () => {
+    expect(isReachableApiOrigin('ftp://example.com')).toBe(false)
+    expect(isReachableApiOrigin('https://api.muzebook.com/api')).toBe(false)
+    expect(isReachableApiOrigin('not a url')).toBe(false)
+    expect(isReachableApiOrigin('')).toBe(false)
+  })
+})
+
+describe('isPublicApiOrigin', () => {
+  it('is true only for an origin something outside this machine could reach', () => {
+    expect(isPublicApiOrigin('https://api.muzebook.com')).toBe(true)
+    expect(isPublicApiOrigin('http://api.example.com:8080')).toBe(true)
+  })
+  it('rejects loopback — the shape an UNSET API_URL takes once the bind host is rewritten', () => {
+    expect(isPublicApiOrigin('http://localhost:8080')).toBe(false)
+    expect(isPublicApiOrigin('http://127.0.0.1:3000')).toBe(false)
+    expect(isPublicApiOrigin('http://[::1]:3000')).toBe(false)
+  })
+  it('rejects bind addresses and non-origins, like isReachableApiOrigin', () => {
+    expect(isPublicApiOrigin('http://0.0.0.0:8080')).toBe(false)
+    expect(isPublicApiOrigin('ftp://example.com')).toBe(false)
+    expect(isPublicApiOrigin('')).toBe(false)
+  })
+})
+
+describe('isLoopbackHost', () => {
+  it('covers every loopback spelling', () => {
+    expect(isLoopbackHost('localhost')).toBe(true)
+    expect(isLoopbackHost('127.0.0.1')).toBe(true)
+    expect(isLoopbackHost('127.1.2.3')).toBe(true)
+    expect(isLoopbackHost('::1')).toBe(true)
+    expect(isLoopbackHost('[::1]')).toBe(true)
+  })
+  it('is false for real hosts and for the wildcard bind address', () => {
+    expect(isLoopbackHost('api.muzebook.com')).toBe(false)
+    expect(isLoopbackHost('0.0.0.0')).toBe(false)
+  })
+})
+
+describe('defaultOrigin with wildcard bind hosts', () => {
+  it('substitutes loopback on the WEB_URL path too (same latent defect)', () => {
+    expect(defaultOrigin('::', undefined, 4200)).toBe('http://localhost:4200')
+    expect(defaultOrigin('0.0.0.0', undefined, 4200)).toBe('http://localhost:4200')
   })
 })

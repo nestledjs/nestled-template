@@ -1,0 +1,63 @@
+id: 2026-08-11-public-url-and-shared-util-fixes
+title: Absorb muzebook-originated fixes — public URL correctness and shared-util hardening
+priority: high
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Absorb fixes that originated downstream in muzebook during its boundary migration and never flowed
+  up. PublicUrlService plus the api-url precedence chain guarantee that a wildcard bind address
+  (0.0.0.0, ::, or their bracketed forms) never reaches a user-facing URL; local storage derives its
+  public base URL through that service instead of reading API_URL raw. error-detection gains typed
+  AuthErrorInfo classification, date gains formatUtcLongDate, and cleanFormInput's select-option
+  handling gains type guards.
+
+  For projects converging via the convergence manuals this note is informational: the changes arrive
+  as template state, not as a patch to apply. It exists because the template's own gate requires
+  sensitive-path changes to carry a note, and because mi-core's in-flight agent needs to recognise
+  these files as merged results rather than drift.
+
+why: >
+  A server LISTENS on a bind address; nothing can ever REACH one. HOST is commonly 0.0.0.0 in a
+  container, so an URL built from it is unreachable in the normal production case, not an edge case
+  (PIR-223). The failure is silent: links render, emails send, and every one of them points nowhere.
+  muzebook fixed this on 2026-07-28; the fix sat downstream while the template kept the defect,
+  which is exactly the divergence the convergence effort exists to end. Fixes live upstream or they
+  die in one repo.
+
+affectedPaths:
+  - libs/api/config/src/lib/api-url.ts
+  - libs/api/config/src/lib/public-url.service.ts
+  - libs/api/config/src/lib/config.module.ts
+  - libs/api/config/src/index.ts
+  - libs/api/integrations/src/lib/storage/providers/local-storage.service.ts
+  - libs/shared/utils/src/lib/error-detection.ts
+  - libs/shared/utils/src/lib/date.ts
+  - libs/shared/utils/src/lib/forms.ts
+
+packageReleases: []
+
+skipIf:
+  - The project already derives every user-facing URL through a public-URL precedence chain that
+    rejects wildcard bind addresses.
+
+verification:
+  - pnpm exec nx run-many -t test --projects=utils,config,integrations
+  - pnpm run nestled-doctor
+  - pnpm typecheck
+
+agentHints:
+  - >
+    muzebook is the origin of these changes and already carries them; its convergence takes the
+    template's merged result back down, token-swapped, rather than keeping its local copies.
+  - >
+    The forms.ts fallback branch was ported without its original `as any`: the Date constructor call
+    is now reached only for types it accepts. Behavior is test-identical; do not reintroduce the
+    cast.
+  - >
+    Deliberately NOT ported from muzebook: its DATABASE_URL param-separator pooling (this template's
+    PoolConfig adapter with pgbouncer support supersedes it), its run-e2e single-suite arg (already
+    present here), its cache-config edits (cosmetic TS changes over stale biztobiz-era type policies
+    — those policies are a separate cleanup), and its publicApi config getters (muzebook-only
+    product surface).

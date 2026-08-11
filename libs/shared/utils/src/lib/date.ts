@@ -14,6 +14,18 @@ export function formatUtcForDateInput(value: Date | string | number | null | und
 }
 
 /**
+ * Format a Date or ISO string as a human-friendly long date (e.g. "December 25, 2024")
+ * using UTC semantics, so calendar-date fields stored at midnight UTC are not shifted
+ * by the viewer's local timezone. Returns '' for empty/invalid values.
+ */
+export function formatUtcLongDate(value: Date | string | number | null | undefined): string {
+  if (!value) return ''
+  const d = typeof value === 'string' || typeof value === 'number' ? new Date(value) : value
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return ''
+  return dayjs.utc(d).format('MMMM D, YYYY')
+}
+
+/**
  * Convert a YYYY-MM-DD string or Date into an ISO string pinned to midnight UTC
  */
 export function toUtcMidnightIso(value: Date | string): string {

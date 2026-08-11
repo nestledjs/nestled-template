@@ -37,31 +37,39 @@ describe('form utilities', () => {
     })
   })
 
-  it('drops invalid multi-select options instead of emitting { id: undefined }', () => {
+  it('can preserve ids and drops invalid dates while cleaning input', () => {
+    expect(
+      cleanFormInput({ id: 'record-1', startDate: new Date('invalid') }, fields, true),
+    ).toEqual({ id: 'record-1' })
+  })
+
+  it('drops invalid multiselect options and stringifies valid ids', () => {
     expect(
       cleanFormInput(
         {
-          id: 'record-1',
           tags: [
             { value: 'tag-1', label: 'One' },
-            { label: 'missing-value' }, // not a valid option → dropped
-            null, // not an option → dropped
-            { value: { nested: true }, label: 'Object' }, // non-string/number value → dropped
-            { value: true, label: 'Boolean' }, // non-string/number value → dropped
-            { value: 42, label: 'Numeric' }, // coerced to a string id
+            { value: 22, label: 'Numeric' },
+            { label: 'missing value' },
+            null,
+            { value: { nested: true }, label: 'bad object' },
+            // A boolean is a legitimate SELECT value but never a relation id; admitting it here
+            // once produced relation connects against ids named "true".
+            { value: true, label: 'boolean' },
           ],
         },
         fields,
       ),
     ).toEqual({
-      tags: [{ id: 'tag-1' }, { id: '42' }],
+      tags: [{ id: 'tag-1' }, { id: '22' }],
     })
   })
 
-  it('can preserve ids and drops invalid dates while cleaning input', () => {
-    expect(
-      cleanFormInput({ id: 'record-1', startDate: new Date('invalid') }, fields, true),
-    ).toEqual({ id: 'record-1' })
+  it('returns an empty value for an invalid numeric timestamp instead of throwing', () => {
+    // Invalid Date OBJECTS are filtered before mapping, but a NaN number is not a Date instance,
+    // so it reaches the date formatter — where an unguarded toISOString() turns one bad field
+    // into a crashed submit.
+    expect(cleanFormInput({ startDate: Number.NaN }, fields)).toEqual({ startDate: '' })
   })
 
   it('maps database output back to form values', () => {

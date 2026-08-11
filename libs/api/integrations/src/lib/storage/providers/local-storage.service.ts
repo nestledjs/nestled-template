@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
+import { PublicUrlService } from '@nestled-template/api/config'
 import { IStorageService, UploadOptions, UploadResult } from '../interfaces'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
@@ -17,9 +18,16 @@ export class LocalStorageService implements IStorageService, OnModuleInit {
   private readonly baseUrl: string
   private readonly isActiveProvider: boolean
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly publicUrl: PublicUrlService,
+  ) {
     this.storagePath = this.configService.get<string>('LOCAL_STORAGE_PATH', './uploads')
-    this.baseUrl = this.configService.get<string>('API_URL', 'http://localhost:3000')
+    // Reading the raw API_URL env key is not enough: it is only public when explicitly set to a
+    // public origin — an explicit bind address stays a bind address, and an unset value is
+    // defaulted from HOST/PORT down to loopback (PIR-223). There is no request at construction
+    // time, so this is the config-or-localhost path of the precedence chain.
+    this.baseUrl = this.publicUrl.origin()
     this.isActiveProvider = this.configService.get<string>('STORAGE_PROVIDER', 'local') === 'local'
   }
 
