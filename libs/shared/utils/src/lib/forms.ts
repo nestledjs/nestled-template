@@ -1,5 +1,5 @@
 import { Maybe } from 'graphql/jsutils/Maybe'
-import { FormField } from '@nestledjs/forms-core'
+import type { FormField } from '@nestledjs/forms-core'
 
 type SelectOption = {
   value?: unknown
@@ -18,13 +18,16 @@ function isSelectOption(value: unknown): value is SelectOption {
   return isRecord(value) && 'value' in value
 }
 
-// A select option that actually carries a usable string/number value. Used to
-// drop invalid multi-select entries instead of emitting { id: undefined } (or a
-// nonsense id like "[object Object]" from String()-ing an object/boolean value).
+/**
+ * Only used for the multiselect path, whose output is relation ids (`{ id: String(value) }`).
+ * A boolean is a legitimate SELECT option value but never a legitimate relation id — admitting it
+ * here would connect relations to ids named "true"/"false". Plain selects go through
+ * `isSelectOption`, which still allows booleans.
+ */
 function isSelectOptionWithValue(value: unknown): value is { value: string | number } {
-  if (!isSelectOption(value)) return false
-  const optionValue = value.value
-  return typeof optionValue === 'string' || typeof optionValue === 'number'
+  return (
+    isSelectOption(value) && (typeof value.value === 'string' || typeof value.value === 'number')
+  )
 }
 
 function isRelationItem(value: unknown): value is RelationItem {
@@ -35,21 +38,32 @@ function isValidDate(d: unknown): d is Date {
   return d instanceof Date && !Number.isNaN(d.getTime())
 }
 
-function normalizeDateValue(v: unknown): string {
-  if (v instanceof Date) return v.toISOString().split('T')[0]
-  if (typeof v === 'number') return new Date(v).toISOString().split('T')[0]
-  if (typeof v === 'string') {
-    return v.includes('T') ? v.split('T')[0] : v
-  }
-  return ''
-}
-
 function formatDate(value: unknown): string {
-  if (value instanceof Date) {
+  if (typeof value === 'object' && value instanceof Date) {
     return value.toISOString().split('T')[0]
   } else if (typeof value === 'string') {
     return value.split('T')[0]
   }
+  return ''
+}
+
+/**
+ * Strings are treated as existing form values: an ISO datetime (contains `T`) is cut to its date
+ * part, and any other string passes through untouched — including non-date garbage, which is the
+ * form's problem to validate, not this formatter's. Dates and numeric timestamps are validated
+ * before formatting: `toISOString` THROWS on an invalid date, so an unguarded call turns one bad
+ * field value into a crashed submit instead of an empty value.
+ */
+function cleanDateFieldValue(value: unknown) {
+  if (typeof value === 'string') {
+    return value.includes('T') ? value.split('T')[0] : value
+  }
+
+  const date = value instanceof Date ? value : typeof value === 'number' ? new Date(value) : null
+  if (date && !Number.isNaN(date.getTime())) {
+    return date.toISOString().split('T')[0]
+  }
+
   return ''
 }
 
@@ -77,19 +91,24 @@ export function cleanFormInput(
         return (
           validKeys.includes(k) &&
           !(
-            (Array.isArray(v) && !v.length) ||
-            k === 'createdAt' ||
-            k === 'updatedAt' ||
-            k === '__typename' ||
-            (!keepId && k === 'id') ||
-            (v instanceof Date && !isValidDate(v))
+            // (!checkboxFields?.includes(k) && v === undefined) ||
+            // (!checkboxFields?.includes(k) && !v) ||
+            // (!checkboxFields?.includes(k) && v === '') ||
+            (
+              (Array.isArray(v) && !v.length) ||
+              k === 'createdAt' ||
+              k === 'updatedAt' ||
+              k === '__typename' ||
+              (!keepId && k === 'id') ||
+              (v instanceof Date && !isValidDate(v))
+            )
           )
         )
       })
       .map(([k, v]) => {
         // Reformat date strings for storage in database
         if (k.toLowerCase().includes('date') || k.toLowerCase().includes('datetime')) {
-          return [k, normalizeDateValue(v)]
+          return [k, cleanDateFieldValue(v)]
         }
         // Return array of values for multiselect fields
         if (multiSelectFields?.includes(k)) {

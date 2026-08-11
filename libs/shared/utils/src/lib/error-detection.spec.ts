@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { handleViteCacheError, isNetworkError, isViteCacheError } from './error-detection'
+import {
+  handleViteCacheError,
+  isAuthError,
+  isNetworkError,
+  isViteCacheError,
+} from './error-detection'
 
 describe('error detection utilities', () => {
   it('distinguishes Vite cache errors from render errors', () => {
@@ -23,6 +28,65 @@ describe('error detection utilities', () => {
     ).toBe(false)
   })
 
+  describe('isAuthError', () => {
+    it('classifies GraphQL codes into the two states', () => {
+      expect(
+        isAuthError({ graphQLErrors: [{ message: 'x', extensions: { code: 'UNAUTHENTICATED' } }] }),
+      ).toMatchObject({ isAuth: true, type: 'unauthenticated' })
+      expect(
+        isAuthError({ graphQLErrors: [{ message: 'x', extensions: { code: 'FORBIDDEN' } }] }),
+      ).toMatchObject({ isAuth: true, type: 'forbidden' })
+    })
+
+    it('resolves the ambiguous UNAUTHORIZED family by whether the message suggests re-login', () => {
+      // Same rule on both paths — this once diverged, routing identical error text to logout or
+      // to the access-denied panel depending on which shape it arrived in.
+      expect(
+        isAuthError({
+          graphQLErrors: [{ message: 'You must be logged in', extensions: { code: 'UNAUTHORIZED' } }],
+        }),
+      ).toMatchObject({ isAuth: true, type: 'unauthenticated' })
+      expect(
+        isAuthError({
+          graphQLErrors: [{ message: 'Unauthorized action', extensions: { code: 'UNAUTHORIZED' } }],
+        }),
+      ).toMatchObject({ isAuth: true, type: 'forbidden' })
+      expect(isAuthError({ message: 'Unauthorized: please log in again' })).toMatchObject({
+        isAuth: true,
+        type: 'unauthenticated',
+      })
+      expect(isAuthError({ message: 'Unauthorized resource' })).toMatchObject({
+        isAuth: true,
+        type: 'forbidden',
+      })
+    })
+
+    it('classifies raw messages and HTTP status fallbacks', () => {
+      expect(isAuthError({ message: 'User is not authenticated' })).toMatchObject({
+        isAuth: true,
+        type: 'unauthenticated',
+      })
+      expect(isAuthError({ message: 'Access denied for role' })).toMatchObject({
+        isAuth: true,
+        type: 'forbidden',
+      })
+      expect(isAuthError({ message: 'boom', statusCode: 401 })).toMatchObject({
+        isAuth: true,
+        type: 'unauthenticated',
+      })
+      expect(isAuthError({ message: 'boom', status: 403 })).toMatchObject({
+        isAuth: true,
+        type: 'forbidden',
+      })
+    })
+
+    it('reports non-auth and non-object errors as not auth', () => {
+      expect(isAuthError(new Error('database timeout'))).toMatchObject({ isAuth: false, type: null })
+      expect(isAuthError(null)).toMatchObject({ isAuth: false, type: null })
+      expect(isAuthError('unauthorized')).toMatchObject({ isAuth: false, type: null })
+    })
+  })
+
   it('handles Vite cache errors with delayed reloads', () => {
     vi.useFakeTimers()
     const reload = vi.fn()
@@ -32,7 +96,7 @@ describe('error detection utilities', () => {
     })
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
-      value: {},
+      value: { location: { reload } },
     })
 
     expect(

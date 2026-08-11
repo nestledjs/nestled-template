@@ -18,6 +18,33 @@ function formatHost(host: string): string {
 }
 
 /**
+ * Wildcard bind addresses. A server LISTENS on these; nothing can ever REACH one. Using them in a
+ * URL shown to a user (or sent to a third party) produces an unreachable link — PIR-223. HOST is
+ * commonly `0.0.0.0` in a container, so this is the normal production case, not an edge case.
+ */
+
+/**
+ * `new URL('http://[::]:8080').hostname` returns `'[::]'` (brackets retained), and HOST itself may
+ * be written either way, so both spellings reach this module.
+ */
+function stripBrackets(host: string): string {
+  if (host.startsWith('[') && host.endsWith(']')) return host.slice(1, -1)
+  return host
+}
+
+/** True when `host` is a wildcard bind address rather than a reachable host. */
+export function isWildcardBindHost(host: string): boolean {
+  const normalized = stripBrackets(host.trim().toLowerCase())
+  if (normalized === '0.0.0.0') return true
+  // The IPv6 unspecified address, in ANY spelling: `::`, `::0`, `0:0:0:0:0:0:0:0`, and the
+  // zero-padded `0000:...:0000`. Every valid non-wildcard IPv6 literal contains a non-zero hex
+  // digit, so "nothing but zeroes and colons" identifies the wildcard without enumerating
+  // spellings — an enumerated set silently missed the unpadded expanded form.
+  if (!normalized.includes(':')) return false
+  return [...normalized].every((char) => char === '0' || char === ':')
+}
+
+/**
  * Build a local-dev origin, defaulting the port when it is unset/blank (never `:undefined`).
  *
  * Generic over the port fallback so every `*_URL` default can share one implementation. Each
@@ -29,7 +56,10 @@ export function defaultOrigin(host?: string, port?: string | number, fallbackPor
   // Trim the port too — a stray `PORT=" 3000 "` must not yield `http://localhost: 3000 `.
   const trimmedPort = `${port ?? ''}`.trim()
   const resolvedPort = trimmedPort === '' ? fallbackPort : trimmedPort
-  return `http://${formatHost(host?.trim() || 'localhost')}:${resolvedPort}`
+  const rawHost = host?.trim() || 'localhost'
+  // A wildcard bind address is not a reachable origin — fall back to loopback (PIR-223).
+  const resolvedHost = isWildcardBindHost(rawHost) ? 'localhost' : rawHost
+  return `http://${formatHost(resolvedHost)}:${resolvedPort}`
 }
 
 /** Build the local-dev default API origin, defaulting PORT to 3000 (never `:undefined`). */
@@ -99,6 +129,49 @@ export function isHttpOrigin(value: string): boolean {
       url.username === '' &&
       url.password === ''
     return isHttp && isOriginOnly
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True when `value` is an http(s) origin that names a host something outside this process could
+ * actually reach. Rejects wildcard bind addresses. Loopback IS accepted — it is the correct origin
+ * in local dev; only production config should additionally require a non-loopback host.
+ *
+ * Note `new URL('http://[::]:8080').hostname` returns `'[::]'` (brackets retained), which is why
+ * `isWildcardBindHost` strips brackets before comparing.
+ */
+export function isReachableApiOrigin(value: string): boolean {
+  if (!isHttpOrigin(value)) return false
+  try {
+    return !isWildcardBindHost(new URL(value).hostname)
+  } catch {
+    return false
+  }
+}
+
+/** True when `host` only ever resolves back to this machine. */
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase()
+  if (normalized === 'localhost' || normalized === '::1' || normalized === '[::1]') return true
+  return normalized.startsWith('127.')
+}
+
+/**
+ * True when `value` names an origin something OUTSIDE this machine could reach — reachable per
+ * `isReachableApiOrigin` and not loopback.
+ *
+ * This is the predicate for "API_URL is genuinely configured". `defaultOrigin` substitutes
+ * `localhost` for a wildcard bind host, so an UNSET API_URL in a container no longer yields
+ * `http://0.0.0.0:8080` — it yields `http://localhost:8080`, which is reachable but still useless
+ * in a member-facing URL. Without this distinction the request-origin fallback and the production
+ * boot warning would both go dead in exactly the PIR-223 case they exist for.
+ */
+export function isPublicApiOrigin(value: string): boolean {
+  if (!isReachableApiOrigin(value)) return false
+  try {
+    return !isLoopbackHost(new URL(value).hostname)
   } catch {
     return false
   }
