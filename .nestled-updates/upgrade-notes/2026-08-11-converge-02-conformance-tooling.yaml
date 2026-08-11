@@ -1,0 +1,93 @@
+id: 2026-08-11-converge-02-conformance-tooling
+title: "Convergence step 2 of 4: install the checks that generate the rest of the work"
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+
+intent: >
+  Install the executable conformance checks and make coverage measure the whole library: the three
+  select/fragment verifiers, the doctor analyses, and a coverage configuration whose denominator is
+  every source file rather than only the files a spec imports.
+
+  Replaces 2026-08-10-select-coverage-tooling-fixes, 2026-08-09-fragment-select-coverage and
+  2026-08-09-postgres-dev-pin.
+
+  This step comes second and not last. The checks are not a quality gate bolted on at the end of a
+  migration -- their OUTPUT IS THE WORK LIST for step 4. A project that installs them last discovers
+  what it owed after deciding it was finished.
+
+why: >
+  The security work in steps 3 and 4 has to hold across code the template has never seen: each
+  project's own resolvers, its MCP tools, its jobs. A file diff cannot reach that code, and a note
+  cannot describe it. Only a rule that runs against the whole repository can say where a project
+  does not conform.
+
+  This is not theoretical. Run against the first project to complete the boundary migration, the
+  fragment checker found nine columns that SDK fragments requested and no select produced -- in a
+  codebase whose selects already passed the schema checker completely. One was a contact blacklist
+  flag, where a null renders as "not blacklisted": a confident wrong answer rather than a visibly
+  broken screen. Those nine were live in merged code, found by a rule, invisible to review.
+
+  The coverage denominator matters for the same reason. Without collectCoverageFrom, Jest measures
+  only files some spec imported and omits the rest entirely, so a file with no test does not lower
+  the percentage -- it is simply absent. In the template that was 86.9 percent over 71 of 132 files
+  versus 70.7 percent over all of them. A threshold set against the first number is not a
+  measurement, and it improves when you delete a test.
+
+affectedPaths:
+  - tools/verify-selects.mjs
+  - tools/verify-fragment-coverage.ts
+  - tools/verify-select-coverage.mjs
+  - tools/*.spec.mjs
+  - tools/*.spec.ts
+  - scripts/doctor.ts
+  - scripts/doctor-*-analysis.ts
+  - libs/api/custom/jest.config.ts
+  - .dev/docker-compose.yml
+  - .github/workflows/ci.yml
+  - package.json
+
+packageReleases: []
+
+skipIf:
+  - The project has no Prisma API and no SDK fragments.
+
+verification:
+  - pnpm template:test-migration-tools
+  - pnpm verify:selects
+  - pnpm verify:fragments
+  - pnpm verify:select-coverage
+  - pnpm run nestled-doctor
+  - pnpm exec nx run api-custom:test --skipNxCache
+
+agentHints:
+  - >
+    Adapt the tools' search roots to the project's layout before concluding they pass. The template
+    scans *.select.ts; a project that keeps select constants beside the resolver that owns them will
+    see zero files scanned and a clean result, which is the most dangerous possible output. Confirm
+    the file count in each tool's summary line is non-zero and roughly what you expect.
+  - >
+    Read the not-checked count at the end of a fragment-coverage run. Models whose selects are
+    inline rather than in a named constant are not covered by it. A clean run over dozens of
+    unchecked models is accurate, not clean, and should be reported that way.
+  - >
+    Set collectCoverageFrom BEFORE setting any coverage threshold, and then set the threshold from
+    your own measured baseline rather than copying the template's numbers. Coverage across these
+    projects ranges from under 30 percent to over 70 once the denominator is honest. A threshold
+    above current coverage is not a policy, it is a red build, and a build red on arrival gets
+    switched off -- leaving no gate at all. Exclude barrels, declaration files and both test
+    suffixes; excluding modules and DTOs buys a better number by measuring less.
+  - >
+    Keep any per-directory rule for agent-reachable surfaces strict even where the global number is
+    low. Strict where risk concentrates and lenient globally is the intent, not an inconsistency.
+  - >
+    The Postgres pin belongs to this step because the checks need a working local database. Read
+    your own production major version with SHOW server_version rather than copying a number or
+    trusting a provider default -- these projects sit on different hosts. If your local data
+    directory is NEWER than production, the pin still follows production and the volume is dumped,
+    moved aside and restored; never deleted to make a pin fit.
+  - >
+    Record this id when every check above runs and reports. "Runs and reports" is the bar, not
+    "reports zero problems" -- the problems it finds are step 4's work list, not a reason to
+    withhold this step.
