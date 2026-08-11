@@ -1,0 +1,93 @@
+id: 2026-08-11-converge-04-conformance-and-sessions
+title: "Convergence step 4 of 4: bring custom code into conformance, and fix session handling"
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Work the output of the checks installed in step 2 until the project's own code conforms to the
+  model installed in step 3, and apply the session and client fixes that sit on the same surface.
+
+  Replaces 2026-08-10-mcp-tool-scoping-and-coverage, 2026-08-10-duplicate-session-cookie-auth,
+  2026-08-10-browser-safe-jwt-decode and 2026-08-10-auth-error-navigation.
+
+  This is the only step whose size is unknown at the start, because it is the only one measured
+  against code the template has never seen. Its work list is produced, not written: run the checks,
+  fix what they name, repeat.
+
+why: >
+  Steps 1 to 3 make a project match the template. This step makes the project's OWN code -- its
+  resolvers, its MCP tools, its jobs and webhooks -- obey the model the template now defines. No
+  file comparison can reach that code, which is why the checks exist and why they came first.
+
+  The MCP surface is the sharpest case. Those tools are agent-reachable data access, they were the
+  least-covered code in the API, and auditing them upstream found four real tenancy defects: an
+  organization role with all:manage promoted to platform-wide authority; an organization-scoped
+  profile response exposing every membership; a token that stayed valid after its membership was
+  removed; and an organization lookup that trusted the token scope without rechecking membership.
+  Those are authorization defects, not missing test lines, and they were invisible until something
+  scanned for them.
+
+  The session fixes belong here rather than earlier because they are the same class: silent
+  failures on a security path. The client picked among duplicate session cookies by decoding each
+  token's issued-at claim through Buffer, which no browser provides -- so on the client it threw for
+  every token, inside the catch that skips malformed ones, and fell back to the last cookie value.
+  document.cookie orders by path specificity rather than age, so that fallback returns the stale
+  token in exactly the case the feature exists to handle. Nothing thrown, nothing logged, and a
+  green suite, because the only coverage exercised the server path where Buffer exists.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/mcp/**
+  - libs/api/custom/src/lib/plugins/api-tokens/**
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/shared/apollo/src/lib/apollo.ts
+  - apps/web/app/root.tsx
+  - apps/web/app/app.tsx
+  - libs/api/custom/src/lib/**
+
+packageReleases: []
+
+skipIf:
+  - The project exposes no MCP or API-token operations AND its checks from step 2 report no findings.
+
+verification:
+  - pnpm run nestled-doctor
+  - pnpm verify:selects
+  - pnpm verify:fragments
+  - pnpm verify:select-coverage
+  - pnpm nx test api-custom
+  - pnpm nx test apollo
+  - pnpm nx test web
+  - pnpm nx build api
+  - pnpm nx build web
+
+agentHints:
+  - >
+    Treat the checks as the backlog, not as a gate. Run them first, write down what they report,
+    and work that list. Do not begin by reading resolvers looking for problems; the rules are faster,
+    more complete, and they do not get tired on file forty.
+  - >
+    Keep platform and tenant authority distinct. Only a genuine super-administrator flag may enable
+    platform-wide enumeration; an organization role named all:manage is still scoped to that
+    organization. Revalidate membership when an organization-scoped token is USED, not only when it
+    is issued, so removing someone from an organization actually revokes their access.
+  - >
+    Assert what the query asked for, not what the mock returned. A resolver that scopes correctly
+    and one that does not both return rows in a unit test; only the arguments handed to the database
+    distinguish them, and that is precisely where these defects live. Also assert that a refused
+    mutation performed no write and fired no side effect -- refusing after the write still leaks the
+    change.
+  - >
+    Check the surfaces the resolver rules do not reach: background jobs, cron, webhooks and raw
+    queries have no request context and therefore no organization to scope by. Where the checks
+    cannot see, say so in the record rather than implying coverage the run did not provide.
+  - >
+    Any catch that exists to skip malformed input will also swallow an environment error such as a
+    missing global. Where a loop falls back to a default when nothing parses, that fallback becomes
+    the normal path the moment parsing breaks, so it has to be defensible on its own.
+  - >
+    Record this id with a reason that states what the checks reported and what remains. If findings
+    are deferred, say which and why; a project that records this step complete while its checks still
+    report findings has recorded something false, and the next reader has no way to tell.
