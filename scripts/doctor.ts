@@ -333,9 +333,8 @@ const checkStaleConfigNames = () => {
     path =>
       /\.(ts|tsx|js|jsx|mjs|cjs|md|yml|yaml|json)$/.test(path) &&
       path !== 'scripts/doctor.ts' &&
-      // Dev-authoring docs (plans/, agents/, ai-docs/) are not the product surface — they routinely
-      // quote stale/buggy config by name while documenting the very fix. (The cast gate excludes the
-      // scripts/ ops tooling for the same "not product code" reason.)
+      // Skip dev-authoring docs (plans/, agents/, ai-docs/): not the product surface, and they
+      // routinely quote the stale/buggy config key by name while documenting the very fix.
       !path.startsWith('plans/') &&
       !path.startsWith('agents/') &&
       !path.startsWith('ai-docs/') &&
