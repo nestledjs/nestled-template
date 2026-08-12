@@ -48,14 +48,18 @@ pnpm prisma migrate deploy
 # Run the tests
 echo -e "${BLUE}3. Running E2E tests...${NC}"
 
+# Route through api-e2e:test (the run-tests.sh wrapper), not api-e2e:e2e. The wrapper runs vitest
+# with tee'd output and adjusts the SIGKILL exit code, so a failure surfaces the actual Vitest
+# assertion details; api-e2e:e2e goes through the Nx executor and can exit with only Nx's failure
+# summary. Extra args after `--` reach the wrapper's "$@" and become a vitest file-path filter.
 # Option 1: Run specific test file
 if [[ "$1" != "" ]]; then
   echo -e "${YELLOW}Running specific test: $1${NC}"
-  pnpm nx run api-e2e:e2e --testPathPattern="$1"
-# Option 2: Run all tests  
+  pnpm nx run api-e2e:test -- "$1"
+# Option 2: Run all tests
 else
   echo -e "${YELLOW}Running all E2E tests...${NC}"
-  pnpm nx run api-e2e:e2e
+  pnpm nx run api-e2e:test
 fi
 
 # Check test results

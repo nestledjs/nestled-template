@@ -10,6 +10,17 @@ TMPFILE=$(mktemp)
 export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${POSTGRES_TEST_PORT:-5433}/nestled_template_test}"
 export DATABASE_URL="$TEST_DATABASE_URL"
 
+# Probe the DB at the URL's own host/port/name — the URL is the single source of truth. Probing
+# POSTGRES_TEST_PORT instead would mismatch a caller-supplied TEST_DATABASE_URL on a non-default port
+# (e.g. a block-specific 5473), producing a false "not accessible" or a redundant container start.
+_db="${TEST_DATABASE_URL#*://}"                     # strip scheme://
+_db="${_db##*@}"                                     # strip any user:pass@
+_db_hostport="${_db%%/*}"                            # host[:port]
+_db_name="${_db#*/}"; _db_name="${_db_name%%[?]*}"   # dbname (drop ?query if present)
+_db_host="${_db_hostport%%:*}"
+_db_port="${_db_hostport##*:}"
+[ "$_db_port" = "$_db_hostport" ] && _db_port=5432   # no explicit port in the URL
+
 TEST_DB_STARTED=false
 
 cleanup() {
@@ -21,7 +32,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-if ! PGPASSWORD=postgres psql -U postgres -h localhost -p "${POSTGRES_TEST_PORT:-5433}" -d nestled_template_test -c "SELECT 1" >/dev/null 2>&1; then
+if ! PGPASSWORD=postgres psql -U postgres -h "$_db_host" -p "$_db_port" -d "$_db_name" -c "SELECT 1" >/dev/null 2>&1; then
   if ! docker info >/dev/null 2>&1; then
     echo "❌ Test database is not accessible and Docker is not running"
     echo "   Start Docker or set TEST_DATABASE_URL to an accessible test database"

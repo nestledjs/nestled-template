@@ -45,6 +45,12 @@ read_env() {
 TEST_DB_PORT="${POSTGRES_TEST_PORT:-$(read_env POSTGRES_TEST_PORT)}"
 TEST_DB_PORT="${TEST_DB_PORT:-5433}"
 TEST_DB_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test}"
+# The resolved URL is the single source of truth for the port we report. When a caller supplies
+# TEST_DATABASE_URL (e.g. a block-specific port), TEST_DB_PORT still holds the .env/default value, so
+# echoing it would claim "ready on port 5433" while actually using the URL's port. Read the port back
+# out of the URL for display; fall back to TEST_DB_PORT if the URL carries no explicit port.
+TEST_DB_DISPLAY_PORT="$(printf '%s' "$TEST_DB_URL" | sed -nE 's#^[^/]+://[^/]+:([0-9]+)/.*#\1#p')"
+TEST_DB_DISPLAY_PORT="${TEST_DB_DISPLAY_PORT:-$TEST_DB_PORT}"
 TEST_DB_CONTAINER="nestled-template_postgres_test"
 
 case "$1" in
@@ -63,7 +69,7 @@ case "$1" in
       fi
     done
     
-    echo "✅ Test database is ready on port $TEST_DB_PORT"
+    echo "✅ Test database is ready on port $TEST_DB_DISPLAY_PORT"
     echo "📄 Connection string: $TEST_DB_URL"
     ;;
     
