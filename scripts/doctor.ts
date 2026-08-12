@@ -27,6 +27,8 @@ import {
   type SdkContractReport,
   type TypeScriptSource,
 } from './doctor-sdk-contract-analysis'
+import { getRegisteredModuleClasses } from './doctor-module-analysis'
+import { stripComments } from './doctor-source-analysis'
 
 type Finding = {
   check: string
@@ -253,74 +255,6 @@ const getRegexMatches = (pattern: RegExp, source: string): RegExpExecArray[] => 
   return matches
 }
 
-const startsWithBlockComment = (source: string, index: number): boolean =>
-  source[index] === '/' && source[index + 1] === '*'
-
-const startsWithLineComment = (
-  source: string,
-  index: number,
-  onlyWhitespaceOnLine: boolean,
-): boolean => onlyWhitespaceOnLine && source[index] === '/' && source[index + 1] === '/'
-
-const skipBlockComment = (
-  source: string,
-  startIndex: number,
-): { index: number; preservedNewlines: string } => {
-  let index = startIndex + 2
-  let preservedNewlines = ''
-
-  while (index < source.length) {
-    if (source[index] === '\n') {
-      preservedNewlines += '\n'
-      index += 1
-    } else if (source[index] === '*' && source[index + 1] === '/') {
-      index += 2
-      break
-    } else {
-      index += 1
-    }
-  }
-
-  return { index, preservedNewlines }
-}
-
-const skipLineComment = (source: string, startIndex: number): number => {
-  let index = startIndex
-  while (index < source.length && source[index] !== '\n') {
-    index += 1
-  }
-  return index
-}
-
-const updateWhitespaceState = (current: string, onlyWhitespaceOnLine: boolean): boolean => {
-  if (current === '\n') return true
-  if (current === ' ' || current === '\t' || current === '\r') return onlyWhitespaceOnLine
-  return false
-}
-
-const stripComments = (source: string): string => {
-  let output = ''
-  let index = 0
-  let onlyWhitespaceOnLine = true
-
-  while (index < source.length) {
-    if (startsWithBlockComment(source, index)) {
-      const skipped = skipBlockComment(source, index)
-      output += skipped.preservedNewlines
-      onlyWhitespaceOnLine = skipped.preservedNewlines.length > 0 || onlyWhitespaceOnLine
-      index = skipped.index
-    } else if (startsWithLineComment(source, index, onlyWhitespaceOnLine)) {
-      index = skipLineComment(source, index)
-    } else {
-      output += source[index]
-      onlyWhitespaceOnLine = updateWhitespaceState(source[index], onlyWhitespaceOnLine)
-      index += 1
-    }
-  }
-
-  return output
-}
-
 const getRegisteredRouteFiles = (): Set<string> => {
   if (!existsSync(routeConfigPath)) {
     fail('routes', 'Route configuration file is missing', routeConfigPath)
@@ -386,7 +320,7 @@ const checkForbiddenPrismaImports = () => {
     if (directImportPattern.test(source)) {
       fail(
         'prisma-imports',
-        'Import Prisma types from @nestled-template/api/prisma instead of @prisma/client',
+        "Import Prisma types from the workspace's API Prisma wrapper instead of @prisma/client",
         file,
       )
     }
@@ -1082,7 +1016,11 @@ const getModuleClasses = (source: string): string[] =>
 const isExportedFromIndex = (source: string, path: string): boolean =>
   source.includes(`'./${path}'`) || source.includes(`"./${path}"`)
 
-const validatePluginModuleFile = (moduleFile: string, pluginIndex: string, appModule: string) => {
+const validatePluginModuleFile = (
+  moduleFile: string,
+  pluginIndex: string,
+  registeredModules: Set<string>,
+) => {
   const moduleSource = readFileSync(moduleFile, 'utf8')
   const moduleBasename = basename(moduleFile, '.ts')
 
@@ -1091,10 +1029,10 @@ const validatePluginModuleFile = (moduleFile: string, pluginIndex: string, appMo
   }
 
   for (const moduleClass of getModuleClasses(moduleSource)) {
-    if (!appModule.includes(moduleClass)) {
+    if (!registeredModules.has(moduleClass)) {
       fail(
         'plugin-structure',
-        'Plugin module is not registered in apps/api/src/app.module.ts',
+        'Plugin module is not reachable from the API app module; import it there or from another registered module',
         moduleFile,
       )
     }
@@ -1105,7 +1043,7 @@ const validatePluginDirectory = (
   entry: string,
   pluginsRoot: string,
   rootIndex: string,
-  appModule: string,
+  registeredModules: Set<string>,
 ) => {
   const pluginDir = join(pluginsRoot, entry)
   if (!statSync(pluginDir).isDirectory()) return
@@ -1125,7 +1063,7 @@ const validatePluginDirectory = (
 
   const pluginIndex = readFileSync(indexPath, 'utf8')
   for (const moduleFile of moduleFiles) {
-    validatePluginModuleFile(moduleFile, pluginIndex, appModule)
+    validatePluginModuleFile(moduleFile, pluginIndex, registeredModules)
   }
 }
 
@@ -1136,10 +1074,14 @@ const checkPluginExportsAndRegistration = () => {
   const rootIndexPath = join(pluginsRoot, 'index.ts')
   const appModulePath = 'apps/api/src/app.module.ts'
   const rootIndex = existsSync(rootIndexPath) ? readFileSync(rootIndexPath, 'utf8') : ''
-  const appModule = existsSync(appModulePath) ? readFileSync(appModulePath, 'utf8') : ''
+  const moduleSources = [
+    ...walkFiles('libs/api', path => path.endsWith('.module.ts')),
+    ...walkFiles('apps/api', path => path.endsWith('.module.ts')),
+  ].map(file => ({ file, source: readFileSync(file, 'utf8') }))
+  const registeredModules = getRegisteredModuleClasses(moduleSources, appModulePath)
 
   for (const entry of readdirSync(pluginsRoot)) {
-    validatePluginDirectory(entry, pluginsRoot, rootIndex, appModule)
+    validatePluginDirectory(entry, pluginsRoot, rootIndex, registeredModules)
   }
 }
 
@@ -1391,6 +1333,8 @@ const checkUnguardedRootOperations = () => {
     const source = stripComments(readFileSync(file, 'utf8'))
 
     for (const operation of getAuthOperations(source, file)) {
+      // Keep @ResolveField handlers in this check. Nest executes guards on field handlers, and the
+      // parent root may be public or otherwise less restrictive than the field it exposes.
       if (hasAuthenticationGuard(operation)) continue
 
       unguarded.add(`${file}::${operation.name}`)
@@ -1432,9 +1376,12 @@ const checkUnsafeTypeScriptCasts = () => {
     '.',
     path =>
       /\.(ts|tsx)$/.test(path) &&
-      path !== 'scripts/doctor.ts' &&
+      // scripts/ is one-off ops/maintenance tooling (also excluded from Sonar), not shipped product
+      // code; the cast gate targets the product surface. Specs and skipped future specs likewise.
+      !path.startsWith('scripts/') &&
       !path.endsWith('.spec.ts') &&
       !path.endsWith('.spec.tsx') &&
+      !path.endsWith('.spec.future.ts') &&
       !isGeneratedOrExternalCode(path),
   )
 
@@ -1878,6 +1825,8 @@ const checkAuthLevelDeclarations = () => {
     const source = stripComments(readFileSync(file, 'utf8'))
 
     for (const operation of getAuthOperations(source, file)) {
+      // GlobalAuthGuard also evaluates @ResolveField handlers, so they need explicit intent even
+      // though they are reached through a parent root operation.
       if (declaresAuthLevel(operation)) continue
 
       fail(

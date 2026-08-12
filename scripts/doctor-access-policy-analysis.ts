@@ -1,4 +1,5 @@
 import ts from 'typescript'
+import { decoratorName, decoratorsOf, unwrapExpression } from './doctor-typescript-analysis'
 
 export type AccessPolicyScope = 'platform' | 'organization'
 
@@ -42,18 +43,6 @@ const inlineAccessCalls = new Set([
   'hasPermission',
   'requirePermission',
 ])
-
-const decoratorsOf = (node: ts.Node): readonly ts.Decorator[] =>
-  ts.canHaveDecorators(node) ? (ts.getDecorators(node) ?? []) : []
-
-const decoratorName = (decorator: ts.Decorator): string => {
-  const expression = ts.isCallExpression(decorator.expression)
-    ? decorator.expression.expression
-    : decorator.expression
-  if (ts.isIdentifier(expression)) return expression.text
-  if (ts.isPropertyAccessExpression(expression)) return expression.name.text
-  return ''
-}
 
 const methodName = (method: ts.MethodDeclaration, sourceFile: ts.SourceFile): string =>
   ts.isIdentifier(method.name) || ts.isStringLiteral(method.name)
@@ -129,18 +118,6 @@ const calledAccessHelpers = (method: ts.MethodDeclaration): string[] => {
   }
   visit(method.body)
   return [...calls].sort((left, right) => left.localeCompare(right))
-}
-
-const unwrapExpression = (expression: ts.Expression): ts.Expression => {
-  let current = expression
-  while (
-    ts.isAsExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isParenthesizedExpression(current)
-  ) {
-    current = current.expression
-  }
-  return current
 }
 
 /** Read literal string properties only from one named top-level object-array declaration. */
