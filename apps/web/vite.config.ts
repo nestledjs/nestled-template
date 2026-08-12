@@ -56,7 +56,13 @@ export default defineConfig(() => ({
     include: ['@apollo/client', '@apollo/client/react'],
   },
   ssr: {
-    noExternal: ['@nestledjs/forms', /^@apollo\/client/],
+    // Add any package that causes ESM/CJS issues during SSR. A regex catches sub-imports.
+    // @nestledjs/access-control's entry does `import "./index.css"`. Here in the template it
+    // resolves to workspace source, so Vite's CSS pipeline handles it — but every downstream repo
+    // installs the published dist, which Node's ESM loader can't load as a runtime import and SSR
+    // 500s (ERR_UNKNOWN_FILE_EXTENSION for .css). The token isn't rewritten by promotion, so this
+    // entry flows down verbatim and bundles the package (extracting its CSS) in every repo.
+    noExternal: [/^@nestledjs\/access-control/, '@nestledjs/forms', /^@apollo\/client/],
     // Keep data-browser external
     external: ['@nestledjs/data-browser'],
   },
