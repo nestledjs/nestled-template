@@ -1,4 +1,8 @@
 import ts from 'typescript'
+import {
+  decoratorName as getDecoratorName,
+  decoratorsOf as getDecorators,
+} from './doctor-typescript-analysis'
 
 export type AuthOperationKind = 'graphql' | 'http'
 
@@ -41,19 +45,6 @@ const authLevelDecorators = new Set([
 ])
 const nonAuthGuardPattern = /Throttler|RateLimit/
 const guardNamePattern = /^[A-Z]\w*Guard$/
-
-const getDecorators = (node: ts.Node): readonly ts.Decorator[] =>
-  ts.canHaveDecorators(node) ? (ts.getDecorators(node) ?? []) : []
-
-const getDecoratorName = (decorator: ts.Decorator): string => {
-  const expression = ts.isCallExpression(decorator.expression)
-    ? decorator.expression.expression
-    : decorator.expression
-
-  if (ts.isIdentifier(expression)) return expression.text
-  if (ts.isPropertyAccessExpression(expression)) return expression.name.text
-  return ''
-}
 
 const getDecoratorSource = (
   decorators: readonly ts.Decorator[],
