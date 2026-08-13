@@ -56,9 +56,20 @@ rm -f "$TMPFILE"
 # Check if tests actually passed by looking for success indicators
 SEPARATOR="════════════════════════════════════════════════════════════"
 
-if echo "$OUTPUT" | grep -q "✅ Cleanup complete - all tests passed!" && \
+if [[ $EXIT_CODE -eq 0 ]]; then
+  # Vitest exited cleanly — the tests passed. Trust the exit code first: a legitimate pass can exit 0
+  # without the custom "Cleanup complete" console line reaching the captured stream, and requiring
+  # that marker here printed a false failure banner (fleet-upstream #109).
+  echo ""
+  echo "$SEPARATOR"
+  echo "✅ E2E Tests PASSED"
+  echo "$SEPARATOR"
+  exit 0
+elif echo "$OUTPUT" | grep -q "✅ Cleanup complete - all tests passed!" && \
    echo "$OUTPUT" | grep -q "Test Files.*passed" && \
    echo "$OUTPUT" | grep -q "Tests.*passed"; then
+  # Non-zero exit but the run completed with all tests passing: the intentional SIGKILL-to-prevent-
+  # hanging case. The marker fallback is retained only for this.
   echo ""
   echo "$SEPARATOR"
   echo "✅ E2E Tests PASSED (exit code adjusted from $EXIT_CODE to 0)"
