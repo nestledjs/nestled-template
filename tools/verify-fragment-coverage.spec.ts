@@ -212,6 +212,23 @@ describe('readSelectConstants', () => {
       },
     ])
   })
+
+  it('captures @graphql-operations even when no model resolves, so main can report the gap', () => {
+    // A model-less operation-scoped select must not be dropped silently — it still reaches
+    // operationScoped so main can flag the missing @prisma-model instead of reading green.
+    const workspace = createSelectWorkspace(`
+      /**
+       * @graphql-operations me
+       */
+      export const UNMAPPED_SELECT = {
+        id: true,
+      } as const
+    `)
+
+    expect(readSelectConstants(workspace, models)).toMatchObject([
+      { name: 'UNMAPPED_SELECT', model: undefined, operations: ['me'] },
+    ])
+  })
 })
 
 describe('scanObject', () => {

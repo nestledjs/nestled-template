@@ -587,9 +587,7 @@ const main = async (): Promise<void> => {
   const schema = buildSchema(readFileSync(join(repo, 'api-schema.graphql'), 'utf8'))
 
   const constants = readSelectConstants(repo, DATABASE_MODELS)
-  const operationScoped = constants.filter(
-    constant => constant.operations.length > 0 && constant.model !== undefined,
-  )
+  const operationScoped = constants.filter(constant => constant.operations.length > 0)
   const byModel = new Map<string, SelectConstant[]>()
   for (const constant of constants) {
     // An operation-scoped select answers for ITS documents, not for the model's whole
@@ -679,7 +677,16 @@ const main = async (): Promise<void> => {
   // positions, so ANY gap is a defect of this select or of a document it serves — there is no
   // "another select covers that operation" excuse left to hide behind.
   for (const constant of operationScoped) {
-    const model = constant.model as string
+    // A `@graphql-operations` select with no resolvable model can't be checked — but dropping it
+    // silently would make the net read green while skipping it. Report it so the gap is visible.
+    if (constant.model === undefined) {
+      operationFindings.push(
+        `${constant.name}: @graphql-operations is set but no @prisma-model resolves — the ` +
+          `operation-scoped net cannot check it. Add @prisma-model so the annotation is not silently skipped.`,
+      )
+      continue
+    }
+    const model = constant.model
     const { matched, select: required } = buildPrismaSelectFromOperationPaths({
       allSources,
       models: DATABASE_MODELS,
@@ -706,7 +713,7 @@ const main = async (): Promise<void> => {
         operationFindings.push(
           `${model}.${path} — DELIBERATELY omitted by ${constant.name} (@select-omits), yet a document ` +
             `on ${constant.operations.join('/')} requests it. The document is wrong, not the select: ` +
-            `repoint it at a select-safe fragment (see auth-fragments UserTokenUser). Do not add the field.`,
+            `repoint it at a fragment the select actually produces. Do not add the field.`,
         )
         continue
       }
