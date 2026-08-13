@@ -1,9 +1,13 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { buildSchema } from 'graphql'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  annotationListBefore,
   matchingBrace,
+  nonNullableAt,
+  parentProduced,
   readSelectConstants,
   resolveSpreads,
   sanitize,
@@ -312,5 +316,88 @@ describe('sanitize', () => {
     const source = 'const X = { a: "line\\\r\n", b: true }'
 
     expect((sanitize(source).match(/\n/g) ?? []).length).toBe(1)
+  })
+})
+
+describe('annotationListBefore', () => {
+  const constant = 'const ME_SELECT = {'
+
+  it('splits a comma-separated list', () => {
+    const raw = `/** @select-omits redFlagged, tokenVersion */\n${constant}`
+    expect(annotationListBefore(raw, raw.indexOf(constant), 0, 'select-omits')).toEqual([
+      'redFlagged',
+      'tokenVersion',
+    ])
+  })
+
+  it('accumulates repeated tags across lines', () => {
+    const raw = `/**\n * @graphql-operations me\n * @graphql-operations UserToken.user\n */\n${constant}`
+    expect(annotationListBefore(raw, raw.indexOf(constant), 0, 'graphql-operations')).toEqual([
+      'me',
+      'UserToken.user',
+    ])
+  })
+
+  it('does not inherit an annotation that belongs to the previous constant', () => {
+    // The window starts where the previous constant's body ended; an annotation
+    // before that point documented THAT constant, not this one.
+    const raw = `/** @select-omits redFlagged */\nconst A = { a: true }\n${constant}`
+    const previousEnd = raw.indexOf('}') + 1
+    expect(
+      annotationListBefore(raw, raw.indexOf(constant), previousEnd, 'select-omits'),
+    ).toEqual([])
+  })
+})
+
+describe('parentProduced', () => {
+  const have = new Set(['id', 'lineItems', 'lineItems.order'])
+
+  it('is trivially true at top level', () => {
+    expect(parentProduced(have, 'redFlagged')).toBe(true)
+  })
+
+  it('is true when the immediate parent is selected', () => {
+    expect(parentProduced(have, 'lineItems.order.id')).toBe(true)
+  })
+
+  it('is false when the parent is absent — the parent finding covers the subtree', () => {
+    expect(parentProduced(have, 'addresses.id')).toBe(false)
+  })
+})
+
+describe('nonNullableAt', () => {
+  // GraphQL nullability, not Prisma optionality, decides null-versus-error:
+  // currentStreak is non-optional in Prisma (it has a default) yet nullable here.
+  const schema = buildSchema(`
+    type Query { me: User }
+    type User {
+      id: ID!
+      redFlagged: Boolean!
+      currentStreak: Int
+      trainerType: [String!]!
+      favorites: [Experience!]
+    }
+    type Experience { id: ID!, title: String }
+  `)
+
+  it('flags a non-nullable scalar', () => {
+    expect(nonNullableAt(schema, 'User', 'redFlagged')).toBe(true)
+  })
+
+  it('flags a non-nullable list — omitting it errors exactly like a scalar', () => {
+    expect(nonNullableAt(schema, 'User', 'trainerType')).toBe(true)
+  })
+
+  it('passes a nullable field', () => {
+    expect(nonNullableAt(schema, 'User', 'currentStreak')).toBe(false)
+  })
+
+  it('reads nested nullability through a list relation', () => {
+    expect(nonNullableAt(schema, 'User', 'favorites.id')).toBe(true)
+    expect(nonNullableAt(schema, 'User', 'favorites.title')).toBe(false)
+  })
+
+  it('treats an unknown field as nullable rather than guessing', () => {
+    expect(nonNullableAt(schema, 'User', 'notAField')).toBe(false)
   })
 })
