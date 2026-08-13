@@ -59,7 +59,7 @@ SEPARATOR="═══════════════════════
 if [[ $EXIT_CODE -eq 0 ]]; then
   # Vitest exited cleanly — the tests passed. Trust the exit code first: a legitimate pass can exit 0
   # without the custom "Cleanup complete" console line reaching the captured stream, and requiring
-  # that marker here printed a false failure banner (fleet-upstream #109).
+  # that marker here printed a false failure banner even though the tests passed.
   echo ""
   echo "$SEPARATOR"
   echo "✅ E2E Tests PASSED"
