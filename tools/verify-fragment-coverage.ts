@@ -16,20 +16,36 @@
  * the whole SDK, and GraphQL-only fields (`@ResolveField` values with no column behind them)
  * filtered out through generated DATABASE_MODELS metadata.
  *
- * Granularity, stated honestly: this compares the UNION of fragments on a model against the
- * selects for that model. It is not per-operation. That yields two levels:
+ * Granularity: by default this compares the UNION of fragments on a model against the selects
+ * for that model. It is not per-operation. That yields two levels:
  *
  *   MISSING  a fragment field no select for the model produces. Some operation returns null for
  *            it. This is a real defect.
  *   PARTIAL  a field some selects have and others lack. Usually correct and intentional — a list
  *            select is meant to be thinner than a detail select — so it is advisory, not a
- *            failure. Read it when a specific screen looks empty.
+ *            failure. Read it when a specific screen looks empty. EXCEPT when the field is
+ *            non-nullable in api-schema.graphql: then the thinner select does not return null
+ *            for it, it fails the whole query ("Cannot return null for non-nullable field") the
+ *            moment any document served by that select requests it. That was the login-breaking
+ *            redFlagged incident, and it was sitting in this advisory bucket — so a non-nullable
+ *            PARTIAL is a FAILURE unless every select lacking the field acknowledges it with
+ *            `@select-omits <field>` (the deliberate deny-list case, e.g. a self-read).
+ *
+ * A select annotated with `@graphql-operations <paths>` opts out of the model union into a
+ * sharper PER-OPERATION check: the required set is what SDK documents actually request at those
+ * positions (`me`, or `UserToken.user` for a field resolver shared across operations), and ANY
+ * requested field the select lacks is a failure — nullable ones are silent blanks, non-nullable
+ * ones kill the query. A required field that is also in `@select-omits` is the sharpest failure
+ * of all: a served document is requesting a field the select deliberately never produces, so the
+ * DOCUMENT is wrong and must be repointed at a select-safe fragment (that is exactly how login
+ * broke: the token user fragment pointed at the staff kitchen-sink). A path entry that matches
+ * no document is itself a failure — a renamed operation must not silently dissolve the net.
  *
  * A helper annotated with `@fragment-partial` still contributes to a same-file `...SPREAD`, but is
  * not treated as an operation select for model-wide fragment coverage. Use that marker for a
  * nested helper that needs `@prisma-model` so verify-selects can validate its columns.
  *
- * Only MISSING sets a non-zero exit code.
+ * MISSING, non-nullable PARTIAL, and every OPERATION-SCOPED finding set a non-zero exit code.
  *
  * Known blind spots, so nobody reads a clean run as more than it is:
  *   - inline selects written at a call site rather than as a named constant are not attributed
@@ -43,8 +59,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { buildSchema, getNamedType, isNonNullType, isObjectType, type GraphQLSchema } from 'graphql'
 import {
   buildPrismaSelectFromFragments,
+  buildPrismaSelectFromOperationPaths,
   type DatabaseModelMetadata,
   type GraphqlSource,
   type PrismaSelect,
@@ -276,7 +294,34 @@ interface SelectConstant {
   file: string
   model: string | undefined
   name: string
+  /** Fields the constant deliberately never selects (`@select-omits a, b`). */
+  omits: string[]
+  /** Document positions the constant serves (`@graphql-operations me, UserToken.user`). */
+  operations: string[]
   select: PrismaSelect
+}
+
+/**
+ * Whether requesting `path` on `modelName` errors the whole query when the select omits it.
+ * Read from the committed api-schema.graphql, NOT from Prisma metadata: the two disagree —
+ * `currentStreak` is non-optional in Prisma (it has a default) but nullable in GraphQL, and it
+ * is the GraphQL wrapper that decides null-versus-error at runtime.
+ */
+export const nonNullableAt = (
+  schema: GraphQLSchema,
+  modelName: string,
+  path: string,
+): boolean => {
+  let type = schema.getType(modelName)
+  const segments = path.split('.')
+  for (const [index, segment] of segments.entries()) {
+    if (!isObjectType(type)) return false
+    const field = type.getFields()[segment]
+    if (!field) return false
+    if (index === segments.length - 1) return isNonNullType(field.type)
+    type = getNamedType(field.type)
+  }
+  return false
 }
 
 /**
@@ -320,6 +365,25 @@ const annotationBefore = (raw: string, offset: number, previousEnd: number): str
   return matches.length > 0 ? matches[matches.length - 1][1] : undefined
 }
 
+/**
+ * A comma-separated list annotation (`@select-omits a, b` / `@graphql-operations me, X.y`) in
+ * the comment directly preceding a constant. Several lines with the same tag accumulate. The
+ * value runs to end of line; a closing comment marker on the same line is stripped so the
+ * annotation can sit last in a one-line or block comment.
+ */
+export const annotationListBefore = (
+  raw: string,
+  offset: number,
+  previousEnd: number,
+  tag: string,
+): string[] => {
+  const window = raw.slice(Math.max(previousEnd, 0), offset)
+  return [...window.matchAll(new RegExp(`@${tag}[ \\t]+([^\\n]+)`, 'g'))]
+    .flatMap(match => match[1].replace(/\*\/.*$/, '').split(','))
+    .map(entry => entry.trim())
+    .filter(Boolean)
+}
+
 export const readSelectConstants = (
   repo: string,
   models: readonly DatabaseModelMetadata[],
@@ -353,6 +417,8 @@ export const readSelectConstants = (
         const fragmentPartial = /@fragment-partial\b/.test(
           raw.slice(Math.max(previousEnd, 0), declaration),
         )
+        const omits = annotationListBefore(raw, declaration, previousEnd, 'select-omits')
+        const operations = annotationListBefore(raw, declaration, previousEnd, 'graphql-operations')
         previousEnd = matchingBrace(source, open)
         inFile.set(match[1], { select, spreads })
         if (fragmentPartial) continue
@@ -360,6 +426,8 @@ export const readSelectConstants = (
           file,
           model: modelForConstant(match[1], annotated, models),
           name: match[1],
+          omits,
+          operations,
           select,
         })
       }
@@ -466,6 +534,20 @@ export const requiredPaths = (
   return { skipped, wanted }
 }
 
+/**
+ * Whether a select produces the PARENT of a dotted path (trivially true at top level).
+ *
+ * The consequence of an absent field belongs to the shallowest absent segment: when a select
+ * lacks `addresses` entirely, `addresses.id` never resolves at all, so reporting it — let alone
+ * as query-fatal — is noise on top of the `addresses` finding. Only a gap whose parent IS
+ * produced is a finding of its own, and only then does the field's own nullability decide
+ * silent-null versus query-fatal.
+ */
+export const parentProduced = (have: ReadonlySet<string>, path: string): boolean => {
+  const dot = path.lastIndexOf('.')
+  return dot === -1 || have.has(path.slice(0, dot))
+}
+
 export const flatten = (select: PrismaSelect, prefix = ''): string[] => {
   const paths: string[] = []
   for (const [field, value] of Object.entries(select)) {
@@ -500,11 +582,20 @@ const main = async (): Promise<void> => {
   }
   const allSources = graphqlSources(join(repo, 'libs/shared/sdk/src/graphql'))
   if (allSources.length === 0) throw new Error('No SDK .graphql files found')
+  // The nullability oracle. Committed and CI-verified, so a missing file is a broken
+  // checkout, not a condition to soldier through — without it the non-nullable net is off.
+  const schema = buildSchema(readFileSync(join(repo, 'api-schema.graphql'), 'utf8'))
 
   const constants = readSelectConstants(repo, DATABASE_MODELS)
+  const operationScoped = constants.filter(
+    constant => constant.operations.length > 0 && constant.model !== undefined,
+  )
   const byModel = new Map<string, SelectConstant[]>()
   for (const constant of constants) {
-    if (!constant.model) continue
+    // An operation-scoped select answers for ITS documents, not for the model's whole
+    // fragment union — holding a self-read to the staff kitchen-sink would only bury
+    // real findings under hundreds of false ones.
+    if (!constant.model || constant.operations.length > 0) continue
     const list = byModel.get(constant.model) ?? []
     list.push(constant)
     byModel.set(constant.model, list)
@@ -518,16 +609,19 @@ const main = async (): Promise<void> => {
 
   const served = resolveFieldsByModel(repo)
   const missing: string[] = []
+  const nonNullPartial: string[] = []
+  const operationFindings: string[] = []
   const partial: string[] = []
   const skipped: string[] = []
   let checkedModels = 0
+  let checkedPaths = 0
   let resolvedElsewhere = 0
 
   for (const modelName of [...fragmentModels].sort(alphabetical)) {
     if (!DATABASE_MODELS.some(model => model.modelName === modelName)) continue
     const selects = byModel.get(modelName)
     if (!selects || selects.length === 0) {
-      skipped.push(modelName)
+      if (!operationScoped.some(constant => constant.model === modelName)) skipped.push(modelName)
       continue
     }
 
@@ -561,14 +655,72 @@ const main = async (): Promise<void> => {
           `${modelName}.${path} — produced by none of ${selects.map(s => s.name).join(', ')}`,
         )
       } else if (holders < selects.length) {
-        const without = selects.filter((_, index) => !provided[index].has(path)).map(s => s.name)
-        partial.push(`${modelName}.${path} — absent from ${without.join(', ')}`)
+        const without = selects.filter((_, index) => !provided[index].has(path))
+        const escalated = selects.filter(
+          (select, index) =>
+            !provided[index].has(path) &&
+            !select.omits.includes(path) &&
+            parentProduced(provided[index], path),
+        )
+        if (nonNullableAt(schema, modelName, path) && escalated.length > 0) {
+          nonNullPartial.push(
+            `${modelName}.${path} — non-nullable, absent from ${escalated.map(s => s.name).join(', ')}: ` +
+              `any document those selects serve that requests it fails the WHOLE query. ` +
+              `Add the field, or acknowledge a deliberate deny with @select-omits ${path}.`,
+          )
+        } else {
+          partial.push(`${modelName}.${path} — absent from ${without.map(s => s.name).join(', ')}`)
+        }
       }
+    }
+  }
+
+  // Operation-scoped selects: the required set is what documents request at the annotated
+  // positions, so ANY gap is a defect of this select or of a document it serves — there is no
+  // "another select covers that operation" excuse left to hide behind.
+  for (const constant of operationScoped) {
+    const model = constant.model as string
+    const { matched, select: required } = buildPrismaSelectFromOperationPaths({
+      allSources,
+      models: DATABASE_MODELS,
+      paths: constant.operations,
+      targetModelName: model,
+    })
+    checkedPaths += constant.operations.length
+
+    for (const [entry, sites] of matched) {
+      if (sites === 0) {
+        operationFindings.push(
+          `${constant.name}: @graphql-operations "${entry}" matches no SDK document — ` +
+            `a renamed or deleted operation must not silently dissolve the net; fix or drop the entry.`,
+        )
+      }
+    }
+
+    const { wanted } = requiredPaths(required, model, served, DATABASE_MODELS)
+    const have = new Set(flatten(constant.select))
+    for (const path of wanted) {
+      if (have.has(path)) continue
+      if (!parentProduced(have, path)) continue
+      if (constant.omits.includes(path)) {
+        operationFindings.push(
+          `${model}.${path} — DELIBERATELY omitted by ${constant.name} (@select-omits), yet a document ` +
+            `on ${constant.operations.join('/')} requests it. The document is wrong, not the select: ` +
+            `repoint it at a select-safe fragment (see auth-fragments UserTokenUser). Do not add the field.`,
+        )
+        continue
+      }
+      const fatal = nonNullableAt(schema, model, path)
+      operationFindings.push(
+        `${model}.${path} — requested via ${constant.operations.join('/')} but absent from ${constant.name}` +
+          (fatal ? ' — non-nullable: the whole query FAILS.' : ' — comes back null silently.'),
+      )
     }
   }
 
   console.log(
     `Checked ${checkedModels} model(s) with both fragments and selects; ` +
+      `${operationScoped.length} select(s) checked per-operation against ${checkedPaths} path(s); ` +
       `${constants.length} select constant(s) parsed; ` +
       `${resolvedElsewhere} field(s) skipped as @ResolveField.`,
   )
@@ -578,6 +730,20 @@ const main = async (): Promise<void> => {
       `\nMISSING (${missing.length}) — a fragment asks for these and nothing produces them:`,
     )
     for (const entry of missing.sort(alphabetical)) console.log(`  ${entry}`)
+  }
+
+  if (nonNullPartial.length > 0) {
+    console.log(
+      `\nNON-NULLABLE PARTIAL (${nonNullPartial.length}) — these error the whole query, not a field:`,
+    )
+    for (const entry of nonNullPartial.sort(alphabetical)) console.log(`  ${entry}`)
+  }
+
+  if (operationFindings.length > 0) {
+    console.log(
+      `\nOPERATION-SCOPED (${operationFindings.length}) — a served document requests what its select does not produce:`,
+    )
+    for (const entry of operationFindings.sort(alphabetical)) console.log(`  ${entry}`)
   }
 
   if (verbose && partial.length > 0) {
@@ -598,8 +764,9 @@ const main = async (): Promise<void> => {
     )
   }
 
-  if (missing.length === 0) console.log('\nNo fragment field is unproduced by its model’s selects.')
-  process.exitCode = missing.length > 0 ? 1 : 0
+  const failures = missing.length + nonNullPartial.length + operationFindings.length
+  if (failures === 0) console.log('\nNo fragment field is unproduced by its model’s selects.')
+  process.exitCode = failures > 0 ? 1 : 0
 }
 
 // Only run when invoked as a script, so the parser can be unit-tested by importing this module.

@@ -7,6 +7,7 @@ import {
   type FragmentDefinitionNode,
   type FragmentSpreadNode,
   type InlineFragmentNode,
+  type OperationDefinitionNode,
   type SelectionSetNode,
 } from 'graphql'
 
@@ -253,6 +254,183 @@ export const buildPrismaSelectFromFragments = (options: {
   }
 }
 
+export type OperationPathSelectResult = {
+  /** Path entry → number of document sites it matched. A zero is a stale annotation. */
+  matched: Map<string, number>
+  select: PrismaSelect
+  skippedFields: string[]
+}
+
+/**
+ * All field nodes named `fieldName` reachable at ONE level of a selection set — directly,
+ * through fragment spreads, or through inline fragments. Spreads are resolved by name across
+ * the whole SDK, so `login { ...UserTokenDetails }` still yields the `user` field the fragment
+ * carries. The path guard stops fragment cycles the same way selectForFragmentSpread does.
+ */
+const fieldNodesNamed = (
+  selectionSet: SelectionSetNode,
+  fieldName: string,
+  fragments: ReadonlyMap<string, FragmentReference>,
+  fragmentPath: ReadonlySet<string>,
+): FieldNode[] => {
+  const nodes: FieldNode[] = []
+
+  for (const selection of selectionSet.selections) {
+    if (selection.kind === Kind.FIELD) {
+      if (selection.name.value === fieldName) nodes.push(selection)
+      continue
+    }
+    if (selection.kind === Kind.INLINE_FRAGMENT) {
+      nodes.push(...fieldNodesNamed(selection.selectionSet, fieldName, fragments, fragmentPath))
+      continue
+    }
+    const fragment = fragments.get(selection.name.value)
+    if (!fragment || fragmentPath.has(selection.name.value)) continue
+    const nextPath = new Set(fragmentPath)
+    nextPath.add(selection.name.value)
+    nodes.push(
+      ...fieldNodesNamed(fragment.definition.selectionSet, fieldName, fragments, nextPath),
+    )
+  }
+
+  return nodes
+}
+
+/**
+ * Every inline-fragment selection set conditioned on `typeName` reachable from a selection set —
+ * descending through fields AND following fragment spreads by name across the whole SDK (with a
+ * path guard against cycles), so `... on UserToken` nested inside a spread is not missed.
+ */
+const inlineFragmentSetsOn = (
+  selectionSet: SelectionSetNode,
+  typeName: string,
+  fragments: ReadonlyMap<string, FragmentReference>,
+  fragmentPath: ReadonlySet<string>,
+): SelectionSetNode[] => {
+  const sets: SelectionSetNode[] = []
+  for (const selection of selectionSet.selections) {
+    if (selection.kind === Kind.INLINE_FRAGMENT) {
+      if (selection.typeCondition?.name.value === typeName) sets.push(selection.selectionSet)
+      sets.push(...inlineFragmentSetsOn(selection.selectionSet, typeName, fragments, fragmentPath))
+      continue
+    }
+    if (selection.kind === Kind.FIELD) {
+      if (selection.selectionSet) {
+        sets.push(...inlineFragmentSetsOn(selection.selectionSet, typeName, fragments, fragmentPath))
+      }
+      continue
+    }
+    const fragment = fragments.get(selection.name.value)
+    if (!fragment || fragmentPath.has(selection.name.value)) continue
+    const nextPath = new Set(fragmentPath)
+    nextPath.add(selection.name.value)
+    sets.push(...inlineFragmentSetsOn(fragment.definition.selectionSet, typeName, fragments, nextPath))
+  }
+  return sets
+}
+
+/** Operation definitions across the whole SDK, parsed once so path matching doesn't reparse. */
+const operationDefinitionsOf = (sources: readonly GraphqlSource[]): OperationDefinitionNode[] =>
+  sources.flatMap(source =>
+    parse(source.source).definitions.filter(
+      (definition): definition is OperationDefinitionNode =>
+        definition.kind === Kind.OPERATION_DEFINITION,
+    ),
+  )
+
+/**
+ * Where a path's first segment starts matching, and the segments still to walk. A type-scoped
+ * entry (`UserToken.user`, leading capital) begins in every fragment defined ON that type plus
+ * every inline fragment conditioned on it; a plain entry begins at every operation's root.
+ */
+const pathCursors = (
+  entry: string,
+  operations: readonly OperationDefinitionNode[],
+  fragments: ReadonlyMap<string, FragmentReference>,
+): { cursors: SelectionSetNode[]; remaining: string[] } => {
+  const segments = entry.split('.').map(segment => segment.trim())
+  if (!/^[A-Z]/.test(segments[0] ?? '')) {
+    return { cursors: operations.map(operation => operation.selectionSet), remaining: segments }
+  }
+  const cursors = [...fragments.values()]
+    .filter(fragment => fragment.definition.typeCondition.name.value === segments[0])
+    .map(fragment => fragment.definition.selectionSet)
+  for (const operation of operations) {
+    cursors.push(...inlineFragmentSetsOn(operation.selectionSet, segments[0], fragments, new Set()))
+  }
+  return { cursors, remaining: segments.slice(1) }
+}
+
+/** Walk `remaining` segments from `cursors`, returning the field nodes at the final segment. */
+const walkPathToLeaves = (
+  cursors: readonly SelectionSetNode[],
+  remaining: readonly string[],
+  fragments: ReadonlyMap<string, FragmentReference>,
+): FieldNode[] => {
+  let current: SelectionSetNode[] = [...cursors]
+  for (const [index, segment] of remaining.entries()) {
+    const nodes = current.flatMap(cursor => fieldNodesNamed(cursor, segment, fragments, new Set()))
+    if (index === remaining.length - 1) return nodes
+    current = nodes
+      .map(node => node.selectionSet)
+      .filter((set): set is SelectionSetNode => set !== undefined)
+  }
+  return []
+}
+
+/**
+ * The union of what SDK documents actually request at specific positions, as a Prisma select
+ * on one model — the per-operation counterpart to buildPrismaSelectFromFragments' model-wide
+ * union.
+ *
+ * A path entry is either:
+ *   - an operation root field, dotted for nesting: `me`, `login.user` — matched against every
+ *     operation definition in the SDK, following fragment spreads between segments;
+ *   - a type-scoped field: `UserToken.user` (leading segment capitalized) — matched inside
+ *     every fragment defined ON that type and every inline fragment conditioned on it. Use
+ *     this when one field resolver serves the same field across many operations: any new
+ *     operation returning that type is covered without touching the annotation.
+ *
+ * The selection under each matched field is interpreted against `targetModelName` exactly the
+ * way buildPrismaSelectFromFragments interprets a fragment body: spreads followed across the
+ * whole SDK, GraphQL-only fields dropped through the models metadata.
+ */
+export const buildPrismaSelectFromOperationPaths = (options: {
+  allSources: readonly GraphqlSource[]
+  models: readonly DatabaseModelMetadata[]
+  paths: readonly string[]
+  targetModelName: string
+}): OperationPathSelectResult => {
+  const fragments = fragmentsFrom(options.allSources)
+  const models = new Map(options.models.map(model => [model.modelName, model]))
+  const targetModel = models.get(options.targetModelName)
+  if (!targetModel) {
+    throw new Error(`No generated database metadata found for ${options.targetModelName}`)
+  }
+
+  const context: SelectContext = {
+    fragments,
+    missingFragments: new Set(),
+    models,
+    skippedFields: new Set(),
+  }
+  const operations = operationDefinitionsOf(options.allSources)
+  const select: PrismaSelect = {}
+  const matched = new Map<string, number>()
+
+  for (const entry of options.paths) {
+    const { cursors, remaining } = pathCursors(entry, operations, fragments)
+    const leaves = walkPathToLeaves(cursors, remaining, fragments)
+    matched.set(entry, leaves.length)
+    for (const leaf of leaves) {
+      if (!leaf.selectionSet) continue
+      mergeSelect(select, selectForSelectionSet(leaf.selectionSet, targetModel, context, new Set()))
+    }
+  }
+
+  return { matched, select, skippedFields: [...context.skippedFields].sort(alphabetical) }
+}
+
 const operationRootFields = (
   selectionSet: SelectionSetNode,
   fragments: ReadonlyMap<string, FragmentReference>,
@@ -308,6 +486,16 @@ export const getSdkOperations = (sources: readonly GraphqlSource[]): SdkOperatio
 
   return operations.sort((left, right) => left.name.localeCompare(right.name))
 }
+
+/**
+ * The PascalCase rule graphql-codegen applies to export names: split on case boundaries,
+ * then capitalize each word's first letter and lowercase the rest — which flattens acronym
+ * runs (`FAQS` → `Faqs`, `deleteCourseFAQ` → `DeleteCourseFaq`).
+ */
+export const codegenPascalCase = (name: string): string =>
+  (name.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+/g) ?? [name])
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('')
 
 const sdkModulePattern = /\/shared\/sdk$|\/shared\/sdk\/|^@[^/]+\/shared\/sdk$/
 
@@ -458,8 +646,16 @@ export const getSdkContractReport = (options: {
         (left, right) =>
           left.file.localeCompare(right.file) || left.operation.localeCompare(right.operation),
       ),
+    // The generated document const is the codegen-PascalCased operation name: `mutation
+    // createPaymentTransaction` exports `CreatePaymentTransaction`, and acronym runs are
+    // normalized (`deleteCourseFAQ` → `DeleteCourseFaq`, `FAQS` → `Faqs`). Consumers import
+    // that const, never the declared name, so matching the declared name alone reported
+    // every such operation as unconsumed — an oracle that, followed blindly, would have
+    // deleted live staff mutations.
     sdkWithoutConsumer: applicationOperations.filter(
-      operation => !consumerImports.has(operation.name),
+      operation =>
+        !consumerImports.has(operation.name) &&
+        !consumerImports.has(codegenPascalCase(operation.name)),
     ),
   }
 }
