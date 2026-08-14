@@ -17,10 +17,12 @@ from string import ascii_letters, digits
 
 USAGE = "Usage: fragment-to-select.py <repo> <model-folder> [SELECT_NAME]"
 
-# <repo> and <model-folder> are path segments, SELECT_NAME is a TS identifier. Nothing legitimate
-# needs a leading dash, a path separator or whitespace.
-ALLOWED_CHARACTERS = frozenset(ascii_letters + digits + "._-")
-ALLOWED_LEADING_CHARACTERS = frozenset(ascii_letters + digits)
+# <repo> and <model-folder> are path segments (a repo is often `.`, `../x`, or an absolute path) and
+# SELECT_NAME is a TS identifier. Path separators and a leading `.`/`/` are allowed; a leading dash is
+# NOT — that is the flag-injection guard (an arg like `--import=./evil.js` is consumed by tsx/node
+# before the downstream script sees it). Whitespace stays out too. (fleet-upstream #130)
+ALLOWED_CHARACTERS = frozenset(ascii_letters + digits + "._-/")
+ALLOWED_LEADING_CHARACTERS = frozenset(ascii_letters + digits + "./")
 MAX_ARGUMENTS = 3
 
 

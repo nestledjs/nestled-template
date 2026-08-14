@@ -94,6 +94,41 @@ export const USER_SELECT = {
     ])
   })
 
+  it('counts a non-nullable enum LIST column as required coverage (#129)', () => {
+    // An enum array (`TrainerType[]`) is an ordinary selectable scalar column; the old `&& !list`
+    // dropped it, so a select omitting it passed silently.
+    const workspace = mkdtempSync(join(tmpdir(), 'verify-select-coverage-'))
+    workspaces.push(workspace)
+    writeFixture(
+      workspace,
+      'libs/api/prisma/src/lib/schemas/schema.prisma',
+      'enum TrainerType {\n  A\n  B\n}\n\nmodel User {\n  id          String        @id\n  trainerType TrainerType[]\n}\n',
+    )
+    writeFixture(
+      workspace,
+      'api-schema.graphql',
+      'type User {\n  id: String!\n  trainerType: [TrainerType!]!\n}\n',
+    )
+    writeFixture(
+      workspace,
+      'libs/api/custom/src/lib/user/user.select.ts',
+      '\nexport const USER_SELECT = {\n  id: true,\n} as const\n',
+    )
+
+    const result = runTool(workspace)
+
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stdout).problems).toEqual([
+      {
+        file: 'libs/api/custom/src/lib/user/user.select.ts',
+        constant: 'USER_SELECT',
+        model: 'User',
+        missing: ['trainerType'],
+      },
+    ])
+  })
+
   it('accepts a deliberate omission and reports nullable gaps only when requested', () => {
     const workspace = createWorkspace(`
 /** @select-omits email */
