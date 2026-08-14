@@ -255,19 +255,41 @@ const getRegexMatches = (pattern: RegExp, source: string): RegExpExecArray[] => 
   return matches
 }
 
+// Resolve a relative import spec to a file on disk (adding .ts/.tsx or an index file).
+const resolveLocalImport = (fromDir: string, spec: string): string | undefined => {
+  const base = join(fromDir, spec)
+  const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')]
+  return candidates.find(candidate => safeStat(candidate)?.isFile() === true)
+}
+
 const getRegisteredRouteFiles = (): Set<string> => {
   if (!existsSync(routeConfigPath)) {
     fail('routes', 'Route configuration file is missing', routeConfigPath)
     return new Set()
   }
 
-  const routeConfig = stripComments(readFileSync(routeConfigPath, 'utf8'))
+  // Route file paths (`route('x', './routes/x.tsx')`) resolve from the app root, so a helper that
+  // composes routes (createAdminRoutes() etc.) uses the same `./routes/...` strings from a different
+  // file. Scan routes.tsx AND every file it imports transitively (relative imports only), or
+  // helper-composed routes report as unregistered (fleet-upstream #121).
   const registered = new Set<string>()
   const routeFilePattern = /['"]\.\/routes\/([^'"]+\.(?:tsx|ts))['"]/g
+  const importPattern = /from\s+['"](\.[^'"]+)['"]/g
+  const visited = new Set<string>()
 
-  for (const match of getRegexMatches(routeFilePattern, routeConfig)) {
-    registered.add(join(routeRoot, match[1]))
+  const scan = (filePath: string): void => {
+    if (visited.has(filePath) || !existsSync(filePath)) return
+    visited.add(filePath)
+    const source = stripComments(readFileSync(filePath, 'utf8'))
+    for (const match of getRegexMatches(routeFilePattern, source)) {
+      registered.add(join(routeRoot, match[1]))
+    }
+    for (const match of getRegexMatches(importPattern, source)) {
+      const resolved = resolveLocalImport(dirname(filePath), match[1])
+      if (resolved) scan(resolved)
+    }
   }
+  scan(routeConfigPath)
 
   return registered
 }
@@ -1007,13 +1029,6 @@ const checkSdkContract = () => {
   reportResolvedSdkBaselineEntries(report, baselineApiFields, baselineInlineOperations)
   reportUnusedSdkOperations(report, exceptions)
 }
-
-const pascalCase = (value: string): string =>
-  value
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join('')
 
 const getModuleClasses = (source: string): string[] =>
   getRegexMatches(/export\s+class\s+(\w+Module)\b/g, source).map(match => match[1])
@@ -1867,6 +1882,10 @@ const readPermissionCatalogs = () => {
 
 const checkAccessPolicyDeclarations = () => {
   const catalogs = readPermissionCatalogs()
+  // A catalog the reader returned empty for would report EVERY declared permission as "unknown" — a
+  // broken read, not N real findings (fleet-upstream #120). Collect those scopes and report each once
+  // instead of flooding one finding per permission.
+  const emptyScopesInUse = new Set<string>()
 
   for (const file of getAuthSourceFiles()) {
     const report = analyzeAccessPolicies(readFileSync(file, 'utf8'), file)
@@ -1882,6 +1901,10 @@ const checkAccessPolicyDeclarations = () => {
       }
 
       const catalog = catalogs[declaration.scope]
+      if (catalog.size === 0) {
+        emptyScopesInUse.add(declaration.scope)
+        continue
+      }
       for (const permission of declaration.permissions) {
         if (catalog.has(permission)) continue
         fail(
@@ -1901,6 +1924,18 @@ const checkAccessPolicyDeclarations = () => {
         violation.line,
       )
     }
+  }
+
+  const scopeCatalogPath: Record<string, string> = {
+    platform: platformPermissionCatalogPath,
+    organization: organizationPermissionCatalogPath,
+  }
+  for (const scope of emptyScopesInUse) {
+    fail(
+      'access-policy',
+      `The ${scope} permission catalog is empty or unreadable, so access-policy declarations using it cannot be validated (every permission would otherwise report "unknown"). Check the catalog seed file and the exported array the doctor reads.`,
+      scopeCatalogPath[scope],
+    )
   }
 }
 

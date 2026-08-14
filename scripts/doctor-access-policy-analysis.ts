@@ -134,36 +134,44 @@ export const readStringObjectArray = (
     ts.ScriptKind.TS,
   )
 
-  for (const statement of sourceFile.statements) {
-    if (!ts.isVariableStatement(statement)) continue
-    for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== variableName) continue
-      if (!declaration.initializer) return []
-      const initializer = unwrapExpression(declaration.initializer)
-      if (!ts.isArrayLiteralExpression(initializer)) return []
-
-      return initializer.elements.flatMap(element => {
-        const value = unwrapExpression(element)
-        if (!ts.isObjectLiteralExpression(value)) return []
-        const entry: Record<string, string> = {}
-        for (const member of value.properties) {
-          if (!ts.isPropertyAssignment(member)) continue
-          const name =
-            ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) ? member.name.text : ''
-          if (!properties.includes(name)) continue
-          const propertyValue = unwrapExpression(member.initializer)
-          if (
-            ts.isStringLiteral(propertyValue) ||
-            ts.isNoSubstitutionTemplateLiteral(propertyValue)
-          ) {
-            entry[name] = propertyValue.text
-          }
-        }
-        return properties.every(property => entry[property]) ? [entry] : []
-      })
+  // Find the declaration ANYWHERE in the tree, not only among top-level statements — a repo may
+  // declare the catalog inside a function, module, or block, and a top-level-only scan hands back an
+  // empty catalog that then reports every declared permission as "unknown" (fleet-upstream #120).
+  let declaration: ts.VariableDeclaration | undefined
+  const visit = (node: ts.Node): void => {
+    if (declaration) return
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === variableName
+    ) {
+      declaration = node
+      return
     }
+    ts.forEachChild(node, visit)
   }
-  return []
+  visit(sourceFile)
+
+  if (!declaration?.initializer) return []
+  const initializer = unwrapExpression(declaration.initializer)
+  if (!ts.isArrayLiteralExpression(initializer)) return []
+
+  return initializer.elements.flatMap(element => {
+    const value = unwrapExpression(element)
+    if (!ts.isObjectLiteralExpression(value)) return []
+    const entry: Record<string, string> = {}
+    for (const member of value.properties) {
+      if (!ts.isPropertyAssignment(member)) continue
+      const name =
+        ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) ? member.name.text : ''
+      if (!properties.includes(name)) continue
+      const propertyValue = unwrapExpression(member.initializer)
+      if (ts.isStringLiteral(propertyValue) || ts.isNoSubstitutionTemplateLiteral(propertyValue)) {
+        entry[name] = propertyValue.text
+      }
+    }
+    return properties.every(property => entry[property]) ? [entry] : []
+  })
 }
 
 export const analyzeAccessPolicies = (source: string, fileName = 'source.ts') => {

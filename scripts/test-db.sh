@@ -19,7 +19,7 @@ COMPOSE="$SCRIPT_DIR/dev-docker.sh"
 # dotenv-style inline ` # comment` and trim. A blanket quote-strip would also eat quotes from
 # inside a value, and leaving the comment in produced URLs like `localhost:5443 # block 1/db`.
 read_env() {
-  [ -f "$ROOT/.env" ] || return 0
+  [[ -f "$ROOT/.env" ]] || return 0
 
   local key="$1"
   local raw
@@ -28,7 +28,7 @@ read_env() {
   raw="${raw%"${raw##*[![:space:]]}"}"
 
   local first="${raw:0:1}" last="${raw: -1}"
-  if [ ${#raw} -ge 2 ] && [ "$first" = "$last" ] && { [ "$first" = '"' ] || [ "$first" = "'" ]; }; then
+  if [[ ${#raw} -ge 2 && "$first" == "$last" && ( "$first" == '"' || "$first" == "'" ) ]]; then
     printf '%s\n' "${raw:1:${#raw}-2}"
     return 0
   fi
@@ -105,7 +105,8 @@ case "$1" in
     
   "migrate")
     echo "🔄 Running Prisma migrations on test database..."
-    export DATABASE_URL=$TEST_DB_URL
+    export DATABASE_URL="$TEST_DB_URL"
+    export DIRECT_URL="$TEST_DB_URL"   # prisma.config.ts prefers DIRECT_URL; pin it (quoted for ?schema=) (#117)
     pnpm prisma migrate deploy
     echo "✅ Test database migrations complete"
     ;;

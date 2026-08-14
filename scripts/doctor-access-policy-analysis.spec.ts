@@ -78,4 +78,27 @@ describe('readStringObjectArray', () => {
 
     expect(entries).toEqual([{ key: 'platform.users.read' }])
   })
+
+  it('finds the catalog when it is declared inside a function rather than at the top level (#120)', () => {
+    // A repo that seeds permissions from a builder must not be handed an empty catalog (which would
+    // then report every declared permission as "unknown").
+    const entries = readStringObjectArray(
+      `
+        export function buildCatalog() {
+          const permissions = [
+            { key: 'platform.users.read' },
+            { key: 'platform.users.manage' },
+          ]
+          return permissions
+        }
+      `,
+      'permissions',
+      ['key'],
+    )
+
+    expect(entries).toEqual([
+      { key: 'platform.users.read' },
+      { key: 'platform.users.manage' },
+    ])
+  })
 })
