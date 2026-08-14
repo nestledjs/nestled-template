@@ -56,10 +56,16 @@ describe('authentication and authorization error navigation', () => {
       globalThis.dispatchEvent(new CustomEvent(APOLLO_ACCESS_FORBIDDEN_EVENT))
     })
 
+    // The event round-trips through a window listener, a state update and a re-render before the
+    // heading exists. findBy's default 1s expires under CI load with coverage instrumentation --
+    // this test has failed at 1044ms on a green suite once already, and was patched for an async
+    // race once before that. The generous timeout costs nothing when the render is fast.
     expect(
-      await screen.findByRole('heading', {
-        name: 'You don’t have permission to view this page',
-      }),
+      await screen.findByRole(
+        'heading',
+        { name: 'You don’t have permission to view this page' },
+        { timeout: 5000 },
+      ),
     ).toBeInTheDocument()
   })
 })
