@@ -52,23 +52,31 @@ TEST_DB_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${TES
 TEST_DB_DISPLAY_PORT="$(printf '%s' "$TEST_DB_URL" | sed -nE 's#^[^/]+://[^/]+:([0-9]+)/.*#\1#p')"
 TEST_DB_DISPLAY_PORT="${TEST_DB_DISPLAY_PORT:-$TEST_DB_PORT}"
 TEST_DB_CONTAINER="nestled-template_postgres_test"
+# Bind mount backing postgres-test (see the `volumes:` entry in .dev/docker-compose.yml). Compose
+# `down` removes named volumes only with -v, and never touches a bind mount — so recreating the
+# container alone does NOT clear the data and `reset` has to delete this explicitly (#137).
+TEST_DB_DATA_DIR="$ROOT/.dev/tmp/postgres-test"
+
+wait_for_db() {
+  echo "⏳ Waiting for test database to be ready..."
+  local timeout=30
+  while ! docker exec "$TEST_DB_CONTAINER" pg_isready -U postgres > /dev/null 2>&1; do
+    sleep 1
+    timeout=$((timeout - 1))
+    if [[ $timeout -eq 0 ]]; then
+      echo "❌ Test database failed to start within 30 seconds"
+      exit 1
+    fi
+  done
+}
 
 case "$1" in
   "start")
     echo "🚀 Starting test database..."
     "$COMPOSE" --profile testing up -d postgres-test
-    
-    echo "⏳ Waiting for test database to be ready..."
-    timeout=30
-    while ! docker exec "$TEST_DB_CONTAINER" pg_isready -U postgres > /dev/null 2>&1; do
-      sleep 1
-      timeout=$((timeout - 1))
-      if [[ $timeout -eq 0 ]]; then
-        echo "❌ Test database failed to start within 30 seconds"
-        exit 1
-      fi
-    done
-    
+
+    wait_for_db
+
     echo "✅ Test database is ready on port $TEST_DB_DISPLAY_PORT"
     echo "📄 Connection string: $TEST_DB_URL"
     ;;
@@ -80,21 +88,18 @@ case "$1" in
     ;;
     
   "reset")
-    echo "🔄 Resetting test database..."
+    echo "🔄 Resetting test database (this destroys all test data)..."
     "$COMPOSE" --profile testing down postgres-test
+    # The bind mount outlives the container — without this, "reset" only recreates the
+    # container and every row survives, which is the opposite of what the command promises.
+    if [[ -n "$TEST_DB_DATA_DIR" && -d "$TEST_DB_DATA_DIR" ]]; then
+      echo "🗑️  Clearing $TEST_DB_DATA_DIR"
+      rm -rf "${TEST_DB_DATA_DIR:?}"
+    fi
     "$COMPOSE" --profile testing up -d postgres-test
-    
-    echo "⏳ Waiting for test database to be ready..."
-    timeout=30
-    while ! docker exec "$TEST_DB_CONTAINER" pg_isready -U postgres > /dev/null 2>&1; do
-      sleep 1
-      timeout=$((timeout - 1))
-      if [[ $timeout -eq 0 ]]; then
-        echo "❌ Test database failed to start within 30 seconds"
-        exit 1
-      fi
-    done
-    
+
+    wait_for_db
+
     echo "✅ Test database reset complete"
     ;;
     
