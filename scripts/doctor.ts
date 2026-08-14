@@ -263,7 +263,13 @@ const getRegexMatches = (pattern: RegExp, source: string): RegExpExecArray[] => 
 // Resolve a relative import spec to a file on disk (adding .ts/.tsx or an index file).
 const resolveLocalImport = (fromDir: string, spec: string): string | undefined => {
   const base = join(fromDir, spec)
-  const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')]
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, 'index.ts'),
+    join(base, 'index.tsx'),
+  ]
   return candidates.find(candidate => safeStat(candidate)?.isFile() === true)
 }
 

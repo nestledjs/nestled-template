@@ -46,7 +46,9 @@ const declaredEnums = getDeclaredEnums()
 if (declaredEnums.length === 0) process.exit(0)
 
 if (!existsSync(enumsPath)) {
-  fail(`The Prisma schema declares ${declaredEnums.length} enum(s) but ${enumsPath} was not written.`)
+  fail(
+    `The Prisma schema declares ${declaredEnums.length} enum(s) but ${enumsPath} was not written.`,
+  )
 }
 
 const source = readFileSync(enumsPath, 'utf8')

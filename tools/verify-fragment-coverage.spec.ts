@@ -360,9 +360,9 @@ describe('annotationListBefore', () => {
     // before that point documented THAT constant, not this one.
     const raw = `/** @select-omits redFlagged */\nconst A = { a: true }\n${constant}`
     const previousEnd = raw.indexOf('}') + 1
-    expect(
-      annotationListBefore(raw, raw.indexOf(constant), previousEnd, 'select-omits'),
-    ).toEqual([])
+    expect(annotationListBefore(raw, raw.indexOf(constant), previousEnd, 'select-omits')).toEqual(
+      [],
+    )
   })
 })
 

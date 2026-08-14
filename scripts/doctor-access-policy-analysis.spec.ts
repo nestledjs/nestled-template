@@ -96,10 +96,7 @@ describe('readStringObjectArray', () => {
       ['key'],
     )
 
-    expect(entries).toEqual([
-      { key: 'platform.users.read' },
-      { key: 'platform.users.manage' },
-    ])
+    expect(entries).toEqual([{ key: 'platform.users.read' }, { key: 'platform.users.manage' }])
   })
 
   it('skips a same-named non-array binding and finds the actual array literal (#54 review)', () => {
