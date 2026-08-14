@@ -7,8 +7,14 @@ set +e  # Don't exit on error
 
 # Use tee to show output in real-time AND capture it
 TMPFILE=$(mktemp)
-export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${POSTGRES_TEST_PORT:-5433}/nestled_template_test}"
+# Resolve the test DB URL the way scripts/test-db.sh does (it reads POSTGRES_TEST_PORT from the
+# repo-root .env), so a direct `api-e2e:test` run doesn't probe/migrate the wrong port (#119).
+export TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(./scripts/test-db.sh url)}"
 export DATABASE_URL="$TEST_DATABASE_URL"
+# prisma.config.ts prefers DIRECT_URL — pin it to the test DB too, or Prisma reaches the dev DB (#117).
+export DIRECT_URL="$TEST_DATABASE_URL"
+# E2E's own API port so a running dev API can't be attached to (#118); global-setup/test-setup read it.
+export E2E_API_PORT="${E2E_API_PORT:-3100}"
 
 # Probe the DB at the URL's own host/port/name — the URL is the single source of truth. Probing
 # POSTGRES_TEST_PORT instead would mismatch a caller-supplied TEST_DATABASE_URL on a non-default port

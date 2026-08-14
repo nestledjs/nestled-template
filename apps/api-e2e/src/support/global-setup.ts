@@ -69,6 +69,9 @@ async function startApiServer(
     env: {
       ...process.env,
       DATABASE_URL: testDatabaseUrl,
+      // prisma.config.ts prefers DIRECT_URL || DATABASE_URL, so a repo .env DIRECT_URL would beat the
+      // test DB and the served API would talk to the dev database. Pin both to the test URL (#117).
+      DIRECT_URL: testDatabaseUrl,
       PORT: port.toString(),
       HOST: host,
       NODE_ENV: 'test',
@@ -139,9 +142,14 @@ module.exports = async function globalSetup() {
     process.env.TEST_DATABASE_URL ||
     'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
   process.env.DATABASE_URL = testDatabaseUrl
+  // prisma.config.ts prefers DIRECT_URL — pin it too, or db push / seed below (and any Prisma call)
+  // could run against the dev database instead of the isolated test DB (#117).
+  process.env.DIRECT_URL = testDatabaseUrl
 
   const host = process.env.HOST ?? 'localhost'
-  const port = process.env.PORT ? Number(process.env.PORT) : 3000
+  // E2E's own port, not the normal PORT from .env — a running dev API on that port would otherwise
+  // make waitForPortOpen false-pass and the harness attach to the wrong server (#118).
+  const port = process.env.E2E_API_PORT ? Number(process.env.E2E_API_PORT) : 3100
   const skipApiCheck = process.env.SKIP_API_CHECK === 'true'
 
   // Track if we started the API (so teardown knows to stop it)
@@ -176,7 +184,7 @@ module.exports = async function globalSetup() {
   try {
     execSync('pnpm prisma db push', {
       cwd: projectRoot,
-      env: { ...process.env, DATABASE_URL: testDatabaseUrl },
+      env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
       stdio: 'inherit',
     })
     console.log('✅ Database schema synced')
@@ -190,7 +198,7 @@ module.exports = async function globalSetup() {
   try {
     execSync('pnpm prisma:seed', {
       cwd: projectRoot,
-      env: { ...process.env, DATABASE_URL: testDatabaseUrl },
+      env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
       stdio: 'inherit',
     })
     console.log('✅ Database seeded')

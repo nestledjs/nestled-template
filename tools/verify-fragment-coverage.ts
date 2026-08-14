@@ -772,7 +772,23 @@ const main = async (): Promise<void> => {
   }
 
   const failures = missing.length + nonNullPartial.length + operationFindings.length
-  if (failures === 0) console.log('\nNo fragment field is unproduced by its model’s selects.')
+  if (failures === 0) {
+    if (checkedModels === 0 && checkedPaths === 0) {
+      // Checking zero models is not coverage proof — a repo that returns GraphQL via full-scalar
+      // Prisma includes / generated CRUD (no narrowed named selects) would otherwise read a hollow
+      // pass as verified coverage. Distinguish "no constants at all" from "constants parsed but none
+      // mapped to a checkable model/operation" so the notice is accurate (fleet-upstream #115).
+      console.log(
+        constants.length === 0
+          ? '\n⚠️  Checked 0 models and 0 operation paths — no named select constants were found in ' +
+              'the search roots. This is NOT fragment-coverage proof; the verifier had nothing to check.'
+          : `\n⚠️  Checked 0 models and 0 operation paths — ${constants.length} select constant(s) were ` +
+              'parsed but none mapped to a checkable model or operation. This is NOT fragment-coverage proof.',
+      )
+    } else {
+      console.log('\nNo fragment field is unproduced by its model’s selects.')
+    }
+  }
   process.exitCode = failures > 0 ? 1 : 0
 }
 

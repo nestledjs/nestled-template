@@ -9,6 +9,6 @@
 set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARGS=()
-[ -f "$ROOT/.env" ] && ARGS+=(--env-file "$ROOT/.env")
+[[ -f "$ROOT/.env" ]] && ARGS+=(--env-file "$ROOT/.env")
 ARGS+=(-f "$ROOT/.dev/docker-compose.yml")
 exec docker compose "${ARGS[@]}" "$@"

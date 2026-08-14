@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 // Runs immediately after `prisma generate` in the db-update chain.
 //
@@ -13,13 +14,23 @@ import { existsSync, readFileSync } from 'node:fs'
 // null to object" — a message naming neither Prisma nor this file. Failing here keeps the error
 // next to the thing that caused it.
 
-const schemaPath = 'libs/api/prisma/src/lib/schemas/schema.prisma'
+const schemaDir = 'libs/api/prisma/src/lib/schemas'
 const enumsPath = 'libs/api/prisma/src/lib/prisma-generated/enums.ts'
 
+// Prisma supports a split schema directory (datasource/generator in one file, models and enums in
+// others). Read enums from EVERY .prisma file in the dir, not just schema.prisma — a split-schema repo
+// (mi-core has ~29 files) would otherwise find zero enums in schema.prisma and pass without verifying
+// anything (fleet-upstream #125).
 const getDeclaredEnums = (): string[] => {
-  if (!existsSync(schemaPath)) return []
-  const matches = readFileSync(schemaPath, 'utf8').matchAll(/^enum\s+(\w+)/gm)
-  return [...matches].map(match => match[1])
+  if (!existsSync(schemaDir)) return []
+  const enums: string[] = []
+  for (const entry of readdirSync(schemaDir)) {
+    if (!entry.endsWith('.prisma')) continue
+    for (const match of readFileSync(join(schemaDir, entry), 'utf8').matchAll(/^enum\s+(\w+)/gm)) {
+      enums.push(match[1])
+    }
+  }
+  return enums
 }
 
 const fail = (message: string): never => {
@@ -35,7 +46,7 @@ const declaredEnums = getDeclaredEnums()
 if (declaredEnums.length === 0) process.exit(0)
 
 if (!existsSync(enumsPath)) {
-  fail(`${schemaPath} declares ${declaredEnums.length} enum(s) but ${enumsPath} was not written.`)
+  fail(`The Prisma schema declares ${declaredEnums.length} enum(s) but ${enumsPath} was not written.`)
 }
 
 const source = readFileSync(enumsPath, 'utf8')

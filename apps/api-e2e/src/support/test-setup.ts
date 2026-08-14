@@ -12,7 +12,9 @@ const e2eGlobal = globalThis as E2EGlobalState
 
 // Configure axios for tests to use.
 const host = process.env.HOST ?? 'localhost'
-const port = process.env.PORT ?? '3000'
+// E2E has its own port namespace so a running dev API on the normal PORT can't make the client
+// attach to the wrong server (fleet-upstream #118). Must match global-setup's choice.
+const port = process.env.E2E_API_PORT ?? '3100'
 axios.defaults.baseURL = `http://${host}:${port}`
 
 // Create agents that don't keep connections alive
