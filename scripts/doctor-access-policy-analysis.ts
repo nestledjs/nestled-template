@@ -134,27 +134,30 @@ export const readStringObjectArray = (
     ts.ScriptKind.TS,
   )
 
-  // Find the declaration ANYWHERE in the tree, not only among top-level statements — a repo may
-  // declare the catalog inside a function, module, or block, and a top-level-only scan hands back an
-  // empty catalog that then reports every declared permission as "unknown" (fleet-upstream #120).
-  let declaration: ts.VariableDeclaration | undefined
+  // Find the array-literal declaration ANYWHERE in the tree, not only among top-level statements — a
+  // repo may declare the catalog inside a function, module, or block (fleet-upstream #120). Require the
+  // initializer to BE an array literal, so a same-named non-array binding (e.g.
+  // `const permissions = buildPermissions()`) doesn't shadow the literal we actually want (#54 review).
+  let initializer: ts.ArrayLiteralExpression | undefined
   const visit = (node: ts.Node): void => {
-    if (declaration) return
+    if (initializer) return
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
-      node.name.text === variableName
+      node.name.text === variableName &&
+      node.initializer
     ) {
-      declaration = node
-      return
+      const unwrapped = unwrapExpression(node.initializer)
+      if (ts.isArrayLiteralExpression(unwrapped)) {
+        initializer = unwrapped
+        return
+      }
     }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
 
-  if (!declaration?.initializer) return []
-  const initializer = unwrapExpression(declaration.initializer)
-  if (!ts.isArrayLiteralExpression(initializer)) return []
+  if (!initializer) return []
 
   return initializer.elements.flatMap(element => {
     const value = unwrapExpression(element)

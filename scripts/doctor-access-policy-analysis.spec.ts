@@ -101,4 +101,23 @@ describe('readStringObjectArray', () => {
       { key: 'platform.users.manage' },
     ])
   })
+
+  it('skips a same-named non-array binding and finds the actual array literal (#54 review)', () => {
+    // The first `permissions` is a call, not the catalog — the walk must keep going to the literal.
+    const entries = readStringObjectArray(
+      `
+        export function build() {
+          const permissions = derivePermissions()
+          return permissions
+        }
+        export const permissions = [
+          { key: 'platform.users.read' },
+        ]
+      `,
+      'permissions',
+      ['key'],
+    )
+
+    expect(entries).toEqual([{ key: 'platform.users.read' }])
+  })
 })
