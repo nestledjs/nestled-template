@@ -288,9 +288,7 @@ const fieldNodesNamed = (
     if (!fragment || fragmentPath.has(selection.name.value)) continue
     const nextPath = new Set(fragmentPath)
     nextPath.add(selection.name.value)
-    nodes.push(
-      ...fieldNodesNamed(fragment.definition.selectionSet, fieldName, fragments, nextPath),
-    )
+    nodes.push(...fieldNodesNamed(fragment.definition.selectionSet, fieldName, fragments, nextPath))
   }
 
   return nodes
@@ -316,7 +314,9 @@ const inlineFragmentSetsOn = (
     }
     if (selection.kind === Kind.FIELD) {
       if (selection.selectionSet) {
-        sets.push(...inlineFragmentSetsOn(selection.selectionSet, typeName, fragments, fragmentPath))
+        sets.push(
+          ...inlineFragmentSetsOn(selection.selectionSet, typeName, fragments, fragmentPath),
+        )
       }
       continue
     }
@@ -324,7 +324,9 @@ const inlineFragmentSetsOn = (
     if (!fragment || fragmentPath.has(selection.name.value)) continue
     const nextPath = new Set(fragmentPath)
     nextPath.add(selection.name.value)
-    sets.push(...inlineFragmentSetsOn(fragment.definition.selectionSet, typeName, fragments, nextPath))
+    sets.push(
+      ...inlineFragmentSetsOn(fragment.definition.selectionSet, typeName, fragments, nextPath),
+    )
   }
   return sets
 }

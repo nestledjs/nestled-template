@@ -307,11 +307,7 @@ interface SelectConstant {
  * `currentStreak` is non-optional in Prisma (it has a default) but nullable in GraphQL, and it
  * is the GraphQL wrapper that decides null-versus-error at runtime.
  */
-export const nonNullableAt = (
-  schema: GraphQLSchema,
-  modelName: string,
-  path: string,
-): boolean => {
+export const nonNullableAt = (schema: GraphQLSchema, modelName: string, path: string): boolean => {
   let type = schema.getType(modelName)
   const segments = path.split('.')
   for (const [index, segment] of segments.entries()) {
