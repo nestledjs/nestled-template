@@ -8,7 +8,12 @@ import {
   getOperationGuardNames,
   hasAuthenticationGuard,
 } from './doctor-auth-analysis'
-import { analyzeAccessPolicies, readStringObjectArray } from './doctor-access-policy-analysis'
+import {
+  analyzeAccessPolicies,
+  readStringObjectArray,
+  type AccessPolicyDeclaration,
+  type InlineAccessCheckViolation,
+} from './doctor-access-policy-analysis'
 import {
   getCrudAuthAnnotationLines,
   getCustomResolverNameViolations,
@@ -1880,49 +1885,60 @@ const readPermissionCatalogs = () => {
   return { organization, platform }
 }
 
+const reportAccessPolicyDeclaration = (
+  declaration: AccessPolicyDeclaration,
+  file: string,
+  catalogs: ReturnType<typeof readPermissionCatalogs>,
+  emptyScopesInUse: Set<string>,
+): void => {
+  if (declaration.permissions.length === 0) {
+    fail(
+      'access-policy',
+      `${declaration.className}.${declaration.name} declares ${declaration.decorator} without a permission`,
+      file,
+      declaration.line,
+    )
+    return
+  }
+
+  const catalog = catalogs[declaration.scope]
+  // An empty catalog would report EVERY declared permission as "unknown" — a broken read, not N real
+  // findings (fleet-upstream #120). Note the scope once; the caller reports it after the sweep.
+  if (catalog.size === 0) {
+    emptyScopesInUse.add(declaration.scope)
+    return
+  }
+  for (const permission of declaration.permissions) {
+    if (catalog.has(permission)) continue
+    fail(
+      'access-policy',
+      `${declaration.className}.${declaration.name} declares unknown ${declaration.scope} permission ${permission}; add it to the code-owned catalog or fix the typo`,
+      file,
+      declaration.line,
+    )
+  }
+}
+
+const reportInlineAccessViolation = (violation: InlineAccessCheckViolation, file: string): void => {
+  fail(
+    'access-policy',
+    `${violation.className}.${violation.name} calls ${violation.calls.join(', ')} inside the operation body without a scoped permission decorator; move the role gate into declarative metadata and leave only row/object checks in the service`,
+    file,
+    violation.line,
+  )
+}
+
 const checkAccessPolicyDeclarations = () => {
   const catalogs = readPermissionCatalogs()
-  // A catalog the reader returned empty for would report EVERY declared permission as "unknown" — a
-  // broken read, not N real findings (fleet-upstream #120). Collect those scopes and report each once
-  // instead of flooding one finding per permission.
   const emptyScopesInUse = new Set<string>()
 
   for (const file of getAuthSourceFiles()) {
     const report = analyzeAccessPolicies(readFileSync(file, 'utf8'), file)
     for (const declaration of report.declarations) {
-      if (declaration.permissions.length === 0) {
-        fail(
-          'access-policy',
-          `${declaration.className}.${declaration.name} declares ${declaration.decorator} without a permission`,
-          file,
-          declaration.line,
-        )
-        continue
-      }
-
-      const catalog = catalogs[declaration.scope]
-      if (catalog.size === 0) {
-        emptyScopesInUse.add(declaration.scope)
-        continue
-      }
-      for (const permission of declaration.permissions) {
-        if (catalog.has(permission)) continue
-        fail(
-          'access-policy',
-          `${declaration.className}.${declaration.name} declares unknown ${declaration.scope} permission ${permission}; add it to the code-owned catalog or fix the typo`,
-          file,
-          declaration.line,
-        )
-      }
+      reportAccessPolicyDeclaration(declaration, file, catalogs, emptyScopesInUse)
     }
-
     for (const violation of report.inlineViolations) {
-      fail(
-        'access-policy',
-        `${violation.className}.${violation.name} calls ${violation.calls.join(', ')} inside the operation body without a scoped permission decorator; move the role gate into declarative metadata and leave only row/object checks in the service`,
-        file,
-        violation.line,
-      )
+      reportInlineAccessViolation(violation, file)
     }
   }
 
