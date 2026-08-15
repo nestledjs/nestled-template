@@ -288,6 +288,22 @@ const getRegisteredRouteFiles = (): Set<string> => {
   const importPattern = /from\s+['"](\.[^'"]+)['"]/g
   const visited = new Set<string>()
 
+  // Template-literal route paths: helpers build a family of routes from a shared prefix —
+  // route('overview', `./routes/${basePath}/overview.tsx`) — which the quoted-string pattern
+  // cannot see, so helper-composed routes read as unregistered even after the transitive scan
+  // (fleet-upstream #135). Substituting simple string constants declared in the SAME file
+  // resolves them to concrete paths. Concrete matters: `registered` is also used to check each
+  // entry EXISTS, so a wildcard would satisfy the is-it-registered check while silently
+  // disabling the does-it-exist one. Anything still carrying an unresolved `${…}` is skipped,
+  // not guessed at.
+  const templatePattern = /`\.\/routes\/([^`]+\.(?:tsx|ts))`/g
+  // The literal must be the WHOLE initializer (allowing a trailing `as const`): matching the
+  // prefix of `const basePath = 'foo' + suffix` would substitute 'foo' as if it were the full
+  // value and register a wrong concrete path. Only horizontal whitespace before the terminator,
+  // so the lookahead can see the newline that ends the declaration.
+  const constantPattern =
+    /\b(?:const|let|var)\s+(\w+)\s*=\s*['"]([^'"]+)['"][^\S\n]*(?=as\b|;|\n|$)/g
+
   const scan = (filePath: string): void => {
     if (visited.has(filePath) || !existsSync(filePath)) return
     visited.add(filePath)
@@ -295,6 +311,19 @@ const getRegisteredRouteFiles = (): Set<string> => {
     for (const match of getRegexMatches(routeFilePattern, source)) {
       registered.add(join(routeRoot, match[1]))
     }
+
+    const constants = new Map<string, string>()
+    for (const match of getRegexMatches(constantPattern, source)) {
+      constants.set(match[1], match[2])
+    }
+    for (const match of getRegexMatches(templatePattern, source)) {
+      const resolved = match[1].replace(
+        /\$\{(\w+)\}/g,
+        (whole, name: string) => constants.get(name) ?? whole,
+      )
+      if (!resolved.includes('${')) registered.add(join(routeRoot, resolved))
+    }
+
     for (const match of getRegexMatches(importPattern, source)) {
       const resolved = resolveLocalImport(dirname(filePath), match[1])
       if (resolved) scan(resolved)

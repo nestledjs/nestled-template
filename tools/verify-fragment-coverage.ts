@@ -49,7 +49,8 @@
  *
  * Known blind spots, so nobody reads a clean run as more than it is:
  *   - inline selects written at a call site rather than as a named constant are not attributed
- *   - `...SPREAD` and named select identifiers are resolved only within the same file
+ *   - `...SPREAD` is resolved only within the same file; a named select identifier also resolves
+ *     through ONE relative-import hop (#142) — a chain of imports past that reads as absent
  *   - attribution is by a constant's top-level model, so a relation block nested in another
  *     model's select does not count as a separate select for the related model
  *   - models served entirely by generated CRUD have no select constant and are skipped (they are
@@ -57,7 +58,7 @@
  * Each of these is counted and printed, so the report says what it did not check.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildSchema, getNamedType, isNonNullType, isObjectType, type GraphQLSchema } from 'graphql'
 import {
@@ -232,6 +233,87 @@ export const scanObject = (source: string, open: number): ScannedObject => {
 }
 
 /**
+ * Where `source` came from, when known — enables one level of relative-import following for
+ * select-constant identifiers. `imported` marks source that was itself reached through an import,
+ * so resolution never chains further than one hop (fleet-upstream #142).
+ */
+export interface SourceContext {
+  file: string
+  imported?: boolean
+}
+
+const NAMED_IMPORT_PATTERN = /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/g
+
+const resolveImportFile = (fromDir: string, spec: string): string | undefined => {
+  const base = resolve(fromDir, spec)
+  const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts')]
+  return candidates.find(candidate => {
+    try {
+      return statSync(candidate).isFile()
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
+ * Resolve a select-constant identifier through a relative import: parse the imported file's
+ * exported constant exactly the way the current file's are parsed. Sharing a subtree between two
+ * selects (one document's select doubling as another's relation subtree) is the natural reason a
+ * constant is imported, and without this every field of the referenced shape reported as absent.
+ * One hop only; an import that cannot be resolved warns rather than silently reading as `{}` —
+ * silent absence is what buries real findings under false ones.
+ */
+const importedConstantSelect = (
+  ident: string,
+  context: SourceContext,
+): PrismaSelect | undefined => {
+  if (context.imported) return undefined
+  // Import specifiers live inside string literals, which sanitize() blanks — so imports are read
+  // from the raw file, not from the sanitized source the select parser works on. But raw text
+  // also still contains comments, so each match is checked against the offset-preserving
+  // sanitized source: a commented-out import has its `import` keyword blanked there, and must
+  // not bind the identifier to a file nobody imports anymore.
+  const raw = readFileSync(context.file, 'utf8')
+  const sanitized = sanitize(raw)
+  NAMED_IMPORT_PATTERN.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = NAMED_IMPORT_PATTERN.exec(raw)) !== null) {
+    if (!sanitized.startsWith('import', match.index)) continue
+    const binding = match[1]
+      .split(',')
+      .map(name => name.trim())
+      .map(name => {
+        const [original, alias] = name.split(/\s+as\s+/).map(part => part.trim())
+        return { original, local: alias ?? original }
+      })
+      .find(candidate => candidate.local === ident)
+    if (!binding?.original) continue
+
+    const importedFile = resolveImportFile(dirname(context.file), match[2])
+    if (!importedFile) {
+      console.warn(
+        `⚠️  ${context.file}: could not resolve import '${match[2]}' for select constant ${ident}; its fields will read as absent`,
+      )
+      return undefined
+    }
+    const importedSource = sanitize(readFileSync(importedFile, 'utf8'))
+    const body = findConstantBody(importedSource, binding.original)
+    if (body === -1) {
+      console.warn(
+        `⚠️  ${context.file}: ${binding.original} not found in '${match[2]}'; its fields will read as absent`,
+      )
+      return undefined
+    }
+    return toSelect(importedSource, body, new Set([binding.original]), {
+      file: importedFile,
+      imported: true,
+    })
+  }
+  return undefined
+}
+
+/**
  * Interpret a select object literal as nested `{field: true | {select}}`.
  *
  * A relation is written `relation: { select: {...} }`, often alongside `take`, `orderBy` or
@@ -244,6 +326,7 @@ export const toSelect = (
   source: string,
   open: number,
   seen: ReadonlySet<string> = new Set(),
+  context?: SourceContext,
 ): PrismaSelect => {
   const select: PrismaSelect = {}
   for (const entry of scanObject(source, open).entries) {
@@ -254,8 +337,13 @@ export const toSelect = (
     if (entry.kind === 'other' && entry.ident && !seen.has(entry.ident)) {
       const body = findConstantBody(source, entry.ident)
       if (body !== -1) {
-        select[entry.name] = { select: toSelect(source, body, new Set([...seen, entry.ident])) }
+        select[entry.name] = {
+          select: toSelect(source, body, new Set([...seen, entry.ident]), context),
+        }
+        continue
       }
+      const imported = context && importedConstantSelect(entry.ident, context)
+      if (imported) select[entry.name] = { select: imported }
       continue
     }
     if (entry.kind !== 'object') continue
@@ -263,14 +351,19 @@ export const toSelect = (
       candidate => candidate.name === 'select',
     )
     if (inner?.kind === 'object') {
-      select[entry.name] = { select: toSelect(source, inner.open, seen) }
+      select[entry.name] = { select: toSelect(source, inner.open, seen, context) }
       continue
     }
     if (inner?.kind === 'other' && inner.ident && !seen.has(inner.ident)) {
       const body = findConstantBody(source, inner.ident)
-      select[entry.name] = {
-        select: body === -1 ? {} : toSelect(source, body, new Set([...seen, inner.ident])),
+      if (body !== -1) {
+        select[entry.name] = {
+          select: toSelect(source, body, new Set([...seen, inner.ident]), context),
+        }
+        continue
       }
+      const imported = context && importedConstantSelect(inner.ident, context)
+      select[entry.name] = { select: imported ?? {} }
       continue
     }
     select[entry.name] = { select: {} }
@@ -401,7 +494,7 @@ export const readSelectConstants = (
       while ((match = SELECT_CONSTANT.exec(source)) !== null) {
         const open = source.indexOf('{', match.index + match[0].length - 1)
         if (open === -1) continue
-        const select = toSelect(source, open)
+        const select = toSelect(source, open, new Set(), { file: absolute })
         const { spreads } = scanObject(source, open)
         if (Object.keys(select).length === 0 && spreads.length === 0) continue
         // The regex runs against sanitized source. A preceding JSDoc is whitespace there, so its

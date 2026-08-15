@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { parse } from 'yaml'
 
@@ -156,11 +156,16 @@ const validatePackageReleases = (value: unknown, errors: string[]) => {
   }
 }
 
-const getYamlFiles = (dir: string): string[] =>
-  readdirSync(dir)
+// The notes directory only exists while notes are pending — "nothing to apply" is the ordinary
+// steady state, not an error, so a missing directory must validate as an empty set rather than
+// throw ENOENT and fail CI precisely when there is nothing wrong (#136).
+const getYamlFiles = (dir: string): string[] => {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
     .map(file => join(dir, file))
     .filter(file => statSync(file).isFile() && file.endsWith('.yaml'))
     .sort((left, right) => left.localeCompare(right))
+}
 
 const validateIdentity = (note: UpgradeNote, filenameId: string, errors: string[]) => {
   if (!isNonEmptyString(note.id)) {
@@ -329,6 +334,10 @@ if (errorCount > 0) {
   process.exit(1)
 }
 
-console.log(
-  files.length === 1 ? 'Validated 1 upgrade note.' : `Validated ${files.length} upgrade notes.`,
-)
+if (files.length === 0) {
+  console.log('No upgrade notes to validate.')
+} else {
+  console.log(
+    files.length === 1 ? 'Validated 1 upgrade note.' : `Validated ${files.length} upgrade notes.`,
+  )
+}
