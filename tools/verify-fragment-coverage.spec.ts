@@ -229,6 +229,154 @@ describe('readSelectConstants', () => {
       { name: 'UNMAPPED_SELECT', model: undefined, operations: ['me'] },
     ])
   })
+
+  // Sharing a subtree between two selects (one document's select doubling as another's relation
+  // subtree) is the natural reason a select constant is imported. Before #142 a cross-file
+  // reference silently read as `{}`, and every field of the referenced shape reported as absent
+  // (mi-core: 10 false `Course.chapters.*` findings).
+  describe('cross-file select constants (#142)', () => {
+    const courseModels = [
+      { modelName: 'Course', fields: [] },
+      { modelName: 'CourseChapter', fields: [] },
+    ]
+
+    const writeSelectFile = (workspace: string, name: string, source: string): void => {
+      writeFileSync(join(workspace, 'libs/api/custom/src/lib/example', name), source)
+    }
+
+    it('resolves a select constant imported from a sibling file', () => {
+      const workspace = createSelectWorkspace(`
+        import { COURSE_CHAPTER_SELECT } from './course-chapter.select'
+
+        export const COURSE_SELECT = {
+          id: true,
+          chapters: { select: COURSE_CHAPTER_SELECT },
+        } as const
+      `)
+      writeSelectFile(
+        workspace,
+        'course-chapter.select.ts',
+        `export const COURSE_CHAPTER_SELECT = {
+          id: true,
+          title: true,
+        } as const
+      `,
+      )
+
+      const constants = readSelectConstants(workspace, courseModels)
+      expect(constants.find(constant => constant.name === 'COURSE_SELECT')?.select).toEqual({
+        id: true,
+        chapters: { select: { id: true, title: true } },
+      })
+    })
+
+    it('resolves an aliased import by its original exported name', () => {
+      const workspace = createSelectWorkspace(`
+        import { COURSE_CHAPTER_SELECT as CHAPTERS } from './course-chapter.select'
+
+        export const COURSE_SELECT = {
+          chapters: { select: CHAPTERS },
+        } as const
+      `)
+      writeSelectFile(
+        workspace,
+        'course-chapter.select.ts',
+        `export const COURSE_CHAPTER_SELECT = { title: true } as const`,
+      )
+
+      const constants = readSelectConstants(workspace, courseModels)
+      expect(constants.find(constant => constant.name === 'COURSE_SELECT')?.select).toEqual({
+        chapters: { select: { title: true } },
+      })
+    })
+
+    it('follows one hop only: an import chain two files deep reads as absent, not wrong', () => {
+      const workspace = createSelectWorkspace(`
+        import { MIDDLE_SELECT } from './middle.select'
+
+        export const COURSE_SELECT = {
+          chapters: { select: MIDDLE_SELECT },
+        } as const
+      `)
+      writeSelectFile(
+        workspace,
+        'middle.select.ts',
+        `import { LEAF_SELECT } from './leaf.select'
+        export const MIDDLE_SELECT = {
+          title: true,
+          sections: { select: LEAF_SELECT },
+        } as const
+      `,
+      )
+      writeSelectFile(
+        workspace,
+        'leaf.select.ts',
+        `export const LEAF_SELECT = { id: true } as const`,
+      )
+
+      // MIDDLE_SELECT's own fields resolve; the second hop to LEAF_SELECT deliberately does not.
+      const course = readSelectConstants(workspace, courseModels).find(
+        constant => constant.name === 'COURSE_SELECT',
+      )
+      expect(course?.select).toEqual({
+        chapters: { select: { title: true, sections: { select: {} } } },
+      })
+    })
+
+    it('does not bind an identifier through a commented-out import', () => {
+      const warnings: string[] = []
+      const original = console.warn
+      console.warn = (message: string) => warnings.push(message)
+      try {
+        const workspace = createSelectWorkspace(`
+          // import { COURSE_CHAPTER_SELECT } from './stale-location.select'
+          import { COURSE_CHAPTER_SELECT } from './course-chapter.select'
+
+          export const COURSE_SELECT = {
+            chapters: { select: COURSE_CHAPTER_SELECT },
+          } as const
+        `)
+        writeSelectFile(
+          workspace,
+          'course-chapter.select.ts',
+          `export const COURSE_CHAPTER_SELECT = { title: true } as const`,
+        )
+
+        // The live import resolves; the commented one neither binds nor warns about its
+        // nonexistent module.
+        const constants = readSelectConstants(workspace, courseModels)
+        expect(constants.find(constant => constant.name === 'COURSE_SELECT')?.select).toEqual({
+          chapters: { select: { title: true } },
+        })
+        expect(warnings).toEqual([])
+      } finally {
+        console.warn = original
+      }
+    })
+
+    it('warns instead of silently reading absent when the import cannot be resolved', () => {
+      const warnings: string[] = []
+      const original = console.warn
+      console.warn = (message: string) => warnings.push(message)
+      try {
+        const workspace = createSelectWorkspace(`
+          import { GHOST_SELECT } from './does-not-exist.select'
+
+          export const COURSE_SELECT = {
+            chapters: { select: GHOST_SELECT },
+          } as const
+        `)
+
+        const constants = readSelectConstants(workspace, courseModels)
+        expect(constants.find(constant => constant.name === 'COURSE_SELECT')?.select).toEqual({
+          chapters: { select: {} },
+        })
+        expect(warnings.some(message => message.includes('could not resolve import'))).toBe(true)
+      } finally {
+        console.warn = original
+      }
+    })
+  })
 })
 
 describe('scanObject', () => {
