@@ -1461,17 +1461,37 @@ const checkUnsafeTypeScriptCasts = () => {
   }
 }
 
+// Generator output, not authored code. `db-update` runs the doctor, regenerates, then runs the
+// doctor again — so the second run always sees these rewritten and would demand a note for a file
+// nobody wrote. Nothing is lost by skipping them: the change that produced them is `schema.prisma`,
+// which is gated on its own line below, so gating the generated mirror too makes one change demand
+// two notes. Generated CRUD output (`libs/api/generated-crud/**`) already sits outside this gate
+// for the same reason.
+//
+// Exact file paths, NOT a directory prefix: `models/` also holds hand-written files
+// (`core-paging.model.ts`), and `api-core-models.module.ts` sits beside it — a prefix would
+// silently ungate them. These three are what `nx g @nestledjs/generators:models` writes; if that
+// generator's output ever changes, this list changes with it.
+const generatedOutputPaths = new Set([
+  'libs/api/core/models/src/lib/models/models.ts',
+  'libs/api/core/models/src/lib/models/enums.ts',
+  'libs/api/core/models/src/lib/models/index.ts',
+])
+
+const isGeneratedOutput = (path: string): boolean => generatedOutputPaths.has(path)
+
 const isSensitiveUpgradePath = (path: string): boolean =>
-  /^libs\/api\/(core|custom|utils|integrations)\//.test(path) ||
-  path.startsWith('apps/api/') ||
-  path.startsWith('apps/web/app/routes/') ||
-  path === 'apps/web/app/routes.tsx' ||
-  path === schemaPath ||
-  path.includes('/guards/') ||
-  path.includes('/billing/') ||
-  path.includes('/auth/') ||
-  path.includes('/rbac/') ||
-  path.includes('/admin/')
+  !isGeneratedOutput(path) &&
+  (/^libs\/api\/(core|custom|utils|integrations)\//.test(path) ||
+    path.startsWith('apps/api/') ||
+    path.startsWith('apps/web/app/routes/') ||
+    path === 'apps/web/app/routes.tsx' ||
+    path === schemaPath ||
+    path.includes('/guards/') ||
+    path.includes('/billing/') ||
+    path.includes('/auth/') ||
+    path.includes('/rbac/') ||
+    path.includes('/admin/'))
 
 const checkUpgradeNoteImpactGate = () => {
   if (!isSourceTemplateRepository()) return
