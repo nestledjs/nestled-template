@@ -1,0 +1,44 @@
+id: 2026-08-19-no-flightdesk-preview-cors-pattern
+title: Do not pattern-match FlightDesk preview origins in CORS — reverted, and it must stay reverted
+priority: ignore
+area: infra
+type: security
+
+intent: >
+  Nothing to apply. This note reverses 2026-08-18-flightdesk-preview-cors, which described adding
+  an `isFlightDeskPreviewOrigin` pattern to the API's credentialed CORS callback so that
+  `https://<task>.preview.flightdesk.dev` would be allowed alongside the exact-match apiCorsOrigins
+  allowlist. That change is reverted here and never reached nestled-template or any downstream
+  project, so no project has anything to undo. The note exists to stop it being re-invented.
+
+why: >
+  Two independent reasons, both general to the fleet rather than specific to one repo:
+
+  It is UNNECESSARY. FlightDesk injects each preview's exact origin into that preview's own API
+  environment, so the exact-match allowlist already covers previews. The pattern granted nothing
+  any preview actually uses.
+
+  It is UNSAFE. `*.preview.flightdesk.dev` hosts previews belonging to OTHER organizations' repos.
+  The grant is credentialed — previews run the real web app and sign in with the session cookie —
+  so it rested on an assumption of single-tenancy under that domain that is simply false. Today
+  SameSite=Lax on the session cookie contains the consequence; a future SameSite=None change,
+  made for unrelated reasons, would silently convert this into a cross-tenant session-riding
+  vector. A latent over-grant that only a distant, unrelated change turns into an exploit is worse
+  than an obvious one, because nothing at the time of that change would point back here.
+
+  Originated as monroe-institute/mi-core#1671, reverted there the same day
+  (monroe-institute/mi-core@1c82626d7), and reverted here before promotion.
+
+skipIf:
+  - Always. There is no project state in which this should be applied.
+
+agentHints:
+  - >
+    If you are looking at a FlightDesk preview that cannot reach its API, the fix is in the
+    preview's environment — confirm FlightDesk is injecting that preview's exact origin into the
+    API's allowlist variable — never a pattern or wildcard in the CORS callback.
+  - >
+    The general rule this is an instance of: a credentialed CORS grant may only be widened to a
+    domain whose subdomains are provably under your exclusive control. Verify who can create hosts
+    under a domain before trusting it; do not record the assumption in a doc comment and proceed,
+    which is exactly how this one shipped.
