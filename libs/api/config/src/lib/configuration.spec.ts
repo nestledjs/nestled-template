@@ -96,10 +96,11 @@ describe('configuration() CORS origins', () => {
       await expectOrigins(['https://app.example.com'])
     })
 
-    // main.ts matches with `origins.includes(origin)` — exact string equality against the
-    // browser's Origin header, which is always bare scheme+host+port. Anything that is not
+    // main.ts matches this list with `origins.includes(origin)` — exact string equality against
+    // the browser's Origin header, which is always bare scheme+host+port. Anything that is not
     // already an origin becomes an allow-list entry NOTHING can match, which blocks every request
-    // with no error. So collapse what can be collapsed...
+    // with no error. So collapse what can be collapsed... (main.ts also allows FlightDesk preview
+    // hosts by pattern, but no value from here can reach that path.)
     it.each([
       ['a trailing slash', 'http://localhost:4200/'],
       ['a path', 'http://localhost:4200/app'],

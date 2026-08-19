@@ -65,8 +65,10 @@ const WILDCARD_BIND_HOSTS = new Set(['0.0.0.0', '[::]'])
 /**
  * Collapse a WEB_URL to a bare browser origin, or return '' when it cannot be one.
  *
- * main.ts matches with `origins.includes(origin)` — exact string equality against the browser's
- * `Origin` header, which is always bare scheme+host+port. So a WEB_URL carrying a trailing slash,
+ * main.ts matches this list with `origins.includes(origin)` — exact string equality against the
+ * browser's `Origin` header, which is always bare scheme+host+port. (Origins outside the list can
+ * still be allowed by pattern; see ./flightdesk-preview-cors. Nothing here reaches that
+ * path.) So a WEB_URL carrying a trailing slash,
  * a path, or credentials becomes an allow-list entry NOTHING can ever match, silently blocking
  * every request. `url.origin` drops path, query, hash and credentials in one step.
  *

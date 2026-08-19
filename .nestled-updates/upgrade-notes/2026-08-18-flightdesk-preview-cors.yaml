@@ -1,0 +1,54 @@
+id: 2026-08-18-flightdesk-preview-cors
+title: Allow FlightDesk preview origins through the API CORS allowlist by pattern
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Accept `https://<anything>.preview.flightdesk.dev` in the API's credentialed CORS callback via a
+  regex check, alongside the existing exact-match allowlist from `apiCorsOrigins`. The pattern and
+  its rationale live in `apps/api/src/flightdesk-preview-cors.ts`; `main.ts` consults it after the
+  exact-match check and before rejecting.
+
+why: >
+  FlightDesk deploys a per-task preview of the web app on a random host under
+  `preview.flightdesk.dev`. `apiCorsOrigins` is compared with `origins.includes(origin)` — exact
+  string match — so those hosts can never be enumerated, and a `*.` entry silently matches nothing.
+  Without this, every preview of the web app is unable to reach its API and the preview is useless
+  for review. Originated in mi-core (PR #1671) and flows up so the whole fleet gets it.
+
+affectedPaths:
+  - libs/api/config/src/lib/flightdesk-preview-cors.ts
+  - libs/api/config/src/lib/flightdesk-preview-cors.spec.ts
+  - libs/api/config/src/index.ts
+  - apps/api/src/main.ts
+
+packageReleases: []
+
+skipIf:
+  - The project is never previewed through FlightDesk.
+  - >
+    The project's preview subdomains are multi-tenant — i.e. anyone outside your own FlightDesk
+    organization can create a host under `preview.flightdesk.dev`. Then this grant must not be
+    applied as a pattern; inject a per-deploy exact origin into the allowlist instead.
+
+verification:
+  - pnpm exec nx run config:test
+  - pnpm exec nx run api:typecheck
+
+agentHints:
+  - >
+    The grant is credentialed (`credentials: true`), because previews run the real web app and sign
+    in with the session cookie. It rests on preview subdomains being created exclusively by your own
+    FlightDesk org; the helper's doc comment records that assumption — keep it with the code.
+  - >
+    Match only `*.preview.flightdesk.dev`: not `flightdesk.dev` itself, not `app.flightdesk.dev`.
+    The pattern is https-only, port-less, and anchored at both ends so suffix attacks
+    (`x.preview.flightdesk.dev.evil.com`) are rejected.
+  - >
+    The helper lives in the config lib rather than `apps/api/src` because `apps/api` has no test
+    target: there it would be untestable and uncovered. Downstream repos may already keep CORS
+    helpers under `apps/api/src/app/` (mi-core does, alongside a Shopify `storefront-cors.ts` doing
+    the same trick uncredentialed). Either home is fine — put it where that project can test it, fix
+    the import path, and do not move existing files to match the template.
