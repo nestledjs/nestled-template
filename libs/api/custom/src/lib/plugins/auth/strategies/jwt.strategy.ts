@@ -161,6 +161,34 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           return this.fail({ message: 'Invalid or expired API token' }, 401)
         }
 
+        // An organization-scoped token is a RESTRICTION below the user's own access, not a hint.
+        // Without this, a user who belongs to both A and B, holding a token scoped only to A, can
+        // act in B just by sending x-organization-id: B — every membership check downstream still
+        // passes, because the user really is a member of B. Bind the header to the token's scope
+        // before the user lookup, so a mismatched request costs nothing and cannot proceed.
+        if (result.organizationId) {
+          const rawHeader = req.headers['x-organization-id']
+          const requestedOrganizationId = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
+
+          if (requestedOrganizationId && requestedOrganizationId !== result.organizationId) {
+            this.logger.warn(
+              `API token ${result.tokenId} is scoped to organization ${result.organizationId} but the request asked for ${requestedOrganizationId}`,
+            )
+            return this.fail(
+              { message: 'API token is not scoped to the requested organization' },
+              403,
+            )
+          }
+
+          // Assigned unconditionally, and that is deliberate — it does two jobs. When the header
+          // was absent it states the token's organization, rather than letting resolution fall
+          // through to the user's active organization, which is not what the token authorizes.
+          // When the header was present it has already been proven equal above, and writing the
+          // scalar collapses a repeated header (`['org-1', 'org-1']`) to a single value, so a
+          // downstream consumer reading it naively cannot receive an array.
+          req.headers['x-organization-id'] = result.organizationId
+        }
+
         const user = await this.auth.validateUser(result.userId)
         if (!user) {
           return this.fail({ message: 'User not found for API token' }, 401)

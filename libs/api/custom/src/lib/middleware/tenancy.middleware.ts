@@ -13,7 +13,14 @@ export class TenancyMiddleware implements NestMiddleware {
     @Optional() private readonly authCache?: AuthCacheService,
   ) {}
 
-  private async resolveOrganizationId(req: Request & { user?: User }): Promise<string | undefined> {
+  private async resolveOrganizationId(
+    req: Request & { user?: User; apiTokenOrganizationId?: string | null },
+  ): Promise<string | undefined> {
+    // An organization-scoped API token outranks the header, matching OrganizationContextService.
+    // JwtStrategy already binds the header to the token's scope, so this is defence in depth: a
+    // future caller that sets the header some other way still cannot widen a scoped token.
+    if (req.apiTokenOrganizationId) return req.apiTokenOrganizationId
+
     const rawHeader = req.headers['x-organization-id']
     const fromHeader = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
     if (fromHeader) return fromHeader

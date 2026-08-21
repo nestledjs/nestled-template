@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing'
-import { NotFoundException } from '@nestjs/common'
+import { ForbiddenException, NotFoundException } from '@nestjs/common'
 import { StorageService } from './storage.service'
 import { StorageProvider } from '@nestled-template/api/prisma'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
@@ -377,7 +377,8 @@ describe('StorageService', () => {
         { id: 'file-2', organizationId: 'org-123', filename: 'banner.jpg' },
       ]
       mockPrisma.storedFile.findMany.mockResolvedValue(mockFiles as any)
-      const result = await service.getOrganizationFiles('org-123')
+      mockPrisma.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' } as any)
+      const result = await service.getOrganizationFiles('org-123', 'user-1')
       expect(result).toEqual(mockFiles)
       expect(mockPrisma.storedFile.findMany).toHaveBeenCalledWith({
         where: { organizationId: 'org-123' },
@@ -388,13 +389,28 @@ describe('StorageService', () => {
     })
     it('should return organization files with custom pagination', async () => {
       mockPrisma.storedFile.findMany.mockResolvedValue([])
-      await service.getOrganizationFiles('org-123', 25, 10)
+      mockPrisma.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' } as any)
+      await service.getOrganizationFiles('org-123', 'user-1', 25, 10)
       expect(mockPrisma.storedFile.findMany).toHaveBeenCalledWith({
         where: { organizationId: 'org-123' },
         take: 25,
         skip: 10,
         orderBy: { createdAt: 'desc' },
       })
+    })
+
+    // The organization id is supplied by the caller. Without a membership check any authenticated
+    // user could list any organization's files just by naming it.
+    it('refuses to list files for an organization the caller does not belong to', async () => {
+      mockPrisma.organizationMember.findFirst.mockResolvedValue(null)
+
+      await expect(service.getOrganizationFiles('org-999', 'outsider')).rejects.toThrow(
+        ForbiddenException,
+      )
+      await expect(service.getOrganizationFiles('org-999', 'outsider')).rejects.toThrow(
+        'You are not a member of that organization',
+      )
+      expect(mockPrisma.storedFile.findMany).not.toHaveBeenCalled()
     })
   })
   describe('getSignedUrl', () => {
@@ -404,13 +420,15 @@ describe('StorageService', () => {
         providerFileId: 'file-123',
         filename: 'private.pdf',
         provider: StorageProvider.LOCAL,
+        userId: 'owner-1',
+        organizationId: null,
       }
       mockPrisma.storedFile.findUnique.mockResolvedValue(mockStoredFile as any)
       mockStorageFactory.getProviderByName = jest.fn().mockReturnValue(mockStorageProvider)
       mockStorageProvider.getSignedUrl.mockResolvedValue(
         'https://storage.example.com/file-123?signature=abc123&expires=3600',
       )
-      const result = await service.getSignedUrl('stored-123')
+      const result = await service.getSignedUrl('stored-123', 'owner-1')
       expect(result).toBe('https://storage.example.com/file-123?signature=abc123&expires=3600')
       expect(mockStorageFactory.getProviderByName).toHaveBeenCalledWith('local')
       expect(mockStorageProvider.getSignedUrl).toHaveBeenCalledWith('file-123', 3600)
@@ -420,19 +438,91 @@ describe('StorageService', () => {
         id: 'stored-123',
         providerFileId: 'file-123',
         provider: StorageProvider.LOCAL,
+        userId: 'owner-1',
+        organizationId: null,
       } as any)
       mockStorageFactory.getProviderByName = jest.fn().mockReturnValue(mockStorageProvider)
       mockStorageProvider.getSignedUrl.mockResolvedValue('https://signed-url.com')
-      await service.getSignedUrl('stored-123', 7200)
+      await service.getSignedUrl('stored-123', 'owner-1', 7200)
       expect(mockStorageFactory.getProviderByName).toHaveBeenCalledWith('local')
       expect(mockStorageProvider.getSignedUrl).toHaveBeenCalledWith('file-123', 7200)
     })
     it('should throw NotFoundException when file does not exist', async () => {
       mockPrisma.storedFile.findUnique.mockResolvedValue(null)
-      await expect(service.getSignedUrl('non-existent')).rejects.toThrow(NotFoundException)
-      await expect(service.getSignedUrl('non-existent')).rejects.toThrow(
+      await expect(service.getSignedUrl('non-existent', 'user-1')).rejects.toThrow(NotFoundException)
+      await expect(service.getSignedUrl('non-existent', 'user-1')).rejects.toThrow(
         'Upload not found: non-existent',
       )
+    })
+
+    // These are the regressions. The service used to fetch the row and hand back a signed URL with
+    // no entitlement check at all — a signed URL is a bearer credential for the file's bytes, so
+    // any authenticated caller who knew or guessed an id could read any private file.
+    it('refuses a private file the caller neither owns nor shares an organization with', async () => {
+      mockPrisma.storedFile.findUnique.mockResolvedValue({
+        id: 'stored-123',
+        providerFileId: 'file-123',
+        provider: StorageProvider.LOCAL,
+        userId: 'someone-else',
+        organizationId: null,
+      } as any)
+
+      // Not-found rather than forbidden, matching deleteFile: probing ids must not reveal which exist.
+      await expect(service.getSignedUrl('stored-123', 'intruder')).rejects.toThrow(
+        NotFoundException,
+      )
+      await expect(service.getSignedUrl('stored-123', 'intruder')).rejects.toThrow(
+        'Upload not found: stored-123',
+      )
+      expect(mockStorageProvider.getSignedUrl).not.toHaveBeenCalled()
+    })
+
+    it('allows a member of the organization that owns the file', async () => {
+      mockPrisma.storedFile.findUnique.mockResolvedValue({
+        id: 'stored-123',
+        providerFileId: 'file-123',
+        provider: StorageProvider.LOCAL,
+        userId: null,
+        organizationId: 'org-123',
+      } as any)
+      mockPrisma.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' } as any)
+      mockStorageProvider.getSignedUrl.mockResolvedValue('https://signed-url.com')
+
+      await expect(service.getSignedUrl('stored-123', 'member-user')).resolves.toBe(
+        'https://signed-url.com',
+      )
+    })
+
+    it('refuses a non-member of the organization that owns the file', async () => {
+      mockPrisma.storedFile.findUnique.mockResolvedValue({
+        id: 'stored-123',
+        providerFileId: 'file-123',
+        provider: StorageProvider.LOCAL,
+        userId: null,
+        organizationId: 'org-123',
+      } as any)
+      mockPrisma.organizationMember.findFirst.mockResolvedValue(null)
+
+      await expect(service.getSignedUrl('stored-123', 'outsider')).rejects.toThrow(
+        NotFoundException,
+      )
+      await expect(service.getSignedUrl('stored-123', 'outsider')).rejects.toThrow(
+        'Upload not found: stored-123',
+      )
+      expect(mockStorageProvider.getSignedUrl).not.toHaveBeenCalled()
+    })
+
+    it('refuses a file owned by neither a user nor an organization', async () => {
+      mockPrisma.storedFile.findUnique.mockResolvedValue({
+        id: 'orphan',
+        providerFileId: 'file-x',
+        provider: StorageProvider.LOCAL,
+        userId: null,
+        organizationId: null,
+      } as any)
+
+      await expect(service.getSignedUrl('orphan', 'anyone')).rejects.toThrow(NotFoundException)
+      await expect(service.getSignedUrl('orphan', 'anyone')).rejects.toThrow('Upload not found')
     })
   })
   describe('Provider mapping', () => {

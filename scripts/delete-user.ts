@@ -3,8 +3,12 @@
  *
  * Safely deletes a user and all their related data.
  *
- * Run with: pnpm tsx scripts/delete-user.ts <email>
- * Example: pnpm tsx scripts/delete-user.ts john@example.com
+ * Run with: pnpm run user:delete <email>
+ * Example: pnpm run user:delete john@example.com
+ *
+ * Use the package script, not `pnpm tsx scripts/delete-user.ts` directly: tsx resolves no path
+ * aliases without a tsconfig, and this repo has only tsconfig.base.json, so the bare invocation
+ * fails to resolve the Prisma import before it runs a single line.
  */
 
 import 'dotenv/config'
@@ -32,7 +36,7 @@ async function deleteUser(email: string) {
     },
     include: {
       emails: true,
-      organizationMemberships: true,
+      organizations: true,
     },
   })
 
@@ -45,7 +49,7 @@ async function deleteUser(email: string) {
   console.log(`   ID: ${user.id}`)
   console.log(`   Name: ${user.firstName} ${user.lastName}`)
   console.log(`   Emails: ${user.emails.map(e => e.email).join(', ')}`)
-  console.log(`   Organizations: ${user.organizationMemberships.length}`)
+  console.log(`   Organizations: ${user.organizations.length}`)
 
   console.log(`\n🗑️  Deleting user and all related data...`)
 
@@ -95,7 +99,7 @@ async function deleteUser(email: string) {
     console.log(`   ✅ Deleted ${memberships.count} organization memberships`)
 
     // 8. Delete user emails
-    const emails = await prisma.userEmail.deleteMany({
+    const emails = await prisma.email.deleteMany({
       where: { userId: user.id },
     })
     console.log(`   ✅ Deleted ${emails.count} email addresses`)
@@ -119,8 +123,8 @@ async function main() {
 
   if (!email) {
     console.error('❌ Error: Email address required')
-    console.log('\nUsage: pnpm tsx scripts/delete-user.ts <email>')
-    console.log('Example: pnpm tsx scripts/delete-user.ts john@example.com')
+    console.log('\nUsage: pnpm run user:delete <email>')
+    console.log('Example: pnpm run user:delete john@example.com')
     process.exit(1)
   }
 

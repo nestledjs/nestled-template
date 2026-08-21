@@ -14,19 +14,6 @@ vi.mock('@apollo/client/react', () => ({
   useMutation: (...args: unknown[]) => mockUseMutation(...args),
 }))
 
-// Mock gql - handle template literals properly
-vi.mock('@apollo/client', () => ({
-  gql: vi.fn((strings: TemplateStringsArray | string, ...values: unknown[]) => {
-    // Handle both template literals and regular strings
-    const queryString = typeof strings === 'string' ? strings : strings[0]
-    return {
-      kind: 'Document',
-      definitions: [],
-      loc: { source: { body: queryString } },
-    }
-  }),
-}))
-
 // Mock alert
 global.alert = vi.fn()
 
@@ -59,7 +46,7 @@ describe('Admin Billing Overview Page', () => {
   })
 
   const mockPlansData = {
-    plans: [
+    adminBillingPlans: [
       {
         id: 'plan-1',
         name: 'Pro Plan',
@@ -97,7 +84,9 @@ describe('Admin Billing Overview Page', () => {
   }
 
   const mockSubscriptionsData = {
-    subscriptions: [
+    adminBillingSubscriptions: {
+      total: 3,
+      subscriptions: [
       {
         id: 'sub-1',
         status: 'ACTIVE',
@@ -143,25 +132,22 @@ describe('Admin Billing Overview Page', () => {
         },
         stripeCurrentPeriodEnd: '2024-01-01T00:00:00Z',
       },
-    ],
-    subscriptionsCount: {
-      total: 3,
-      count: 3,
+      ],
     },
   }
 
   const setupMocks = () => {
     mockUseQuery.mockImplementation((query, options) => {
-      // Check if it's the plans query or subscriptions query
-      const queryString = query?.loc?.source?.body || ''
-      if (queryString.includes('plans')) {
+      // SDK documents are real GraphQL ASTs — discriminate on the operation name.
+      const operationName = query?.definitions?.[0]?.name?.value ?? ''
+      if (operationName === 'AdminBillingPlans') {
         return {
           data: mockPlansData,
           loading: false,
           error: null,
           refetch: vi.fn().mockResolvedValue({ data: mockPlansData }),
         }
-      } else if (queryString.includes('subscriptions')) {
+      } else if (operationName === 'AdminBillingSubscriptions') {
         return {
           data: mockSubscriptionsData,
           loading: false,
@@ -368,17 +354,17 @@ describe('Admin Billing Overview Page', () => {
 
     it('should show empty state when no subscriptions', () => {
       mockUseQuery.mockImplementation(query => {
-        const queryString = query?.loc?.source?.body || ''
-        if (queryString.includes('plans')) {
+        const operationName = query?.definitions?.[0]?.name?.value ?? ''
+        if (operationName === 'AdminBillingPlans') {
           return {
             data: mockPlansData,
             loading: false,
             error: null,
             refetch: vi.fn(),
           }
-        } else if (queryString.includes('subscriptions')) {
+        } else if (operationName === 'AdminBillingSubscriptions') {
           return {
-            data: { subscriptions: [], subscriptionsCount: { total: 0, count: 0 } },
+            data: { adminBillingSubscriptions: { subscriptions: [], total: 0 } },
             loading: false,
             error: null,
           }
@@ -430,15 +416,15 @@ describe('Admin Billing Overview Page', () => {
       const mockSyncPrices = vi.fn().mockResolvedValue({})
 
       mockUseQuery.mockImplementation(query => {
-        const queryString = query?.loc?.source?.body || ''
-        if (queryString.includes('plans')) {
+        const operationName = query?.definitions?.[0]?.name?.value ?? ''
+        if (operationName === 'AdminBillingPlans') {
           return {
             data: mockPlansData,
             loading: false,
             error: null,
             refetch: mockRefetch,
           }
-        } else if (queryString.includes('subscriptions')) {
+        } else if (operationName === 'AdminBillingSubscriptions') {
           return {
             data: mockSubscriptionsData,
             loading: false,
@@ -486,26 +472,28 @@ describe('Admin Billing Overview Page', () => {
 
     it('should show 0.00 MRR when no active subscriptions', () => {
       mockUseQuery.mockImplementation(query => {
-        const queryString = query?.loc?.source?.body || ''
-        if (queryString.includes('plans')) {
+        const operationName = query?.definitions?.[0]?.name?.value ?? ''
+        if (operationName === 'AdminBillingPlans') {
           return {
             data: mockPlansData,
             loading: false,
             error: null,
             refetch: vi.fn(),
           }
-        } else if (queryString.includes('subscriptions')) {
+        } else if (operationName === 'AdminBillingSubscriptions') {
           return {
             data: {
-              subscriptions: [
-                {
-                  id: 'sub-1',
-                  status: 'CANCELED',
-                  organization: { id: 'org-1', name: 'Org 1' },
-                  plan: { id: 'plan-1', name: 'Plan 1', price: '99.99' },
-                },
-              ],
-              subscriptionsCount: { total: 1, count: 1 },
+              adminBillingSubscriptions: {
+                total: 1,
+                subscriptions: [
+                  {
+                    id: 'sub-1',
+                    status: 'CANCELED',
+                    organization: { id: 'org-1', name: 'Org 1' },
+                    plan: { id: 'plan-1', name: 'Plan 1', price: '99.99' },
+                  },
+                ],
+              },
             },
             loading: false,
             error: null,

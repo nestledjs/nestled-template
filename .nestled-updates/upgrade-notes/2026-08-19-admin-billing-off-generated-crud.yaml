@@ -1,0 +1,77 @@
+id: 2026-08-19-admin-billing-off-generated-crud
+title: Admin Billing reads purpose-built resolvers, not generated CRUD — and states its own permissions
+priority: high
+area: billing
+type: security
+delivery: code-patch
+
+intent: >
+  Move the admin Billing pages off the generated CRUD roots `plans`, `subscriptions` and
+  `subscriptionsCount`, onto two purpose-built queries on the existing BillingResolver —
+  `adminBillingPlans` and `adminBillingSubscriptions` — and give every Billing operation an explicit
+  platform permission instead of relying on `@AdminOnly()` alone.
+
+  Adds `platform.billing.read` and `platform.billing.manage` to the platform permission catalog, an
+  `AdminBillingSubscriptionsInput` / `Response` DTO pair, SDK documents under
+  `libs/shared/sdk/src/graphql/billing/`, and repoints the three pages
+  (`admin/billing/_index.tsx`, `plans.tsx`, `subscriptions.tsx`) from inline `gql` to the SDK.
+
+why: >
+  A page that calls a generated CRUD root inherits whatever guard tier the CRUD generator currently
+  emits, rather than stating its own. That is fine while generated-crud posture is `admin` — and it
+  is exactly what breaks when a repo declares posture `authenticated`, because every such page
+  silently widens to any signed-in user with no change to the page and nothing to review.
+
+  The template shipped four of these calls across three Billing pages. They were invisible to the
+  `admin-crud-boundary` check, which read SDK documents only and never inline `gql` templates, so
+  the template taught the pattern to every clone while reporting itself clean. cashcast hit the same
+  thing downstream and fixed it there (pirateandfox/cashcast#51); this brings the fix upstream so
+  the whole fleet inherits the safe shape.
+
+  The permissions matter for the same reason: `@AdminOnly()` is a coarse role gate, not an answer to
+  "who may read billing". Every Billing operation now names the permission it requires.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+  - libs/api/custom/src/lib/plugins/billing/admin-billing.dto.ts
+  - libs/api/custom/src/lib/plugins/billing/index.ts
+  - libs/api/prisma/src/lib/seed/seed-data/seed-platform-access-control.ts
+  - libs/shared/sdk/src/graphql/billing/billing-queries.graphql
+  - libs/shared/sdk/src/graphql/billing/billing-mutations.graphql
+  - apps/web/app/routes/admin/billing/_index.tsx
+  - apps/web/app/routes/admin/billing/plans.tsx
+  - apps/web/app/routes/admin/billing/subscriptions.tsx
+
+packageReleases: []
+
+skipIf:
+  - >
+    The project already reads admin Billing through purpose-built resolvers that carry their own
+    guard and permissions, and no client document calls a generated CRUD root. cashcast is in this
+    state already (PR #51) and should reconcile rather than re-apply.
+
+verification:
+  - pnpm exec nx run api:typecheck
+  - pnpm exec nx run web:typecheck
+  - pnpm run nestled-doctor
+  - pnpm exec nx run web:test
+
+agentHints:
+  - >
+    Run the seed after adopting, or the two new permissions will not exist in the database and the
+    access-policy guard will deny the Billing operations for every non-superadmin. Superadmins are
+    unaffected — they hold `platform.*`.
+  - >
+    Keep the resolver's Prisma `include` in step with the SDK selection set. The document selects
+    `organization.emails`, so the resolver includes it; a narrower include resolves the field to
+    null rather than failing, which is a silent data bug, not a type error.
+  - >
+    `price` is the GraphQL Decimal scalar and serializes as a string — parse it rather than treating
+    it as a number. The old hand-written local types declared it `string` and hid this.
+  - >
+    Both `plans.tsx` and `subscriptions.tsx` export components whose names collide with the SDK
+    document names, so the imports there are aliased. Keep the alias or rename the component; do not
+    rename the SDK document.
+  - >
+    This upgrade is what makes a future generated-crud posture change safe. Adopt it before
+    declaring posture `authenticated` in any repo, never after.

@@ -227,9 +227,16 @@ export class StorageService {
    */
   async getOrganizationFiles(
     organizationId: string,
+    userId: string,
     limit = 50,
     offset = 0,
   ): Promise<StoredFile[]> {
+    // The organization id comes from the caller, so membership has to be proven here — without it
+    // any authenticated user can list any organization's files by supplying its id.
+    if (!(await this.isOrganizationMember(organizationId, userId))) {
+      throw new ForbiddenException('You are not a member of that organization')
+    }
+
     return this.prisma.storedFile.findMany({
       where: { organizationId },
       take: limit,
@@ -293,6 +300,36 @@ export class StorageService {
     }
   }
 
+  /** Membership, any role. Listing an organization's files is not an admin action. */
+  private async isOrganizationMember(organizationId: string, userId: string): Promise<boolean> {
+    const membership = await this.prisma.organizationMember.findFirst({
+      where: { userId, organizationId },
+      select: { id: true },
+    })
+
+    return membership !== null
+  }
+
+  /**
+   * May this user be handed the bytes of this file?
+   *
+   * Owner, or a member of the organization the file belongs to — nothing else. A file owned by
+   * neither is unreachable by design: default-deny beats guessing at intent.
+   *
+   * Deliberately NOT keyed on publicUrl. A file that already has a public URL needs no signed one,
+   * and treating "has a public URL" as "anyone may sign it" would make the check depend on a field
+   * that exists to describe delivery, not entitlement.
+   */
+  private async canReadFile(
+    upload: { userId: string | null; organizationId: string | null },
+    userId: string,
+  ): Promise<boolean> {
+    if (upload.userId && upload.userId === userId) return true
+    if (upload.organizationId) return this.isOrganizationMember(upload.organizationId, userId)
+
+    return false
+  }
+
   /**
    * Assert the user is an Owner or Admin of the given organization.
    * Throws ForbiddenException if not.
@@ -314,14 +351,25 @@ export class StorageService {
   }
 
   /**
-   * Get a signed URL for temporary access to a private file
+   * Get a signed URL for temporary access to a private file.
+   *
+   * A signed URL is a bearer credential for the file's bytes, so the caller must be entitled to the
+   * file itself: they own it, or it belongs to an organization they are a member of. There is no
+   * exception for files that also have a public URL — see canReadFile.
+   *
+   * Not-found rather than forbidden on a failed check, matching deleteFile — a caller probing ids
+   * should not learn which ones exist.
    */
-  async getSignedUrl(uploadId: string, expiresIn = 3600): Promise<string> {
+  async getSignedUrl(uploadId: string, userId: string, expiresIn = 3600): Promise<string> {
     const upload = await this.prisma.storedFile.findUnique({
       where: { id: uploadId },
     })
 
     if (!upload) {
+      throw new NotFoundException(`Upload not found: ${uploadId}`)
+    }
+
+    if (!(await this.canReadFile(upload, userId))) {
       throw new NotFoundException(`Upload not found: ${uploadId}`)
     }
 

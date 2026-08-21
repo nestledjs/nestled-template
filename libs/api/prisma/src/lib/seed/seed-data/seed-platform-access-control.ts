@@ -30,6 +30,18 @@ export const platformPermissions = [
     description: 'View platform-wide analytics',
   },
   {
+    key: 'platform.billing.read',
+    namespace: 'platform.billing',
+    action: 'read',
+    description: 'View platform billing plans and organization subscriptions',
+  },
+  {
+    key: 'platform.billing.manage',
+    namespace: 'platform.billing',
+    action: 'manage',
+    description: 'Synchronize billing products, prices, and subscriptions with Stripe',
+  },
+  {
     key: 'platform.audit.read',
     namespace: 'platform.audit',
     action: 'read',

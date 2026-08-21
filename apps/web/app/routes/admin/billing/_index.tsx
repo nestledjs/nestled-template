@@ -1,6 +1,11 @@
 import { Link } from 'react-router'
-import { gql, type TypedDocumentNode } from '@apollo/client'
 import { useQuery, useMutation } from '@apollo/client/react'
+import {
+  AdminBillingPlans,
+  AdminBillingSubscriptions,
+  AdminSyncStripePrices,
+  AdminSyncStripeProducts,
+} from '@nestled-template/shared/sdk'
 import {
   ArrowPathIcon,
   CreditCardIcon,
@@ -9,37 +14,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { useState } from 'react'
 
-type Plan = {
-  id: string
-  name: string
-  description?: string
-  price: string
-  interval: string
-  active: boolean
-  stripeProductId?: string
-  stripePriceId?: string
-  trialPeriodDays?: number
-}
 
-type Subscription = {
-  id: string
-  status: string
-  organizationId: string
-  organization?: {
-    id: string
-    name: string
-  }
-  plan?: {
-    id: string
-    name: string
-    price: string
-  }
-  stripeCurrentPeriodEnd?: string
-}
 
-type AdminPlansQuery = {
-  plans: Plan[]
-}
 
 function getSubscriptionStatusClass(status: string): string {
   if (status === 'ACTIVE') return 'bg-green-100 text-green-800'
@@ -47,84 +23,23 @@ function getSubscriptionStatusClass(status: string): string {
   return 'bg-red-100 text-red-800'
 }
 
-type AdminSubscriptionsQuery = {
-  subscriptions: Subscription[]
-  subscriptionsCount: {
-    total: number
-    count: number
-  }
-}
 
-type AdminSyncStripeProductsMutation = {
-  syncStripeProducts: boolean
-}
 
-type AdminSyncStripePricesMutation = {
-  syncStripePrices: boolean
-}
 
-const ADMIN_PLANS_QUERY: TypedDocumentNode<AdminPlansQuery> = gql`
-  query AdminPlans {
-    plans {
-      id
-      name
-      description
-      price
-      interval
-      active
-      stripeProductId
-      stripePriceId
-      trialPeriodDays
-    }
-  }
-`
 
-const ADMIN_SUBSCRIPTIONS_QUERY: TypedDocumentNode<AdminSubscriptionsQuery> = gql`
-  query AdminSubscriptions($input: ListSubscriptionInput) {
-    subscriptions(input: $input) {
-      id
-      status
-      organizationId
-      organization {
-        id
-        name
-      }
-      plan {
-        id
-        name
-        price
-      }
-      stripeCurrentPeriodEnd
-    }
-    subscriptionsCount(input: $input) {
-      total
-      count
-    }
-  }
-`
 
-const SYNC_PRODUCTS_MUTATION: TypedDocumentNode<AdminSyncStripeProductsMutation> = gql`
-  mutation AdminSyncStripeProducts {
-    syncStripeProducts
-  }
-`
 
-const SYNC_PRICES_MUTATION: TypedDocumentNode<AdminSyncStripePricesMutation> = gql`
-  mutation AdminSyncStripePrices {
-    syncStripePrices
-  }
-`
 
 export default function AdminBillingOverview() {
   const [syncing, setSyncing] = useState(false)
 
-  const { data: plansData, refetch: refetchPlans } = useQuery(ADMIN_PLANS_QUERY)
-  const { data: subsData } = useQuery(ADMIN_SUBSCRIPTIONS_QUERY, {
-    variables: { input: { take: 5, orderBy: 'createdAt', orderDirection: 'desc' } },
+  const { data: plansData, refetch: refetchPlans } = useQuery(AdminBillingPlans)
+  const { data: subsData } = useQuery(AdminBillingSubscriptions, {
+    variables: { input: { take: 5 } },
   })
 
-  const [syncProducts] = useMutation(SYNC_PRODUCTS_MUTATION)
-  const [syncPrices] = useMutation(SYNC_PRICES_MUTATION)
+  const [syncProducts] = useMutation(AdminSyncStripeProducts)
+  const [syncPrices] = useMutation(AdminSyncStripePrices)
 
   const handleSync = async () => {
     setSyncing(true)
@@ -141,20 +56,21 @@ export default function AdminBillingOverview() {
     }
   }
 
-  const plans = plansData?.plans || []
-  const subscriptions = subsData?.subscriptions || []
-  const totalSubscriptions = subsData?.subscriptionsCount?.total || 0
+  const plans = plansData?.adminBillingPlans || []
+  const subscriptions = subsData?.adminBillingSubscriptions?.subscriptions || []
+  const totalSubscriptions = subsData?.adminBillingSubscriptions?.total || 0
 
   const activeSubscriptions = subscriptions.filter(s => s.status === 'ACTIVE').length
   const activePlans = plans.filter(p => p.active).length
 
-  const monthlyRecurringRevenue = subscriptions.reduce((sum: number, s: Subscription) => {
+  const monthlyRecurringRevenue = subscriptions.reduce((sum, s) => {
     if (s.status !== 'ACTIVE' || !s.plan?.price) {
       return sum
     }
 
-    const price = Number.parseFloat(s.plan.price)
-    return sum + price
+    // price is the GraphQL Decimal scalar, which serializes as a string.
+    const price = Number.parseFloat(String(s.plan.price))
+    return Number.isFinite(price) ? sum + price : sum
   }, 0)
 
   return (

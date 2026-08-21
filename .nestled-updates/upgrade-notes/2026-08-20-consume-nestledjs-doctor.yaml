@@ -1,0 +1,67 @@
+id: 2026-08-20-consume-nestledjs-doctor
+title: Enforcement comes from @nestledjs/doctor — delete the copies
+priority: high
+area: infra
+type: infra
+delivery: hybrid
+
+intent: >
+  Install `@nestledjs/doctor` as a devDependency, repoint the package scripts at its bins, and
+  DELETE the 23 copied enforcement files: `scripts/doctor*.ts`, `scripts/verify-prisma-client.ts`,
+  `tools/verify-fragment-coverage.{ts,spec.ts}`, `tools/verify-selects.{mjs,spec.mjs}`,
+  `tools/verify-select-coverage.{mjs,spec.mjs}`.
+
+  Script mapping: `nestled-doctor` → `nestled-doctor`; `verify:prisma-client` →
+  `nestled-verify-prisma-client`; `verify:selects` → `nestled-verify-selects`;
+  `verify:select-coverage` → `nestled-verify-select-coverage`; `verify:fragments` →
+  `nestled-verify-fragments`. The `--update-guard-baseline` and `--update-sdk-contract-baseline`
+  flags pass through unchanged. Drop `template:test-doctor-auth` — those specs run in the package's
+  own CI now.
+
+why: >
+  ~7,400 lines were copied verbatim into every repo. A copy can be edited, and an edited check
+  reports clean while enforcing less — which is why convergence-status had to hash these files to
+  find drift at all, and why it found three repos running edited checks. As a package the version a
+  repo runs is a line in its lockfile.
+
+  The deletion is the part that matters and the part the tooling cannot do for you: the promotion
+  mirror never removes files, so a repo that installs the package without deleting its copies keeps
+  running the old ones through its own scripts. Two enforcement suites, one of them stale, and
+  nothing to tell you which answered.
+
+affectedPaths:
+  - package.json
+  - scripts/
+  - tools/
+
+packageReleases:
+  - name: '@nestledjs/doctor'
+    targetVersion: 0.1.1
+    versionRange: ^0.1.1
+
+skipIf:
+  - The project already depends on @nestledjs/doctor and carries no scripts/doctor*.ts.
+
+verification:
+  - pnpm run nestled-doctor
+  - pnpm run verify:selects
+  - pnpm run verify:select-coverage
+  - pnpm run verify:fragments
+  - pnpm run verify:prisma-client
+
+agentHints:
+  - >
+    Do NOT take 0.1.0 — it omits tslib and cannot run outside the publishing workspace. 0.1.1 is the
+    first usable release.
+  - >
+    Verify by output, not by exit code: run the doctor before and after and diff. It passed here
+    byte-identically, which is the assurance worth having when swapping the thing that does the
+    checking.
+  - >
+    A repo whose select constants are not in `*.select.ts` declares that in
+    `.nestled-updates/doctor.config.json` (`selectFileSuffixes`) instead of editing the checker —
+    editing is no longer possible once it lives in node_modules. muzebook is the case in point.
+  - >
+    Keep the CI prettier glob pointed at `scripts/**` and `tools/**`: both still hold repo-owned
+    files after the deletion, so the step keeps working. If a repo empties either directory
+    entirely, narrow the glob or prettier errors on no matches.

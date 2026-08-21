@@ -37,6 +37,10 @@ describe('authentication and authorization error navigation', () => {
     ).toBeInTheDocument()
   })
 
+  // 20s test budget against the 5s findByRole wait below. These have to differ: vitest's default
+  // testTimeout is 5000ms, so an inner wait of the same length can consume the entire budget and
+  // the test dies by timeout at ~5005ms before the retry window it was given can ever elapse. That
+  // is what "generous timeout costs nothing" missed — it cost the whole test.
   it('replaces a protected query page with access denied after a forbidden event', async () => {
     const router = createMemoryRouter(
       [
@@ -67,5 +71,5 @@ describe('authentication and authorization error navigation', () => {
         { timeout: 5000 },
       ),
     ).toBeInTheDocument()
-  })
+  }, 20000)
 })

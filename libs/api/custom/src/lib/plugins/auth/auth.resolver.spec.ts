@@ -1,3 +1,4 @@
+import { ACCESS_POLICY_KEY } from '@nestled-template/api/utils'
 import { ConfigService } from '@nestjs/config'
 import { AuthResolver } from './auth.resolver'
 import { AuthService } from './auth.service'
@@ -207,14 +208,21 @@ describe('AuthResolver', () => {
     expect(authService.endEmulation).toHaveBeenCalledWith('cookie-token')
   })
 
-  it('restricts account unlocks to super admins', async () => {
-    await expect(resolver.unlockAccount(context, user, 'locked-user')).rejects.toThrow(
-      'Only super admins can unlock accounts',
-    )
+  // The role gate used to be an inline `if (!user.isSuperAdmin) throw` in the resolver body:
+  // invisible to tooling, and it raised a bare Error rather than a Forbidden. It is declarative
+  // metadata now, so assert the declaration — that is what actually enforces the restriction.
+  it('declares the platform permission that restricts account unlocks', () => {
+    const policy = Reflect.getMetadata(ACCESS_POLICY_KEY, AuthResolver.prototype.unlockAccount)
 
-    await expect(
-      resolver.unlockAccount(context, { id: 'admin-1', isSuperAdmin: true } as any, 'locked-user'),
-    ).resolves.toBe(user)
+    expect(policy).toEqual({
+      scope: 'platform',
+      permissions: ['platform.users.manage'],
+      match: 'any',
+    })
+  })
+
+  it('unlocks the requested account and records the session', async () => {
+    await expect(resolver.unlockAccount(context, 'locked-user')).resolves.toBe(user)
     expect(authService.unlockAccount).toHaveBeenCalledWith('locked-user', sessionInfo)
   })
 
