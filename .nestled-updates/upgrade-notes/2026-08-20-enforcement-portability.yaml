@@ -1,0 +1,61 @@
+id: 2026-08-20-enforcement-portability
+title: Enforcement code may not import anything that resolves in one repo only
+priority: normal
+area: infra
+type: security
+delivery: code-patch
+
+intent: >
+  New doctor check `checkEnforcementPortability`. Files under `scripts/doctor*.ts` and
+  `tools/verify-*.ts` may import only node builtins, `typescript`, `graphql`, `vitest`, or a
+  relative sibling. Any other specifier fails — including this repo's own workspace scope.
+
+  Runs in the source template repositories only.
+
+why: >
+  These files are copied verbatim into every clone, where the workspace scope differs
+  (`@mi-core/...`, `@cashcast/...`, and so on). An import of `@nestled-template/api/utils` resolves
+  here and nowhere else, so the check would silently stop working in exactly the repos it exists to
+  police — while continuing to pass in the one place anyone looks.
+
+  The invariant held by luck, not by construction: zero such imports existed, and nothing asserted
+  it. The near-miss is concrete — mi-core carried a local `doctor.ts` edit, marked pending upstream,
+  that referenced a path existing only in mi-core. Had it been promoted as written, repo-specific
+  detail would have entered the tool eleven repos are judged by.
+
+  The allowlist is deliberate. A new dependency in enforcement code should be a decision taken once,
+  not a drive-by import that every clone then has to carry.
+
+affectedPaths:
+  - scripts/doctor.ts
+  - scripts/doctor-source-analysis.ts
+  - scripts/doctor-source-analysis.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project does not carry the template's doctor.
+
+verification:
+  - pnpm exec vitest run scripts/
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Source-template only, on purpose. This stops repo-specific content being promoted INTO the
+    shared tool. The other direction — a downstream repo editing its own copy — is a different
+    question, answered by the upgrader's `convergence-status`, which reports enforcement files that
+    differ from the template's.
+  - >
+    Stated limit: this reads IMPORTS, which are precise and false-positive free. A hardcoded
+    repo-specific path string inside a check body is not caught. That is the shape mi-core's local
+    edit actually took, so read promoted enforcement changes for it by eye.
+  - >
+    All five ways a module gets imported are covered: `import … from`, `export … from`, dynamic
+    `import()`, `require()`, and `import x = require(…)`. The last is the easy one to miss — it
+    reaches a module without an ImportDeclaration or a CallExpression, so a scan built from those
+    two alone lets it through silently. If you extend this reader, extend the spec first.
+  - >
+    Repo names in comments stay legal — the check reads the AST, not text, so provenance notes like
+    "(mi-core: 10 false findings)" are unaffected. Keep writing them; knowing where a rule came from
+    is worth more than a blanket ban on the word.

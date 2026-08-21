@@ -101,8 +101,9 @@ export class StorageResolver {
   async getSignedUrl(
     @Args('uploadId', { type: () => String }) uploadId: string,
     @Args('expiresIn', { type: () => Int, nullable: true }) expiresIn: number | undefined,
+    @CtxUser() user: User,
   ): Promise<string> {
-    return this.storageService.getSignedUrl(uploadId, expiresIn)
+    return this.storageService.getSignedUrl(uploadId, user.id, expiresIn)
   }
 
   /**
@@ -125,7 +126,8 @@ export class StorageResolver {
     @Args('organizationId', { type: () => String }) organizationId: string,
     @Args('limit', { type: () => Int, nullable: true }) limit: number | undefined,
     @Args('offset', { type: () => Int, nullable: true }) offset: number | undefined,
+    @CtxUser() user: User,
   ): Promise<StoredFile[]> {
-    return this.storageService.getOrganizationFiles(organizationId, limit, offset)
+    return this.storageService.getOrganizationFiles(organizationId, user.id, limit, offset)
   }
 }

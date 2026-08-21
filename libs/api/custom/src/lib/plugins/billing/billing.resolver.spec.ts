@@ -8,6 +8,13 @@ type DataMock = {
   auditLog: {
     create: jest.Mock
   }
+  plan: {
+    findMany: jest.Mock
+  }
+  subscription: {
+    findMany: jest.Mock
+    count: jest.Mock
+  }
 }
 
 type SyncMock = {
@@ -22,6 +29,13 @@ function createDataMock(): DataMock & ApiCoreDataAccessService {
   return Object.assign(Object.create(ApiCoreDataAccessService.prototype), {
     auditLog: {
       create: jest.fn().mockResolvedValue({}),
+    },
+    plan: {
+      findMany: jest.fn().mockResolvedValue([{ id: 'plan-1' }]),
+    },
+    subscription: {
+      findMany: jest.fn().mockResolvedValue([{ id: 'sub-1' }]),
+      count: jest.fn().mockResolvedValue(1),
     },
   })
 }
@@ -136,5 +150,73 @@ describe('BillingResolver audit coverage', () => {
     expect(Logger.warn).toHaveBeenCalledWith(
       'Failed to record audit log STRIPE_PRODUCT_SYNCED for StripeProduct prod-1: audit unavailable',
     )
+  })
+})
+
+describe('BillingResolver admin queries', () => {
+  it('returns plans newest first', async () => {
+    const data = createDataMock()
+    const resolver = new BillingResolver(createSyncMock(), data)
+
+    await expect(resolver.adminBillingPlans()).resolves.toEqual([{ id: 'plan-1' }])
+    expect(data.plan.findMany).toHaveBeenCalledWith({ orderBy: { createdAt: 'desc' } })
+  })
+
+  it('defaults paging and includes the relations the SDK document selects', async () => {
+    const data = createDataMock()
+    const resolver = new BillingResolver(createSyncMock(), data)
+
+    await expect(resolver.adminBillingSubscriptions()).resolves.toEqual({
+      subscriptions: [{ id: 'sub-1' }],
+      total: 1,
+    })
+
+    const args = data.subscription.findMany.mock.calls[0][0]
+    expect(args.skip).toBe(0)
+    expect(args.take).toBe(50)
+    expect(args.where).toBeUndefined()
+    // organization.emails is selected by the admin Billing document; a narrower include resolves
+    // the field to null rather than failing, so the include must stay in step with the selection.
+    expect(args.include).toEqual({ organization: { include: { emails: true } }, plan: true })
+  })
+
+  it('clamps take to 100 and floors skip at 0', async () => {
+    const data = createDataMock()
+    const resolver = new BillingResolver(createSyncMock(), data)
+
+    await resolver.adminBillingSubscriptions({ skip: -5, take: 5000 })
+
+    const args = data.subscription.findMany.mock.calls[0][0]
+    expect(args.take).toBe(100)
+    expect(args.skip).toBe(0)
+  })
+
+  it('raises a take of 0 to 1 rather than returning an unbounded page', async () => {
+    const data = createDataMock()
+    const resolver = new BillingResolver(createSyncMock(), data)
+
+    await resolver.adminBillingSubscriptions({ take: 0 })
+
+    expect(data.subscription.findMany.mock.calls[0][0].take).toBe(1)
+  })
+
+  it('filters by organization name when a search term is given, and counts the same filter', async () => {
+    const data = createDataMock()
+    const resolver = new BillingResolver(createSyncMock(), data)
+
+    await resolver.adminBillingSubscriptions({ search: '  Acme  ' })
+
+    const where = { organization: { name: { contains: 'Acme', mode: 'insensitive' } } }
+    expect(data.subscription.findMany.mock.calls[0][0].where).toEqual(where)
+    expect(data.subscription.count).toHaveBeenCalledWith({ where })
+  })
+
+  it('treats a whitespace-only search as no filter', async () => {
+    const data = createDataMock()
+    const resolver = new BillingResolver(createSyncMock(), data)
+
+    await resolver.adminBillingSubscriptions({ search: '   ' })
+
+    expect(data.subscription.findMany.mock.calls[0][0].where).toBeUndefined()
   })
 })

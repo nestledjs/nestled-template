@@ -1,0 +1,70 @@
+id: 2026-08-19-api-token-organization-binding
+title: Organization-scoped API tokens are bound to the organization they are scoped to
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  In `JwtStrategy.authenticate()`, when `validateApiToken()` returns a non-null `organizationId`:
+  reject the request with 403 if `x-organization-id` is present and different, and set that header
+  to the token's organization when it is absent. Unscoped tokens are untouched.
+
+  `TenancyMiddleware.resolveOrganizationId()` also now prefers `req.apiTokenOrganizationId` over the
+  header, matching what `OrganizationContextService` already did.
+
+why: >
+  An organization-scoped token is a RESTRICTION below the user's own access, not a hint about which
+  organization to prefer. The strategy attached `result.organizationId` to the request as metadata
+  but never constrained the header, and `TenancyMiddleware` read the header first — so a user who
+  belongs to organizations A and B, holding a token scoped only to A, could act in B simply by
+  sending `x-organization-id: B`.
+
+  Nothing downstream catches this, and that is the point: every membership check still passes,
+  because the user genuinely is a member of B. The scope is only meaningful if it is enforced where
+  the token is validated.
+
+  Scope of the exposure, stated precisely: it does not cross into organizations the user is not a
+  member of — `TenancyMiddleware` throws Forbidden without a membership row. What it defeats is the
+  ability to issue a token that is *narrower* than its owner, which is the entire purpose of
+  per-organization tokens (for example a token handed to a CI job or an integration for one
+  organization only).
+
+  Found by Copilot review on muzebook PR #156; muzebook carried a local workaround pending this.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+  - libs/api/custom/src/lib/middleware/tenancy.middleware.ts
+
+packageReleases: []
+
+skipIf:
+  - The project does not issue organization-scoped API tokens and never sets apiTokenOrganizationId.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api:typecheck
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    muzebook already enforces this locally, pending upstream. When it adopts, take this version and
+    remove the workaround plus the corresponding pending-upstream entry in its docs/DECISIONS.md —
+    do not keep both.
+  - >
+    The mismatch is rejected BEFORE the user lookup: a request that cannot proceed should not cost a
+    database round trip, and the token is already known invalid for this request at that point.
+  - >
+    403 rather than 401 is deliberate. The token is valid and the caller is authenticated; they are
+    asking for an organization this token does not authorize.
+  - >
+    `x-organization-id` can arrive as an array (repeated header). Take the first element before
+    comparing, or a repeated header slips past a naive string comparison — there is a regression
+    test for exactly this. The header is then written back as a scalar unconditionally, which also
+    collapses a repeated-but-matching header to one value so a downstream consumer reading it
+    naively cannot receive an array.
+  - >
+    Audit any project-local caller of ApiTokenAuthMiddleware or any other consumer that reads
+    `x-organization-id` directly: it must prefer `apiTokenOrganizationId`, as
+    OrganizationContextService and now TenancyMiddleware both do.

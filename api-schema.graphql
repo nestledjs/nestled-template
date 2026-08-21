@@ -169,6 +169,17 @@ type AdminAuditLogsResponse {
   total: Int!
 }
 
+input AdminBillingSubscriptionsInput {
+  search: String
+  skip: Int
+  take: Int
+}
+
+type AdminBillingSubscriptionsResponse {
+  subscriptions: [Subscription!]!
+  total: Int!
+}
+
 type AdminDashboardStats {
   activeSessions: Int!
   activeSubscriptions: Int!
@@ -2473,6 +2484,8 @@ type Query {
   adminAnalytics: AdminAnalytics!
   adminAuditLogFacets: AdminAuditLogFacets!
   adminAuditLogs(filters: AdminAuditLogFiltersInput): AdminAuditLogsResponse!
+  adminBillingPlans: [Plan!]!
+  adminBillingSubscriptions(input: AdminBillingSubscriptionsInput): AdminBillingSubscriptionsResponse!
   adminDashboardStats: AdminDashboardStats!
   adminOrganizations(filters: AdminOrganizationFiltersInput): AdminOrganizationsResponse!
   adminSecurityEvents(filters: AdminSecurityEventFiltersInput): AdminSecurityEventsResponse!

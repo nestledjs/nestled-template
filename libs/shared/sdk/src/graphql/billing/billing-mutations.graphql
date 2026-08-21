@@ -1,0 +1,7 @@
+mutation AdminSyncStripeProducts {
+  syncStripeProducts
+}
+
+mutation AdminSyncStripePrices {
+  syncStripePrices
+}

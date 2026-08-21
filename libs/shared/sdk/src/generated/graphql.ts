@@ -8,8 +8,7 @@ export type MakeEmpty<T extends { [key: string]: unknown }, K extends keyof T> =
   [_ in K]?: never
 }
 export type Incremental<T> =
-  | T
-  | { [P in keyof T]?: P extends ' $fragmentName' | '__typename' ? T[P] : never }
+  T | { [P in keyof T]?: P extends ' $fragmentName' | '__typename' ? T[P] : never }
 /** All built-in and custom scalars, mapped to their actual values */
 export type Scalars = {
   ID: { input: string; output: string }
@@ -199,6 +198,18 @@ export type AdminAuditLogsResponse = {
   logs: Array<AuditLog>
   skip: Scalars['Int']['output']
   take: Scalars['Int']['output']
+  total: Scalars['Int']['output']
+}
+
+export type AdminBillingSubscriptionsInput = {
+  search?: InputMaybe<Scalars['String']['input']>
+  skip?: InputMaybe<Scalars['Int']['input']>
+  take?: InputMaybe<Scalars['Int']['input']>
+}
+
+export type AdminBillingSubscriptionsResponse = {
+  __typename?: 'AdminBillingSubscriptionsResponse'
+  subscriptions: Array<Subscription>
   total: Scalars['Int']['output']
 }
 
@@ -3067,6 +3078,8 @@ export type Query = {
   adminAnalytics: AdminAnalytics
   adminAuditLogFacets: AdminAuditLogFacets
   adminAuditLogs: AdminAuditLogsResponse
+  adminBillingPlans: Array<Plan>
+  adminBillingSubscriptions: AdminBillingSubscriptionsResponse
   adminDashboardStats: AdminDashboardStats
   adminOrganizations: AdminOrganizationsResponse
   adminSecurityEvents: AdminSecurityEventsResponse
@@ -3181,6 +3194,10 @@ export type QueryAddressesCountArgs = {
 
 export type QueryAdminAuditLogsArgs = {
   filters?: InputMaybe<AdminAuditLogFiltersInput>
+}
+
+export type QueryAdminBillingSubscriptionsArgs = {
+  input?: InputMaybe<AdminBillingSubscriptionsInput>
 }
 
 export type QueryAdminOrganizationsArgs = {
@@ -10302,6 +10319,67 @@ export type Complete2FaLoginMutation = {
       }> | null
     } | null
   } | null
+}
+
+export type AdminSyncStripeProductsMutationVariables = Exact<{ [key: string]: never }>
+
+export type AdminSyncStripeProductsMutation = {
+  __typename?: 'Mutation'
+  syncStripeProducts: boolean
+}
+
+export type AdminSyncStripePricesMutationVariables = Exact<{ [key: string]: never }>
+
+export type AdminSyncStripePricesMutation = { __typename?: 'Mutation'; syncStripePrices: boolean }
+
+export type AdminBillingPlansQueryVariables = Exact<{ [key: string]: never }>
+
+export type AdminBillingPlansQuery = {
+  __typename?: 'Query'
+  adminBillingPlans: Array<{
+    __typename?: 'Plan'
+    id: string
+    name: string
+    description?: string | null
+    price: any
+    interval: string
+    active: boolean
+    features?: any | null
+    limits?: any | null
+    stripeProductId?: string | null
+    stripePriceId?: string | null
+    trialPeriodDays?: number | null
+  }>
+}
+
+export type AdminBillingSubscriptionsQueryVariables = Exact<{
+  input?: InputMaybe<AdminBillingSubscriptionsInput>
+}>
+
+export type AdminBillingSubscriptionsQuery = {
+  __typename?: 'Query'
+  adminBillingSubscriptions: {
+    __typename?: 'AdminBillingSubscriptionsResponse'
+    total: number
+    subscriptions: Array<{
+      __typename?: 'Subscription'
+      id: string
+      status: SubscriptionStatus
+      organizationId: string
+      stripeCustomerId?: string | null
+      stripeCurrentPeriodEnd?: any | null
+      trialEnd?: any | null
+      cancelAtPeriodEnd: boolean
+      createdAt: any
+      organization?: {
+        __typename?: 'Organization'
+        id: string
+        name: string
+        emails?: Array<{ __typename?: 'Email'; id: string; email: string; primary: boolean }> | null
+      } | null
+      plan?: { __typename?: 'Plan'; id: string; name: string; price: any; interval: string } | null
+    }>
+  }
 }
 
 export type UptimeQueryVariables = Exact<{ [key: string]: never }>
@@ -29589,6 +29667,170 @@ export const Complete2FaLogin = {
     },
   ],
 } as unknown as DocumentNode<Complete2FaLoginMutation, Complete2FaLoginMutationVariables>
+export const AdminSyncStripeProducts = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'AdminSyncStripeProducts' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [{ kind: 'Field', name: { kind: 'Name', value: 'syncStripeProducts' } }],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  AdminSyncStripeProductsMutation,
+  AdminSyncStripeProductsMutationVariables
+>
+export const AdminSyncStripePrices = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'AdminSyncStripePrices' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [{ kind: 'Field', name: { kind: 'Name', value: 'syncStripePrices' } }],
+      },
+    },
+  ],
+} as unknown as DocumentNode<AdminSyncStripePricesMutation, AdminSyncStripePricesMutationVariables>
+export const AdminBillingPlans = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'AdminBillingPlans' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'adminBillingPlans' },
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'price' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'interval' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'active' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'features' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'limits' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'stripeProductId' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'stripePriceId' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'trialPeriodDays' } },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<AdminBillingPlansQuery, AdminBillingPlansQueryVariables>
+export const AdminBillingSubscriptions = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'AdminBillingSubscriptions' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+          type: {
+            kind: 'NamedType',
+            name: { kind: 'Name', value: 'AdminBillingSubscriptionsInput' },
+          },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'adminBillingSubscriptions' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'input' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'total' } },
+                {
+                  kind: 'Field',
+                  name: { kind: 'Name', value: 'subscriptions' },
+                  selectionSet: {
+                    kind: 'SelectionSet',
+                    selections: [
+                      { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'status' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'organization' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                            {
+                              kind: 'Field',
+                              name: { kind: 'Name', value: 'emails' },
+                              selectionSet: {
+                                kind: 'SelectionSet',
+                                selections: [
+                                  { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                                  { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                                  { kind: 'Field', name: { kind: 'Name', value: 'primary' } },
+                                ],
+                              },
+                            },
+                          ],
+                        },
+                      },
+                      {
+                        kind: 'Field',
+                        name: { kind: 'Name', value: 'plan' },
+                        selectionSet: {
+                          kind: 'SelectionSet',
+                          selections: [
+                            { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'price' } },
+                            { kind: 'Field', name: { kind: 'Name', value: 'interval' } },
+                          ],
+                        },
+                      },
+                      { kind: 'Field', name: { kind: 'Name', value: 'stripeCustomerId' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'stripeCurrentPeriodEnd' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'trialEnd' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'cancelAtPeriodEnd' } },
+                      { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  AdminBillingSubscriptionsQuery,
+  AdminBillingSubscriptionsQueryVariables
+>
 export const Uptime = {
   kind: 'Document',
   definitions: [

@@ -62,6 +62,125 @@ describe('JwtStrategy API token authentication', () => {
     )
   })
 
+  // An organization-scoped token is a restriction below the user's own access. The user really is
+  // a member of the organization they are asking for, so every membership check downstream passes
+  // — the binding has to happen here or not at all.
+  it('accepts a scoped token whose request asks for the same organization', async () => {
+    const user = { id: 'user-1' }
+    const req = {
+      headers: { authorization: `Bearer ${token}`, 'x-organization-id': 'org-1' },
+    } as any
+
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: 'org-1',
+    })
+    auth.validateUser.mockResolvedValue(user)
+
+    await strategy.authenticate(req)
+
+    expect((strategy as any).success).toHaveBeenCalledWith(user)
+    expect(req.headers['x-organization-id']).toBe('org-1')
+  })
+
+  it('rejects a scoped token used against a different organization, before any user lookup', async () => {
+    const req = {
+      headers: { authorization: `Bearer ${token}`, 'x-organization-id': 'org-2' },
+    } as any
+
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: 'org-1',
+    })
+
+    await strategy.authenticate(req)
+
+    expect(auth.validateUser).not.toHaveBeenCalled()
+    expect((strategy as any).success).not.toHaveBeenCalled()
+    expect((strategy as any).fail).toHaveBeenCalledWith(
+      { message: 'API token is not scoped to the requested organization' },
+      403,
+    )
+  })
+
+  it('rejects a mismatch even when the header arrives as an array', async () => {
+    const req = {
+      headers: { authorization: `Bearer ${token}`, 'x-organization-id': ['org-2', 'org-1'] },
+    } as any
+
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: 'org-1',
+    })
+
+    await strategy.authenticate(req)
+
+    expect((strategy as any).fail).toHaveBeenCalledWith(
+      { message: 'API token is not scoped to the requested organization' },
+      403,
+    )
+  })
+
+  it('collapses a repeated matching header to a single value', async () => {
+    const user = { id: 'user-1' }
+    const req = {
+      headers: { authorization: `Bearer ${token}`, 'x-organization-id': ['org-1', 'org-1'] },
+    } as any
+
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: 'org-1',
+    })
+    auth.validateUser.mockResolvedValue(user)
+
+    await strategy.authenticate(req)
+
+    // A consumer reading the header naively must not receive an array.
+    expect(req.headers['x-organization-id']).toBe('org-1')
+    expect((strategy as any).success).toHaveBeenCalledWith(user)
+  })
+
+  it("defaults an absent header to the token's organization rather than the user's active one", async () => {
+    const user = { id: 'user-1', activeOrganizationId: 'org-9' }
+    const req = { headers: { authorization: `Bearer ${token}` } } as any
+
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: 'org-1',
+    })
+    auth.validateUser.mockResolvedValue(user)
+
+    await strategy.authenticate(req)
+
+    expect(req.headers['x-organization-id']).toBe('org-1')
+    expect((strategy as any).success).toHaveBeenCalledWith(user)
+  })
+
+  it('leaves the header alone for an unscoped token', async () => {
+    const user = { id: 'user-1' }
+    const req = {
+      headers: { authorization: `Bearer ${token}`, 'x-organization-id': 'org-7' },
+    } as any
+
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: null,
+    })
+    auth.validateUser.mockResolvedValue(user)
+
+    await strategy.authenticate(req)
+
+    expect(req.headers['x-organization-id']).toBe('org-7')
+    expect(req.apiTokenOrganizationId).toBeNull()
+    expect((strategy as any).success).toHaveBeenCalledWith(user)
+  })
+
   it('chooses the newest JWT when domain and host-only cookies coexist', () => {
     const older = jwtWithIssuedAt(1)
     const newer = jwtWithIssuedAt(2)

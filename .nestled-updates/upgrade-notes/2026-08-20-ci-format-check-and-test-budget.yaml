@@ -1,0 +1,49 @@
+id: 2026-08-20-ci-format-check-and-test-budget
+title: CI checks formatting, and the forbidden-navigation test stops racing its own timeout
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Adds a `Check formatting` step to CI running `prettier --check` over `scripts/**` and `tools/**`,
+  and gives the forbidden-navigation test a 20s budget so its 5s `findByRole` wait can actually
+  elapse. Also formats two files that reached develop unformatted.
+
+why: >
+  Formatting was never checked anywhere. `nx format:check --base=<ref>` only inspects files a branch
+  CHANGED, so anything already on the default branch is invisible to it, and the CI workflow never
+  invoked any format check at all. Two files landed unformatted on develop that way and nothing
+  noticed.
+
+  The test is the more interesting one. A previous change raised its `findByRole` timeout from 1s to
+  5s to deflake it under CI load, with the comment "the generous timeout costs nothing when the
+  render is fast". It cost the whole test: vitest's default `testTimeout` is also 5000ms, so the
+  inner wait could consume the entire budget and the test died by timeout at ~5005ms before the
+  retry window it had been given could ever elapse. Raising the inner wait without raising the outer
+  budget converted an assertion failure into a timeout failure — the same flake wearing a different
+  hat.
+
+affectedPaths:
+  - .github/workflows/ci.yml
+  - apps/web/tests/auth-error-navigation.spec.tsx
+  - scripts/doctor-generated-crud-posture.ts
+  - scripts/doctor-generated-crud-posture.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project already checks formatting in CI and its navigation test budget exceeds its inner waits.
+
+verification:
+  - pnpm exec prettier --check "scripts/**/*.ts" "tools/**/*.ts"
+  - pnpm exec nx run web:test
+
+agentHints:
+  - >
+    Whenever an inner `findBy*`/`waitFor` timeout is raised, raise the test's own budget above it.
+    They are not independent: the outer budget caps the inner wait, and equal values mean the inner
+    retry can never complete.
+  - >
+    Scope the prettier glob to what the repo actually keeps formatted. Widening it to the whole
+    workspace in one step turns adoption into a large reformat; extend it deliberately.

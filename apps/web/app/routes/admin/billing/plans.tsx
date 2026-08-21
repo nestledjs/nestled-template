@@ -1,5 +1,6 @@
-import { gql, type TypedDocumentNode } from '@apollo/client'
 import { useQuery } from '@apollo/client/react'
+// Aliased: this route's default export is also called AdminBillingPlans.
+import { AdminBillingPlans as AdminBillingPlansDocument } from '@nestled-template/shared/sdk'
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
 
 function formatLimitValue(value: unknown): string | number {
@@ -9,48 +10,11 @@ function formatLimitValue(value: unknown): string | number {
   return JSON.stringify(value)
 }
 
-type Plan = {
-  id: string
-  createdAt: string
-  updatedAt: string
-  name: string
-  description?: string
-  price: string
-  interval: string
-  features?: string[]
-  limits?: Record<string, unknown>
-  active: boolean
-  stripeProductId?: string
-  stripePriceId?: string
-  trialPeriodDays?: number
-}
 
-type AdminPlansQuery = {
-  plans: Plan[]
-}
 
-const ADMIN_PLANS_QUERY: TypedDocumentNode<AdminPlansQuery> = gql`
-  query AdminPlans {
-    plans {
-      id
-      createdAt
-      updatedAt
-      name
-      description
-      price
-      interval
-      features
-      limits
-      active
-      stripeProductId
-      stripePriceId
-      trialPeriodDays
-    }
-  }
-`
 
 export default function AdminBillingPlans() {
-  const { data, loading, error } = useQuery(ADMIN_PLANS_QUERY)
+  const { data, loading, error } = useQuery(AdminBillingPlansDocument)
 
   if (loading) {
     return (
@@ -68,7 +32,7 @@ export default function AdminBillingPlans() {
     )
   }
 
-  const plans = data?.plans || []
+  const plans = data?.adminBillingPlans || []
 
   return (
     <div className="space-y-6">

@@ -1,0 +1,70 @@
+id: 2026-08-19-storage-signed-url-and-org-files-idor
+title: Signed URLs and organization file listings check entitlement — they previously checked nothing
+priority: critical
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  `StorageService.getSignedUrl` now takes the calling user and returns a URL only when that user
+  owns the file or belongs to the organization the file belongs to; it raises NotFound otherwise,
+  matching `deleteFile` so that probing ids reveals nothing. `StorageService.getOrganizationFiles`
+  now takes the calling user and requires membership of the organization being listed.
+
+  Both resolver operations pass `@CtxUser()` through. No signature is left accepting an id without a
+  caller.
+
+why: >
+  Both operations took a caller-supplied id and performed no entitlement check whatsoever.
+
+  `getSignedUrl(uploadId)` looked the row up and handed back a signed URL. A signed URL is a bearer
+  credential for the file's bytes, so ANY authenticated user who knew or guessed an upload id could
+  read ANY private file in the system. `getOrganizationFiles(organizationId)` filtered by the
+  id the caller supplied, so ANY authenticated user could list ANY organization's files.
+
+  The resolver class carries only `@UseGuards(GqlAuthGuard)` and `@Authenticated()` — authentication,
+  never authorization — and neither operation took `@CtxUser()` at all, so there was nothing to
+  check against even in principle.
+
+  The adjacent `deleteFile` in the same service has always done this correctly
+  (`if (upload.userId !== userId) throw new NotFoundException(...)`). The pattern was present and
+  simply not applied to these two.
+
+  Found by the access-policy coverage check while classifying operations that declare no permission
+  — which is the argument for that check: these had been invisible because nothing ever asked why an
+  authenticated operation carried no authorization.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/storage/storage.service.ts
+  - libs/api/custom/src/lib/plugins/storage/storage.resolver.ts
+  - libs/api/custom/src/lib/plugins/storage/storage.service.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - >
+    The project already scopes both operations to the caller. Verify rather than assume: check that
+    getSignedUrl receives a user id and that getOrganizationFiles proves membership.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api:typecheck
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Apply this to every repo, and treat it as live exposure rather than hardening: any authenticated
+    account could read any private file. Consider whether signed URLs issued before the fix should be
+    treated as compromised — they remain valid until they expire, and the fix does not revoke them.
+  - >
+    Entitlement is owner OR organization member, deliberately not keyed on `publicUrl`. A file with a
+    public URL needs no signed one, and treating "has a public URL" as "anyone may sign it" would
+    make the check depend on a field describing delivery rather than entitlement. A file owned by
+    neither a user nor an organization is unreachable by design — default-deny.
+  - >
+    Keep NotFound rather than Forbidden on a failed entitlement check, matching deleteFile. A caller
+    probing ids should not learn which exist.
+  - >
+    The old specs asserted the vulnerable behaviour — `getSignedUrl('stored-123')` on a file with no
+    owner returning a URL. If your repo's specs still look like that, they are pinning the bug;
+    update them rather than working around the new signature.

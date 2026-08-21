@@ -1,0 +1,65 @@
+id: 2026-08-19-generated-crud-posture-awareness
+title: The doctor reads generated-crud posture instead of always asserting admin-only
+priority: normal
+area: infra
+type: security
+delivery: code-patch
+
+intent: >
+  `checkGeneratedCrudAlwaysAdmin` becomes `checkGeneratedCrudPosture`, reading
+  `.nestled-updates/security/generated-crud-posture.json` — the same file the CRUD generator reads —
+  and asserting the tier the repo actually declared.
+
+  At the default `admin` posture nothing changes. At `authenticated` the doctor stops reporting
+  every generated operation as a violation of a rule the repo has deliberately suspended, and
+  instead emits one notice naming the posture and its stated reason, plus real drift: an operation
+  carrying no guard at all is still reported. An unrecognized, unparseable or malformed posture file
+  fails loudly, because a repo that believes it declared something and did not is worse off than a
+  repo with no file.
+
+why: >
+  Generators 3.1.0 shipped the posture-aware CRUD generator, but nothing declared a posture and the
+  doctor still asserted admin-only unconditionally. A repo that needed the escape hatch therefore
+  got its entire generated surface reported as violations — 1,213 findings in mi-core, burying the
+  195 boundary findings the check exists to track. The doctor stopped being readable exactly when it
+  mattered most.
+
+  Do not read this as an invitation to relax posture. `admin` is correct and is the default in every
+  direction: a missing file, unreadable file, unparseable JSON, missing key, non-string or unknown
+  value all resolve to `admin`, matching the generator so the doctor can never assert a weaker tier
+  than the one actually emitted. Declaring `authenticated` is an incident with an exit condition,
+  not a configuration preference.
+
+affectedPaths:
+  - scripts/doctor.ts
+  - scripts/doctor-generated-crud-posture.ts
+  - scripts/doctor-generated-crud-posture.spec.ts
+  - scripts/doctor-crud-boundary-analysis.ts
+  - scripts/doctor-crud-boundary-analysis.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project does not carry the template's doctor.
+
+verification:
+  - pnpm exec vitest run scripts/
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    The template ships NO posture file, and should not. Absent means `admin`, which is the correct
+    state; an explicit `{"posture":"admin"}` file is allowed but adds nothing.
+  - >
+    A repo declaring `authenticated` should record `reason` and `restoreWhen` in the file. The
+    doctor surfaces `reason` in its notice, so write it for whoever reads the output next.
+  - >
+    The posture constants are mirrored from @nestledjs/generators rather than imported, because the
+    generator's reader takes an Nx Tree and its module pulls in @nx/devkit and @prisma/internals.
+    `doctor-generated-crud-posture.spec.ts` pins the mirrored path, values and fallback against the
+    installed package's own source, so a generator change surfaces as a failing test rather than a
+    silent divergence. Keep that spec if you adopt the module.
+  - >
+    Before adopting this in a repo that intends to move from `authenticated` back to `admin`, adopt
+    2026-08-19-admin-billing-off-generated-crud first — pages that call generated CRUD roots inherit
+    whatever tier is emitted, and are the reason a posture change is dangerous.

@@ -1,0 +1,53 @@
+id: 2026-08-20-doctor-repo-layout-config
+title: Select verification reads where to look from repo config instead of being edited in place
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  `verify-selects` reads `.nestled-updates/doctor.config.json` for `selectFileSuffixes`, defaulting
+  to `['.select.ts']`. A repo whose select constants live elsewhere declares that instead of editing
+  the checker.
+
+  Constants in files matched by a suffix OTHER than `.select.ts` must be SCREAMING_SNAKE to count as
+  selects. Constants in `.select.ts` files are unaffected.
+
+why: >
+  muzebook keeps select constants beside the resolver that owns them, so scanning only `*.select.ts`
+  verified nothing there at all. It fixed that the only way available — by editing
+  `tools/verify-selects.mjs` in place — which works today and stops working entirely once these
+  tools ship as a package, because you cannot edit a node_module.
+
+  The naming rule is scoped rather than global for a reason found by checking. mi-core has camelCase
+  select constants (`courseOverviewSelect`, `experienceCategorySelect`) in dedicated `.select.ts`
+  files. Requiring SCREAMING_SNAKE everywhere — which is what the downstream fix did locally —
+  would have silently stopped verifying those. A dedicated select file holds nothing but selects, so
+  every exported const is one; a shared file also holds ordinary locals like `const where = {}`, and
+  there a naming convention is the only way to tell them apart.
+
+  Malformed config throws rather than falling back to the default: a checker that quietly reverts to
+  scanning nothing passes by verifying an empty set.
+
+affectedPaths:
+  - tools/verify-selects.mjs
+  - tools/verify-selects.spec.mjs
+
+packageReleases: []
+
+skipIf:
+  - The project keeps every select constant in a dedicated `*.select.ts` file — the default already fits.
+
+verification:
+  - pnpm exec vitest run tools/verify-selects.spec.mjs
+  - pnpm run verify:selects
+
+agentHints:
+  - >
+    muzebook should replace its local edit of tools/verify-selects.mjs with
+    `{"selectFileSuffixes": [".select.ts", ".resolver.ts"]}` and take the template's file verbatim.
+    That converts a permanent divergence — which convergence-status reports on every run — into a
+    declaration, and is the shape it has to be in before the tools become a package.
+  - >
+    This config declares WHERE TO LOOK, never WHAT TO ACCEPT. Do not extend it into a way to relax a
+    rule; a repo with a different layout is laid out differently, not held to a weaker standard.
