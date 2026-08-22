@@ -31,16 +31,23 @@ why: >
 
 affectedPaths:
   - package.json
+  - pnpm-lock.yaml
   - scripts/
   - tools/
 
 packageReleases:
   - name: '@nestledjs/doctor'
-    targetVersion: 0.1.1
-    versionRange: ^0.1.1
+    targetVersion: 0.1.2
+    versionRange: ^0.1.2
 
 skipIf:
-  - The project already depends on @nestledjs/doctor and carries no scripts/doctor*.ts.
+  - >
+    The project RESOLVES @nestledjs/doctor to 0.1.2 or later in pnpm-lock.yaml AND carries no
+    scripts/doctor*.ts. Check the lockfile, not package.json: the manifest states an intent and the
+    lockfile states what actually runs, and a caret range can satisfy the manifest while resolving
+    to something older. Depending on the package is not sufficient on its own either -- 0.1.1 and
+    earlier report caller-scoped resolvers as unscoped, so a repo can hold the package, pass a
+    name-only skip test, and still be running checks with a known bug in them.
 
 verification:
   - pnpm run nestled-doctor
@@ -51,8 +58,10 @@ verification:
 
 agentHints:
   - >
-    Do NOT take 0.1.0 — it omits tslib and cannot run outside the publishing workspace. 0.1.1 is the
-    first usable release.
+    Take 0.1.2 or later. 0.1.0 omits tslib and cannot run outside the publishing workspace; 0.1.1
+    runs but its caller-scope detector matched only @CtxUser and @CtxOrganization, so every
+    resolver scoped with @CtxOrganizationId — a decorator this template ships — was reported as
+    unscoped. muzebook saw 382 findings that were not real.
   - >
     Verify by output, not by exit code: run the doctor before and after and diff. It passed here
     byte-identically, which is the assurance worth having when swapping the thing that does the
