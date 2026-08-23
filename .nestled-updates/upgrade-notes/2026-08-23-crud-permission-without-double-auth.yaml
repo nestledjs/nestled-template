@@ -1,0 +1,61 @@
+id: 2026-08-23-crud-permission-without-double-auth
+title: Generated CRUD declares its permission without re-authenticating
+priority: normal
+area: api
+type: correctness
+delivery: hybrid
+
+intent: >
+  Generated CRUD resolvers declare `@RequirePlatformPermissionUnderClassGuard(...)`, not
+  `@RequirePlatformPermission(...)`. Take @nestledjs/generators 3.2.1 and @nestledjs/doctor 0.3.1
+  together, then regenerate.
+
+  The new decorator sets the same access policy and adds only `AccessPolicyGuard`. Use it ONLY on a
+  method whose class already authenticates — it authenticates nothing itself and throws when
+  `request.user` is absent.
+
+why: >
+  `RequirePlatformPermission` composes `Authenticated()` and
+  `UseGuards(GqlAuthGuard, AccessPolicyGuard)`. That is correct on a bare resolver and wrong on a
+  generated one, whose class already carries `@UseGuards(GqlAuthAdminGuard)` + `@AdminOnly()`.
+
+  Emitted there it cost two things on every call, across 138 roots in this template alone. A second
+  JWT verification and an organization-context preload — a database round trip, for platform-scoped
+  admin work with no organization to preload.
+
+  And a quieter one: `GlobalAuthGuard` resolves the level with
+  `getAllAndOverride([handler, controller])`, so the method's `Authenticated()` overrode the class's
+  `AdminOnly()`. Every generated root DECLARED `authenticated` while the class guard still ENFORCED
+  admin. Nothing became reachable that was not before — but the declaration was wrong, and the
+  doctor's own auth-level analysis reads that declaration.
+
+  Found in review of the template regeneration, against a change described as adding metadata only.
+  The lines were only that; what they did was not.
+
+packageReleases:
+  - name: '@nestledjs/generators'
+    targetVersion: 3.2.1
+    versionRange: ^3.2.1
+  - name: '@nestledjs/doctor'
+    targetVersion: 0.3.1
+    versionRange: ^0.3.1
+
+affectedPaths:
+  - libs/api/utils/src/lib/guards/access-policy.decorator.ts
+  - libs/api/generated-crud/feature/src/lib/
+
+skipIf:
+  - The project runs the `authenticated` generated-crud posture, which emits no permission at all.
+
+verification:
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Do not take generators 3.2.0. It emits the composing decorator. 3.2.1 is the first correct
+    release in that line, and it requires the new decorator to exist in api/utils — take the
+    template change first, or regeneration produces code that does not compile.
+  - >
+    Do not use RequirePlatformPermissionUnderClassGuard on a resolver without a class-level
+    authenticating guard. It adds no authentication and will throw UnauthorizedException at
+    runtime rather than at review time.

@@ -9,7 +9,11 @@ import {
   ListUserInput,
   UpdateUserInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => User)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedUserResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [User], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   users(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListUserInput, nullable: true }) input?: ListUserInput,
@@ -26,6 +31,7 @@ export class GeneratedUserResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   usersCount(
     @Args({ name: 'input', type: () => ListUserInput, nullable: true }) input?: ListUserInput,
   ) {
@@ -33,16 +39,19 @@ export class GeneratedUserResolver {
   }
 
   @Query(() => User, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   user(@Info() info: GraphQLResolveInfo, @Args('userId') userId: string) {
     return this.generatedService.user(info, userId)
   }
 
   @Mutation(() => User, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createUser(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateUserInput) {
     return this.generatedService.createUser(info, input)
   }
 
   @Mutation(() => User, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateUser(
     @Info() info: GraphQLResolveInfo,
     @Args('userId') userId: string,
@@ -52,6 +61,7 @@ export class GeneratedUserResolver {
   }
 
   @Mutation(() => User, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteUser(@Args('userId') userId: string) {
     return this.generatedService.deleteUser(userId)
   }

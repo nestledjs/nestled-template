@@ -9,7 +9,11 @@ import {
   ListRoleInput,
   UpdateRoleInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => Role)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedRoleResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Role], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   roles(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListRoleInput, nullable: true }) input?: ListRoleInput,
@@ -26,6 +31,7 @@ export class GeneratedRoleResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   rolesCount(
     @Args({ name: 'input', type: () => ListRoleInput, nullable: true }) input?: ListRoleInput,
   ) {
@@ -33,16 +39,19 @@ export class GeneratedRoleResolver {
   }
 
   @Query(() => Role, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   role(@Info() info: GraphQLResolveInfo, @Args('roleId') roleId: string) {
     return this.generatedService.role(info, roleId)
   }
 
   @Mutation(() => Role, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createRole(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateRoleInput) {
     return this.generatedService.createRole(info, input)
   }
 
   @Mutation(() => Role, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateRole(
     @Info() info: GraphQLResolveInfo,
     @Args('roleId') roleId: string,
@@ -52,6 +61,7 @@ export class GeneratedRoleResolver {
   }
 
   @Mutation(() => Role, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteRole(@Args('roleId') roleId: string) {
     return this.generatedService.deleteRole(roleId)
   }

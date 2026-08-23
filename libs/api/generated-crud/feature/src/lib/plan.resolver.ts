@@ -9,7 +9,11 @@ import {
   ListPlanInput,
   UpdatePlanInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => Plan)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedPlanResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Plan], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   plans(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListPlanInput, nullable: true }) input?: ListPlanInput,
@@ -26,6 +31,7 @@ export class GeneratedPlanResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   plansCount(
     @Args({ name: 'input', type: () => ListPlanInput, nullable: true }) input?: ListPlanInput,
   ) {
@@ -33,16 +39,19 @@ export class GeneratedPlanResolver {
   }
 
   @Query(() => Plan, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   plan(@Info() info: GraphQLResolveInfo, @Args('planId') planId: string) {
     return this.generatedService.plan(info, planId)
   }
 
   @Mutation(() => Plan, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createPlan(@Info() info: GraphQLResolveInfo, @Args('input') input: CreatePlanInput) {
     return this.generatedService.createPlan(info, input)
   }
 
   @Mutation(() => Plan, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updatePlan(
     @Info() info: GraphQLResolveInfo,
     @Args('planId') planId: string,
@@ -52,6 +61,7 @@ export class GeneratedPlanResolver {
   }
 
   @Mutation(() => Plan, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deletePlan(@Args('planId') planId: string) {
     return this.generatedService.deletePlan(planId)
   }

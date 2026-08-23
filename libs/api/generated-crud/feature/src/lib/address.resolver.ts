@@ -9,7 +9,11 @@ import {
   ListAddressInput,
   UpdateAddressInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => Address)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedAddressResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Address], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   addresses(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListAddressInput, nullable: true }) input?: ListAddressInput,
@@ -26,6 +31,7 @@ export class GeneratedAddressResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   addressesCount(
     @Args({ name: 'input', type: () => ListAddressInput, nullable: true }) input?: ListAddressInput,
   ) {
@@ -33,16 +39,19 @@ export class GeneratedAddressResolver {
   }
 
   @Query(() => Address, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   address(@Info() info: GraphQLResolveInfo, @Args('addressId') addressId: string) {
     return this.generatedService.address(info, addressId)
   }
 
   @Mutation(() => Address, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createAddress(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateAddressInput) {
     return this.generatedService.createAddress(info, input)
   }
 
   @Mutation(() => Address, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateAddress(
     @Info() info: GraphQLResolveInfo,
     @Args('addressId') addressId: string,
@@ -52,6 +61,7 @@ export class GeneratedAddressResolver {
   }
 
   @Mutation(() => Address, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteAddress(@Args('addressId') addressId: string) {
     return this.generatedService.deleteAddress(addressId)
   }

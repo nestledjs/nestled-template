@@ -9,7 +9,11 @@ import {
   ListApiTokenInput,
   UpdateApiTokenInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => ApiToken)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedApiTokenResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [ApiToken], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   apiTokens(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListApiTokenInput, nullable: true })
@@ -27,6 +32,7 @@ export class GeneratedApiTokenResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   apiTokensCount(
     @Args({ name: 'input', type: () => ListApiTokenInput, nullable: true })
     input?: ListApiTokenInput,
@@ -35,16 +41,19 @@ export class GeneratedApiTokenResolver {
   }
 
   @Query(() => ApiToken, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   apiToken(@Info() info: GraphQLResolveInfo, @Args('apiTokenId') apiTokenId: string) {
     return this.generatedService.apiToken(info, apiTokenId)
   }
 
   @Mutation(() => ApiToken, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createApiToken(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateApiTokenInput) {
     return this.generatedService.createApiToken(info, input)
   }
 
   @Mutation(() => ApiToken, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateApiToken(
     @Info() info: GraphQLResolveInfo,
     @Args('apiTokenId') apiTokenId: string,
@@ -54,6 +63,7 @@ export class GeneratedApiTokenResolver {
   }
 
   @Mutation(() => ApiToken, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteApiToken(@Args('apiTokenId') apiTokenId: string) {
     return this.generatedService.deleteApiToken(apiTokenId)
   }

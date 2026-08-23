@@ -9,7 +9,11 @@ import {
   ListLoginAttemptInput,
   UpdateLoginAttemptInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => LoginAttempt)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedLoginAttemptResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [LoginAttempt], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   loginAttempts(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListLoginAttemptInput, nullable: true })
@@ -27,6 +32,7 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   loginAttemptsCount(
     @Args({ name: 'input', type: () => ListLoginAttemptInput, nullable: true })
     input?: ListLoginAttemptInput,
@@ -35,11 +41,13 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Query(() => LoginAttempt, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   loginAttempt(@Info() info: GraphQLResolveInfo, @Args('loginAttemptId') loginAttemptId: string) {
     return this.generatedService.loginAttempt(info, loginAttemptId)
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createLoginAttempt(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateLoginAttemptInput,
@@ -48,6 +56,7 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateLoginAttempt(
     @Info() info: GraphQLResolveInfo,
     @Args('loginAttemptId') loginAttemptId: string,
@@ -57,6 +66,7 @@ export class GeneratedLoginAttemptResolver {
   }
 
   @Mutation(() => LoginAttempt, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteLoginAttempt(@Args('loginAttemptId') loginAttemptId: string) {
     return this.generatedService.deleteLoginAttempt(loginAttemptId)
   }
