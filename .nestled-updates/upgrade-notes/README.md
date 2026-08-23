@@ -1,5 +1,10 @@
 # Template Upgrade Notes
 
+> **`archive/` is history, not a backlog.** Notes there predate the convergence reset
+> (2026-08-19) and must not be replayed or counted as a gap. A repo's standing is measured by
+> `.nestled/converged-at` against the template's HEAD — see `archive/README.md`.
+
+
 Add one YAML file here for each template or published library change that should be
 reviewed by downstream Nestled projects.
 
