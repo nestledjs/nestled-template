@@ -23,6 +23,16 @@ which notes it has applied. `nestled-upgrader convergence-status` reports the ga
 divergence scan brings a repo to the template's present state directly; it does not replay how
 the template got there.
 
+## Notes that exist only in one clone
+
+A clone may hold archived notes this repo never had — its own bootstrap, its own build wiring,
+anything describing that repo's own setup rather than a change flowing down from here. Those are
+archived in place, in the repo that owns them, because there is no upstream copy to archive.
+
+That is the one exception. Every other note here is mirrored, and editing a mirrored note in a clone
+is undone by the next promotion — which is how the section explaining this exception was lost once
+already.
+
 ## What the live directory is still for
 
 Notes dated 2026-08-19 and later, and every new one. They document changes as they happen and

@@ -43,6 +43,11 @@ packageReleases:
 affectedPaths:
   - libs/api/utils/src/lib/guards/access-policy.decorator.ts
   - libs/api/generated-crud/feature/src/lib/
+  # The regenerated resolvers reference platform.data-browser.read and .manage. A repo that takes
+  # the packages and regenerates without these keys in its catalog gets resolvers naming permissions
+  # that do not exist: the access-policy check reports every one as unknown, and no role can select
+  # them. The keys and the code that requires them belong in the same change.
+  - libs/api/prisma/src/lib/seed/seed-data/seed-platform-access-control.ts
 
 skipIf:
   - The project runs the `authenticated` generated-crud posture, which emits no permission at all.
@@ -51,6 +56,10 @@ verification:
   - pnpm run nestled-doctor
 
 agentHints:
+  - >
+    Add platform.data-browser.read and platform.data-browser.manage to the platform access-control
+    seed catalog BEFORE regenerating, and re-seed. Regenerating first leaves every generated root
+    declaring a permission the catalog does not define.
   - >
     Do not take generators 3.2.0. It emits the composing decorator. 3.2.1 is the first correct
     release in that line, and it requires the new decorator to exist in api/utils — take the

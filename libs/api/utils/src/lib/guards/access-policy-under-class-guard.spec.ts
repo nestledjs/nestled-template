@@ -40,7 +40,10 @@ describe('RequirePlatformPermissionUnderClassGuard', () => {
       ),
     ).toBeUndefined()
     expect(
-      metadataOf(RequirePlatformPermission('platform.data-browser.read') as MethodDecorator, AUTH_LEVEL_KEY),
+      metadataOf(
+        RequirePlatformPermission('platform.data-browser.read') as MethodDecorator,
+        AUTH_LEVEL_KEY,
+      ),
     ).toBe('authenticated')
   })
 })
