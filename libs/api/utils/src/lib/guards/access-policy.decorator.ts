@@ -18,6 +18,34 @@ function policyDecorators(policy: AccessPolicy) {
   )
 }
 
+/**
+ * The same policy, for a method whose CLASS already authenticates.
+ *
+ * `RequirePlatformPermission` composes `Authenticated()` and `UseGuards(GqlAuthGuard, ...)`, which
+ * is right on a bare resolver and wrong on one already carrying `@UseGuards(GqlAuthAdminGuard)` +
+ * `@AdminOnly()`. There it costs a second JWT verification and an organization-context preload per
+ * call -- a database round trip for platform-scoped work that has no organization to preload -- and
+ * the method-level `Authenticated()` overrides the class's `AdminOnly()` under
+ * `getAllAndOverride([handler, controller])`, so the operation ends up DECLARING `authenticated`
+ * while the class guard still ENFORCES admin. Enforcement holds; the declaration lies.
+ *
+ * This variant sets the policy and adds only `AccessPolicyGuard`. That guard authenticates nothing
+ * -- it throws `UnauthorizedException` when `request.user` is absent -- so it is only correct where
+ * a class-level guard has already established the user. Do not reach for it anywhere else.
+ */
+function policyDecoratorsUnderClassGuard(policy: AccessPolicy) {
+  return applyDecorators(SetMetadata(ACCESS_POLICY_KEY, policy), UseGuards(AccessPolicyGuard))
+}
+
+/**
+ * Platform permission for a method on an already-authenticating class.
+ *
+ * Generated CRUD resolvers are the case this exists for: the class carries the admin guard, and
+ * every method needs its own permission without re-running authentication 138 times.
+ */
+export const RequirePlatformPermissionUnderClassGuard = (...permissions: string[]) =>
+  policyDecoratorsUnderClassGuard({ scope: 'platform', permissions, match: 'any' })
+
 /** Admit a caller who holds at least one of the listed platform permissions. */
 export const RequirePlatformPermission = (...permissions: string[]) =>
   policyDecorators({ scope: 'platform', permissions, match: 'any' })

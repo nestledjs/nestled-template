@@ -42,6 +42,18 @@ export const platformPermissions = [
     description: 'Synchronize billing products, prices, and subscriptions with Stripe',
   },
   {
+    key: 'platform.data-browser.read',
+    namespace: 'platform.data-browser',
+    action: 'read',
+    description: 'View records through the super-administrator data browser',
+  },
+  {
+    key: 'platform.data-browser.manage',
+    namespace: 'platform.data-browser',
+    action: 'manage',
+    description: 'Create, update, and delete records through the super-administrator data browser',
+  },
+  {
     key: 'platform.audit.read',
     namespace: 'platform.audit',
     action: 'read',

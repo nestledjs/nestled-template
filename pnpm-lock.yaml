@@ -121,8 +121,8 @@ importers:
         specifier: 0.9.0
         version: 0.9.0(@apollo/client@4.1.8(graphql-ws@6.2.1(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.14.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(dayjs@1.11.21)(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
       '@nestledjs/generators':
-        specifier: 3.1.0
-        version: 3.1.0(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))
+        specifier: 3.2.1
+        version: 3.2.1(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))
       '@nestledjs/shared-components':
         specifier: ^1.0.15
         version: 1.0.15(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
@@ -404,8 +404,8 @@ importers:
         specifier: ^11.1.29
         version: 11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29)(@nestjs/platform-express@11.1.29)
       '@nestledjs/doctor':
-        specifier: 0.2.2
-        version: 0.2.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
+        specifier: 0.3.1
+        version: 0.3.1(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
       '@nx/eslint':
         specifier: 22.7.8
         version: 22.7.8(54731966972b5fabcf66c95f47a10080)
@@ -3965,8 +3965,8 @@ packages:
       react: 19.1.0
       react-router: ^7.0.0
 
-  '@nestledjs/doctor@0.2.2':
-    resolution: {integrity: sha512-eepaqFawvB/M0W7jwcT0vLKUR/MhdVAqlN75pLLmiSQwPB8xIFdXeHrpjs5itprqT6RmgfekF0yR8HH0skTSWQ==}
+  '@nestledjs/doctor@0.3.1':
+    resolution: {integrity: sha512-3Un2pZY5ob7pxN5PP3nfSPWbhIrnVGRIS/tt/XFRut8qVfu4TIr/i5er64cbXjVWY9DADPZxJoGTS8l6Y2l+fw==}
     hasBin: true
     peerDependencies:
       '@prisma/internals': '>=6'
@@ -4005,8 +4005,8 @@ packages:
       '@mdxeditor/editor':
         optional: true
 
-  '@nestledjs/generators@3.1.0':
-    resolution: {integrity: sha512-vOa3Ria+xztWAIFIIW67p5jD/MBT7Vg3q7+NO5LA4xVaO2q8k3L+VBV1RYXqSgpp8m0d49RgDqsVV2ZT/q2LNw==}
+  '@nestledjs/generators@3.2.1':
+    resolution: {integrity: sha512-90gAxz3kUz3U6U3uUbNVHlBZzXAp7UV0UeSX7YJTSgSW7GrRKOduUoh4q3rkA+Sg1YibMrUSQbzYAEEGlYj6xw==}
 
   '@nestledjs/shared-components@1.0.15':
     resolution: {integrity: sha512-sDlulOirGqYVVbkBjT2DmjaWAOkM95aqfaB/JdLitA7pcnHYREjbNZSqISSH8Fh3Fiu/8j36dKrXd+6YukXh8A==}
@@ -19124,7 +19124,7 @@ snapshots:
       react: 19.1.0
       react-router: 7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
 
-  '@nestledjs/doctor@0.2.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
+  '@nestledjs/doctor@0.3.1(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
     dependencies:
       graphql: 16.14.2
       tslib: 2.8.1
@@ -19160,7 +19160,7 @@ snapshots:
     transitivePeerDependencies:
       - dayjs
 
-  '@nestledjs/generators@3.1.0(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))':
+  '@nestledjs/generators@3.2.1(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))':
     dependencies:
       '@nx/devkit': 22.0.2(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))
       '@nx/js': 22.0.2(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))

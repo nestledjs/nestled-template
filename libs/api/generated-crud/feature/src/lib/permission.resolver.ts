@@ -9,7 +9,11 @@ import {
   ListPermissionInput,
   UpdatePermissionInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => Permission)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedPermissionResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Permission], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   permissions(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListPermissionInput, nullable: true })
@@ -27,6 +32,7 @@ export class GeneratedPermissionResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   permissionsCount(
     @Args({ name: 'input', type: () => ListPermissionInput, nullable: true })
     input?: ListPermissionInput,
@@ -35,16 +41,19 @@ export class GeneratedPermissionResolver {
   }
 
   @Query(() => Permission, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   permission(@Info() info: GraphQLResolveInfo, @Args('permissionId') permissionId: string) {
     return this.generatedService.permission(info, permissionId)
   }
 
   @Mutation(() => Permission, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createPermission(@Info() info: GraphQLResolveInfo, @Args('input') input: CreatePermissionInput) {
     return this.generatedService.createPermission(info, input)
   }
 
   @Mutation(() => Permission, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updatePermission(
     @Info() info: GraphQLResolveInfo,
     @Args('permissionId') permissionId: string,
@@ -54,6 +63,7 @@ export class GeneratedPermissionResolver {
   }
 
   @Mutation(() => Permission, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deletePermission(@Args('permissionId') permissionId: string) {
     return this.generatedService.deletePermission(permissionId)
   }

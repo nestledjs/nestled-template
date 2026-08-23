@@ -23,14 +23,6 @@ which notes it has applied. `nestled-upgrader convergence-status` reports the ga
 divergence scan brings a repo to the template's present state directly; it does not replay how
 the template got there.
 
-## Template-only notes
-
-Three of these exist only here, never in `nestled-dev-template`: the public-template bootstrap, the
-downstream AGENTS.md auto-clean, and the admin-custom build wiring. They describe this repo's own
-setup rather than a change flowing down, so they could not be archived upstream and were moved
-here directly. Nothing else in this directory should ever be edited here rather than in
-`nestled-dev-template`.
-
 ## What the live directory is still for
 
 Notes dated 2026-08-19 and later, and every new one. They document changes as they happen and

@@ -1,0 +1,56 @@
+id: 2026-08-23-inherited-parent-authorization
+title: Parent projections declare themselves instead of being exempted
+priority: normal
+area: api
+type: correctness
+delivery: hybrid
+
+intent: >
+  A GraphQL field that reads a property off an already-resolved `@Parent()` and performs no data
+  access declares `@InheritedParentAuthorization()` from `api/utils` instead of being recorded in
+  `.nestled-updates/security/permission-exemptions.json`.
+
+  Use it ONLY for pure projections. The field must not query by a parent-derived identifier, call
+  another service, or otherwise expand what the parent operation already authorized. Anything that
+  reaches data needs a permission or caller scoping like any other operation.
+
+  Requires @nestledjs/doctor 0.3.0 or later, which recognizes the marker. Do not remove existing
+  exemptions before that release is installed — the check would report the fields as uncovered.
+
+why: >
+  The two exemptions this replaces said the same thing in prose: "reads a property off the
+  already-resolved @Parent() User and performs no data access — there is no row to scope and no
+  query to authorize. Whatever resolved the parent decided what this caller may see."
+
+  That is a category, not an excuse, and it was being restated per field in a JSON file. A typed
+  marker is greppable, reviewable, and can be asserted in a spec; a reason string is none of those.
+  It also stops a real pattern from being filed alongside genuine exemptions, where it makes the
+  exemption list look longer and less deliberate than it is.
+
+  Found during cashcast's convergence pass, which removed the exemption rather than carrying it.
+
+packageReleases:
+  - name: '@nestledjs/doctor'
+    targetVersion: 0.3.0
+    versionRange: ^0.3.0
+
+affectedPaths:
+  - libs/api/utils/src/lib/guards/inherited-parent-authorization.decorator.ts
+  - libs/api/utils/src/index.ts
+  - libs/api/custom/src/lib/plugins/auth/user-extension.resolver.ts
+  - .nestled-updates/security/permission-exemptions.json
+
+skipIf:
+  - The project has no resolver field that projects a value off an already-resolved parent.
+
+verification:
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Do not apply this by deleting exemptions first. Install the doctor release, confirm the marker
+    is recognized, then remove the exemption and add the decorator in one change — otherwise the
+    repo reports findings for fields that are correctly covered.
+  - >
+    Resist widening it. If the resolver takes an id off the parent and looks something up, that is
+    a query and needs authorizing; the marker would be a lie the checker believes.

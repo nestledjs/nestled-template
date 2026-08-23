@@ -9,7 +9,11 @@ import {
   ListAuditLogInput,
   UpdateAuditLogInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => AuditLog)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedAuditLogResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [AuditLog], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   auditLogs(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListAuditLogInput, nullable: true })
@@ -27,6 +32,7 @@ export class GeneratedAuditLogResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   auditLogsCount(
     @Args({ name: 'input', type: () => ListAuditLogInput, nullable: true })
     input?: ListAuditLogInput,
@@ -35,16 +41,19 @@ export class GeneratedAuditLogResolver {
   }
 
   @Query(() => AuditLog, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   auditLog(@Info() info: GraphQLResolveInfo, @Args('auditLogId') auditLogId: string) {
     return this.generatedService.auditLog(info, auditLogId)
   }
 
   @Mutation(() => AuditLog, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createAuditLog(@Info() info: GraphQLResolveInfo, @Args('input') input: CreateAuditLogInput) {
     return this.generatedService.createAuditLog(info, input)
   }
 
   @Mutation(() => AuditLog, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateAuditLog(
     @Info() info: GraphQLResolveInfo,
     @Args('auditLogId') auditLogId: string,
@@ -54,6 +63,7 @@ export class GeneratedAuditLogResolver {
   }
 
   @Mutation(() => AuditLog, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteAuditLog(@Args('auditLogId') auditLogId: string) {
     return this.generatedService.deleteAuditLog(auditLogId)
   }

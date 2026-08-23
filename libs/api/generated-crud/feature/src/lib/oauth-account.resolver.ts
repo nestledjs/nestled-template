@@ -9,7 +9,11 @@ import {
   ListOAuthAccountInput,
   UpdateOAuthAccountInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => OAuthAccount)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedOAuthAccountResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [OAuthAccount], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   oAuthAccounts(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListOAuthAccountInput, nullable: true })
@@ -27,6 +32,7 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   oAuthAccountsCount(
     @Args({ name: 'input', type: () => ListOAuthAccountInput, nullable: true })
     input?: ListOAuthAccountInput,
@@ -35,11 +41,13 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Query(() => OAuthAccount, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   oAuthAccount(@Info() info: GraphQLResolveInfo, @Args('oAuthAccountId') oAuthAccountId: string) {
     return this.generatedService.oAuthAccount(info, oAuthAccountId)
   }
 
   @Mutation(() => OAuthAccount, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createOAuthAccount(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateOAuthAccountInput,
@@ -48,6 +56,7 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Mutation(() => OAuthAccount, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateOAuthAccount(
     @Info() info: GraphQLResolveInfo,
     @Args('oAuthAccountId') oAuthAccountId: string,
@@ -57,6 +66,7 @@ export class GeneratedOAuthAccountResolver {
   }
 
   @Mutation(() => OAuthAccount, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteOAuthAccount(@Args('oAuthAccountId') oAuthAccountId: string) {
     return this.generatedService.deleteOAuthAccount(oAuthAccountId)
   }

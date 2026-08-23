@@ -9,7 +9,11 @@ import {
   ListSubscriptionInput,
   UpdateSubscriptionInput,
 } from '@nestled-template/api/generated-crud/data-access'
-import { AdminOnly, GqlAuthAdminGuard } from '@nestled-template/api/utils'
+import {
+  AdminOnly,
+  GqlAuthAdminGuard,
+  RequirePlatformPermissionUnderClassGuard,
+} from '@nestled-template/api/utils'
 
 @Resolver(() => Subscription)
 @UseGuards(GqlAuthAdminGuard)
@@ -18,6 +22,7 @@ export class GeneratedSubscriptionResolver {
   constructor(private readonly generatedService: ApiCrudDataAccessService) {}
 
   @Query(() => [Subscription], { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   subscriptions(
     @Info() info: GraphQLResolveInfo,
     @Args({ name: 'input', type: () => ListSubscriptionInput, nullable: true })
@@ -27,6 +32,7 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Query(() => CorePaging, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   subscriptionsCount(
     @Args({ name: 'input', type: () => ListSubscriptionInput, nullable: true })
     input?: ListSubscriptionInput,
@@ -35,11 +41,13 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Query(() => Subscription, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
   subscription(@Info() info: GraphQLResolveInfo, @Args('subscriptionId') subscriptionId: string) {
     return this.generatedService.subscription(info, subscriptionId)
   }
 
   @Mutation(() => Subscription, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   createSubscription(
     @Info() info: GraphQLResolveInfo,
     @Args('input') input: CreateSubscriptionInput,
@@ -48,6 +56,7 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Mutation(() => Subscription, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   updateSubscription(
     @Info() info: GraphQLResolveInfo,
     @Args('subscriptionId') subscriptionId: string,
@@ -57,6 +66,7 @@ export class GeneratedSubscriptionResolver {
   }
 
   @Mutation(() => Subscription, { nullable: true })
+  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
   deleteSubscription(@Args('subscriptionId') subscriptionId: string) {
     return this.generatedService.deleteSubscription(subscriptionId)
   }

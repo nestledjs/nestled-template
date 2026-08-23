@@ -43,14 +43,15 @@ const deliveries = new Set(['code-patch', 'package-release', 'hybrid'])
 // These paths identify package sources in the upstream nestled-dev-template promotion source.
 // The public nestled-template checkout intentionally imports the packages and omits their source.
 // package name -> the path IN THIS REPO where its source lives, or null when the package is
-// published from a different repository. @nestledjs/doctor is the first of the latter kind: its
-// source is the nestled monorepo, so there is no in-repo path a note could name, and demanding one
-// would force every adopter to invent a lie.
+// published from a different repository. @nestledjs/doctor and @nestledjs/generators are of the
+// latter kind: their source is the nestled monorepo, so there is no in-repo path a note could name,
+// and demanding one would force every adopter to invent a lie.
 const upstreamPublishedPackages = new Map<string, string | null>([
   ['@nestledjs/data-browser', 'libs/data-browser'],
   ['@nestledjs/shared-components', 'libs/shared-components'],
   ['@nestledjs/access-control', 'libs/access-control'],
   ['@nestledjs/doctor', null],
+  ['@nestledjs/generators', null],
 ])
 
 const isNonEmptyString = (value: unknown): value is string =>
