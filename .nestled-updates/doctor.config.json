@@ -1,0 +1,6 @@
+{
+  "selectFileSuffixes": [
+    ".select.ts"
+  ],
+  "noSelectFiles": "This template returns GraphQL through generated CRUD and inline Prisma selects; it declares no reusable *.select.ts constants. A clone that adopts the select pattern should delete this key so the verifiers start checking its files."
+}
