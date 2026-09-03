@@ -65,7 +65,7 @@ skipIf:
     project actually runs, not the AGENTS.md description of it -- the description is what drifted.
 
 verification:
-  - node scripts/db-update.mjs
+  - pnpm db-update
   - pnpm run nestled-doctor
   - git diff --stat api-schema.graphql libs/shared/sdk/src/generated
 
