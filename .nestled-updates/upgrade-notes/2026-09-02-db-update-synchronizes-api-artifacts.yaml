@@ -1,8 +1,8 @@
 id: 2026-09-02-db-update-synchronizes-api-artifacts
 title: db-update owns the whole artifact chain, including the API schema refresh
 priority: high
-area: tooling
-type: workflow
+area: infra
+type: infra
 delivery: code-patch
 
 intent: >
