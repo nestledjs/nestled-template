@@ -7290,6 +7290,7 @@ export type __AdminRoleSummaryFragment = {
   id: string
   name: string
   description?: string | null
+  isSystem: boolean
   organizationId?: string | null
   organization?: { __typename?: 'Organization'; id: string } | null
 }
@@ -7299,6 +7300,7 @@ export type __AdminRoleDetailsFragment = {
   id: string
   name: string
   description?: string | null
+  isSystem: boolean
   organizationId?: string | null
   organization?: { __typename?: 'Organization'; id: string } | null
 }
@@ -7314,6 +7316,7 @@ export type __AdminCreateRoleMutation = {
     id: string
     name: string
     description?: string | null
+    isSystem: boolean
     organizationId?: string | null
     organization?: { __typename?: 'Organization'; id: string } | null
   } | null
@@ -7340,6 +7343,7 @@ export type __AdminUpdateRoleMutation = {
     id: string
     name: string
     description?: string | null
+    isSystem: boolean
     organizationId?: string | null
     organization?: { __typename?: 'Organization'; id: string } | null
   } | null
@@ -7356,6 +7360,7 @@ export type __AdminRoleQuery = {
     id: string
     name: string
     description?: string | null
+    isSystem: boolean
     organizationId?: string | null
     organization?: { __typename?: 'Organization'; id: string } | null
   } | null
@@ -7372,6 +7377,7 @@ export type __AdminRolesQuery = {
     id: string
     name: string
     description?: string | null
+    isSystem: boolean
     organizationId?: string | null
     organization?: { __typename?: 'Organization'; id: string } | null
   }> | null
@@ -12802,6 +12808,7 @@ export const __AdminRoleSummaryFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'id' } },
           { kind: 'Field', name: { kind: 'Name', value: 'name' } },
           { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
           { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
           {
             kind: 'Field',
@@ -12840,6 +12847,7 @@ export const __AdminRoleDetailsFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'id' } },
           { kind: 'Field', name: { kind: 'Name', value: 'name' } },
           { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
           { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
           {
             kind: 'Field',
@@ -21459,6 +21467,7 @@ export const __AdminCreateRole = {
           { kind: 'Field', name: { kind: 'Name', value: 'id' } },
           { kind: 'Field', name: { kind: 'Name', value: 'name' } },
           { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
           { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
           {
             kind: 'Field',
@@ -21587,6 +21596,7 @@ export const __AdminUpdateRole = {
           { kind: 'Field', name: { kind: 'Name', value: 'id' } },
           { kind: 'Field', name: { kind: 'Name', value: 'name' } },
           { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
           { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
           {
             kind: 'Field',
@@ -21662,6 +21672,7 @@ export const __AdminRole = {
           { kind: 'Field', name: { kind: 'Name', value: 'id' } },
           { kind: 'Field', name: { kind: 'Name', value: 'name' } },
           { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
           { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
           {
             kind: 'Field',
@@ -21752,6 +21763,7 @@ export const __AdminRoles = {
           { kind: 'Field', name: { kind: 'Name', value: 'id' } },
           { kind: 'Field', name: { kind: 'Name', value: 'name' } },
           { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'isSystem' } },
           { kind: 'Field', name: { kind: 'Name', value: 'organizationId' } },
           {
             kind: 'Field',

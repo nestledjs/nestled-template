@@ -61,4 +61,26 @@ describe('WebUiDataTable', () => {
     expect(setSkip).toHaveBeenCalledWith(0)
     expect(setSkip).toHaveBeenCalledWith(40)
   })
+
+  it('threads field metadata into temporal cells', () => {
+    render(
+      <WebUiDataTable
+        path="/admin/people"
+        fields={['id', 'birthDate', 'mandateNotes']}
+        data={[
+          { id: 'p-1', birthDate: '2026-05-16T00:00:00.000Z', mandateNotes: 'pending review' },
+        ]}
+        fieldMeta={{
+          birthDate: { type: 'DateTime', documentation: '@dateOnly' },
+          mandateNotes: { type: 'String' },
+        }}
+      />,
+    )
+
+    // A calendar day stays on its UTC day rather than sliding west of UTC, and a text column
+    // whose NAME contains "date" is no longer rendered as the literal string "Invalid Date".
+    expect(screen.getByText('May 16, 2026')).toBeTruthy()
+    expect(screen.getByText('pending review')).toBeTruthy()
+    expect(screen.queryByText('Invalid Date')).toBeNull()
+  })
 })

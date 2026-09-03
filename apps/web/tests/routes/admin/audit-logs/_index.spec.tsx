@@ -21,6 +21,19 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   }
 })
 
+// The routes render timestamps with `toLocaleString('en-US', ...)`, which resolves against the
+// machine's timezone. Asserting a literal day matches only in the zones where these two instants
+// happen to fall on different local days -- in UTC+9 they are both Jan 15 and the day-only matcher
+// finds two elements. Deriving the expectation the same way keeps the assertion zone-independent.
+const expectedTimestamp = (iso: string) =>
+  new Date(iso).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
 describe('Admin Audit Logs Page', () => {
   let user: ReturnType<typeof userEvent.setup>
 
@@ -171,8 +184,8 @@ describe('Admin Audit Logs Page', () => {
 
       renderAuditLogsPage()
 
-      expect(screen.getByText(/Jan 15, 2024/)).toBeInTheDocument()
-      expect(screen.getByText(/Jan 14, 2024/)).toBeInTheDocument()
+      expect(screen.getByText(expectedTimestamp('2024-01-15T10:30:00Z'))).toBeInTheDocument()
+      expect(screen.getByText(expectedTimestamp('2024-01-14T15:20:00Z'))).toBeInTheDocument()
     })
 
     it('should display log IDs', () => {
@@ -298,6 +311,24 @@ describe('Admin Audit Logs Page', () => {
       renderAuditLogsPage()
 
       expect(screen.getByLabelText('End Date')).toBeInTheDocument()
+    })
+
+    it('should show back the local time that was typed, not its UTC equivalent', async () => {
+      mockUseQuery.mockReturnValue({
+        data: mockAuditLogsData,
+        loading: false,
+        error: null,
+      })
+
+      renderAuditLogsPage()
+
+      // A `datetime-local` input is read back as local wall-clock time, so it has to be rendered
+      // from local components too. Rendering it with `toISOString()` made the field jump by the
+      // viewer's UTC offset the moment a time was entered.
+      const startDate = screen.getByLabelText('Start Date')
+      await user.type(startDate, '2024-01-15T09:00')
+
+      await waitFor(() => expect(startDate).toHaveValue('2024-01-15T09:00'))
     })
   })
 

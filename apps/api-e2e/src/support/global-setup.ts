@@ -211,8 +211,36 @@ module.exports = async function globalSetup() {
   const apiAlreadyRunning = await isPortInUse(port, host)
 
   if (apiAlreadyRunning) {
-    console.log(`⚠️  API is already running on ${host}:${port}`)
-    console.log("   Using existing API server (make sure it's using the test database!)")
+    // Refuse by default. Adopting whatever is listening and printing "make sure it's using the
+    // test database!" is an instruction to a human, in a place no human reads during CI, about a
+    // fact the suite cannot verify.
+    //
+    // #118 already moved this harness off the dev port, so the collision is rare here. It is not
+    // rare downstream: a repo still on the pre-#118 global-setup reads PORT (dev) rather than
+    // E2E_API_PORT, adopts the dev server, seeds the TEST database and runs every spec against DEV.
+    // moceanic-ai hit exactly that. Port isolation makes the collision unlikely; refusing makes it
+    // impossible to lose the evidence when it happens anyway.
+    if (process.env.E2E_ALLOW_EXISTING_API !== '1') {
+      throw new Error(
+        [
+          `Refusing to run e2e against an API this suite did not start.`,
+          `Something is already listening on ${host}:${port}.`,
+          ``,
+          `This suite cannot check which database that process is using. If it is the dev server,`,
+          `every spec runs against dev data.`,
+          ``,
+          `Do one of:`,
+          `  - stop whatever is on ${port}`,
+          `  - run e2e on another port:  E2E_API_PORT=3101 pnpm test:e2e`,
+          `  - if you started that API yourself against the TEST database, say so explicitly:`,
+          `      E2E_ALLOW_EXISTING_API=1 pnpm test:e2e`,
+        ].join('\n'),
+      )
+    }
+    console.log(`⚠️  Using an API this suite did not start, on ${host}:${port}`)
+    console.log(
+      '   E2E_ALLOW_EXISTING_API=1 was set — you have asserted it uses the test database.',
+    )
     e2eGlobal.__WE_STARTED_API__ = false
     e2eGlobal.__SKIP_E2E_TESTS__ = false
   } else {

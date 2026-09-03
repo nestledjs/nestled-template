@@ -1,0 +1,56 @@
+id: 2026-08-23-e2e-must-not-adopt-the-dev-server
+title: E2E refuses an API it did not start, instead of warning about it
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  `apps/api-e2e` global setup throws when something is already listening on the e2e port, rather
+  than adopting it and printing a warning. Three ways out are named in the error: stop that process,
+  choose another port with `E2E_API_PORT`, or assert the listener is on the test database with
+  `E2E_ALLOW_EXISTING_API=1`.
+
+  The override is `E2E_API_PORT`, not `PORT`. The harness reads it in both global-setup and
+  test-setup and passes it to the API it spawns; an inherited `PORT` from `.env` is not consulted.
+
+why: >
+  Adopting a listening API and printing "Using existing API server (make sure it's using the test
+  database!)" is an instruction to a human, in a place no human reads during CI, about a fact the
+  suite cannot verify.
+
+  This template is already isolated: #118 moved the harness to E2E_API_PORT, defaulting to 3100,
+  away from the dev API. So the collision is rare here and this change is defence in depth.
+
+  It is not rare downstream. A repo still on the pre-#118 global setup reads `PORT` — which Nx
+  injects from `.env` for the dev API — adopts the dev server, pushes and seeds the TEST database,
+  then runs every spec against DEV. Specs fail for reasons unrelated to the code and the users they
+  create land in dev data. moceanic-ai hit exactly that, and it is invisible whenever no dev server
+  happens to be up, so it presents as a suite that passes in the morning and fails in the afternoon
+  with unrelated auth errors.
+
+  For those repos the fix is convergence, which brings the #118 port isolation. This change makes
+  the residual case fail loudly rather than silently producing a green run against the wrong
+  database.
+
+affectedPaths:
+  - apps/api-e2e/src/support/global-setup.ts
+
+skipIf:
+  - >
+    global-setup already throws rather than adopting a listening API. Note this is separate from
+    #118 port isolation — check for the throw, not for E2E_API_PORT.
+
+verification:
+  - pnpm test:e2e
+
+agentHints:
+  - >
+    If your global-setup reads `process.env.PORT` rather than `E2E_API_PORT`, you are on the
+    pre-#118 harness and you have the silent-adoption bug. Converge first; that is the real fix.
+    Adding a PORT export to the run scripts does NOT fix it — the harness decides the port it
+    targets, and the scripts do not feed it.
+  - >
+    Do not set E2E_ALLOW_EXISTING_API=1 in CI. That flag exists for a human who started an API
+    against the test database on purpose; setting it in CI restores the original silent behaviour
+    with extra steps.

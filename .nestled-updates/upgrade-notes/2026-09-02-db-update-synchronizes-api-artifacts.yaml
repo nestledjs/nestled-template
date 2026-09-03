@@ -1,0 +1,97 @@
+id: 2026-09-02-db-update-synchronizes-api-artifacts
+title: db-update owns the whole artifact chain, including the API schema refresh
+priority: high
+area: tooling
+type: workflow
+delivery: code-patch
+
+intent: >
+  pnpm db-update is now the complete, ordered artifact contract rather than the first half of one.
+  It runs Doctor and the Prisma/Nestled generators, then refreshes api-schema.graphql, and only
+  then compiles the typed SDK.
+
+  The package script is now a thin entry point into a new file, scripts/db-update.mjs:
+
+  db-update -> node scripts/db-update.mjs
+  db-update:generate -> the previous Doctor/Prisma/generators chain, preserved under a new name
+
+  The schema refresh adapts to the workspace. If a healthy nx serve api process is already
+  running, the script waits for that watcher to rewrite api-schema.graphql instead of starting a
+  competitor. Otherwise it boots a one-shot API on an ephemeral port against disposable local
+  dependencies from .dev/docker-compose.yml, waits for the schema, and stops only the services it
+  started. SDK compilation follows the same rule: an existing sdk:watch is awaited, otherwise
+  pnpm sdk runs once.
+
+  That boot runs with credentials scrubbed. Any environment variable whose name looks like a
+  secret is replaced with a placeholder, CLOUDINARY_URL is pointed at a local stub, NODE_ENV is
+  test, and the notification and processing feature flags are forced off, so emitting a schema
+  cannot reach SendGrid, Shopify, or any other external service.
+
+  A lock file makes concurrent runs safe.
+
+  This note is retrospective: the change is already merged and rolled out fleet-wide. It exists so
+  the template's history is complete and so a project that has not converged can still adopt the
+  change deliberately.
+
+why: >
+  The two halves of the artifact chain used to be joined by documentation and human memory.
+  db-update stopped after the generators, and AGENTS.md then asked the operator to boot the API by
+  hand to refresh api-schema.graphql and to run pnpm sdk afterwards.
+
+  Anything skipped in that manual tail produced a workspace whose Prisma models, GraphQL schema,
+  and typed SDK disagreed, and the failure surfaced later as an SDK compile error attributable to
+  whichever batch happened to be in flight rather than to the change that caused it.
+
+  Booting the API by hand also meant booting it with the developer's real .env. Emitting a schema
+  is not supposed to touch a third-party service, but nothing enforced that, so a schema refresh
+  could send mail or reach a payment provider as a side effect. The scrubbing makes it structural.
+
+  Reusing an already-running watcher matters because the old instruction produced a second API on
+  the same port whenever a developer had nx serve api open, which is the common case. That is what
+  the ephemeral-port and watcher-detection work in the source PR is fighting.
+
+affectedPaths:
+  - package.json
+  - scripts/db-update.mjs
+  - .dev/docker-compose.yml
+  - AGENTS.md
+  - docs/dev/api-extension-methodology.md
+  - agents/pipeline-config.md
+
+skipIf:
+  - >
+    The project already drives its API schema refresh and SDK compilation from a single command
+    and never asks an operator to boot the API by hand. Verify by reading the db-update script the
+    project actually runs, not the AGENTS.md description of it -- the description is what drifted.
+
+verification:
+  - node scripts/db-update.mjs
+  - pnpm run nestled-doctor
+  - git diff --stat api-schema.graphql libs/shared/sdk/src/generated
+
+agentHints:
+  - >
+    Update the project's own AGENTS.md in the same change. The old text states that db-update does
+    not boot NestJS or refresh api-schema.graphql and lists the manual boot and pnpm sdk as
+    separate numbered steps. Left in place it instructs the next operator to start a second API
+    against a script that already started one, which is the port collision this change exists to
+    remove. The new contract is: do not add a separate API boot or pnpm sdk after db-update.
+  - >
+    scripts/db-update.mjs is template source, not a published package, so it has to be copied.
+    Nothing about this change arrives through a dependency bump.
+  - >
+    The isolated path requires docker and a .dev/docker-compose.yml providing postgres and redis.
+    That compose file predates this change and is not part of it, so a project that removed or
+    renamed it must restore an equivalent or keep a watcher running for db-update to use instead.
+  - >
+    Keep the credential scrubbing when adapting the script. It is the only thing standing between
+    a routine schema refresh and a live third-party call, and a project that has added its own
+    integrations should confirm their variables match the secret-name pattern or extend it.
+  - >
+    db-update:generate is the old chain under a new name, for the case where only the generators
+    should run. It is not a replacement for db-update and leaves the schema and SDK stale.
+  - >
+    The doctor upgrade-note gate did not require this note. isSensitiveUpgradePath covers runtime
+    API and route paths, not scripts, root package.json, or AGENTS.md, so build and workflow
+    tooling changes pass the gate silently. Treat a tooling change as noteworthy on judgment
+    rather than waiting for Doctor to demand one.

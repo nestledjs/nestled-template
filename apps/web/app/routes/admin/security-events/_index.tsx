@@ -15,6 +15,7 @@ import {
   UserCircleIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline'
+import { formatLocalDateTime } from '@nestledjs/forms-core'
 import { cn } from '@nestled-template/shared/utils'
 import { getColorClasses } from '../_color-utils'
 
@@ -346,9 +347,7 @@ export default function AdminSecurityEventsPage() {
             <input
               id="startDate"
               type="datetime-local"
-              value={
-                filters.startDate ? new Date(filters.startDate).toISOString().slice(0, 16) : ''
-              }
+              value={filters.startDate ? formatLocalDateTime(new Date(filters.startDate)) : ''}
               onChange={e => {
                 setFilters(f => ({
                   ...f,
@@ -370,7 +369,7 @@ export default function AdminSecurityEventsPage() {
             <input
               id="endDate"
               type="datetime-local"
-              value={filters.endDate ? new Date(filters.endDate).toISOString().slice(0, 16) : ''}
+              value={filters.endDate ? formatLocalDateTime(new Date(filters.endDate)) : ''}
               onChange={e => {
                 setFilters(f => ({
                   ...f,
