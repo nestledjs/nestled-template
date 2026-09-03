@@ -3,6 +3,7 @@ import {
   formatFieldName,
   getNestedProperty,
   renderValue,
+  type DateFieldMeta,
 } from '@nestled-template/shared/utils'
 import { CorePaging } from '@nestled-template/shared/sdk'
 
@@ -35,6 +36,13 @@ export interface WebUiDataTableProps {
   readonly additionalFilters?: ReactElement | null
   readonly setSort?: Dispatch<SetStateAction<{ orderBy: string; orderDirection: string }>>
   readonly sort?: { orderBy: string; orderDirection: string }
+  /**
+   * Prisma field metadata keyed by field path, used to render temporal columns correctly.
+   * Optional: without it an ISO-8601 value is rendered as a local timestamp, which is the
+   * truthful reading of a Prisma `DateTime`. Supply it so that columns annotated
+   * `/// @dateOnly` render on the UTC calendar day instead of shifting by the viewer's offset.
+   */
+  readonly fieldMeta?: Record<string, DateFieldMeta>
 }
 
 function headerThClass(index: number) {
@@ -208,7 +216,7 @@ export function WebUiDataTable(props: WebUiDataTableProps) {
                       </Link>
                     </td>
                     {props.fields.map((field, index) => {
-                      const fieldValue = getNestedProperty(item, field)
+                      const fieldValue = getNestedProperty(item, field, props.fieldMeta?.[field])
                       if (index === 0) {
                         return (
                           <td

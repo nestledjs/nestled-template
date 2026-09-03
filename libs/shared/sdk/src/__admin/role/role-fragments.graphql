@@ -2,6 +2,7 @@ fragment __AdminRoleSummary on Role {
   id
   name
   description
+  isSystem
   organizationId
   organization {
     id

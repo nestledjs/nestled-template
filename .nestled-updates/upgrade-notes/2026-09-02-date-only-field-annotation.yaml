@@ -1,0 +1,143 @@
+id: 2026-09-02-date-only-field-annotation
+title: Calendar-date columns are declared with @dateOnly instead of guessed from the field name
+priority: high
+area: admin
+type: correctness
+delivery: hybrid
+
+intent: >
+  A PostgreSQL-backed Prisma model has no date-only scalar, so a birth date and a login timestamp
+  both arrive as DateTime and cannot be told apart by type. The template used to infer the
+  difference from the field's NAME. That inference is replaced by an explicit schema annotation.
+
+  Mark a column that is conceptually a calendar day in schema.prisma:
+
+  /// @dateOnly
+  birthDate DateTime?
+
+  The crud generator already copies a field's doc comment into DatabaseField.documentation, so the
+  annotation reaches the client with no generator change and no regeneration beyond the usual
+  pnpm db-update. Ask the question through isDateOnlyField -- exported from
+  libs/data-browser/src/lib/utils/graphql-utils.ts and from libs/shared/utils/src/lib/table-utils.ts
+  -- and never by inspecting a field name.
+
+  A calendar day is stored at midnight UTC and is now read, rendered, and submitted on the UTC
+  calendar. A timestamp marks an instant and is rendered and edited in local time. The data browser
+  gives an annotated field a date picker and submits it pinned to midnight UTC; an un-annotated
+  DateTime keeps the datetime-local control fixed in the previous release.
+
+  getNestedProperty in table-utils now takes an optional third argument carrying that metadata, and
+  both data tables accept a matching optional fieldMeta prop. Without metadata it falls back to the
+  SHAPE of the value -- a strict ISO-8601 test -- rather than the field's name.
+
+  The unused cleanFormInput in libs/shared/utils is deleted rather than fixed. It was a divergent
+  older copy of the data browser's function, dispatching on field names where the live one
+  dispatches on Prisma field types. Its two dead siblings in the same module, cleanDatabaseOutput
+  and defaultSingleMap, are removed with it; the module had no importer anywhere in the template.
+
+  This completes the two items deliberately deferred by
+  2026-09-01-data-browser-datetime-local-round-trip.
+
+why: >
+  Name matching was wrong in both directions and silently so.
+
+  It fired on any field whose name contains the substring "date", which includes mandateNotes,
+  validateStatus, candidateName and updateReason. Their ordinary text was passed to a date
+  formatter, and the table cell rendered the literal string "Invalid Date".
+
+  It also missed fields it was meant to catch. "updatedAt" contains "date"; "createdAt" does not.
+  In the same table one was formatted as a day and the other rendered as a raw ISO string, and
+  nobody chose that. In the template's own schema the accidental matches were updatedAt and
+  validateEmailTokenExpires -- a token expiry rendered as a bare day, with the time that gives it
+  meaning dropped.
+
+  On the write side the same test truncated any matching field to a bare day, so a datetime named
+  startDate lost its time on every save, unrecoverably. Because the truncation cut a string at its
+  first capital T, a TEXT field that matched was corrupted too: "Ship T-shirts" was stored as
+  "Ship ".
+
+  Underneath all of that, the correct distinction was already plumbed through the data browser and
+  had never been reachable. Three call sites branched on a field type of 'date', but the generator
+  emits the Prisma scalar verbatim and Prisma never produces 'date' -- only 'DateTime'. The
+  producer half was missing. This note supplies it.
+
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.22
+    versionRange: ^1.0.22
+  - name: '@nestledjs/shared-components'
+    sourcePath: libs/shared-components
+    targetVersion: 1.0.16
+    versionRange: ^1.0.16
+
+affectedPaths:
+  - package.json
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - libs/shared/utils/src/lib/table-utils.ts
+  - libs/shared/utils/src/lib/table-utils.spec.ts
+  - libs/shared/utils/src/lib/date.ts
+  - libs/shared/utils/src/lib/date.spec.ts
+  - libs/shared/utils/src/lib/forms.ts
+  - libs/shared/utils/src/lib/forms.spec.ts
+  - libs/shared/utils/src/index.ts
+  - libs/web-ui/src/lib/web-ui-data-table.tsx
+  - libs/web-ui/src/lib/web-ui-data-table.spec.tsx
+  - AGENTS.md
+
+skipIf:
+  - >
+    The project has no Prisma DateTime column that represents a calendar day rather than an
+    instant, AND no local code decides date formatting from a field name. Confirm the second half
+    by searching for name-based tests such as includes('date') or endsWith('Date') in table,
+    form, filter and export code -- not only in the files this note lists.
+
+verification:
+  - TZ=America/New_York pnpm nx test utils
+  - TZ=Pacific/Auckland pnpm nx test utils
+  - TZ=America/New_York pnpm nx test data-browser
+  - TZ=America/New_York pnpm nx test shared-components
+  - TZ=America/New_York pnpm nx test web-ui
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Upgrade @nestledjs/doctor to 0.5.0 or newer as part of this note. 0.4.0 added the
+    date-only check, which rejects @dateOnly on a non-DateTime field, on a model or enum, and
+    dangling with no declaration beneath it. Without it the annotation is unenforced and a
+    misplaced one fails silently at runtime instead of at build time.
+  - >
+    Audit every DateTime column in schema.prisma, not only the ones whose name contains "date".
+    The name is where to start looking, never the answer -- that is the defect being removed. The
+    list is bounded and short; decide per field whether it marks an instant or a calendar day.
+  - >
+    Annotate only genuine calendar days. Anything ending in At -- createdAt, updatedAt,
+    lastActiveAt, canceledAt -- is an instant and must stay un-annotated, as must expiry columns
+    such as expiresAt, trialEnd, lockedUntil and passwordResetExpires. The template's own schema
+    has no date-only column, so the reference schema gains no annotations from this change.
+  - >
+    A project WILL see a display change on any field whose name happened to contain "date". Such a
+    field previously rendered as a bare day and now renders as a local timestamp unless annotated.
+    That is the migration: if the column really is a calendar day, add the annotation; if it is an
+    instant, the new rendering is the correction. Check both readings before assuming a regression.
+  - >
+    Un-annotated DateTime fields are deliberately treated as timestamps. A project that annotates
+    nothing gets the previous data browser behaviour, so the annotation can be adopted per model
+    rather than in one pass.
+  - >
+    If the project imports cleanFormInput, cleanDatabaseOutput or defaultSingleMap from
+    shared/utils, the deletion breaks the build at compile time, which is intended. Migrate to the
+    data browser's cleanFormInput, which dispatches on Prisma field types rather than on field
+    names, or vendor the old function into the project with its date branch removed.
+  - >
+    Pass fieldMeta to the data tables wherever the model is already to hand. Both props are
+    optional and additive, so a downstream table compiles unchanged; without the metadata a
+    calendar day is rendered as a local timestamp and slides onto the previous day west of UTC.
+  - >
+    Run the date tests under a non-UTC TZ, in both hemispheres. A calendar-day defect is invisible
+    in UTC and east of it -- only a viewer west of UTC sees midnight UTC land on the previous day,
+    which is why the assertions here are run under both America/New_York and Pacific/Auckland.
+  - >
+    Do not add a name-based fallback for projects that have not annotated yet. Reintroducing the
+    substring test to soften the migration restores every false positive it caused, including the
+    Invalid Date cells, and makes the annotation unverifiable.
