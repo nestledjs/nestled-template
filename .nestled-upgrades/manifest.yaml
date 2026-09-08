@@ -1,11 +1,33 @@
 schemaVersion: 1
-generatedAt: '2026-08-27'
+generatedAt: 2026-09-08
 channels:
-  canary: '2026.08.0'
-  stable: '2026.08.0'
+  canary: 2026.09.1
+  stable: 2026.08.0
 releases:
-  - id: '2026.08.0'
-    date: '2026-08-27'
+  - id: 2026.08.0
+    date: 2026-08-27
     title: Convergence baseline
     templateCommit: 11adecd
     notes: []
+  - id: 2026.09.1
+    date: 2026-09-08
+    title: Generators 3.2.2 / doctor 0.5.2
+    templateCommit: 763e3d6
+    notes:
+      - id: 2026-09-08-generators-322-doctor-052
+        title: "@nestledjs/generators 3.2.2, @nestledjs/doctor 0.5.2, data-browser 1.0.23, shared-components 1.0.17"
+        delivery: hybrid
+        intent: "Bump @nestledjs/generators, @nestledjs/doctor, @nestledjs/data-browser, and @nestledjs/shared-components to their published versions, and fix the dayjs plugin import extension for correct ESM resolution. The generators bump fixes two defects: the sdk generator no longer hardcodes `query Uptime { uptime }` into core.graphql, which was silently resurrecting a removed, unconsumed GraphQL operation on every db-update; and the crud generator now fails fast with an actionable message if CorePagingInput still declares `filters`, instead of 62 confusing TS4114 errors across 22,000 lines of generated code."
+        area: codegen
+        affectedPaths:
+          - libs/shared/utils/src/lib/date.ts
+        patch: patches/2026-09-08-generators-322-doctor-052.diff
+        packageReleases:
+          - name: "@nestledjs/generators"
+            targetVersion: 3.2.2
+          - name: "@nestledjs/doctor"
+            targetVersion: 0.5.2
+          - name: "@nestledjs/data-browser"
+            versionRange: ^1.0.23
+          - name: "@nestledjs/shared-components"
+            versionRange: ^1.0.17
