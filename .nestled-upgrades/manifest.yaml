@@ -31,3 +31,5 @@ releases:
             versionRange: ^1.0.23
           - name: "@nestledjs/shared-components"
             versionRange: ^1.0.17
+        verification:
+          - pnpm nestled-doctor
