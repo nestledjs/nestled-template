@@ -92,7 +92,9 @@ pnpm typecheck          # generate React Router types + TypeScript checks for ap
 ```bash
 pnpm prisma:generate    # generate Prisma client
 pnpm prisma:format      # format schema
-pnpm prisma:db-push     # push schema to DB
+pnpm prisma:migrate     # create + apply a migration from schema changes (local DB only)
+pnpm prisma:deploy      # apply committed migrations (what Railway runs before each deploy)
+pnpm prisma:db-push     # prototype only: push schema without a migration (never for shared envs)
 pnpm prisma:seed        # seed database
 pnpm prisma:reset       # reset database (destroys data)
 pnpm prisma:studio      # open Prisma Studio
@@ -395,9 +397,33 @@ The following files are overwritten when running `pnpm db-update`:
 
 **Required environment variables:** `DATABASE_URL`, `JWT_SECRET`. See `.env.example` for all options.
 
+## Production Migrations
+
+Committed migrations reach production on their own. `railway.json` sets the Railway pre-deploy
+command to `pnpm prisma:deploy` (`prisma migrate deploy`), which runs between build and start —
+in the built image, with the service's runtime variables, before the new container serves
+traffic. A failing migration aborts the deploy and the previous version keeps running. The
+config file applies to every service built from this repo; the guard around it skips services
+with no `DIRECT_URL`/`DATABASE_URL`, which is how the `web` service stays out of it. Never give
+`web` a database URL. The `api` service also carries a Railway health check on `/api/uptime`
+(a dashboard setting) so a container that fails to boot never takes traffic.
+
+Schema changes are migrations, not pushes: edit the schema, run `pnpm prisma:migrate` against
+the local database to create and apply a migration, commit the new folder under
+`libs/api/prisma/src/lib/migrations/`, and let the deploy apply it. `pnpm prisma:db-push` is
+for throwaway prototyping only; a pushed change never reaches production and leaves the next
+migration to fail.
+
+A database that was built with `db push` before migrations existed must be baselined once
+before this can run against it: generate the initial migration from the schema
+(`prisma migrate diff --from-empty --to-schema libs/api/prisma/src/lib/schemas --script`),
+commit it, and mark it applied on that database with `prisma migrate resolve --applied <name>`.
+Confirm first that the live database matches the schema
+(`prisma migrate diff --from-config-datasource --to-schema ... --exit-code` returns 0).
+
 ## Security & Configuration Tips
 
-Do not commit secrets. Start from `.env.example` and keep local values in `.env`. Be careful with database and cleanup commands; prefer documented Prisma scripts such as `pnpm prisma:generate`, `pnpm prisma:db-push`, and `pnpm prisma:seed`.
+Do not commit secrets. Start from `.env.example` and keep local values in `.env`. Be careful with database and cleanup commands; prefer documented Prisma scripts such as `pnpm prisma:generate`, `pnpm prisma:migrate`, and `pnpm prisma:seed`.
 
 ## SonarQube Quality Expectations
 

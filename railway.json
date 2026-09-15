@@ -1,0 +1,8 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "deploy": {
+    "preDeployCommand": [
+      "if [ -n \"$DIRECT_URL\" ] || [ -n \"$DATABASE_URL\" ]; then pnpm prisma:deploy; else echo 'Skipping prisma:deploy: neither DIRECT_URL nor DATABASE_URL is set'; fi"
+    ]
+  }
+}
