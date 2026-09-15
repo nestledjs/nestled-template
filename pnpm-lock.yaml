@@ -610,6 +610,9 @@ importers:
       prisma-graphql-type-decimal:
         specifier: 4.0.2
         version: 4.0.2(@prisma/client-runtime-utils@7.9.1)(@prisma/client@7.9.1(prisma@7.9.1(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(magicast@0.5.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3))(typescript@5.9.3))(graphql@16.14.2)
+      railway:
+        specifier: ^3.11.0
+        version: 3.11.0
       rollup:
         specifier: ^4.62.4
         version: 4.62.4
@@ -12597,6 +12600,11 @@ packages:
   quick-lru@5.1.1:
     resolution: {integrity: sha512-WuyALRjWPDGtt/wzJiadO5AXY+8hZ80hVpe6MyivgraREW751X3SbhRvG3eLKOYN+8VEvqLcf3wdnt44Z4S4SA==}
     engines: {node: '>=10'}
+
+  railway@3.11.0:
+    resolution: {integrity: sha512-ehLFHCxV+gITWeBlIVaXulXaVRg4LCxqm0bq64iXSwYL1DESd0pUeLYMP/BMBhnZWeFFBYyJCREaq+Nka7Wgmw==}
+    engines: {node: '>=22'}
+    hasBin: true
 
   rambda@9.4.2:
     resolution: {integrity: sha512-++euMfxnl7OgaEKwXh9QqThOjMeta2HH001N1v4mYQzBjJBnmXBh2BCK6dZAbICFVXOFUVD3xFG0R3ZPU0mxXw==}
@@ -29647,6 +29655,12 @@ snapshots:
   quick-format-unescaped@4.0.4: {}
 
   quick-lru@5.1.1: {}
+
+  railway@3.11.0:
+    dependencies:
+      '@graphql-typed-document-node/core': 3.2.0(graphql@16.14.2)
+      graphql: 16.14.2
+      tsx: 4.23.12
 
   rambda@9.4.2: {}
 

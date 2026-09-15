@@ -276,6 +276,7 @@
     "prettier": "^3.9.6",
     "prisma": "^7.9.1",
     "prisma-graphql-type-decimal": "4.0.2",
+    "railway": "^3.11.0",
     "rollup": "^4.62.4",
     "storybook": "10.5.7",
     "tailwindcss": "^4.3.3",
