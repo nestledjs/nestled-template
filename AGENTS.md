@@ -399,14 +399,27 @@ The following files are overwritten when running `pnpm db-update`:
 
 ## Production Migrations
 
-Committed migrations reach production on their own. `railway.json` sets the Railway pre-deploy
-command to `pnpm prisma:deploy` (`prisma migrate deploy`), which runs between build and start —
+Committed migrations reach production on their own. The `api` service's Railway pre-deploy
+command is `pnpm prisma:deploy` (`prisma migrate deploy`), which runs between build and start —
 in the built image, with the service's runtime variables, before the new container serves
-traffic. A failing migration aborts the deploy and the previous version keeps running. The
-config file applies to every service built from this repo; the guard around it skips services
-with no `DIRECT_URL`/`DATABASE_URL`, which is how the `web` service stays out of it. Never give
-`web` a database URL. The `api` service also carries a Railway health check on `/api/uptime`
-(a dashboard setting) so a container that fails to boot never takes traffic.
+traffic. A failing migration aborts the deploy and the previous version keeps running. The `api`
+service also carries a Railway health check on `/api/uptime` (300s) so a container that fails to
+boot never takes traffic. Neither `build:api` nor `start:api` touches the database, and the
+`web` service has no database URL and no pre-deploy.
+
+Both settings live on the service in Railway and are declared in `.railway/railway.ts`
+(Railway Infrastructure as Code). Do not add a `railway.json`: config-as-code is deprecated,
+is not read for services that never used it, and stops being read for everyone on 2026-12-01.
+Railway does not read `.railway/railway.ts` on deploy either. It is applied with
+`railway config apply` (or the `railwayapp/config` GitHub Action on merge) after
+`railway config plan` shows only the change you intend. Omitted resources are deleted on apply,
+so keep the file complete: regenerate it from live state with `railway config pull` rather than
+hand-editing it, then diff. `railway config plan` currently reports importer noise on the managed
+Postgres/Redis services (it wants to pin their images); leave that unapplied.
+
+`.railway/railway.ts` here describes the template's own Railway project. A project cloned from
+the template regenerates it for its own project with `railway config pull` and keeps the
+`preDeploy` and `healthcheck` settings on `api`.
 
 Schema changes are migrations, not pushes: edit the schema, run `pnpm prisma:migrate` against
 the local database to create and apply a migration, commit the new folder under
