@@ -18,6 +18,7 @@
 ## Repo
 | Field | Value |
 |---|---|
+| `flightdesk_project_id` | `46200a1b-9f14-455f-8141-5d756a9029e0` — bound for FlightDesk dispatches (2026-09-21); the deploy-monitoring-only guard above still holds: no `auto_merge`, no `merge_command` |
 | `repo_name` | `nestled-template` |
 | `framework` | `nestled` |
 | `github_slug` | `nestledjs/nestled-template` |
@@ -50,3 +51,9 @@ On a failed deployment here: **diagnose, surface to Justin, and stop.** Do not o
 against another repo's project, do not push a fix branch, and do not merge. A broken template deploy
 is a propagation risk, not a routine app failure — it wants a human decision about whether new site
 clones should be paused until it's resolved.
+
+## Source System
+
+FlightDesk is the source of truth for task state (D23). This folder's agent never writes status,
+comments or state changes to Linear; the FlightDesk turn (`flightdesk turn end`) reports the
+outcome and FlightDesk advances the task. Linear is not used for this repo.
