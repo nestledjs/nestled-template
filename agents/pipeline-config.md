@@ -7,7 +7,7 @@
 > (intake → plan → execute → auto-merge) does not pick this repo up and cannot merge to it.
 >
 > Added 2026-08-12. Before this, `nestled-template` had a live Railway project and no
-> `pipeline-config.md` at all, which made it invisible to Deploy Fixer *and* to every pipeline pass —
+> `pipeline-config.md` at all, which made it invisible to Deploy Fixer _and_ to every pipeline pass —
 > despite being the canonical clone source that new Nestled sites are created from. A silently broken
 > deploy here would propagate outward before anyone noticed.
 >
@@ -16,31 +16,33 @@
 > become pipeline-enabled, that's Justin's explicit call.
 
 ## Repo
-| Field | Value |
-|---|---|
+
+| Field                   | Value                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `flightdesk_project_id` | `46200a1b-9f14-455f-8141-5d756a9029e0` — bound for FlightDesk dispatches (2026-09-21); the deploy-monitoring-only guard above still holds: no `auto_merge`, no `merge_command` |
-| `repo_name` | `nestled-template` |
-| `framework` | `nestled` |
-| `github_slug` | `nestledjs/nestled-template` |
-| `base_branch` | `develop` |
-| `repo_path` | resolve at runtime with `git rev-parse --show-toplevel` — portable across Mac (`~/IdeaProjects`) and Linux (`~/workspaces`) hosts; never hardcode |
+| `repo_name`             | `nestled-template`                                                                                                                                                             |
+| `framework`             | `nestled`                                                                                                                                                                      |
+| `github_slug`           | `nestledjs/nestled-template`                                                                                                                                                   |
+| `base_branch`           | `develop`                                                                                                                                                                      |
+| `repo_path`             | resolve at runtime with `git rev-parse --show-toplevel` — portable across Mac (`~/IdeaProjects`) and Linux (`~/workspaces`) hosts; never hardcode                              |
 
 ## Host — Railway (for Deploy Fixer mapping)
-| Field | Value |
-|---|---|
-| `host` | `railway` |
-| `railway_project_name` | `nestled-template` |
-| `railway_project_id` | `9cb10a5b-c60e-444c-83a0-f99260a5fd4b` |
-| `railway_environment_name` | `production` |
-| `railway_environment_id` | `e746a86c-4be8-442c-8b0d-5dc9e4aceac7` |
+
+| Field                      | Value                                  |
+| -------------------------- | -------------------------------------- |
+| `host`                     | `railway`                              |
+| `railway_project_name`     | `nestled-template`                     |
+| `railway_project_id`       | `9cb10a5b-c60e-444c-83a0-f99260a5fd4b` |
+| `railway_environment_name` | `production`                           |
+| `railway_environment_id`   | `e746a86c-4be8-442c-8b0d-5dc9e4aceac7` |
 
 Git-backed services in this project — Deploy Fixer checks **each** one's latest deployment.
 Managed plugins (Postgres, Redis) are not git-backed and are not scanned.
 
-| Service | ID |
-|---|---|
-| `api` | `11dcacda-3247-4da4-a1cb-a6df31f67e11` |
-| `web` | `c11e4dfe-adf8-4aad-9eec-146b805b8b60` |
+| Service | ID                                     |
+| ------- | -------------------------------------- |
+| `api`   | `11dcacda-3247-4da4-a1cb-a6df31f67e11` |
+| `web`   | `c11e4dfe-adf8-4aad-9eec-146b805b8b60` |
 
 ## Deploy failure handling
 
