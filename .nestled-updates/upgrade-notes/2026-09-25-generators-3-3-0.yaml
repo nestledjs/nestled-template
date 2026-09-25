@@ -1,0 +1,80 @@
+id: 2026-09-25-generators-3-3-0
+title: Generators 3.3.0 adds nullable GraphQL responses and filters unused enum imports
+priority: normal
+area: api
+type: deps
+delivery: hybrid
+
+intent: >
+  Update @nestledjs/generators from 3.2.2 to the published 3.3.0 release, pin the dependency
+  exactly, and refresh the lockfile. Move the existing Uptime query from the generator-owned
+  graphql/core/core.graphql into the application-owned graphql/core/core-queries.graphql,
+  preserving the operation name and fields. Run pnpm db-update so generated models, admin CRUD,
+  api-schema.graphql, and the typed SDK are synchronized with the installed generator.
+
+why: >
+  Version 3.3.0 adds the opt-in Prisma field annotation /// @graphqlNullable. It makes a
+  generated GraphQL response field nullable, with an optional TypeScript property that accepts
+  null, while leaving the database column and generated CRUD input requirements unchanged.
+  This lets application resolvers return null for fields the caller cannot access without
+  triggering GraphQL non-null propagation. The resolver remains responsible for authorization.
+
+  The release also imports only enums used by visible generated model fields. Enums referenced
+  only by @skipCrud models or @graphqlOmit fields no longer create unused model imports;
+  enum exports and registration remain available.
+
+  Regeneration also exposed an existing SDK ownership issue: the generator rewrites
+  graphql/core/core.graphql with the CorePagingDetails fragment and removes the template's
+  Uptime query. Keeping that operation in a separate application-owned document preserves the
+  public SDK contract and lets Doctor and repeated regeneration pass.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - libs/api/core/models/src/lib/models/models.ts
+  - libs/shared/sdk/src/graphql/core/core.graphql
+  - libs/shared/sdk/src/graphql/core/core-queries.graphql
+
+packageReleases:
+  - name: '@nestledjs/generators'
+    targetVersion: 3.3.0
+    versionRange: 3.3.0
+
+skipIf:
+  - >
+    The installed dependency and lockfile already resolve @nestledjs/generators to 3.3.0 or a
+    later compatible release, and the project has successfully run pnpm db-update with that
+    version, with any application operations preserved outside the generated core.graphql.
+    Do not downgrade a project that has already adopted a newer compatible release.
+
+verification:
+  - pnpm db-update
+  - pnpm run nestled-doctor
+  - pnpm verify:selects
+  - pnpm verify:select-coverage
+  - pnpm verify:fragments
+  - pnpm typecheck
+
+agentHints:
+  - >
+    This is a dependency update; consume the published package and regenerate each project's
+    own artifacts. Do not copy generator source or this template's generated files downstream.
+  - >
+    No schema annotation is added by this template update. Adopt @graphqlNullable only where
+    an application intentionally returns null for a database-required field. Unannotated fields
+    retain their existing nullability, and no database migration is needed for the annotation.
+  - >
+    @graphqlNullable supports scalars, enums, and lists. A list becomes nullable while its items
+    remain non-null. @graphqlOmit takes precedence when both annotations are present.
+  - >
+    Keep generated admin CRUD protected by GqlAuthAdminGuard and @AdminOnly(). Nullability does
+    not grant access, widen Prisma selects, or replace field-level authorization in custom
+    resolvers. Review client handling of null if a project opts in to the annotation.
+  - >
+    Use the complete pnpm db-update pipeline, which refreshes the API schema before compiling
+    the SDK. Review the resulting generated diff and retain existing application SDK documents.
+  - >
+    Before regeneration, move application operations out of graphql/core/core.graphql into an
+    application-owned sibling document. Preserve operation names and selections, and do not
+    duplicate an operation already defined elsewhere. If the project intentionally removed
+    the uptime root field, do not reintroduce the Uptime query; preserve its own API contract.

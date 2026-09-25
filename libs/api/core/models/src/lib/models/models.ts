@@ -7,7 +7,6 @@ import {
   AddressType,
   EmailType,
   FailureReason,
-  ImageType,
   InviteStatus,
   PhoneType,
   SecurityEventType,
