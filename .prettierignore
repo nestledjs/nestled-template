@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+tmp/
+coverage/
+api-schema.graphql
+pnpm-lock.yaml
+apps/web/.react-router/
+
+.nx/self-healing
+.yalc/

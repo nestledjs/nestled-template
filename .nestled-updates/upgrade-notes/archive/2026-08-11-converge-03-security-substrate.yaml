@@ -1,0 +1,111 @@
+id: 2026-08-11-converge-03-security-substrate
+title: "Convergence step 3 of 4: scoped RBAC substrate, schema and the tenancy standard"
+priority: high
+area: auth
+type: security
+delivery: hybrid
+
+intent: >
+  Install the platform/organization authorization substrate: separate platform and organization
+  scopes, code-owned permission catalogs, declarative access-policy decorators and guards, the
+  organization context service, the schema and seed changes they require, and the published
+  access-control console. State the project's tenancy standard explicitly and delete the inert
+  Prisma tenant-isolation extension that currently contradicts it.
+
+  Replaces 2026-08-09-scoped-rbac-platform-admin and folds in both package fixes,
+  2026-08-10-access-control-production-jsx and 2026-08-10-access-control-auto-styles.
+
+  Consume @nestledjs/access-control at ^0.0.3 or newer. Do NOT adopt 0.0.1 or 0.0.2. The earlier
+  note pinned ^0.0.2, which meant following the records in order installed a version that crashes in
+  production and renders the console unstyled, then repaired it twice. Going straight to 0.0.3 is the
+  single largest reason these notes were collapsed.
+
+why: >
+  This is the step that changes what authorization means, so it carries the schema change and the
+  substrate every later check depends on. Generated CRUD and the generic data browser stay
+  root-only; product surfaces get explicit, declarative policy instead of implicit reachability.
+
+  On tenancy, state the standard rather than leaving it to be inferred. The template has shipped
+  libs/api/core/data-access/src/lib/extensions/tenant-isolation.extension.ts since the May security
+  baseline, carrying a CRITICAL SECURITY COMPONENT banner, and it has never been called anywhere --
+  in the template or in any project cloned from it. It also guards seven hardcoded model names and
+  filters on organizationId, while the convention these projects standardised on is
+  ownedByOrganizationId, so even if it were wired in it would protect almost nothing.
+
+  Dead code labelled critical is worse than absent code, because it invites the assumption that
+  tenancy is handled somewhere else. The enforceable standard is explicit scoping at the API
+  boundary, checked by the rules installed in step 2 -- that is the mechanism that actually caught a
+  live cross-tenant read (an unscoped findUnique by id serving any organization's events). Database
+  row-level security is the stronger long-term answer and is deliberately out of scope here; it
+  touches migrations, pooling and every deploy, and deserves its own design pass rather than riding
+  along with nine other changes.
+
+affectedPaths:
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - libs/api/prisma/src/lib/seed/**
+  - libs/api/utils/src/lib/guards/access-policy*
+  - libs/api/utils/src/lib/services/organization-context.service.ts
+  - libs/api/utils/src/lib/services/auth-cache.service.ts
+  - libs/api/utils/src/lib/services/auth-loader.service.ts
+  - libs/api/custom/src/lib/plugins/access-control/**
+  - libs/api/custom/src/lib/plugins/admin/**
+  - libs/api/custom/src/lib/default/organization/**
+  - scripts/doctor-access-policy-analysis.ts
+  - apps/web/package.json
+  - libs/api/core/data-access/src/lib/extensions/tenant-isolation.extension.ts
+
+packageReleases:
+  - name: '@nestledjs/access-control'
+    sourcePath: libs/access-control
+    targetVersion: 0.0.3
+    versionRange: ^0.0.3
+
+skipIf:
+  - The project already has separately persisted platform and organization RBAC, declarative
+    operation policy metadata, equivalent grant and target ceilings, and reviewed management UIs.
+  - >
+    The project intentionally has no delegated platform administration. In that case still port the
+    organization policy pieces and the doctor access-policy analysis, keep root-only admin surfaces,
+    and record the adaptation rather than skipping the whole step.
+
+verification:
+  - pnpm prisma:generate
+  - pnpm prisma migrate deploy
+  - pnpm prisma:seed
+  - pnpm template:test-doctor-auth
+  - pnpm run nestled-doctor
+  - pnpm nx test api-utils
+  - pnpm nx test api-custom
+  - pnpm nx build api
+  - pnpm sdk
+  - pnpm typecheck
+
+agentHints:
+  - >
+    This step changes the database. Write a real migration; do not reach for prisma db push. Push
+    does not detect renames -- it drops and re-adds, losing the data in the column. Rehearse the
+    migration against a local database restored from a production-shaped dump before it runs
+    anywhere real, and read the constraint and index names in your own schema rather than assuming
+    they match the template's.
+  - >
+    Take @nestledjs/access-control at ^0.0.3 or newer and verify against the installed artifact, not
+    the version string: unpack the package and confirm its index.js imports index.css. 0.0.1 ships a
+    development JSX runtime that crashes in production; 0.0.2 renders the console entirely unstyled
+    because nothing imports the extracted stylesheet. Both failures are silent in the sense that
+    nothing throws.
+  - >
+    Delete tenant-isolation.extension.ts and its spec, and remove its export. Promotion is additive
+    and cannot carry deletions, so this will not happen by itself -- the file will simply persist and
+    keep claiming to be critical. If the project has independently wired it in and relies on it, keep
+    it and record the adaptation with that reasoning.
+  - >
+    Keep generated CRUD and the generic data browser root-only. A non-admin guard on a generated
+    operation is an unscoped cross-tenant query by construction, because generated CRUD emits no
+    organization filter and no ownership check.
+  - >
+    Organization role management is application-local on purpose. Adapt its language and workflow to
+    the product's own organization model; preserve the API ceilings rather than the UI copy.
+  - >
+    Record this id with the reason. If the project is single-tenant, say so explicitly -- that is a
+    real and permanent architectural fact, and it is exactly the kind of decision that is worthless
+    to a future reader unless it is written down.

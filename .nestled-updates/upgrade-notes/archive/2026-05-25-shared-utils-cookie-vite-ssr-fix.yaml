@@ -1,0 +1,37 @@
+id: 2026-05-25-shared-utils-cookie-vite-ssr-fix
+title: Fix double import.meta.env access in getSessionCookieName
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Capture import.meta?.env?.VITE_COOKIE_NAME into a local variable before the truthiness
+  check in getSessionCookieName so the env value is read once and returned consistently.
+
+why: >
+  When VITE_COOKIE_NAME is set in .env, the original code accessed import.meta.env.VITE_COOKIE_NAME
+  twice (once in the condition, once in the return). In some Vite/SSR environments this causes the
+  second access to return undefined while the first returned a string, resulting in the function
+  silently falling through to the '__session' default despite the variable being set. The fix
+  captures the value once, making the condition and return agree.
+
+affectedPaths:
+  - libs/shared/utils/src/lib/cookies.tsx
+
+packageReleases: []
+
+skipIf:
+  - The downstream project has removed or replaced getSessionCookieName.
+  - The downstream project has already applied the single-capture fix.
+  - The downstream project does not use VITE_COOKIE_NAME.
+
+verification:
+  - pnpm nx test utils --skipNxCache
+
+agentHints:
+  - In getSessionCookieName, locate the client-side Vite block.
+  - 'Before: if (import.meta?.env?.VITE_COOKIE_NAME) { return import.meta.env.VITE_COOKIE_NAME }'
+  - 'After: const viteEnvName = import.meta?.env?.VITE_COOKIE_NAME as string | undefined; if (viteEnvName) { return viteEnvName }'
+  - The server-side process.env block above it is fine and should not be changed.
+  - All three cookie tests should pass after the change.

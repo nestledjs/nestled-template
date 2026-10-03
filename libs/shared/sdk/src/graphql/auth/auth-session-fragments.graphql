@@ -1,0 +1,10 @@
+fragment ActiveSessionInfo on UserSessionOutput {
+  id
+  createdAt
+  lastActiveAt
+  deviceInfo
+  ipAddress
+  isValid
+  twoFactorVerified
+  isCurrent
+}

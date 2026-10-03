@@ -1,0 +1,20 @@
+query __AdminAddress($addressId: String!) {
+  address(addressId: $addressId) {
+    ...__AdminAddressDetails
+  }
+}
+
+query __AdminAddresses($input: ListAddressInput) {
+  addresses(input: $input) {
+    ...__AdminAddressSummary
+  }
+  counters: addressesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminAddressPagination($input: ListAddressInput) {
+  counters: addressesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

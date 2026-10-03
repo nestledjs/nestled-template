@@ -1,0 +1,36 @@
+id: 2026-07-23-billing-audit-coverage
+title: Add audit logging for user and admin billing mutations
+priority: normal
+area: billing
+type: correctness
+delivery: code-patch
+
+intent: >
+  Add best-effort AuditLog writes for billing mutations that perform sensitive user or admin
+  side effects: checkout session creation, billing portal session creation, subscription
+  cancellation, and manual Stripe product/price/subscription sync operations.
+
+why: >
+  The billing resolvers were already protected by user/admin guards, but the successful mutations
+  did not leave an AuditLog record. That left subscription-management and manual Stripe-sync actions
+  less observable than organization and auth-sensitive workflows. Audit writes are deliberately
+  best-effort: if AuditLog creation fails, the billing operation still succeeds and logs a warning,
+  matching the existing organization audit pattern.
+
+affectedPaths:
+  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
+  - libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+  - libs/api/custom/src/lib/plugins/billing/billing.resolver.spec.ts
+
+skipIf:
+  - The downstream project already records AuditLog entries for createCheckoutSession, createPortalSession, cancelSubscription, syncStripeProducts, syncStripePrices, syncStripeProduct, syncStripePrice, and syncStripeSubscription.
+
+verification:
+  - pnpm nx run api-custom:test --skip-nx-cache --output-style=stream
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Keep audit writes best-effort; billing mutations should not fail just because AuditLog creation fails.
+  - Do not log checkout or portal URLs. Record stable IDs and action names only.
+  - Use the direct billing UsageService import in user-subscription.resolver.ts instead of the api/custom barrel; the barrel pulls in unrelated auth OAuth modules in Jest.

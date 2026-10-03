@@ -1,0 +1,95 @@
+schemaVersion: 1
+generatedAt: 2026-10-01
+channels:
+  canary: 2026.10.1
+  stable: 2026.08.0
+releases:
+  - id: 2026.08.0
+    date: 2026-08-27
+    title: Convergence baseline
+    templateCommit: 11adecd
+    notes: []
+  - id: 2026.09.1
+    date: 2026-09-08
+    title: Generators 3.2.2 / doctor 0.5.2
+    templateCommit: 763e3d6
+    notes:
+      - id: 2026-09-08-generators-322-doctor-052
+        title: "@nestledjs/generators 3.2.2, @nestledjs/doctor 0.5.2, data-browser 1.0.23, shared-components 1.0.17"
+        delivery: hybrid
+        intent: "Bump @nestledjs/generators, @nestledjs/doctor, @nestledjs/data-browser, and @nestledjs/shared-components to their published versions, and fix the dayjs plugin import extension for correct ESM resolution. The generators bump fixes two defects: the sdk generator no longer hardcodes `query Uptime { uptime }` into core.graphql, which was silently resurrecting a removed, unconsumed GraphQL operation on every db-update; and the crud generator now fails fast with an actionable message if CorePagingInput still declares `filters`, instead of 62 confusing TS4114 errors across 22,000 lines of generated code."
+        area: codegen
+        affectedPaths:
+          - libs/shared/utils/src/lib/date.ts
+        patch: patches/2026-09-08-generators-322-doctor-052.diff
+        packageReleases:
+          - name: "@nestledjs/generators"
+            targetVersion: 3.2.2
+          - name: "@nestledjs/doctor"
+            targetVersion: 0.5.2
+          - name: "@nestledjs/data-browser"
+            versionRange: ^1.0.23
+          - name: "@nestledjs/shared-components"
+            versionRange: ^1.0.17
+        verification:
+          - pnpm nestled-doctor
+  - id: 2026.10.1
+    date: 2026-10-01
+    title: Auth session/token hardening + Railway pre-deploy migrations
+    templateCommit: a937739
+    notes:
+      - id: 2026-09-15-railway-predeploy-migrations
+        title: Production schema changes are Prisma migrations applied by a Railway pre-deploy command
+        delivery: code-patch
+        intent: "Every deploy applies committed Prisma migrations before the new container serves traffic, and schema changes are authored as migrations rather than pushed. The api service's Railway pre-deploy command is `pnpm prisma:deploy` (`prisma migrate deploy`) and it carries a health check on /api/uptime (timeout 300), so a container that fails to boot never replaces the running one. Both are service settings in Railway, declared in the repo as Railway Infrastructure as Code at .railway/railway.ts and applied with `railway config apply`. The `railway` npm package is a devDependency so `railway config plan` can evaluate the file. The template carries its first migration, libs/api/prisma/src/lib/migrations/0_init, generated from the schema, plus migration_lock.toml. Package scripts change to match: prisma:apply now runs `prisma migrate deploy` instead of `db push`, prisma:migrate (`prisma migrate dev`) is the authoring command, prisma:deploy is the production command, and prisma:db-push remains only for throwaway prototyping. AGENTS.md documents the contract under \"Production Migrations\"."
+        area: database
+        affectedPaths:
+          - .railway/railway.ts
+          - .railway/README.md
+          - package.json
+          - libs/api/prisma/src/lib/migrations/0_init/migration.sql
+          - libs/api/prisma/src/lib/migrations/migration_lock.toml
+          - AGENTS.md
+        verification:
+          - "railway config plan   # only importer noise on managed Postgres/Redis images, nothing on api"
+          - pnpm prisma migrate status
+          - Railway deploy log for the api service shows `prisma migrate deploy` before start and the health check succeeding
+        patch: patches/2026-09-15-railway-predeploy-migrations.diff
+      - id: 2026-09-25-generators-3-3-0
+        title: Generators 3.3.0 adds nullable GraphQL responses and filters unused enum imports
+        delivery: hybrid
+        intent: Update @nestledjs/generators from 3.2.2 to the published 3.3.0 release, pin the dependency exactly, and refresh the lockfile. Move the existing Uptime query from the generator-owned graphql/core/core.graphql into the application-owned graphql/core/core-queries.graphql, preserving the operation name and fields. Run pnpm db-update so generated models, admin CRUD, api-schema.graphql, and the typed SDK are synchronized with the installed generator.
+        area: api
+        affectedPaths:
+          - package.json
+          - pnpm-lock.yaml
+          - libs/api/core/models/src/lib/models/models.ts
+          - libs/shared/sdk/src/graphql/core/core.graphql
+          - libs/shared/sdk/src/graphql/core/core-queries.graphql
+        verification:
+          - pnpm db-update
+          - pnpm run nestled-doctor
+          - "pnpm verify:selects"
+          - "pnpm verify:select-coverage"
+          - "pnpm verify:fragments"
+          - pnpm typecheck
+        patch: patches/2026-09-25-generators-3-3-0.diff
+        packageReleases:
+          - name: "@nestledjs/generators"
+            targetVersion: 3.3.0
+            versionRange: 3.3.0
+      - id: 2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens
+        title: Password reset revokes sessions; stale verification tokens can no longer verify the wrong address
+        delivery: code-patch
+        intent: "Changes in `AuthService` (libs/api/custom/src/lib/plugins/auth/auth.service.ts): 1. `resetPassword()` writes the new password, the password-history row, and `userSession.updateMany({ isValid: false })` for EVERY session in one interactive transaction. No session is spared (the reset flow is unauthenticated). The password write consumes the reset token by compare-and-set (`user.updateMany` whose `where` includes the token and `passwordResetExpires > now`); a zero match writes nothing and throws \"This token has been used or is invalid.\" Security logging and the password-changed email run only after that commit. 2. `changeEmail()` writes the User update (now also clearing `validateEmailToken` and `validateEmailTokenExpires`) and the primary Email rewrite in one transaction, User row FIRST. 3. Signup verification tokens are minted by a new private `mintVerificationTokenForPrimary()`, which stores the token and then asserts the target is still the primary address inside one transaction, rolling back otherwise. `sendVerificationEmail()` now returns false when it refused. The public `resendVerificationEmail()` treats that as the unknown-address branch (returns true, sends nothing); `resendMyVerificationEmail()` throws a BadRequest asking the user to retry. 4. `verifyEmail()` and `verifyEmailChange()` consume their token by compare-and-set (`updateMany` whose `where` includes the token) inside the transaction that marks the address verified. A zero match verifies nothing and throws NotFound. 5. Signup verification tokens carry a version marker. All three mint sites (`register()`, `registerWithInvitation()`, `sendVerificationEmail()`) use `generateEmailVerificationToken()` from auth.helper.ts, which prefixes `EMAIL_VERIFICATION_TOKEN_PREFIX` (`v2-`). `verifyEmail()` refuses any token without it before the lookup, with the same NotFound as an unknown token. This is REQUIRED, not optional: the other changes stop new unbound tokens being issued, but without the marker a token minted by the previous code stays redeemable until it expires (24h). Users holding an old link request a new one. Lock order is part of the fix. Every path above writes the User row before reading or writing Email, so concurrent requests on one account serialize instead of interleaving or deadlocking."
+        area: auth
+        affectedPaths:
+          - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.helper.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts
+        verification:
+          - "pnpm exec nx run api-custom:test"
+          - "pnpm exec nx run api:typecheck"
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens.diff

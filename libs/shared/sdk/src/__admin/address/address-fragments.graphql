@@ -1,0 +1,28 @@
+fragment __AdminAddressSummary on Address {
+  id
+  createdAt
+  updatedAt
+  address1
+  address2
+  city
+  region
+  postalCode
+  addressType
+  isPrimary
+  countryId
+  userId
+  organizationId
+  country {
+    id
+  }
+  user {
+    id
+  }
+  organization {
+    id
+  }
+}
+
+fragment __AdminAddressDetails on Address {
+  ...__AdminAddressSummary
+}

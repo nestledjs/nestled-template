@@ -1,0 +1,5 @@
+query MySecurityEvents($input: SecurityEventPagingInput) {
+  mySecurityEvents(input: $input) {
+    ...SecurityEventList
+  }
+}

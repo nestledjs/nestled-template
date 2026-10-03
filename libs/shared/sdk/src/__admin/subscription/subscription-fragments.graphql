@@ -1,0 +1,27 @@
+fragment __AdminSubscriptionSummary on Subscription {
+  id
+  createdAt
+  updatedAt
+  organizationId
+  planId
+  stripeCustomerId
+  stripeSubscriptionId
+  stripePriceId
+  stripeCurrentPeriodEnd
+  trialStart
+  trialEnd
+  cancelAt
+  canceledAt
+  cancelAtPeriodEnd
+  status
+  organization {
+    id
+  }
+  plan {
+    id
+  }
+}
+
+fragment __AdminSubscriptionDetails on Subscription {
+  ...__AdminSubscriptionSummary
+}

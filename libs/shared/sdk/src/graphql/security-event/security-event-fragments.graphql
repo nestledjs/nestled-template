@@ -1,0 +1,13 @@
+fragment SecurityEventList on SecurityEvent {
+  id
+  createdAt
+  updatedAt
+  eventType
+  ipAddress
+  userAgent
+  metadata
+}
+
+fragment SecurityEventDetails on SecurityEvent {
+  ...SecurityEventList
+}

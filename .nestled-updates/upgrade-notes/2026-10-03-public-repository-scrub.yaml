@@ -1,0 +1,20 @@
+id: 2026-10-03-public-repository-scrub
+title: Notes, docs and comments made generic; agent run logs removed
+priority: ignore
+area: docs
+type: cleanup
+
+intent: >
+  Nothing to apply. Wording in upgrade notes (including archive/), agent docs and code comments now
+  describes provenance generically ("a downstream project hit this") instead of naming where a
+  problem was found, test fixtures use neutral example hosts, and references to closed tracking
+  issues are replaced by the reasoning they stood for. Agent run logs and completed planning
+  documents are removed from the repository. Note ids, technical intent and template behavior are
+  unchanged.
+
+why: >
+  This repository is public. Notes and docs should describe the template and the fix, never the
+  installations built from it, and operational run history has no reusable value here.
+
+skipIf:
+  - Always. Nothing in a project built from the template changes.

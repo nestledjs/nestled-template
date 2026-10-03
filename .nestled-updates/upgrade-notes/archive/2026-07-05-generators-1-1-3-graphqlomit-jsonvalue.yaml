@@ -1,0 +1,54 @@
+id: 2026-07-05-generators-1-1-3-graphqlomit-jsonvalue
+title: Bump @nestledjs/generators to 1.1.3 — models generator honors @graphqlOmit and imports JsonValue from the Prisma wrapper
+priority: high
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  Pin @nestledjs/generators to exact 1.1.3 and regenerate. Two models-generator changes:
+  (1) fields marked `/// @graphqlOmit` are now dropped from the generated @ObjectType in
+  models.ts, so they no longer emit a @Field and no longer appear in the GraphQL schema;
+  (2) the `JsonValue` import switches from `@prisma/client/runtime/client` to the project's
+  Prisma wrapper alias (resolved from tsconfig paths, e.g. `@nestled-template/api/prisma`).
+  This supersedes any manual one-line patch of the JsonValue import in models.ts.
+
+why: >
+  @graphqlOmit was honored by the sdk and crud generators but NOT by the models generator.
+  In code-first NestJS the @Field decorators in models.ts ARE the server schema, so an
+  omitted field that still carried @Field stayed fully queryable — the omit was enforced
+  only in generated client operations (convenience), never on the server (security).
+  Fields like `encryptedAccessToken`/`encryptedRefreshToken` were therefore exposed in
+  api-schema.graphql despite the annotation. The models generator is the single
+  authoritative enforcement point, so the fix belongs there rather than in a post-generation
+  omit script. Separately, importing JsonValue from Prisma runtime internals bypassed the
+  wrapper (risking the webpack resolution failures the wrapper exists to prevent) and
+  violated the project's Prisma import-path convention.
+
+affectedPaths:
+  - package.json
+  - libs/api/core/models/**
+  - libs/api/prisma/src/lib/schemas/**
+
+packageReleases: []
+
+skipIf:
+  - package.json already depends on @nestledjs/generators >= 1.1.3.
+
+verification:
+  - pnpm install
+  - pnpm db-update
+  - grep -n "JsonValue" libs/api/core/models/src/lib/models/models.ts # import must resolve to the project prisma wrapper, not @prisma/client/runtime/client
+  - pnpm run --if-present nestled-doctor
+  - pnpm build:api
+
+agentHints:
+  - Set the @nestledjs/generators dependency to an exact 1.1.3, then pnpm install and pnpm db-update (or nx g @nestledjs/generators:models for a targeted regen).
+  - The JsonValue import is emitted from the project's resolved prismaImportPath; it is not hardcoded to @nestled-template/api/prisma. Do not hand-edit models.ts — the generator now produces the correct import.
+  - SECURITY AUDIT — ACT BEFORE OR DURING THIS UPGRADE. Any field marked @graphqlOmit in a
+    deployed project was server-queryable in the GraphQL schema until this regen removed it.
+    Enumerate every @graphqlOmit field in the schema; for any that hold secrets/token
+    material (e.g. encryptedAccessToken/encryptedRefreshToken) rotate the underlying
+    credentials wherever the API was network-reachable, then regenerate so the fields leave
+    the schema.
+  - After regen, confirm the omitted fields are absent from api-schema.graphql, not merely absent from the SDK operations.

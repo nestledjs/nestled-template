@@ -1,0 +1,73 @@
+id: 2026-08-23-verifiers-fail-on-nothing-checked
+title: A verifier that checked nothing now fails instead of reporting success
+priority: normal
+area: infra
+type: correctness
+delivery: hybrid
+
+intent: >
+  Take `@nestledjs/doctor` 0.2.2. Under it, `verify:selects` and `verify:select-coverage` exit
+  non-zero when they find no select files, and `verify:fragments` exits non-zero when it maps no
+  models or operation paths. A repo that genuinely has none declares that once, with a reason, in
+  `.nestled-updates/doctor.config.json`:
+
+    { "noSelectFiles": "<why this repo has none>" }
+
+  A repo whose selects live under a different filename fixes `selectFileSuffixes` instead. Do not
+  add `noSelectFiles` to a repo that has selects under another name — that hides them again.
+
+why: >
+  Two separate ways these checks reported success without having run.
+
+  `nestled-verify-selects` discarded its own exit code: the bin called `runCli()` and dropped the
+  return value, so it exited 0 on every run, including runs that found real problems. Any repo
+  gating CI on `pnpm run verify:selects` through the package has been gating on nothing. Proved
+  against a fixture whose select names a column the schema does not have — it printed the finding
+  and exited 0.
+
+  Separately, checking zero files passed silently. Nine of the eleven repos in this fleet find no
+  `*.select.ts` files at all, both templates included, and `verify:fragments` already printed
+  "This is NOT fragment-coverage proof" before exiting 0 — the contradiction stated in words and
+  then contradicted by the exit code.
+
+  Declaring the empty case converts an invisible no-op into a recorded decision, and means a repo
+  that DID have selects cannot lose them to a rename without the check noticing.
+
+packageReleases:
+  - name: '@nestledjs/doctor'
+    targetVersion: 0.2.2
+    versionRange: ^0.2.2
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - .nestled-updates/doctor.config.json
+
+skipIf:
+  - >
+    The project RESOLVES @nestledjs/doctor to 0.2.2 or later in pnpm-lock.yaml AND either finds
+    select files or declares noSelectFiles. Check the lockfile, not package.json: a caret range can
+    satisfy the manifest while resolving to something older.
+
+verification:
+  - pnpm run nestled-doctor
+  - pnpm run verify:selects
+  - pnpm run verify:select-coverage
+  - pnpm run verify:fragments
+  - pnpm run verify:prisma-client
+
+agentHints:
+  - >
+    Expect verify:selects and verify:select-coverage to FAIL on first run. That is the point of the
+    upgrade, not a regression — it is this repo discovering that a check it believed was passing had
+    never examined anything. Decide which case applies before making it green.
+  - >
+    Do NOT take 0.2.0 or 0.2.1. Both shipped a nestled-verify-fragments that could not start: 0.2.0
+    died with ERR_REQUIRE_ASYNC_MODULE, 0.2.1 with a top-level-await transform error. 0.2.2 is the
+    first usable release in that line.
+  - >
+    Read exit codes unpiped. `cmd | tail -1` reports the pipe's exit code, not the command's, which
+    will make a failing verifier look like it passed.
+  - >
+    Bump package.json AND pnpm-lock.yaml together. CI installs with --frozen-lockfile and fails on
+    a mismatch before any check runs.

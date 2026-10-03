@@ -1,0 +1,20 @@
+query __AdminTeam($teamId: String!) {
+  team(teamId: $teamId) {
+    ...__AdminTeamDetails
+  }
+}
+
+query __AdminTeams($input: ListTeamInput) {
+  teams(input: $input) {
+    ...__AdminTeamSummary
+  }
+  counters: teamsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminTeamPagination($input: ListTeamInput) {
+  counters: teamsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

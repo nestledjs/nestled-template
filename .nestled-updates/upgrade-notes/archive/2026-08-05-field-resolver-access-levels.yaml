@@ -1,0 +1,54 @@
+id: 2026-08-05-field-resolver-access-levels
+title: Declare access levels on field resolvers, and check them alongside root operations
+priority: critical
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  `GlobalAuthGuard` refuses any handler that has not declared an access level, and NestJS applies
+  guards to `@ResolveField` handlers exactly as it does to queries and mutations. The doctor checks,
+  however, only inspected root operations, so a field resolver could be missing its declaration
+  while every check reported clean.
+
+  Declare the three field resolvers that had no level, and widen the operation matcher the doctor
+  checks share so `@ResolveField` is inspected alongside `@Query`, `@Mutation`, and `@Subscription`.
+
+why: >
+  Detection and enforcement disagreed, which is the failure this whole series has been trying to
+  remove. The runtime refused something the checks never looked at, so the checks could pass on code
+  the server would reject.
+
+  The practical consequence was worse than a gap in coverage. `UserToken.user` is the field the login
+  response resolves, so an undeclared field resolver there means a successful login cannot return
+  its user — an outage on the most important path in the application, produced by a change intended
+  to harden it. It was invisible because every automated check passed and the failure only appears on
+  an authenticated request, which the anonymous verification queries never reach.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/user-extension.resolver.ts
+  - .nestled-updates/security/public-operations.json
+  - scripts/doctor.ts
+
+skipIf:
+  - The project has no field resolvers, or already declares a level on every one of them.
+
+verification:
+  - pnpm run nestled-doctor
+  - pnpm nx build api
+  - pnpm nx test api-custom
+
+agentHints:
+  - Inventory field resolvers before deploying, not after. Every `@ResolveField` needs a declaration
+    exactly as a root operation does, and a project that added its own will have the same gap.
+  - Verify an authenticated request, not only anonymous ones. Field resolvers on types returned by
+    authenticated or public-but-token-bearing operations are never reached by an unauthenticated
+    probe, so the checks that caught the root operations will not exercise them. Log in and select
+    the fields.
+  - Match the declaration to the guard rather than leaving one implied. A field resolver declaring
+    Authenticated should carry the guard that enforces it, so that the declaration and the runtime
+    agree instead of relying on the parent operation having been guarded.
+  - A field on a type that only a successful login issues is legitimately public, because reaching
+    it already requires the token that login returned. Record it in the public operations allowlist
+    with that reasoning rather than attaching a guard that would refuse the login response itself.

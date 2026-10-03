@@ -1,0 +1,41 @@
+name: Template bug
+description: Something in the template is broken or behaves unexpectedly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Describe the problem in template terms; leave out anything that identifies your own project or deployment.
+        **Security problem?** Don't file it here; use [private vulnerability reporting](https://github.com/nestledjs/nestled-dev-template/security/advisories/new).
+  - type: input
+    id: release
+    attributes:
+      label: Template release
+      description: "`baselineRelease` in your project's `.nestled/upgrade-log.yaml` (or `.nestled/template-version` if it has never run `nestled-update`), e.g. 2026.10.1, plus the upgrade id if one is involved."
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: The feature, check or tooling involved, and the file(s) in the template.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Steps on a fresh clone of nestled-template.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour or proposed fix
+  - type: checkboxes
+    id: public
+    attributes:
+      label: This repository is public
+      options:
+        - label: I removed project, client, organization and site names, private URLs, credentials and private repository links.
+          required: true

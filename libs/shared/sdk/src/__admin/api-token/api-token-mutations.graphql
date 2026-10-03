@@ -1,0 +1,17 @@
+mutation __AdminCreateApiToken($input: CreateApiTokenInput!) {
+  createApiToken(input: $input) {
+    ...__AdminApiTokenDetails
+  }
+}
+
+mutation __AdminDeleteApiToken($apiTokenId: String!) {
+  deleteApiToken(apiTokenId: $apiTokenId) {
+    id
+  }
+}
+
+mutation __AdminUpdateApiToken($apiTokenId: String!, $input: UpdateApiTokenInput!) {
+  updateApiToken(apiTokenId: $apiTokenId, input: $input) {
+    ...__AdminApiTokenDetails
+  }
+}

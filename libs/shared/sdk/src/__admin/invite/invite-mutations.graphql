@@ -1,0 +1,17 @@
+mutation __AdminCreateInvite($input: CreateInviteInput!) {
+  createInvite(input: $input) {
+    ...__AdminInviteDetails
+  }
+}
+
+mutation __AdminDeleteInvite($inviteId: String!) {
+  deleteInvite(inviteId: $inviteId) {
+    id
+  }
+}
+
+mutation __AdminUpdateInvite($inviteId: String!, $input: UpdateInviteInput!) {
+  updateInvite(inviteId: $inviteId, input: $input) {
+    ...__AdminInviteDetails
+  }
+}

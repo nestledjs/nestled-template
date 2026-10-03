@@ -1,0 +1,17 @@
+mutation __AdminCreatePermission($input: CreatePermissionInput!) {
+  createPermission(input: $input) {
+    ...__AdminPermissionDetails
+  }
+}
+
+mutation __AdminDeletePermission($permissionId: String!) {
+  deletePermission(permissionId: $permissionId) {
+    id
+  }
+}
+
+mutation __AdminUpdatePermission($permissionId: String!, $input: UpdatePermissionInput!) {
+  updatePermission(permissionId: $permissionId, input: $input) {
+    ...__AdminPermissionDetails
+  }
+}

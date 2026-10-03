@@ -1,0 +1,17 @@
+mutation __AdminCreatePlan($input: CreatePlanInput!) {
+  createPlan(input: $input) {
+    ...__AdminPlanDetails
+  }
+}
+
+mutation __AdminDeletePlan($planId: String!) {
+  deletePlan(planId: $planId) {
+    id
+  }
+}
+
+mutation __AdminUpdatePlan($planId: String!, $input: UpdatePlanInput!) {
+  updatePlan(planId: $planId, input: $input) {
+    ...__AdminPlanDetails
+  }
+}

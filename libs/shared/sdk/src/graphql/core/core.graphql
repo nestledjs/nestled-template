@@ -1,0 +1,11 @@
+fragment CorePagingDetails on CorePaging {
+  count
+  take
+  page
+  skip
+  total
+  filteredTotal
+  pages
+  hasNext
+  hasPrev
+}

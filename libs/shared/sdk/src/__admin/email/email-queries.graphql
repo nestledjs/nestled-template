@@ -1,0 +1,20 @@
+query __AdminEmail($emailId: String!) {
+  email(emailId: $emailId) {
+    ...__AdminEmailDetails
+  }
+}
+
+query __AdminEmails($input: ListEmailInput) {
+  emails(input: $input) {
+    ...__AdminEmailSummary
+  }
+  counters: emailsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminEmailPagination($input: ListEmailInput) {
+  counters: emailsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

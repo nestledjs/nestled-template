@@ -1,0 +1,33 @@
+id: 2026-05-17-auth-delay-csprng
+title: Use CSPRNG for auth brute-force delay jitter
+priority: normal
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Keep failed-login delay jitter in the 100-200ms range while sourcing the random value from
+  Node's cryptographic random number generator instead of Math.random().
+
+why: >
+  The delay value is not secret, but this code lives in the auth path and is explicitly
+  security-oriented. Using a CSPRNG removes avoidable scanner noise and keeps the implementation
+  aligned with the timing-attack mitigation comment.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+
+packageReleases: []
+
+skipIf:
+  - The downstream project has removed or replaced the failed-login delay helper.
+  - The downstream project already uses crypto.randomInt or another CSPRNG for this auth delay.
+
+verification:
+  - pnpm nx test api-custom --skipNxCache
+  - pnpm template:validate-upgrade-notes
+
+agentHints:
+  - Import randomInt from node:crypto.
+  - Replace Math.random-based delay calculation with randomInt(100, 201).
+  - Preserve the existing 100-200ms delay range and all existing login failure behavior.

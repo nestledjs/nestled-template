@@ -1,0 +1,80 @@
+id: 2026-08-19-access-policy-coverage
+title: Every authenticated operation must declare a permission or scope to the caller
+priority: high
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  New doctor check `checkAccessPolicyCoverage`. An authenticated API operation must be authorized by
+  one of two mechanisms — a declared `Require*Permission`, or caller scoping (it takes `@CtxUser()`
+  / reaches for the caller's identity when querying). An operation with neither fails, unless it is
+  recorded in `.nestled-updates/security/permission-exemptions.json` with a reason. Stale exemptions
+  are reported.
+
+  Also drops `unlockAccount`'s now-redundant `@UseGuards(GqlAuthGuard)` + `@Authenticated()`, which
+  `RequirePlatformPermission` already applies.
+
+why: >
+  The existing access-policy check validated the declarations that existed — spelling, catalog
+  membership, no inline role gates — but never required an operation to have any authorization at
+  all. Authentication says *someone* is calling; it never says *this* caller may do *this*.
+
+  That gap was not theoretical. `StorageService.getSignedUrl` and `getOrganizationFiles` took
+  caller-supplied ids, declared no permission, and took no caller — so any authenticated user could
+  read any private file and list any organization's files. They were found by this check
+  (see 2026-08-19-storage-signed-url-and-org-files-idor).
+
+  Two mechanisms rather than one, deliberately: requiring a permission from every operation would
+  have demanded 59 written exemptions in this template alone — a list nobody reads, burying the few
+  that matter among many that are already correct. Recognizing caller scoping as authorization in
+  its own right reduces that to 2.
+
+affectedPaths:
+  - scripts/doctor.ts
+  - scripts/doctor-access-policy-analysis.ts
+  - scripts/doctor-access-policy-analysis.spec.ts
+  - .nestled-updates/security/permission-exemptions.json
+  - libs/api/custom/src/lib/default/email/email.resolver.ts
+
+packageReleases: []
+
+skipIf:
+  - The project does not carry the template's doctor.
+
+verification:
+  - pnpm exec vitest run scripts/
+  - pnpm run nestled-doctor
+  - pnpm exec nx run api-custom:test
+
+agentHints:
+  - >
+    Expect findings on adoption, and read each one as a question rather than a chore: "what decides
+    whether this caller may do this?" In this template the answer was "nothing" twice, and both were
+    live data exposure.
+  - >
+    Do NOT satisfy a finding by writing an exemption unless the operation genuinely needs no
+    authorization. The two exemptions here are @ResolveField handlers that read a property off an
+    already-resolved @Parent() and perform no data access — there is no row to scope. If an
+    operation queries anything by an id the caller supplied, it needs a permission or caller
+    scoping, not an exemption.
+  - >
+    Caller scoping is detected on the whole method text including PARAMETERS, because @CtxUser() is
+    a parameter decorator. Detection that reads only a method's own decorators or only its body
+    misses it — the template's older getGraphqlOperationMethods body extraction has exactly that
+    weakness, since it takes the first `{` after the signature and so captures an @Args object
+    literal instead of the body.
+  - >
+    Generated CRUD is excluded: it is governed by generated-crud posture as one declared tier, not
+    per-operation permissions. Including it adds 138 findings nobody can act on.
+  - >
+    `Require*Permission` is a composed decorator — it already applies `@Authenticated()` and
+    `@UseGuards(GqlAuthGuard, AccessPolicyGuard)`. Do not add those alongside it; the guard runs
+    twice and the intent reads as though the permission were an extra on top of a separate gate.
+  - >
+    Four exemptions, not two, and the extra pair is a decision rather than an oversight.
+    StaffEmailResolver's mutations are superadmin-only through a class-level gate that
+    email.resolver.spec.ts asserts. Adding a per-operation permission on top would narrow nothing;
+    replacing the class gate with one would WIDEN them from "superadmin" to "any role holding that
+    permission". That may be the right call for your project — take it deliberately, not as a side
+    effect of clearing this check.

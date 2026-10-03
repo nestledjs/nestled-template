@@ -1,0 +1,20 @@
+query __AdminStoredFile($storedFileId: String!) {
+  storedFile(storedFileId: $storedFileId) {
+    ...__AdminStoredFileDetails
+  }
+}
+
+query __AdminStoredFiles($input: ListStoredFileInput) {
+  storedFiles(input: $input) {
+    ...__AdminStoredFileSummary
+  }
+  counters: storedFilesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminStoredFilePagination($input: ListStoredFileInput) {
+  counters: storedFilesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

@@ -1,0 +1,33 @@
+id: 2026-07-05-prisma-known-request-error-wrapper-export
+title: Export PrismaClientKnownRequestError from the Prisma wrapper; import it from there
+priority: normal
+area: api
+type: cleanup
+delivery: code-patch
+
+intent: >
+  Re-export PrismaClientKnownRequestError (as both value and type) from the Prisma wrapper
+  index, and repoint app code to import it from `@nestled-template/api/prisma` instead of
+  `@prisma/client/runtime/client`. auth.service.ts is updated as the first consumer.
+
+why: >
+  Importing PrismaClientKnownRequestError directly from `@prisma/client/runtime/client`
+  reaches into Prisma runtime internals — the exact resolution path the wrapper exists to
+  insulate app code from (the same class of webpack resolution issue the wrapper already
+  guards for JsonValue) — and violates the project's Prisma import-path convention. The
+  wrapper is the single source for Prisma types and error classes.
+
+affectedPaths:
+  - libs/api/prisma/src/index.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+
+skipIf:
+  - The downstream project does not catch PrismaClientKnownRequestError, or already imports it from the prisma wrapper.
+
+verification:
+  - pnpm build:api
+  - pnpm run --if-present nestled-doctor
+
+agentHints:
+  - Add both `export const` and `export type` for PrismaClientKnownRequestError in the wrapper index, mirroring how the client exposes it, so `instanceof` checks and type annotations both resolve.
+  - Grep the project for `from '@prisma/client/runtime/client'` and repoint any PrismaClientKnownRequestError imports to the wrapper alias.

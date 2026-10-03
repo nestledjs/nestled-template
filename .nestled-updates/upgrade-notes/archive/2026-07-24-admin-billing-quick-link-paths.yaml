@@ -1,0 +1,52 @@
+id: 2026-07-24-admin-billing-quick-link-paths
+title: Fix admin billing quick-links that pointed at a non-existent /settings/admin prefix
+priority: normal
+area: billing
+type: correctness
+delivery: code-patch
+
+intent: >
+  The admin Billing Management overview (apps/web/app/routes/admin/billing/_index.tsx) has three
+  navigation links — the "Manage Plans" card, the "View Subscriptions" card, and the "View all"
+  link next to Recent Subscriptions. All three pointed at `/settings/admin/billing/plans` and
+  `/settings/admin/billing/subscriptions`. Those paths are not registered anywhere in
+  apps/web/app/routes.tsx, so clicking them produced a hard 404 error boundary
+  ("No route matches URL /settings/admin/billing/plans"). The billing plans and subscriptions
+  pages are registered under the `admin` route parent, not `settings`, so the correct targets are
+  `/admin/billing/plans` and `/admin/billing/subscriptions`. This note repoints all three links.
+
+why: >
+  These are the only entry points into the admin plans and subscriptions pages, so the wrong prefix
+  made both pages unreachable through the UI and surfaced a scary full-screen error instead. The bug
+  shipped in the template and was masked because the existing spec
+  (tests/routes/admin/billing/_index.spec.tsx) asserted the buggy `/settings/admin/...` hrefs and
+  registered its stub routes at those same wrong paths — so the test passed while the real app
+  404'd. The fix corrects both the component links and the spec's expectations/stub routes, so the
+  test now guards the correct behavior instead of codifying the bug.
+
+affectedPaths:
+  - apps/web/app/routes/admin/billing/_index.tsx
+  - apps/web/tests/routes/admin/billing/_index.spec.tsx
+
+packageReleases: []
+
+skipIf:
+  - The admin billing overview already links to /admin/billing/plans and
+    /admin/billing/subscriptions (no /settings/admin/billing/* hrefs remain in
+    apps/web/app/routes/admin/billing/_index.tsx).
+
+verification:
+  - grep -rn "/settings/admin/billing" apps/web/app apps/web/tests
+  - pnpm nx test web
+  - pnpm typecheck
+
+agentHints:
+  - "The billing plans/subscriptions routes live under the `admin` parent in
+    apps/web/app/routes.tsx (route('billing/plans', ...) inside route('admin', ...)), giving real
+    paths /admin/billing/plans and /admin/billing/subscriptions. There is no /settings/admin/* tree.
+    If a downstream project has genuinely nested billing under settings, adapt the target to match
+    its own routes.tsx rather than blindly applying /admin/billing/*."
+  - "Update the spec together with the source: tests/routes/admin/billing/_index.spec.tsx both
+    asserts the link hrefs AND registers stub routes at those paths. If you only fix the component,
+    the toHaveAttribute assertions will fail; if you only fix the assertions, the stub routes won't
+    match. Both must move to /admin/billing/*."

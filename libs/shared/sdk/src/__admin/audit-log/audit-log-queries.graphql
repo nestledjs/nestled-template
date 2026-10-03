@@ -1,0 +1,20 @@
+query __AdminAuditLog($auditLogId: String!) {
+  auditLog(auditLogId: $auditLogId) {
+    ...__AdminAuditLogDetails
+  }
+}
+
+query __AdminAuditLogs($input: ListAuditLogInput) {
+  auditLogs(input: $input) {
+    ...__AdminAuditLogSummary
+  }
+  counters: auditLogsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminAuditLogPagination($input: ListAuditLogInput) {
+  counters: auditLogsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

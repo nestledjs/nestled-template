@@ -1,0 +1,96 @@
+id: 2026-09-15-railway-predeploy-migrations
+title: Production schema changes are Prisma migrations applied by a Railway pre-deploy command
+priority: high
+area: database
+type: infra
+delivery: code-patch
+
+intent: >
+  Every deploy applies committed Prisma migrations before the new container serves traffic, and
+  schema changes are authored as migrations rather than pushed.
+
+  The api service's Railway pre-deploy command is `pnpm prisma:deploy` (`prisma migrate deploy`)
+  and it carries a health check on /api/uptime (timeout 300), so a container that fails to boot
+  never replaces the running one. Both are service settings in Railway, declared in the repo as
+  Railway Infrastructure as Code at .railway/railway.ts and applied with `railway config apply`.
+  The `railway` npm package is a devDependency so `railway config plan` can evaluate the file.
+
+  The template carries its first migration, libs/api/prisma/src/lib/migrations/0_init, generated
+  from the schema, plus migration_lock.toml. Package scripts change to match: prisma:apply now
+  runs `prisma migrate deploy` instead of `db push`, prisma:migrate (`prisma migrate dev`) is the
+  authoring command, prisma:deploy is the production command, and prisma:db-push remains only for
+  throwaway prototyping. AGENTS.md documents the contract under "Production Migrations".
+
+why: >
+  Half the fleet migrated on deploy and half did not, and nothing in the template said which was
+  intended. Projects that stayed on db push had production databases with no migration history
+  at all, so a schema change either reached production by someone running db push against it by
+  hand or did not reach it. Projects that did migrate on deploy did so three different ways: a
+  pre-deploy command set only in the dashboard, a start command that runs migrate before node,
+  or a railway.json. A start-command migration crashes the new container on failure and, without
+  a health check, takes the old one down with it.
+
+  Railway's pre-deploy command is the safest of the three: it runs once, to completion, and a
+  failure leaves the previous deployment serving. railway.json (config-as-code) is deprecated:
+  Railway no longer reads it for services that never used it and stops reading it for everyone on
+  2026-12-01, so a new railway.json silently does nothing. The replacement is Infrastructure as
+  Code (.railway/railway.ts), which is versioned and reviewable but is applied by the CLI or a
+  GitHub Action, not read on deploy. This template is opinionated toward Railway; a project on
+  another host replaces the pre-deploy step with that host's equivalent.
+
+affectedPaths:
+  - .railway/railway.ts
+  - .railway/README.md
+  - package.json
+  - libs/api/prisma/src/lib/migrations/0_init/migration.sql
+  - libs/api/prisma/src/lib/migrations/migration_lock.toml
+  - AGENTS.md
+
+skipIf:
+  - >
+    The project already commits Prisma migrations, its api service already has a Railway
+    pre-deploy command that runs `prisma migrate deploy` and a health check, and both are
+    declared in .railway/railway.ts. A dashboard-only setting or a railway.json is not a reason
+    to skip: declare it in .railway/railway.ts and, if the project relies on railway.json, move
+    the setting onto the service before 2026-12-01.
+
+verification:
+  - "railway config plan   # only importer noise on managed Postgres/Redis images, nothing on api"
+  - "pnpm prisma migrate status"
+  - "Railway deploy log for the api service shows `prisma migrate deploy` before start and the health check succeeding"
+
+agentHints:
+  - >
+    Do not copy the template's 0_init migration into a project that already has migrations. It
+    is the template's baseline, not the project's. Keep the project's own history.
+  - >
+    Do not copy the template's .railway/railway.ts verbatim either: it describes the template's
+    own Railway project, and IaC apply deletes anything the file omits. In the product project run
+    `railway link` then `railway config pull` to regenerate the file from live state, confirm the
+    api service shows `deploy: { preDeployCommand: ["pnpm prisma:deploy"] }`, `healthcheck:
+    "/api/uptime"` and `healthcheckTimeout: 300`, and commit that. If those settings are missing
+    on the service, set them in the Railway dashboard (or via the API) first, then pull.
+  - >
+    A project that has no migrations folder and whose production database was built with
+    `db push` must be baselined before the pre-deploy command is set, or the first pre-deploy
+    will try to recreate tables that already exist and fail the deploy. First confirm the live
+    database matches the schema: `prisma migrate diff --from-config-datasource --to-schema
+    libs/api/prisma/src/lib/schemas --script --exit-code` with DIRECT_URL pointed at production
+    must exit 0. Then generate the baseline with `prisma migrate diff --from-empty --to-schema
+    libs/api/prisma/src/lib/schemas --script > libs/api/prisma/src/lib/migrations/0_init/migration.sql`,
+    commit it, and record it as applied on production with `prisma migrate resolve --applied
+    0_init`. Repeat the resolve for every other long-lived environment (staging).
+  - >
+    package.json is not mirrored by template promotion. Apply the script changes by hand:
+    prisma:apply -> `pnpm prisma:format && pnpm prisma migrate deploy`; add
+    prisma:deploy -> `prisma migrate deploy` and prisma:migrate -> `prisma migrate dev`; add
+    `railway` as a devDependency. prisma.config.ts already supplies the schema and migrations
+    paths and prefers DIRECT_URL, so none of these need --schema.
+  - >
+    If the project's start command currently runs `prisma migrate deploy` before node, remove
+    that once the pre-deploy command is in place so migrations run exactly once per deploy. Keep
+    any post-migration step the project relies on (for example an ensure-indexes script) in the
+    same pre-deploy command after migrate deploy.
+  - >
+    The pre-deploy command and health check are per-service settings on api only. Never set them
+    on web, and never give web a database URL.

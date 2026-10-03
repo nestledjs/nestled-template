@@ -1,0 +1,10 @@
+{
+  "apiWithoutSdk": {},
+  "inlineClientOperations": {
+    "libs/data-browser/src/lib/pages/AdminDataCreatePage.tsx#PlaceholderCreate": "Hook-order fallback only; it selects __typename and never represents an application API contract.",
+    "libs/data-browser/src/lib/pages/AdminDataEditPage.tsx#PlaceholderDelete": "Hook-order fallback only; it selects __typename and never represents an application API contract.",
+    "libs/data-browser/src/lib/pages/AdminDataEditPage.tsx#PlaceholderQuery": "Hook-order fallback only; it selects __typename and never represents an application API contract.",
+    "libs/data-browser/src/lib/pages/AdminDataEditPage.tsx#PlaceholderUpdate": "Hook-order fallback only; it selects __typename and never represents an application API contract."
+  },
+  "sdkWithoutConsumer": {}
+}

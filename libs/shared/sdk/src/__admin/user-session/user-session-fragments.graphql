@@ -1,0 +1,18 @@
+fragment __AdminUserSessionSummary on UserSession {
+  id
+  createdAt
+  updatedAt
+  lastActiveAt
+  userId
+  deviceInfo
+  ipAddress
+  isValid
+  twoFactorVerified
+  user {
+    id
+  }
+}
+
+fragment __AdminUserSessionDetails on UserSession {
+  ...__AdminUserSessionSummary
+}

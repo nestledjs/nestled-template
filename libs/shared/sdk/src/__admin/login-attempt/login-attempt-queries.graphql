@@ -1,0 +1,20 @@
+query __AdminLoginAttempt($loginAttemptId: String!) {
+  loginAttempt(loginAttemptId: $loginAttemptId) {
+    ...__AdminLoginAttemptDetails
+  }
+}
+
+query __AdminLoginAttempts($input: ListLoginAttemptInput) {
+  loginAttempts(input: $input) {
+    ...__AdminLoginAttemptSummary
+  }
+  counters: loginAttemptsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminLoginAttemptPagination($input: ListLoginAttemptInput) {
+  counters: loginAttemptsCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

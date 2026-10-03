@@ -1,0 +1,42 @@
+id: 2026-08-19-note-gate-skips-generated-models
+title: The upgrade-note gate no longer demands a note for regenerated model output
+priority: ignore
+area: infra
+type: cleanup
+
+intent: >
+  Nothing to apply. `scripts/doctor.ts` no longer treats
+  `libs/api/core/models/src/lib/models/**` as a sensitive upgrade path, so regenerating models does
+  not by itself require an upgrade note. The gate only ever runs in the source template repositories
+  (`isSourceTemplateRepository()`), so no downstream project's doctor behavior changes at all — this
+  arrives as template state and needs no action.
+
+why: >
+  `db-update` runs the doctor, regenerates via `nx g @nestledjs/generators:models`, then runs the
+  doctor again. The second run always saw a rewritten `models.ts` inside the gated
+  `libs/api/core/(models|custom|utils|integrations)/` prefix and failed, demanding an upgrade note
+  for a file nobody wrote. The routine escape was a `priority: ignore` note per regeneration, which
+  is note-history noise standing in for a gate that was matching the wrong thing.
+
+  No coverage is lost. The change that produces this output is `schema.prisma`, which the gate
+  matches on its own line — a schema change still demands a note. Gating the generated mirror as
+  well made one change demand two. Generated CRUD output (`libs/api/generated-crud/**`) already sat
+  outside the gate for exactly this reason; generated model output being inside it was an
+  inconsistency, not a decision.
+
+affectedPaths:
+  - scripts/doctor.ts
+
+agentHints:
+  - >
+    The exclusion is an exact-path set (`generatedOutputPaths`) checked before every other clause,
+    so it also wins over the `/guards/`, `/billing/`, `/auth/`, `/rbac/` and `/admin/` substring
+    tests. It must stay exact paths, never a directory prefix: the generated `models/` directory
+    also holds the hand-written `core-paging.model.ts`, and `api-core-models.module.ts` sits beside
+    it — a prefix would silently ungate both.
+  - >
+    The three paths are what `nx g @nestledjs/generators:models` writes (see the generator's
+    `src/models/generator.js`). If that generator's output set changes, this list changes with it.
+  - >
+    If a future generator writes into another gated path, add its files here rather than reaching
+    for a per-regeneration ignore note.

@@ -1,0 +1,32 @@
+id: 2026-05-17-ci-toolchain-lock
+title: Ci Toolchain Lock
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Keep CI package-manager and Node setup aligned with the repository-level toolchain lock.
+
+why: >
+  The template declares packageManager pnpm@10.33.0 and exact Node 22.14.0 with engine-strict.
+  GitHub Actions must not also pass pnpm/action-setup a conflicting version, and setup-node should
+  install the same Node version the repository declares.
+
+affectedPaths:
+  - .github/workflows/ci.yml
+
+packageReleases: []
+
+skipIf:
+  - The downstream project does not use the template GitHub Actions workflow.
+  - The downstream project intentionally owns a different Node/pnpm toolchain and has updated package.json, .tool-versions, and CI consistently.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - GitHub Actions install step should no longer report multiple pnpm versions.
+
+agentHints:
+  - Remove the pnpm/action-setup version field instead of changing it to another value; pnpm/action-setup can read packageManager.
+  - Set actions/setup-node node-version to 22.14.0 to match package.json engines and .tool-versions.
+  - Do not weaken engine-strict to make CI pass.

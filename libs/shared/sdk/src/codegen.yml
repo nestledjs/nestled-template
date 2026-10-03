@@ -1,0 +1,23 @@
+overwrite: true
+schema: './api-schema.graphql'
+documents:
+  - 'libs/shared/sdk/src/graphql/**/*.graphql'
+  - 'libs/shared/sdk/src/__admin/**/*.graphql'
+generates:
+  # Generate types and TypedDocumentNode for Apollo Client 4
+  libs/shared/sdk/src/generated/graphql.ts:
+    plugins:
+      - typescript
+      - typescript-operations
+      - typed-document-node
+    config:
+      scalars:
+        BigInt: bigint
+      # Keep original operation names (no 'Document' suffix)
+      documentVariableSuffix: ''
+      # Use documentNode mode for proper TypedDocumentNode exports
+      documentMode: documentNode
+
+hooks:
+  afterAllFileWrite:
+    - prettier --write

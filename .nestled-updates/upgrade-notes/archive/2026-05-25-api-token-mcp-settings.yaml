@@ -1,0 +1,50 @@
+id: 2026-05-25-api-token-mcp-settings
+title: API token MCP settings and org scope enforcement
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  Ensure API tokens can authenticate MCP requests, personal tokens can be managed by users,
+  and organization-scoped MCP tokens can only be created for organizations the token owner
+  belongs to.
+
+why: >
+  MCP OAuth issues API tokens, so the MCP controller must receive a request user from API
+  token middleware. Organization-scoped tokens must not be creatable for arbitrary
+  organizations, and rotated tokens must keep their original scope. Users also need a UI
+  path to create and revoke both personal and organization-scoped tokens.
+
+affectedPaths:
+  - apps/api/**
+  - apps/web/app/routes.tsx
+  - apps/web/app/routes/settings/**
+  - apps/web/tests/routes/settings/**
+  - libs/api/custom/src/lib/middleware/**
+  - libs/api/custom/src/lib/plugins/api-tokens/**
+  - libs/api/custom/src/lib/plugins/auth/**
+  - libs/api/custom/src/lib/plugins/mcp/**
+  - libs/api/utils/src/lib/services/organization-context.service.ts
+  - libs/api/utils/src/lib/services/organization-context.service.spec.ts
+  - libs/shared/sdk/src/graphql/api-token/**
+  - libs/shared/sdk/src/generated/graphql.ts
+
+packageReleases: []
+
+skipIf:
+  - The downstream project already authenticates /api/mcp Bearer API tokens before the MCP controller runs.
+  - The downstream project already has personal and organization-scoped API token management screens.
+  - Org-scoped token generation already verifies the user is a member of the requested organization.
+
+verification:
+  - pnpm nx test api-custom --runTestsByPath libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts libs/api/custom/src/lib/plugins/mcp/mcp.controller.spec.ts
+  - pnpm nx test api-utils --runTestsByPath libs/api/utils/src/lib/services/organization-context.service.spec.ts
+  - pnpm nx test web --run apps/web/tests/routes/settings/_layout.spec.tsx
+  - pnpm nx build web
+  - pnpm template:validate-upgrade-notes
+
+agentHints:
+  - Preserve product-specific MCP server names and available-tool copy when adapting the UI.
+  - If a downstream app has separate public API keys, keep those distinct from user API tokens used by MCP.
+  - Check route registration explicitly because React Router pages in this template are not filesystem-discovered.

@@ -1,0 +1,17 @@
+mutation __AdminCreateTeam($input: CreateTeamInput!) {
+  createTeam(input: $input) {
+    ...__AdminTeamDetails
+  }
+}
+
+mutation __AdminDeleteTeam($teamId: String!) {
+  deleteTeam(teamId: $teamId) {
+    id
+  }
+}
+
+mutation __AdminUpdateTeam($teamId: String!, $input: UpdateTeamInput!) {
+  updateTeam(teamId: $teamId, input: $input) {
+    ...__AdminTeamDetails
+  }
+}

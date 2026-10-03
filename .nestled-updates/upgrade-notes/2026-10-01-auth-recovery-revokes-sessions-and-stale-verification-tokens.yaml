@@ -1,0 +1,120 @@
+id: 2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens
+title: Password reset revokes sessions; stale verification tokens can no longer verify the wrong address
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Changes in `AuthService` (libs/api/custom/src/lib/plugins/auth/auth.service.ts):
+
+  1. `resetPassword()` writes the new password, the password-history row, and
+  `userSession.updateMany({ isValid: false })` for EVERY session in one interactive transaction.
+  No session is spared (the reset flow is unauthenticated). The password write consumes the reset
+  token by compare-and-set (`user.updateMany` whose `where` includes the token and
+  `passwordResetExpires > now`); a zero match writes nothing and throws "This token has been used or
+  is invalid." Security logging and the password-changed email run only after that commit.
+
+  2. `changeEmail()` writes the User update (now also clearing `validateEmailToken` and
+  `validateEmailTokenExpires`) and the primary Email rewrite in one transaction, User row FIRST.
+
+  3. Signup verification tokens are minted by a new private `mintVerificationTokenForPrimary()`,
+  which stores the token and then asserts the target is still the primary address inside one
+  transaction, rolling back otherwise. `sendVerificationEmail()` now returns false when it refused.
+  The public `resendVerificationEmail()` treats that as the unknown-address branch (returns true,
+  sends nothing); `resendMyVerificationEmail()` throws a BadRequest asking the user to retry.
+
+  4. `verifyEmail()` and `verifyEmailChange()` consume their token by compare-and-set
+  (`updateMany` whose `where` includes the token) inside the transaction that marks the address
+  verified. A zero match verifies nothing and throws NotFound.
+
+  5. Signup verification tokens carry a version marker. All three mint sites (`register()`,
+  `registerWithInvitation()`, `sendVerificationEmail()`) use `generateEmailVerificationToken()` from
+  auth.helper.ts, which prefixes `EMAIL_VERIFICATION_TOKEN_PREFIX` (`v2-`). `verifyEmail()` refuses
+  any token without it before the lookup, with the same NotFound as an unknown token. This is
+  REQUIRED, not optional: the other changes stop new unbound tokens being issued, but without the
+  marker a token minted by the previous code stays redeemable until it expires (24h). Users holding
+  an old link request a new one.
+
+  Lock order is part of the fix. Every path above writes the User row before reading or writing
+  Email, so concurrent requests on one account serialize instead of interleaving or deadlocking.
+
+why: >
+  Reported externally as two findings (CWE-613) against a project generated from the template; both
+  reproduce in the template itself and therefore in every project generated from it.
+
+  Password reset. `changePassword()` already revoked other sessions, but the account-recovery path
+  did not. A session stolen before the reset kept working after it, which defeats the main reason a
+  user resets a password. The JWT strategy already rejects tokens whose `UserSession.isValid` is
+  false and session validity is not cached, so marking the rows invalid takes effect on the next
+  request.
+
+  Verification tokens. `verifyEmail()` marks whatever is the PRIMARY email verified at redemption
+  time; the token itself is not bound to an address. Two paths could put a token in the hands of
+  someone who never proved control of the primary address. First, `changeEmail()` rewrites the
+  primary Email row in place but left the signup token alive, so a link sent to the OLD address
+  verified the NEW one (the report understated this, since it describes only the account flag; the
+  Email row for the new address was also marked verified). Second, the public resend looks the
+  user up by ANY of their addresses, so requesting a resend for a secondary address mailed it a
+  token that verified the primary.
+
+  Fixing the steady state was not enough; each fix also had a race (raised in PR review). A primary
+  check made before minting could be stale by the time the token was written. A token read and
+  then consumed by id could be redeemed after a concurrent changeEmail() had replaced it. And
+  revoking sessions as a separate write after the password commit meant a database error left the
+  reset done, the token spent, and every stolen session still valid. The transactions and the
+  compare-and-set close those windows. The same applies to the reset token: read outside the
+  transaction and then written by id, two requests holding one token could both succeed, the second
+  overwriting the password with a token the first had already spent.
+
+  Tokens already outstanding at deploy time are the last window. Clearing them with a pre-deploy
+  migration does not close it: during a Railway rollout the previous release keeps serving until the
+  new one passes its healthcheck, and can mint an unbound token after the migration has run. A
+  marker that only the fixed code writes rejects those as well, whenever they were minted.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.helper.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project has replaced AuthService password reset, email change, and verification resend with its own implementations.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api:typecheck
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    These are three surgical edits inside existing methods. If the project's auth.service.ts has
+    diverged, apply them by hand rather than overwriting the file, and keep the project's own changes.
+  - >
+    Keep the User-row-first order if the project has its own Email writes in these flows. Writing
+    Email first in one path and User first in another turns the race into a deadlock.
+  - >
+    The reset transaction updates UserSession directly rather than calling
+    SessionService.invalidateAllUserSessions, because that method cannot join a transaction. If the
+    project caches session validity anywhere, invalidate that cache after the commit.
+  - >
+    The non-primary resend branch must stay indistinguishable from the unknown-address branch. It
+    returns true and calls addBruteForceDelay(), so the endpoint still does not reveal which
+    addresses belong to an account.
+  - >
+    The spec's data mock gains user.updateMany, user.findUniqueOrThrow, and userSession.updateMany.
+    Existing resend tests need data.email.findFirst to return the primary row, or the mint refuses
+    and nothing is sent.
+  - >
+    Route EVERY place the project writes `validateEmailToken` through
+    generateEmailVerificationToken(), including project-local signup or admin "resend verification"
+    paths. A site still calling generateToken() mints tokens verifyEmail() now refuses, which shows
+    up as working emails with dead links. grep for `validateEmailToken` to find them. Do not add a
+    migration to clear old tokens instead; it runs before the old release stops serving.
+  - >
+    Known remaining gap, not addressed here. signUser only embeds a sessionId when sessionInfo is
+    passed, and a JWT without one cannot be revoked by any of the above. In the template only the
+    admin emulation paths (emulateUser and endEmulation) mint such tokens. Audit project-local
+    callers of signUser for the same omission.

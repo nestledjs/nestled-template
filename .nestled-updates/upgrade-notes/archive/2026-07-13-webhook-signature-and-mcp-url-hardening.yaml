@@ -1,0 +1,42 @@
+id: 2026-07-13-webhook-signature-and-mcp-url-hardening
+title: Harden Stripe webhook signature/error handling and MCP base URL
+priority: normal
+area: billing
+type: correctness
+delivery: code-patch
+
+intent: >
+  Defensive follow-ups to the Stripe webhook controller and the MCP OAuth base-URL builder,
+  surfaced by code review.
+  (1) In the Stripe webhook controller, normalize the `stripe-signature` header before verifying:
+  Express types it as `string | string[] | undefined`, so a repeated header arrives as an array.
+  Take the first value (`Array.isArray(h) ? h[0] : h`) ahead of the missing-signature guard and drop
+  the unsafe `as string` cast — an array previously reached `constructWebhookEvent` and could fail
+  or pass `undefined` unexpectedly.
+  (2) In both webhook catch blocks, normalize the caught value to a string
+  (`error instanceof Error ? error.message : String(error)`) before logging/returning, so a
+  non-Error throw does not log `undefined` and hide the real failure (this endpoint intentionally
+  returns 500 to trigger Stripe retries).
+  (3) In the MCP OAuth service, trim any trailing slash from `API_URL` before appending `/api/mcp`
+  (string ops, no regex) so a misconfigured env can never produce `//api/mcp`.
+
+why: >
+  These are guards for latent edge cases — a duplicated signature header, a non-Error throw, a
+  trailing slash in API_URL. None change behavior for correctly-configured requests; they prevent
+  confusing verification failures, `undefined` in logs, and malformed MCP URLs. Downstream projects
+  clone the same files and carry the same latent cases.
+
+affectedPaths:
+  - apps/api/src/webhooks/stripe-webhook.controller.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+
+skipIf:
+  - The webhook controller already normalizes the stripe-signature header and caught errors, and the MCP base URL already strips a trailing slash from API_URL.
+
+verification:
+  - grep -n "Array.isArray(signatureHeader)" apps/api/src/webhooks/stripe-webhook.controller.ts
+  - grep -n "error instanceof Error" apps/api/src/webhooks/stripe-webhook.controller.ts
+  - grep -n "endsWith('/')" libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+
+agentHints:
+  - Pure hardening; no API, schema, or behavior change for valid requests. Safe to adapt or mark not-applicable if the downstream file already has these guards.

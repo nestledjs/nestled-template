@@ -1,0 +1,6 @@
+{
+  "libs/api/custom/src/lib/default/email/email.resolver.ts": {
+    "staffUpdateEmail": "Superadmin-only through the class-level @UseGuards(GqlAuthAdminGuard) + @AdminOnly() gate, which email.resolver.spec.ts asserts. A per-operation permission would not narrow this and replacing the class gate with one would WIDEN it to any role holding that permission \u2014 a posture decision to take deliberately, not to satisfy this check.",
+    "staffDeleteEmail": "Superadmin-only through the class-level @UseGuards(GqlAuthAdminGuard) + @AdminOnly() gate, which email.resolver.spec.ts asserts. A per-operation permission would not narrow this and replacing the class gate with one would WIDEN it to any role holding that permission \u2014 a posture decision to take deliberately, not to satisfy this check."
+  }
+}

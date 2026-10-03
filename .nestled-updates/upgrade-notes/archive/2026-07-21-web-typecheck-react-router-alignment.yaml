@@ -1,0 +1,40 @@
+id: 2026-07-21-web-typecheck-react-router-alignment
+title: Web Typecheck React Router Alignment
+priority: normal
+area: web
+type: infra
+delivery: code-patch
+
+intent: >
+  Make the web typecheck command run React Router type generation and the app TypeScript
+  project consistently, and keep the app-local React Router packages aligned with the
+  root workspace version.
+
+why: >
+  The previous root typecheck script ran plain tsc against the app tsconfig wrapper,
+  which checked no app files. Mixed root and app-local React Router versions could also
+  generate route types that did not match react-router/internal during local typechecks.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - apps/web/package.json
+  - apps/web/project.json
+  - .github/workflows/ci.yml
+
+packageReleases: []
+
+skipIf: []
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx run web:typecheck --skip-nx-cache --output-style=stream
+  - pnpm nx run web:build --skip-nx-cache --output-style=stream
+  - pnpm nx run web:test --skip-nx-cache --output-style=stream
+  - pnpm format:check
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Preserve the explicit web:typecheck dependsOn typegen relationship when adapting this note.
+  - Keep react-router, @react-router/dev, @react-router/node, and @react-router/serve on the same version.
+  - Do not broaden CI to all affected typecheck targets unless unrelated package typecheck failures are fixed.

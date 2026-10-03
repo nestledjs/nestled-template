@@ -1,0 +1,17 @@
+mutation __AdminCreateSecurityEvent($input: CreateSecurityEventInput!) {
+  createSecurityEvent(input: $input) {
+    ...__AdminSecurityEventDetails
+  }
+}
+
+mutation __AdminDeleteSecurityEvent($securityEventId: String!) {
+  deleteSecurityEvent(securityEventId: $securityEventId) {
+    id
+  }
+}
+
+mutation __AdminUpdateSecurityEvent($securityEventId: String!, $input: UpdateSecurityEventInput!) {
+  updateSecurityEvent(securityEventId: $securityEventId, input: $input) {
+    ...__AdminSecurityEventDetails
+  }
+}

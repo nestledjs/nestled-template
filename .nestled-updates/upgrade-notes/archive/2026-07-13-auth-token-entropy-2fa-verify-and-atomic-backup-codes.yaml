@@ -1,0 +1,53 @@
+id: 2026-07-13-auth-token-entropy-2fa-verify-and-atomic-backup-codes
+title: Close auth account-takeover holes — token entropy, temp-2FA-token verify, atomic backup codes
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Three account-takeover fixes in the auth plugin.
+  (C6) Replace the token generator: `generateToken()` was `md5(randomId(24))` where `randomId`
+  returned `Date.now()` truncated — i.e. the current millisecond. Generate tokens with
+  `crypto.randomBytes(32).toString('hex')` instead (copy the api-tokens service pattern). This is
+  the sole source for password-reset, email-verification and email-change tokens. Also back
+  `randomId` with a CSPRNG.
+  (C4) In `complete2FALogin`, verify the temp 2FA token with `jwtService.verify()` (signature +
+  expiry) inside try/catch instead of `jwtService.decode()` (which checks neither).
+  (C5) Consume 2FA backup codes ATOMICALLY: a single `UPDATE ... SET twoFactorRecoveryCodes =
+  array_remove(twoFactorRecoveryCodes, $code) WHERE id = $id AND $code = ANY(twoFactorRecoveryCodes)`
+  and treat the login as successful only when exactly one row was affected — replacing the
+  read-modify-write on the array column.
+
+why: >
+  (C6) An attacker who knows server time (HTTP Date header) to a small window can brute-force md5
+  over a few thousand candidate milliseconds offline and forge a valid reset token, then take over
+  any account via the unauthenticated `resetPassword` mutation.
+  (C4) `decode()` performs no signature or expiry check, so a client can forge
+  `{ temp2FA: true, userId: <victim>, remember: true }`, drop the password factor, and bypass the
+  intended 5-minute token lifetime (a valid TOTP/backup code is still required, but the password
+  requirement is voided).
+  (C5) The old read-modify-write let two concurrent logins with the SAME backup code both succeed
+  (single-use code authenticates two sessions), and two concurrent logins with DIFFERENT codes
+  clobber each other's write-back, resurrecting an already-used code. The atomic array_remove +
+  affected-count guard makes a backup code authenticate at most one login.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.helper.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+
+skipIf:
+  - The downstream project already generates auth tokens from a CSPRNG, verifies (not decodes) the temp 2FA token, and consumes backup codes atomically.
+
+verification:
+  - grep -n "randomBytes(32)" libs/api/custom/src/lib/plugins/auth/auth.helper.ts
+  - grep -n "jwtService.verify(tempToken)" libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - grep -n "array_remove" libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - pnpm nx test api-custom
+
+agentHints:
+  - The backup-code UPDATE must be a single raw statement (this.data.$executeRaw tagged template). array_remove operates on the live column value, so the returned affected-row count (1 vs 0) is the single-use guarantee — do NOT re-introduce a read-then-write.
+  - The Postgres table is "User" and the column is "twoFactorRecoveryCodes" (Prisma default mapping, no @@map). If a child renamed either via @map/@@map, adjust the raw SQL identifiers accordingly.
+  - generateToken now returns 64 hex chars (was 32). Any downstream test asserting a 32-char md5 must be updated. Stored/compared as an opaque string, so the format change is otherwise transparent.

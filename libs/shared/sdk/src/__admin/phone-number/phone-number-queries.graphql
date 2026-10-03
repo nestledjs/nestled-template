@@ -1,0 +1,20 @@
+query __AdminPhoneNumber($phoneNumberId: String!) {
+  phoneNumber(phoneNumberId: $phoneNumberId) {
+    ...__AdminPhoneNumberDetails
+  }
+}
+
+query __AdminPhoneNumbers($input: ListPhoneNumberInput) {
+  phoneNumbers(input: $input) {
+    ...__AdminPhoneNumberSummary
+  }
+  counters: phoneNumbersCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminPhoneNumberPagination($input: ListPhoneNumberInput) {
+  counters: phoneNumbersCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

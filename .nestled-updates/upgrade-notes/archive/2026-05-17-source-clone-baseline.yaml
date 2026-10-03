@@ -1,0 +1,23 @@
+id: 2026-05-17-source-clone-baseline
+title: Source clone baseline
+priority: ignore
+area: docs
+type: docs
+
+intent: >
+  Record commit 5b720e6 as the named source-template baseline for the first downstream clone and
+  migration wave.
+
+why: >
+  Downstream migrations need a stable reference point so updater work can distinguish inherited
+  baseline behavior from later source-template changes.
+
+skipIf:
+  - This note is only being used as historical source-template context.
+
+verification:
+  - git rev-parse --short HEAD
+
+agentHints:
+  - Treat 5b720e6 as the initial security-baseline commit when planning downstream migrations.
+  - Do not apply this note as a downstream code patch.

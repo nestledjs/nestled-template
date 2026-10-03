@@ -1,0 +1,26 @@
+{
+  "apiWithoutSdk": [
+    "currentPlan",
+    "currentUsage",
+    "securityEventsByType",
+    "securitySummary",
+    "staffDeleteEmail",
+    "staffUpdateEmail",
+    "syncStripePrice",
+    "syncStripePrices",
+    "syncStripeProduct",
+    "syncStripeProducts",
+    "syncStripeSubscription",
+    "unlockAccount",
+    "userSecurityEvents"
+  ],
+  "inlineClientOperations": [
+    "apps/web/app/routes/admin/billing/_index.tsx#AdminPlans",
+    "apps/web/app/routes/admin/billing/_index.tsx#AdminSubscriptions",
+    "apps/web/app/routes/admin/billing/_index.tsx#AdminSyncStripeProducts",
+    "apps/web/app/routes/admin/billing/_index.tsx#AdminSyncStripePrices",
+    "apps/web/app/routes/admin/billing/plans.tsx#AdminPlans",
+    "apps/web/app/routes/admin/billing/subscriptions.tsx#AdminSubscriptions",
+    "apps/web/app/routes/logout.tsx#Logout"
+  ]
+}

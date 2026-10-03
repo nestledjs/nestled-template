@@ -1,0 +1,33 @@
+id: 2026-05-17-emulation-privilege-ceiling
+title: Emulation Privilege Ceiling
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Prevent admin user-emulation sessions from targeting super-admin users or any user with equal or
+  higher privilege than the emulator.
+
+why: >
+  User emulation creates a privileged session as another account. Without a privilege ceiling, an
+  admin-only emulation feature can become a path to assume a peer or higher-privilege administrator
+  account.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+
+skipIf:
+  - The downstream project does not include admin user emulation or impersonation.
+  - The downstream implementation already rejects emulation targets with equal or higher privilege.
+
+verification:
+  - pnpm run nestled-doctor
+  - pnpm nx test api-custom
+
+agentHints:
+  - Check the emulation resolver still requires an admin-only guard.
+  - Add the ceiling in the backend service layer, not only in the web UI.
+  - Keep audit logging for successful emulation starts and avoid writing an audit log for rejected
+    attempts unless the downstream project already tracks denied security events.

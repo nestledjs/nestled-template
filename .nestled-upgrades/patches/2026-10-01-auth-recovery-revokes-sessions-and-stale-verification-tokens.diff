@@ -1,0 +1,1102 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens.yaml b/.nestled-updates/upgrade-notes/2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens.yaml
+new file mode 100644
+index 0000000..355c393
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens.yaml
+@@ -0,0 +1,120 @@
++id: 2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens
++title: Password reset revokes sessions; stale verification tokens can no longer verify the wrong address
++priority: high
++area: auth
++type: security
++delivery: code-patch
++
++intent: >
++  Changes in `AuthService` (libs/api/custom/src/lib/plugins/auth/auth.service.ts):
++
++  1. `resetPassword()` writes the new password, the password-history row, and
++  `userSession.updateMany({ isValid: false })` for EVERY session in one interactive transaction.
++  No session is spared (the reset flow is unauthenticated). The password write consumes the reset
++  token by compare-and-set (`user.updateMany` whose `where` includes the token and
++  `passwordResetExpires > now`); a zero match writes nothing and throws "This token has been used or
++  is invalid." Security logging and the password-changed email run only after that commit.
++
++  2. `changeEmail()` writes the User update (now also clearing `validateEmailToken` and
++  `validateEmailTokenExpires`) and the primary Email rewrite in one transaction, User row FIRST.
++
++  3. Signup verification tokens are minted by a new private `mintVerificationTokenForPrimary()`,
++  which stores the token and then asserts the target is still the primary address inside one
++  transaction, rolling back otherwise. `sendVerificationEmail()` now returns false when it refused.
++  The public `resendVerificationEmail()` treats that as the unknown-address branch (returns true,
++  sends nothing); `resendMyVerificationEmail()` throws a BadRequest asking the user to retry.
++
++  4. `verifyEmail()` and `verifyEmailChange()` consume their token by compare-and-set
++  (`updateMany` whose `where` includes the token) inside the transaction that marks the address
++  verified. A zero match verifies nothing and throws NotFound.
++
++  5. Signup verification tokens carry a version marker. All three mint sites (`register()`,
++  `registerWithInvitation()`, `sendVerificationEmail()`) use `generateEmailVerificationToken()` from
++  auth.helper.ts, which prefixes `EMAIL_VERIFICATION_TOKEN_PREFIX` (`v2-`). `verifyEmail()` refuses
++  any token without it before the lookup, with the same NotFound as an unknown token. This is
++  REQUIRED, not optional: the other changes stop new unbound tokens being issued, but without the
++  marker a token minted by the previous code stays redeemable until it expires (24h). Users holding
++  an old link request a new one.
++
++  Lock order is part of the fix. Every path above writes the User row before reading or writing
++  Email, so concurrent requests on one account serialize instead of interleaving or deadlocking.
++
++why: >
++  Reported externally as two findings (CWE-613) against a project generated from the template; both
++  reproduce in the template itself and therefore in every project generated from it.
++
++  Password reset. `changePassword()` already revoked other sessions, but the account-recovery path
++  did not. A session stolen before the reset kept working after it, which defeats the main reason a
++  user resets a password. The JWT strategy already rejects tokens whose `UserSession.isValid` is
++  false and session validity is not cached, so marking the rows invalid takes effect on the next
++  request.
++
++  Verification tokens. `verifyEmail()` marks whatever is the PRIMARY email verified at redemption
++  time; the token itself is not bound to an address. Two paths could put a token in the hands of
++  someone who never proved control of the primary address. First, `changeEmail()` rewrites the
++  primary Email row in place but left the signup token alive, so a link sent to the OLD address
++  verified the NEW one (the report understated this, since it describes only the account flag; the
++  Email row for the new address was also marked verified). Second, the public resend looks the
++  user up by ANY of their addresses, so requesting a resend for a secondary address mailed it a
++  token that verified the primary.
++
++  Fixing the steady state was not enough; each fix also had a race (raised in PR review). A primary
++  check made before minting could be stale by the time the token was written. A token read and
++  then consumed by id could be redeemed after a concurrent changeEmail() had replaced it. And
++  revoking sessions as a separate write after the password commit meant a database error left the
++  reset done, the token spent, and every stolen session still valid. The transactions and the
++  compare-and-set close those windows. The same applies to the reset token: read outside the
++  transaction and then written by id, two requests holding one token could both succeed, the second
++  overwriting the password with a token the first had already spent.
++
++  Tokens already outstanding at deploy time are the last window. Clearing them with a pre-deploy
++  migration does not close it: during a Railway rollout the previous release keeps serving until the
++  new one passes its healthcheck, and can mint an unbound token after the migration has run. A
++  marker that only the fixed code writes rejects those as well, whenever they were minted.
++
++affectedPaths:
++  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.helper.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts
++
++packageReleases: []
++
++skipIf:
++  - The project has replaced AuthService password reset, email change, and verification resend with its own implementations.
++
++verification:
++  - pnpm exec nx run api-custom:test
++  - pnpm exec nx run api:typecheck
++  - pnpm run nestled-doctor
++
++agentHints:
++  - >
++    These are three surgical edits inside existing methods. If the project's auth.service.ts has
++    diverged, apply them by hand rather than overwriting the file, and keep the project's own changes.
++  - >
++    Keep the User-row-first order if the project has its own Email writes in these flows. Writing
++    Email first in one path and User first in another turns the race into a deadlock.
++  - >
++    The reset transaction updates UserSession directly rather than calling
++    SessionService.invalidateAllUserSessions, because that method cannot join a transaction. If the
++    project caches session validity anywhere, invalidate that cache after the commit.
++  - >
++    The non-primary resend branch must stay indistinguishable from the unknown-address branch. It
++    returns true and calls addBruteForceDelay(), so the endpoint still does not reveal which
++    addresses belong to an account.
++  - >
++    The spec's data mock gains user.updateMany, user.findUniqueOrThrow, and userSession.updateMany.
++    Existing resend tests need data.email.findFirst to return the primary row, or the mint refuses
++    and nothing is sent.
++  - >
++    Route EVERY place the project writes `validateEmailToken` through
++    generateEmailVerificationToken(), including project-local signup or admin "resend verification"
++    paths. A site still calling generateToken() mints tokens verifyEmail() now refuses, which shows
++    up as working emails with dead links. grep for `validateEmailToken` to find them. Do not add a
++    migration to clear old tokens instead; it runs before the old release stops serving.
++  - >
++    Known remaining gap, not addressed here. signUser only embeds a sessionId when sessionInfo is
++    passed, and a JWT without one cannot be revoked by any of the above. In the template only the
++    admin emulation paths (emulateUser and endEmulation) mint such tokens. Audit project-local
++    callers of signUser for the same omission.
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts
+index b1e009e..cc3db34 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.helper.spec.ts
+@@ -8,6 +8,9 @@ import {
+   randomId,
+   generateUsernameSlug,
+   generateUsernameWithSuffix,
++  generateEmailVerificationToken,
++  isCurrentEmailVerificationToken,
++  EMAIL_VERIFICATION_TOKEN_PREFIX,
+ } from './auth.helper'
+ describe('Auth Helper Functions', () => {
+   describe('getGravatarUrl', () => {
+@@ -228,4 +231,16 @@ describe('Auth Helper Functions', () => {
+       expect(usernames.size).toBeGreaterThan(1)
+     })
+   })
++  describe('email verification tokens', () => {
++    it('carries the version prefix around a full-entropy token', () => {
++      const token = generateEmailVerificationToken()
++      expect(token.startsWith(EMAIL_VERIFICATION_TOKEN_PREFIX)).toBe(true)
++      expect(token.slice(EMAIL_VERIFICATION_TOKEN_PREFIX.length)).toMatch(/^[0-9a-f]{64}$/)
++      expect(isCurrentEmailVerificationToken(token)).toBe(true)
++    })
++    it('rejects tokens minted without the prefix', () => {
++      expect(isCurrentEmailVerificationToken(generateToken())).toBe(false)
++      expect(isCurrentEmailVerificationToken('')).toBe(false)
++    })
++  })
+ })
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.helper.ts b/libs/api/custom/src/lib/plugins/auth/auth.helper.ts
+index 6e3ca9f..c26bb9e 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.helper.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.helper.ts
+@@ -44,6 +44,26 @@ export function generateToken(): string {
+   return randomBytes(32).toString('hex')
+ }
+ 
++/**
++ * Marks signup email-verification tokens minted by code that binds them to the current primary
++ * address (see AuthService.mintVerificationTokenForPrimary). Tokens without it were minted by the
++ * earlier code, which could hand a primary-verifying token to an address that never controlled the
++ * primary, so verifyEmail() refuses them.
++ *
++ * A marker rather than a migration that clears old tokens: during a rolling deploy the previous
++ * release keeps serving, and can mint an unbound token after any pre-deploy migration has run.
++ * Bump the version if the binding rules change again.
++ */
++export const EMAIL_VERIFICATION_TOKEN_PREFIX = 'v2-'
++
++export function generateEmailVerificationToken(): string {
++  return `${EMAIL_VERIFICATION_TOKEN_PREFIX}${generateToken()}`
++}
++
++export function isCurrentEmailVerificationToken(token: string): boolean {
++  return token.startsWith(EMAIL_VERIFICATION_TOKEN_PREFIX)
++}
++
+ export function generateExpireDate(days = 1) {
+   return new Date(Date.now() + 60 * 60 * 24 * 1000 * days)
+ }
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+index cc7090a..32ed45d 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+@@ -1,5 +1,5 @@
+ import { Test, TestingModule } from '@nestjs/testing'
+-import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common'
++import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common'
+ import { JwtService } from '@nestjs/jwt'
+ import { ConfigService } from '@nestjs/config'
+ import { AuthService } from './auth.service'
+@@ -12,15 +12,23 @@ import { hashPassword, validatePassword } from './auth.helper'
+ import { PlatformAccessControlService } from '../access-control'
+ import type { Response } from 'express'
+ // Mock the helper functions
+-jest.mock('./auth.helper', () => ({
+-  ...jest.requireActual('./auth.helper'),
+-  hashPassword: jest.fn(),
+-  validatePassword: jest.fn(),
+-  generateToken: jest.fn(),
+-  generateExpireDate: jest.fn(),
+-  generateUsernameSlug: jest.fn(),
+-  generateUsernameWithSuffix: jest.fn(),
+-}))
++jest.mock('./auth.helper', () => {
++  const actual = jest.requireActual('./auth.helper')
++  const generateToken = jest.fn()
++  return {
++    ...actual,
++    hashPassword: jest.fn(),
++    validatePassword: jest.fn(),
++    generateToken,
++    // Real prefix around the mocked token, so fixtures stay readable and the version check is live.
++    generateEmailVerificationToken: jest.fn(
++      () => `${actual.EMAIL_VERIFICATION_TOKEN_PREFIX}${generateToken()}`,
++    ),
++    generateExpireDate: jest.fn(),
++    generateUsernameSlug: jest.fn(),
++    generateUsernameWithSuffix: jest.fn(),
++  }
++})
+ jest.mock('./twofa.helper', () => ({
+   ...jest.requireActual('./twofa.helper'),
+   decryptSecret: jest.fn().mockReturnValue('decrypted-secret'),
+@@ -53,6 +61,9 @@ describe('AuthService', () => {
+         findFirst: jest.fn(),
+         create: jest.fn(),
+         update: jest.fn().mockResolvedValue({ failedLoginCount: 0 }),
++        // Compare-and-set token consumption; 1 = the token was still on the account.
++        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
++        findUniqueOrThrow: jest.fn(),
+       },
+       email: {
+         create: jest.fn(),
+@@ -98,6 +109,7 @@ describe('AuthService', () => {
+         findFirst: jest.fn(),
+         findMany: jest.fn(),
+         findUnique: jest.fn(),
++        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+       },
+       $transaction: jest.fn(arg => {
+         // Handle both callback and array forms
+@@ -253,6 +265,7 @@ describe('AuthService', () => {
+         firstName: 'Ada',
+         emails: [{ email: 'ada@example.com', primary: true }],
+       })
++      mockData.email.findFirst.mockResolvedValue({ email: 'ada@example.com', primary: true })
+       mockData.user.update.mockResolvedValue({ id: 'user-1' })
+ 
+       await service.resendVerificationEmail('  Ada@Example.com  ')
+@@ -917,7 +930,7 @@ describe('AuthService', () => {
+   })
+   describe('Email Verification Flow', () => {
+     it('should verify email with valid token', async () => {
+-      const token = 'valid-verification-token'
++      const token = 'v2-valid-verification-token'
+       const mockUser = {
+         id: 'user-123',
+         firstName: 'Test',
+@@ -931,13 +944,14 @@ describe('AuthService', () => {
+         verified: false,
+       }
+       mockData.user.findFirst.mockResolvedValue(mockUser as any)
+-      mockData.user.update.mockResolvedValue({ ...mockUser, emailValidated: true } as any)
++      mockData.user.findUniqueOrThrow.mockResolvedValue({ ...mockUser, emailValidated: true })
+       mockData.email.findFirst.mockResolvedValue(mockEmail as any)
+       const result = await service.verifyEmail(token)
+       expect(result).toBeDefined()
+-      expect(mockData.user.update).toHaveBeenCalledWith(
++      // Consumed by compare-and-set: only while the token is still the one on the account.
++      expect(mockData.user.updateMany).toHaveBeenCalledWith(
+         expect.objectContaining({
+-          where: { id: 'user-123' },
++          where: { id: 'user-123', validateEmailToken: token },
+           data: expect.objectContaining({
+             emailValidated: true,
+             validateEmailToken: null,
+@@ -953,7 +967,7 @@ describe('AuthService', () => {
+       )
+     })
+     it('should reject expired verification token', async () => {
+-      const token = 'expired-token'
++      const token = 'v2-expired-token'
+       const mockUser = {
+         id: 'user-123',
+         validateEmailToken: token,
+@@ -963,6 +977,35 @@ describe('AuthService', () => {
+       mockData.user.findFirst.mockResolvedValue(mockUser as any)
+       await expect(service.verifyEmail(token)).rejects.toThrow(BadRequestException)
+     })
++    it('refuses a token minted before verification was bound to the primary', async () => {
++      // Unversioned tokens came from the old code, which could mail a primary-verifying token to an
++      // address that never controlled the primary. That includes ones the previous release mints
++      // mid-deploy, so they are refused on sight rather than cleared once by a migration.
++      mockData.user.findFirst.mockResolvedValue({
++        id: 'user-1',
++        validateEmailToken: 'legacy-token',
++        validateEmailTokenExpires: new Date(Date.now() + 60_000),
++      })
++
++      await expect(service.verifyEmail('legacy-token')).rejects.toThrow(NotFoundException)
++      expect(mockData.user.findFirst).not.toHaveBeenCalled()
++      expect(mockData.user.updateMany).not.toHaveBeenCalled()
++      expect(mockData.email.updateMany).not.toHaveBeenCalled()
++    })
++    it('verifies nothing when the token was cleared after it was read', async () => {
++      // A changeEmail() committing between the lookup and the write clears the token. The
++      // compare-and-set then matches nothing, and the NEW primary must not be marked verified.
++      mockData.user.findFirst.mockResolvedValue({
++        id: 'user-1',
++        validateEmailToken: 'v2-tok',
++        validateEmailTokenExpires: new Date(Date.now() + 60_000),
++      })
++      mockData.user.updateMany.mockResolvedValue({ count: 0 })
++
++      await expect(service.verifyEmail('v2-tok')).rejects.toThrow(NotFoundException)
++      expect(mockData.email.updateMany).not.toHaveBeenCalled()
++      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
++    })
+     it('should resend verification email', async () => {
+       const email = 'test@example.com'
+       const mockUser = {
+@@ -975,13 +1018,14 @@ describe('AuthService', () => {
+       )
+       ;(require('./auth.helper').generateExpireDate as jest.Mock).mockReturnValue(new Date())
+       mockData.user.findFirst.mockResolvedValue(mockUser as any)
++      mockData.email.findFirst.mockResolvedValue(mockUser.emails[0] as any)
+       mockData.user.update.mockResolvedValue(mockUser as any)
+       const result = await service.resendVerificationEmail(email)
+       expect(result).toBe(true)
+       expect(mockData.user.update).toHaveBeenCalledWith(
+         expect.objectContaining({
+           data: expect.objectContaining({
+-            validateEmailToken: 'new-verification-token',
++            validateEmailToken: 'v2-new-verification-token',
+           }),
+         }),
+       )
+@@ -1002,6 +1046,7 @@ describe('AuthService', () => {
+       ;(require('./auth.helper').generateToken as jest.Mock).mockReturnValue('new-token')
+       ;(require('./auth.helper').generateExpireDate as jest.Mock).mockReturnValue(new Date())
+       mockData.user.findFirst.mockResolvedValue(mockUser as any)
++      mockData.email.findFirst.mockResolvedValue(mockUser.emails[0] as any)
+       mockData.user.update.mockResolvedValue(mockUser as any)
+       const result = await service.resendVerificationEmail(email)
+       expect(result).toBe(true)
+@@ -1016,6 +1061,40 @@ describe('AuthService', () => {
+       expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
+     })
+ 
++    it('does not mail a signup verification token to a non-primary address', async () => {
++      // Redeeming this token verifies the PRIMARY address, so sending it to a secondary one let
++      // proof of the secondary verify the primary. Answers like the unknown-address branch.
++      mockData.user.findFirst.mockResolvedValue({
++        id: 'user-1',
++        emails: [
++          { email: 'primary@example.com', primary: true },
++          { email: 'secondary@example.com', primary: false },
++        ],
++      })
++      mockData.email.findFirst.mockResolvedValue({ email: 'primary@example.com', primary: true })
++
++      await expect(service.resendVerificationEmail('secondary@example.com')).resolves.toBe(true)
++      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
++    })
++
++    it('checks the primary address inside the same transaction that stores the token', async () => {
++      // A check made before the transaction can be stale by the time the token is written: a
++      // concurrent changeEmail() could move the primary in between. The read must happen after the
++      // User row is locked by the token write, and a mismatch must abort that transaction.
++      mockData.user.findFirst.mockResolvedValue({ id: 'user-1', emails: [] })
++      let primaryReadAfterTokenWrite = false
++      mockData.email.findFirst.mockImplementation(async () => {
++        primaryReadAfterTokenWrite = mockData.user.update.mock.calls.length > 0
++        return { email: 'moved@example.com', primary: true }
++      })
++      mockData.$transaction.mockImplementation(async (fn: any) => fn(mockData))
++
++      await expect(service.resendVerificationEmail('old@example.com')).resolves.toBe(true)
++      expect(primaryReadAfterTokenWrite).toBe(true)
++      await expect(mockData.$transaction.mock.results[0].value).rejects.toThrow()
++      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
++    })
++
+     it('answers a known and an unknown address identically', async () => {
+       mockData.user.findFirst.mockResolvedValueOnce({
+         id: 'user-1',
+@@ -1051,6 +1130,7 @@ describe('AuthService', () => {
+         firstName: 'Ada',
+         emails: [{ email: 'ada@example.com', primary: true }],
+       })
++      mockData.email.findFirst.mockResolvedValue({ email: 'ada@example.com', primary: true })
+       mockData.user.update.mockResolvedValue({ id: 'user-1' })
+       mockEmailService.sendTemplate.mockRejectedValue(new Error('connect ECONNREFUSED :1025'))
+ 
+@@ -1062,12 +1142,12 @@ describe('AuthService', () => {
+       // verified:false forever, breaking every query that filters on verified:true.
+       mockData.user.findFirst.mockResolvedValue({
+         id: 'user-1',
+-        validateEmailToken: 'tok',
++        validateEmailToken: 'v2-tok',
+         validateEmailTokenExpires: new Date(Date.now() + 60_000),
+       })
+-      mockData.user.update.mockResolvedValue({ id: 'user-1', emailValidated: true })
++      mockData.user.findUniqueOrThrow.mockResolvedValue({ id: 'user-1', emailValidated: true })
+ 
+-      await service.verifyEmail('tok')
++      await service.verifyEmail('v2-tok')
+ 
+       expect(mockData.email.updateMany).toHaveBeenCalledWith({
+         where: { userId: 'user-1', primary: true },
+@@ -1082,13 +1162,13 @@ describe('AuthService', () => {
+       const logSpy = jest.spyOn(Logger, 'error').mockImplementation(() => undefined)
+       mockData.user.findFirst.mockResolvedValue({
+         id: 'user-1',
+-        validateEmailToken: 'tok',
++        validateEmailToken: 'v2-tok',
+         validateEmailTokenExpires: new Date(Date.now() + 60_000),
+       })
+-      mockData.user.update.mockResolvedValue({ id: 'user-1', emailValidated: true })
++      mockData.user.findUniqueOrThrow.mockResolvedValue({ id: 'user-1', emailValidated: true })
+       mockData.email.updateMany.mockResolvedValue({ count: 0 })
+ 
+-      await service.verifyEmail('tok')
++      await service.verifyEmail('v2-tok')
+ 
+       expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/no primary Email row/i))
+       logSpy.mockRestore()
+@@ -1098,12 +1178,12 @@ describe('AuthService', () => {
+       // They must not be able to diverge — that divergence IS the bug.
+       mockData.user.findFirst.mockResolvedValue({
+         id: 'user-1',
+-        validateEmailToken: 'tok',
++        validateEmailToken: 'v2-tok',
+         validateEmailTokenExpires: new Date(Date.now() + 60_000),
+       })
+-      mockData.user.update.mockResolvedValue({ id: 'user-1', emailValidated: true })
++      mockData.user.findUniqueOrThrow.mockResolvedValue({ id: 'user-1', emailValidated: true })
+ 
+-      await service.verifyEmail('tok')
++      await service.verifyEmail('v2-tok')
+ 
+       expect(mockData.$transaction).toHaveBeenCalled()
+     })
+@@ -1114,6 +1194,7 @@ describe('AuthService', () => {
+         firstName: 'Ada',
+         emails: [{ email: 'ada@example.com', primary: true }],
+       })
++      mockData.email.findFirst.mockResolvedValue({ email: 'ada@example.com', primary: true })
+       mockData.user.update.mockResolvedValue({ id: 'user-1' })
+ 
+       await expect(service.resendMyVerificationEmail('user-1')).resolves.toBe(true)
+@@ -1124,6 +1205,17 @@ describe('AuthService', () => {
+       )
+     })
+ 
++    it('resendMyVerificationEmail refuses when the primary changed before the token was stored', async () => {
++      mockData.user.findUnique.mockResolvedValue({
++        id: 'user-1',
++        emails: [{ email: 'ada@example.com', primary: true }],
++      })
++      mockData.email.findFirst.mockResolvedValue({ email: 'new@example.com', primary: true })
++
++      await expect(service.resendMyVerificationEmail('user-1')).rejects.toThrow(BadRequestException)
++      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
++    })
++
+     it('resendMyVerificationEmail rejects an account with no primary email', async () => {
+       mockData.user.findUnique.mockResolvedValue({ id: 'user-1', firstName: 'Ada', emails: [] })
+ 
+@@ -1190,6 +1282,73 @@ describe('AuthService', () => {
+   })
+ 
+   describe('Password Reset Flow', () => {
++    it('commits the new password and the session revocation together', async () => {
++      // Separately, a failed revocation would leave the reset done, the token spent, and every
++      // stolen session still valid. Inside one transaction the whole reset fails instead.
++      mockData.user.findFirst.mockResolvedValue({
++        id: 'user-123',
++        password: 'old-hash',
++        passwordResetToken: 'tok',
++        passwordResetExpires: new Date(Date.now() + 3600000),
++      })
++      ;(validatePassword as jest.Mock).mockReturnValue(false)
++      mockData.passwordHistory.findMany.mockResolvedValue([])
++      const writes: string[] = []
++      const tx = {
++        user: {
++          updateMany: jest.fn(async () => {
++            writes.push('password')
++            return { count: 1 }
++          }),
++          findUniqueOrThrow: jest.fn(),
++        },
++        passwordHistory: { create: jest.fn(async () => writes.push('history')) },
++        userSession: {
++          updateMany: jest.fn(async () => {
++            throw new Error('connection lost')
++          }),
++        },
++      }
++      mockData.$transaction.mockImplementation(async (fn: any) => fn(tx))
++
++      await expect(service.resetPassword('NewPassword123!', 'tok', {} as any)).rejects.toThrow(
++        'connection lost',
++      )
++      // All three ran on the transaction client, never the root client, so they roll back together.
++      expect(writes).toEqual(['password', 'history'])
++      expect(mockData.user.updateMany).not.toHaveBeenCalled()
++      expect(mockData.passwordHistory.create).not.toHaveBeenCalled()
++      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
++      expect(mockSecurityEvents.logPasswordChanged).not.toHaveBeenCalled()
++    })
++
++    it('refuses a token a concurrent reset already consumed', async () => {
++      // Both requests passed the initial read; the first cleared the token, so the second's
++      // compare-and-set matches nothing. It must not write the password, history, or sessions.
++      mockData.user.findFirst.mockResolvedValue({
++        id: 'user-123',
++        password: 'old-hash',
++        passwordResetToken: 'tok',
++        passwordResetExpires: new Date(Date.now() + 3600000),
++      })
++      ;(validatePassword as jest.Mock).mockReturnValue(false)
++      mockData.passwordHistory.findMany.mockResolvedValue([])
++      mockData.user.updateMany.mockResolvedValueOnce({ count: 0 })
++
++      await expect(service.resetPassword('NewPassword123!', 'tok', {} as any)).rejects.toThrow(
++        'This token has been used or is invalid.',
++      )
++      expect(mockData.user.updateMany).toHaveBeenCalledWith(
++        expect.objectContaining({
++          where: expect.objectContaining({ id: 'user-123', passwordResetToken: 'tok' }),
++        }),
++      )
++      expect(mockData.passwordHistory.create).not.toHaveBeenCalled()
++      expect(mockData.userSession.updateMany).not.toHaveBeenCalled()
++      expect(mockSecurityEvents.logPasswordChanged).not.toHaveBeenCalled()
++      expect(mockEmailService.sendTemplate).not.toHaveBeenCalled()
++    })
++
+     it('should reset password with valid token', async () => {
+       const token = 'valid-reset-token'
+       const newPassword = 'NewPassword123!'
+@@ -1203,7 +1362,7 @@ describe('AuthService', () => {
+       ;(hashPassword as jest.Mock).mockReturnValue('hashed-new-password')
+       ;(validatePassword as jest.Mock).mockReturnValue(false) // Not in history
+       mockData.user.findFirst.mockResolvedValue(mockUser as any)
+-      mockData.user.update.mockResolvedValue(mockUser as any)
++      mockData.user.findUniqueOrThrow.mockResolvedValue(mockUser as any)
+       mockData.passwordHistory.findMany.mockResolvedValue([])
+       mockData.passwordHistory.create.mockResolvedValue({} as any)
+       mockData.email.findFirst.mockResolvedValue({
+@@ -1212,8 +1371,9 @@ describe('AuthService', () => {
+       } as any)
+       const result = await service.resetPassword(newPassword, token, {} as any)
+       expect(result).toBeDefined()
+-      expect(mockData.user.update).toHaveBeenCalledWith(
++      expect(mockData.user.updateMany).toHaveBeenCalledWith(
+         expect.objectContaining({
++          where: expect.objectContaining({ id: 'user-123', passwordResetToken: token }),
+           data: expect.objectContaining({
+             password: 'hashed-new-password',
+             passwordResetToken: null,
+@@ -1221,7 +1381,11 @@ describe('AuthService', () => {
+           }),
+         }),
+       )
+-      // Note: Implementation doesn't invalidate sessions on password reset
++      // Recovery revokes every session, with no current session spared (the flow is anonymous).
++      expect(mockData.userSession.updateMany).toHaveBeenCalledWith({
++        where: { userId: 'user-123', isValid: true },
++        data: { isValid: false },
++      })
+       expect(mockEmailService.sendTemplate).toHaveBeenCalledWith(
+         'test@example.com',
+         expect.objectContaining({
+@@ -1230,7 +1394,7 @@ describe('AuthService', () => {
+       )
+     })
+     it('should reject expired reset token', async () => {
+-      const token = 'expired-token'
++      const token = 'v2-expired-token'
+       const newPassword = 'NewPassword123!'
+       const mockUser = {
+         id: 'user-123',
+@@ -1490,13 +1654,21 @@ describe('AuthService', () => {
+       expect(result).toBe(true)
+       // Implementation updates the email record, not user with pendingEmail
+       expect(mockData.email.update).toHaveBeenCalled()
++      // The signup token was minted for the old address; redeeming it would verify the new one.
+       expect(mockData.user.update).toHaveBeenCalledWith(
+         expect.objectContaining({
+           data: expect.objectContaining({
+             emailValidated: false,
++            validateEmailToken: null,
++            validateEmailTokenExpires: null,
+           }),
+         }),
+       )
++      // Same transaction, User row locked first — the order every token path uses.
++      expect(mockData.$transaction).toHaveBeenCalledTimes(1)
++      expect(mockData.user.update.mock.invocationCallOrder[0]).toBeLessThan(
++        mockData.email.update.mock.invocationCallOrder[0],
++      )
+       expect(mockEmailService.sendTemplate).toHaveBeenCalledWith(
+         'newemail@example.com',
+         expect.objectContaining({
+@@ -1535,7 +1707,6 @@ describe('AuthService', () => {
+         },
+       }
+       mockData.email.findFirst.mockResolvedValue(mockEmail as any)
+-      mockData.email.update.mockResolvedValue({ ...mockEmail, verified: true } as any)
+       mockData.user.update.mockResolvedValue({
+         id: 'user-123',
+         emailValidated: true,
+@@ -1543,9 +1714,10 @@ describe('AuthService', () => {
+       const result = await service.verifyEmailChange(token)
+       expect(result).toBeDefined()
+       expect(result.emailValidated).toBe(true)
+-      expect(mockData.email.update).toHaveBeenCalledWith(
++      // Compare-and-set: the row must still carry this token when it is consumed.
++      expect(mockData.email.updateMany).toHaveBeenCalledWith(
+         expect.objectContaining({
+-          where: { id: 'email-123' },
++          where: { id: 'email-123', verifyToken: token },
+           data: expect.objectContaining({
+             verified: true,
+             verifyToken: null,
+@@ -1554,12 +1726,27 @@ describe('AuthService', () => {
+         }),
+       )
+     })
++    it('rejects an email-change token that was replaced after it was read', async () => {
++      // A second changeEmail() rewrites the same row with a new address and token. A link mailed
++      // to the first address must not verify the second.
++      mockData.email.findFirst.mockResolvedValue({
++        id: 'email-123',
++        email: 'first@example.com',
++        userId: 'user-123',
++        verifyToken: 'first-token',
++        verifyExpires: new Date(Date.now() + 3600000),
++        user: { id: 'user-123' },
++      })
++      mockData.email.updateMany.mockResolvedValue({ count: 0 })
++
++      await expect(service.verifyEmailChange('first-token')).rejects.toThrow(NotFoundException)
++    })
+     it('should reject invalid email change token', async () => {
+       mockData.email.findFirst.mockResolvedValue(null)
+       await expect(service.verifyEmailChange('invalid-token')).rejects.toThrow()
+     })
+     it('should reject expired email change token', async () => {
+-      const token = 'expired-token'
++      const token = 'v2-expired-token'
+       const mockEmail = {
+         id: 'email-123',
+         email: 'new@example.com',
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+index f820210..bf05a01 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+@@ -27,11 +27,13 @@ import {
+ import { UserToken } from './models'
+ import { EmailService } from '@nestled-template/api/integrations'
+ import {
++  generateEmailVerificationToken,
+   generateExpireDate,
+   generateToken,
+   generateUsernameSlug,
+   generateUsernameWithSuffix,
+   hashPassword,
++  isCurrentEmailVerificationToken,
+   normalizeEmail,
+   validatePassword,
+ } from './auth.helper'
+@@ -58,6 +60,12 @@ const authUserRelations = {
+   images: true,
+ } as const
+ 
++/**
++ * Rolls back a verification-token mint whose target stopped being the primary address. Thrown
++ * inside the interactive transaction because throwing is the only way to abort one.
++ */
++class StaleVerificationAddressError extends Error {}
++
+ type AuthTokenPayload = {
+   userId: string
+   isEmulating?: boolean
+@@ -205,34 +213,39 @@ export class AuthService {
+    * Creates default roles for a new organization with proper permissions
+    */
+   private async createOrganizationRoles(organizationId: string) {
+-    // Ensure global permissions exist (idempotent — safe to call on a fresh DB)
+-    for (const perm of defaultPermissions) {
+-      await this.data.permission.upsert({
+-        where: { action_subject: { action: perm.action, subject: perm.subject } },
+-        update: {},
+-        create: perm,
+-      })
+-    }
++    // Ensure global permissions exist (idempotent — safe to call on a fresh DB). Each upsert
++    // targets a distinct unique key, so they are independent and can run concurrently.
++    await Promise.all(
++      defaultPermissions.map(perm =>
++        this.data.permission.upsert({
++          where: { action_subject: { action: perm.action, subject: perm.subject } },
++          update: {},
++          create: perm,
++        }),
++      ),
++    )
+ 
+     const allPermissions = await this.data.permission.findMany()
+ 
+-    for (const roleTemplate of defaultRoles) {
+-      const rolePermissions = allPermissions.filter(p =>
+-        roleTemplate.permissions.includes(`${p.subject}:${p.action}`),
+-      )
++    await Promise.all(
++      defaultRoles.map(roleTemplate => {
++        const rolePermissions = allPermissions.filter(p =>
++          roleTemplate.permissions.includes(`${p.subject}:${p.action}`),
++        )
+ 
+-      await this.data.role.create({
+-        data: {
+-          name: roleTemplate.name,
+-          description: roleTemplate.description,
+-          isSystem: true,
+-          organizationId,
+-          permissions: {
+-            connect: rolePermissions.map(p => ({ id: p.id })),
++        return this.data.role.create({
++          data: {
++            name: roleTemplate.name,
++            description: roleTemplate.description,
++            isSystem: true,
++            organizationId,
++            permissions: {
++              connect: rolePermissions.map(p => ({ id: p.id })),
++            },
+           },
+-        },
+-      })
+-    }
++        })
++      }),
++    )
+   }
+ 
+   async register(payload: RegisterInput, sessionInfo?: SessionInfo) {
+@@ -290,7 +303,7 @@ export class AuthService {
+       })
+ 
+       // Send verification email
+-      const validateEmailToken = generateToken()
++      const validateEmailToken = generateEmailVerificationToken()
+       const validateEmailTokenExpires = generateExpireDate()
+       await this.data.user.update({
+         where: { id: user.id },
+@@ -389,7 +402,7 @@ export class AuthService {
+       })
+ 
+       // Send verification email
+-      const validateEmailToken = generateToken()
++      const validateEmailToken = generateEmailVerificationToken()
+       const validateEmailTokenExpires = generateExpireDate()
+       await this.data.user.update({
+         where: { id: user.id },
+@@ -610,16 +623,22 @@ export class AuthService {
+   }
+ 
+   /**
+-   * Issues a fresh verification token and mails it. Callers are responsible for authorising the
+-   * send — this does no gating of its own.
++   * Issues a fresh signup verification token and mails it — but only while `email` is still the
++   * user's PRIMARY address, because redeeming the token verifies whatever is primary. Returns false,
++   * sending nothing, when it is not. Callers remain responsible for authorising the send.
+    */
+-  private async sendVerificationEmail(user: User, email: string): Promise<void> {
+-    const validateEmailToken = generateToken()
++  private async sendVerificationEmail(user: User, email: string): Promise<boolean> {
++    const validateEmailToken = generateEmailVerificationToken()
+     const validateEmailTokenExpires = generateExpireDate()
+-    await this.data.user.update({
+-      where: { id: user.id },
+-      data: { validateEmailToken, validateEmailTokenExpires },
+-    })
++    const minted = await this.mintVerificationTokenForPrimary(
++      user.id,
++      email,
++      validateEmailToken,
++      validateEmailTokenExpires,
++    )
++    if (!minted) {
++      return false
++    }
+     const appName = this.config.get('app.name')
+     const siteUrl = this.config.get('siteUrl')
+     const verificationUrl = `${siteUrl}/verify-email?token=${validateEmailToken}&type=initial`
+@@ -633,6 +652,40 @@ export class AuthService {
+         expirationHours: 24,
+       },
+     })
++    return true
++  }
++
++  /**
++   * Store the token and assert `email` is the primary address in ONE transaction, User row first.
++   * changeEmail() takes the same User row lock before it rewrites the primary, so the two
++   * serialize: either the token lands before the change (and the change clears it), or this sees
++   * the new primary and rolls back. A check made outside the transaction could be stale by the
++   * time the token is written.
++   */
++  private async mintVerificationTokenForPrimary(
++    userId: string,
++    email: string,
++    validateEmailToken: string,
++    validateEmailTokenExpires: Date,
++  ): Promise<boolean> {
++    try {
++      await this.data.$transaction(async tx => {
++        await tx.user.update({
++          where: { id: userId },
++          data: { validateEmailToken, validateEmailTokenExpires },
++        })
++        const primary = await tx.email.findFirst({ where: { userId, primary: true } })
++        if (!primary?.email || normalizeEmail(primary.email) !== email) {
++          throw new StaleVerificationAddressError()
++        }
++      })
++      return true
++    } catch (error) {
++      if (error instanceof StaleVerificationAddressError) {
++        return false
++      }
++      throw error
++    }
+   }
+ 
+   /**
+@@ -663,10 +716,18 @@ export class AuthService {
+       return true
+     }
+ 
+-    await this.sendWithoutRevealing(
+-      () => this.sendVerificationEmail(user, normalizedEmail),
+-      `Verification email to ${normalizedEmail}`,
+-    )
++    // findUserByEmail matches ANY of the user's addresses, but redeeming this token verifies the
++    // PRIMARY one, so sendVerificationEmail refuses anything else — otherwise proving control of a
++    // secondary address would verify an address nobody proved. Same silent success as the
++    // unknown-address branch.
++    let sent = true
++    await this.sendWithoutRevealing(async () => {
++      sent = await this.sendVerificationEmail(user, normalizedEmail)
++    }, `Verification email to ${normalizedEmail}`)
++    if (!sent) {
++      Logger.warn(`Verification resend requested for non-primary address of user ${user.id}`)
++      await this.addBruteForceDelay()
++    }
+     return true
+   }
+ 
+@@ -688,11 +749,22 @@ export class AuthService {
+       throw new BadRequestException('No primary email found for this account')
+     }
+ 
+-    await this.sendVerificationEmail(user, normalizeEmail(primaryEmail))
++    // False only if the primary changed between the read above and the mint — a concurrent
++    // changeEmail(), which has already mailed the new address its own link.
++    const sent = await this.sendVerificationEmail(user, normalizeEmail(primaryEmail))
++    if (!sent) {
++      throw new BadRequestException('Your email address just changed. Please try again.')
++    }
+     return true
+   }
+ 
+   async verifyEmail(token: string) {
++    // Tokens minted before verification was bound to the primary address carry no version marker
++    // and may verify an address their holder never controlled. Refuse them with the same answer
++    // as an unknown token; the user requests a fresh link.
++    if (!isCurrentEmailVerificationToken(token)) {
++      throw new NotFoundException('Invalid or already used verification token')
++    }
+     const user = await this.data.user.findFirst({ where: { validateEmailToken: token } })
+     if (!user) {
+       throw new NotFoundException('Invalid or already used verification token')
+@@ -713,20 +785,35 @@ export class AuthService {
+     // promotion, deletion validation, and admin filtering by verified email.
+     //
+     // verifyEmailChange() already does both; this is the same pairing for the registration path.
+-    const [updatedUser, verifiedEmails] = await this.data.$transaction([
+-      this.data.user.update({
+-        where: { id: user.id },
++    //
++    // The token is consumed only if it is STILL the one on the account (compare-and-set on the User
++    // row, which also takes that row's lock first). changeEmail() clears it in the transaction that
++    // rewrites the primary, under the same lock, so a redemption racing an email change either
++    // finishes first and verifies the old address, or finds the token gone. The read above cannot
++    // stand in for that check: it may be stale by the time this runs.
++    const result = await this.data.$transaction(async tx => {
++      const consumed = await tx.user.updateMany({
++        where: { id: user.id, validateEmailToken: token },
+         data: {
+           emailValidated: true,
+           validateEmailToken: null,
+           validateEmailTokenExpires: null,
+         },
+-      }),
+-      this.data.email.updateMany({
++      })
++      if (consumed.count === 0) {
++        return null
++      }
++      const verified = await tx.email.updateMany({
+         where: { userId: user.id, primary: true },
+         data: { verified: true },
+-      }),
+-    ])
++      })
++      const refreshed = await tx.user.findUniqueOrThrow({ where: { id: user.id } })
++      return { updatedUser: refreshed, verifiedEmails: verified }
++    })
++    if (!result) {
++      throw new NotFoundException('Invalid or already used verification token')
++    }
++    const { updatedUser, verifiedEmails } = result
+ 
+     // A zero match means the account has no primary Email row at all — the flag now describes
+     // something that does not exist. validateEmailDeletion refuses to delete a primary without
+@@ -797,22 +884,26 @@ export class AuthService {
+       throw new BadRequestException('No primary email found')
+     }
+ 
+-    // Update the primary email to the new address with unverified status
+-    await this.data.email.update({
+-      where: { id: primaryEmail.id },
+-      data: {
+-        email: cleanEmail,
+-        verified: false,
+-        verifyToken,
+-        verifyExpires,
+-      },
+-    })
+-
+-    // Mark user as having unvalidated email
+-    await this.data.user.update({
+-      where: { id: userId },
+-      data: { emailValidated: false },
+-    })
++    // One transaction, User row FIRST. Clearing the signup verification token matters because it
++    // was minted for the OLD address, yet verifyEmail() verifies whatever is primary at redemption
++    // time — left alive, a link sent to the old address would verify the new one. Every token
++    // mint and redemption path locks the User row before touching Email, so taking it first here
++    // serializes them against this change instead of letting them interleave (or deadlock).
++    await this.data.$transaction([
++      this.data.user.update({
++        where: { id: userId },
++        data: { emailValidated: false, validateEmailToken: null, validateEmailTokenExpires: null },
++      }),
++      this.data.email.update({
++        where: { id: primaryEmail.id },
++        data: {
++          email: cleanEmail,
++          verified: false,
++          verifyToken,
++          verifyExpires,
++        },
++      }),
++    ])
+ 
+     // Log security event with IP context
+     await this.securityEvents.logEmailChanged(userId, primaryEmail.email, cleanEmail, {
+@@ -858,25 +949,32 @@ export class AuthService {
+       throw new BadRequestException('Your verification token has expired')
+     }
+ 
+-    // Mark email as verified
+-    await this.data.email.update({
+-      where: { id: email.id },
+-      data: {
+-        verified: true,
+-        verifyToken: null,
+-        verifyExpires: null,
+-      },
+-    })
+-
+-    // Mark user email as validated
+     const userId = email.userId
+     if (!userId) {
+       throw new BadRequestException('Email verification record is missing a user')
+     }
+ 
+-    const updatedUser = await this.data.user.update({
+-      where: { id: userId },
+-      data: { emailValidated: true },
++    // Consume the token only if the row still carries it. A second changeEmail() rewrites this
++    // same row with a new address and a new token, so the read above can be stale: without the
++    // compare-and-set, a link mailed to address A would verify address B written after it.
++    // User row first, matching changeEmail(); throwing rolls the User update back.
++    const updatedUser = await this.data.$transaction(async tx => {
++      const user = await tx.user.update({
++        where: { id: userId },
++        data: { emailValidated: true },
++      })
++      const consumed = await tx.email.updateMany({
++        where: { id: email.id, verifyToken: token },
++        data: {
++          verified: true,
++          verifyToken: null,
++          verifyExpires: null,
++        },
++      })
++      if (consumed.count === 0) {
++        throw new NotFoundException('Invalid or already used verification token')
++      }
++      return user
+     })
+ 
+     Logger.log(`Email change verified for user ${email.userId}: ${email.email}`)
+@@ -1150,24 +1248,57 @@ export class AuthService {
+       }
+     }
+ 
+-    const updatedUser = await this.data.user.update({
+-      where: { id: user.id },
+-      data: {
+-        passwordResetToken: null,
+-        passwordResetExpires: null,
+-        password: hashedPassword,
+-      },
+-    })
+-
+-    // Save old password to history if it exists
+-    if (user.password) {
+-      await this.data.passwordHistory.create({
++    // A reset is account recovery: whoever asked for it may be locking out someone holding a
++    // stolen session, so every existing session goes. Unlike changePassword there is no current
++    // session to spare — the reset flow is unauthenticated and the user signs in afterwards.
++    //
++    // The revocation commits in the SAME transaction as the new password and the consumed token.
++    // Run separately, a failure after the password write would leave the reset done, the token
++    // spent, and every stolen session still valid. Logging and mail follow the commit.
++    //
++    // The token is consumed by compare-and-set: the write matches only while this token is still
++    // on the account and unexpired. The read above may be stale — two requests holding the same
++    // token can both pass it, and updating by id alone would let the second overwrite the password
++    // with a token the first already spent. A zero match writes nothing and the reset fails.
++    const result = await this.data.$transaction(async tx => {
++      const consumed = await tx.user.updateMany({
++        where: {
++          id: user.id,
++          passwordResetToken: token,
++          passwordResetExpires: { gt: new Date(Date.now()) },
++        },
+         data: {
+-          userId: user.id,
+-          passwordHash: user.password,
++          passwordResetToken: null,
++          passwordResetExpires: null,
++          password: hashedPassword,
+         },
+       })
++      if (consumed.count === 0) {
++        return null
++      }
++
++      // Save old password to history if it exists
++      if (user.password) {
++        await tx.passwordHistory.create({
++          data: {
++            userId: user.id,
++            passwordHash: user.password,
++          },
++        })
++      }
++
++      const revoked = await tx.userSession.updateMany({
++        where: { userId: user.id, isValid: true },
++        data: { isValid: false },
++      })
++      const updated = await tx.user.findUniqueOrThrow({ where: { id: user.id } })
++      return { updatedUser: updated, revokedSessions: revoked.count }
++    })
++    if (!result) {
++      throw new Error(`This token has been used or is invalid.`)
+     }
++    const { updatedUser, revokedSessions } = result
++    Logger.log(`Password reset for user ${user.id} - ${revokedSessions} sessions invalidated`)
+ 
+     // Log security event with IP context
+     await this.securityEvents.logPasswordChanged(user.id, {

@@ -1,0 +1,53 @@
+fragment OrganizationList on Organization {
+  id
+  createdAt
+  updatedAt
+  name
+  logo {
+    id
+    url
+    publicUrl
+    filename
+    mimeType
+    createdAt
+  }
+  images {
+    id
+    url
+    publicUrl
+    filename
+    mimeType
+    metadata
+    folder
+    createdAt
+  }
+}
+
+fragment OrganizationDetails on Organization {
+  ...OrganizationList
+  members {
+    id
+    userId
+    roleId
+    user {
+      id
+      firstName
+      lastName
+    }
+    role {
+      id
+      name
+      permissions {
+        id
+        action
+        subject
+        description
+      }
+    }
+  }
+  roles {
+    id
+    name
+    description
+  }
+}

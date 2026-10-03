@@ -1,0 +1,17 @@
+fragment __AdminSecurityEventSummary on SecurityEvent {
+  id
+  createdAt
+  updatedAt
+  userId
+  eventType
+  ipAddress
+  userAgent
+  metadata
+  user {
+    id
+  }
+}
+
+fragment __AdminSecurityEventDetails on SecurityEvent {
+  ...__AdminSecurityEventSummary
+}

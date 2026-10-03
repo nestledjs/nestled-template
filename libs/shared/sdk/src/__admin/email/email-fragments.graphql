@@ -1,0 +1,23 @@
+fragment __AdminEmailSummary on Email {
+  id
+  createdAt
+  updatedAt
+  email
+  public
+  primary
+  verified
+  verifyExpires
+  userId
+  emailType
+  organizationId
+  user {
+    id
+  }
+  organization {
+    id
+  }
+}
+
+fragment __AdminEmailDetails on Email {
+  ...__AdminEmailSummary
+}

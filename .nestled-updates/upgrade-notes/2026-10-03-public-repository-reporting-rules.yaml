@@ -1,0 +1,19 @@
+id: 2026-10-03-public-repository-reporting-rules
+title: Contributor docs state the public-repository reporting rules
+priority: ignore
+area: docs
+type: cleanup
+
+intent: >
+  Nothing to apply. AGENTS.md gains a "This Repository Is Public" section, and the upstream issue
+  template now asks for the template release and a reproduction instead of identifying details. Both
+  describe how to contribute to the public template repositories; they change no template behavior
+  and nothing in a project built from the template.
+
+why: >
+  Issues, upgrade notes and commits in the public repositories must describe the template, never the
+  installations built from it, and security problems belong in private vulnerability reporting. The
+  rules are written where agents and contributors read them first.
+
+skipIf:
+  - Always. Project repositories keep their own AGENTS.md.

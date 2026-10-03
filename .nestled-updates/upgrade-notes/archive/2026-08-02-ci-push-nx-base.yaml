@@ -1,0 +1,32 @@
+id: 2026-08-02-ci-push-nx-base
+title: Use the pushed commit range as the Nx base in CI
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Update .github/workflows/ci.yml so push-triggered CI sets NX_BASE to github.event.before and
+  NX_HEAD to github.sha after nrwl/nx-set-shas runs, as long as the push is not the first push of a
+  new branch.
+
+why: >
+  nrwl/nx-set-shas can fall back to Git's empty-tree SHA on develop push events when it cannot find a
+  prior successful workflow run. Projects with strict changed-line validation then fail because there
+  is no real base ref to diff against. Using the pushed commit range keeps Nx affected commands and
+  nestled-doctor aligned with the commits that actually triggered the workflow.
+
+affectedPaths:
+  - .github/workflows/ci.yml
+
+skipIf:
+  - The CI workflow already overrides NX_BASE with github.event.before for non-initial push events.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Keep nrwl/nx-set-shas in place for pull_request events and fallback behavior. Add the push-event
+    override immediately after that action so later doctor and affected steps all see the corrected
+    NX_BASE and NX_HEAD values.

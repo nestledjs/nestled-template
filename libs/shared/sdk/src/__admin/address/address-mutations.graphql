@@ -1,0 +1,17 @@
+mutation __AdminCreateAddress($input: CreateAddressInput!) {
+  createAddress(input: $input) {
+    ...__AdminAddressDetails
+  }
+}
+
+mutation __AdminDeleteAddress($addressId: String!) {
+  deleteAddress(addressId: $addressId) {
+    id
+  }
+}
+
+mutation __AdminUpdateAddress($addressId: String!, $input: UpdateAddressInput!) {
+  updateAddress(addressId: $addressId, input: $input) {
+    ...__AdminAddressDetails
+  }
+}

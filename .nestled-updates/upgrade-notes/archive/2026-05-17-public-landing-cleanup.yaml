@@ -1,0 +1,38 @@
+id: 2026-05-17-public-landing-cleanup
+title: Public Landing Cleanup
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Remove the dead About this Template call-to-action from the starter landing page unless a
+  downstream app has intentionally added and registered an about page, and refresh stale browser
+  baseline mapping data used by frontend test tooling.
+
+why: >
+  The starter landing page linked to /public/about without shipping an about route, creating a
+  silent production 404. The browser baseline mapping refresh removes stale frontend tooling
+  warnings without changing application behavior.
+
+affectedPaths:
+  - apps/web/app/routes/_public/_index.tsx
+  - apps/web/tests/routes/_public/_index.spec.tsx
+  - package.json
+  - pnpm-lock.yaml
+
+packageReleases: []
+
+skipIf:
+  - The downstream app has a real about page route and intentionally keeps the landing-page CTA.
+  - The downstream app does not use the template landing page or has replaced it entirely.
+
+verification:
+  - pnpm nx test web --skipNxCache
+  - pnpm exec vitest --project unit --run --config libs/web-ui/vitest.config.mts src/lib/web-ui-header.spec.tsx --reporter verbose
+  - pnpm template:validate-upgrade-notes
+
+agentHints:
+  - Prefer removing the dead CTA over adding a placeholder about page.
+  - If a downstream app has intentionally implemented an about page, keep its route and CTA.
+  - Use a package-manager override for baseline-browser-mapping rather than broad dependency updates.

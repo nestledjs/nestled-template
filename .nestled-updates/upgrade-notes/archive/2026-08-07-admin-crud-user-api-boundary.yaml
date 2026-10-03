@@ -1,0 +1,142 @@
+id: 2026-08-07-admin-crud-user-api-boundary
+title: Make generated CRUD admin-only and application APIs explicit
+priority: critical
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Make generated CRUD a permanent super-admin management surface and remove `@crudAuth` as a way
+  to lower generated query or mutation access. Every generated resolver operation must use
+  GqlAuthAdminGuard and @AdminOnly(), while typed generated filters and recursive relation selection
+  remain available to the admin data browser.
+
+  Every handwritten GraphQL operation, including an admin-only workflow, must define a local DTO
+  containing only the arguments the workflow supports and execute an explicit Prisma query through
+  ApiCoreDataAccessService. Handwritten code must never import generated CRUD inputs,
+  ApiCrudDataAccessService, ApiCrudDataAccessModule, generated resolvers, or createSelect. Relations
+  exposed to users must be fetched explicitly or implemented with a guarded @ResolveField. Once
+  handwritten code cannot reach the recursive query compiler, remove ViewerContextInterceptor,
+  viewer-context helpers/tests, and model-level relation traversal authorization from createSelect.
+
+why: >
+  GraphQL clients cannot send SQL or Prisma queries directly; they can only call fields and
+  arguments exposed by the schema. The dangerous capability was application code reusing generic
+  generated inputs or compiling an arbitrary GraphQL selection into a recursive Prisma select.
+  Removing that capability from all handwritten code gives the API one reviewable authorization
+  model: generated generic access is admin-only, and every custom workflow owns its accepted input,
+  row scope, selected fields, and relation behavior. This is clearer and less likely to drift than
+  a second @crudAuth/traversal policy language.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - api-schema.graphql
+  - tsconfig.base.json
+  - eslint.config.mjs
+  - apps/api/src/app.module.ts
+  - libs/api/core/helpers/**
+  - libs/api/custom/**
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - scripts/doctor.ts
+  - scripts/doctor-crud-boundary-analysis.ts
+  - scripts/doctor-crud-boundary-analysis.spec.ts
+  - tools/fragment-to-select.py
+  - tools/fragment-to-select.ts
+  - tools/verify-selects.mjs
+  - libs/shared/sdk/src/generated/graphql.ts
+  - AGENTS.md
+  - docs/decisions/0001-generated-crud-admin-default.md
+  - docs/dev/api-extension-methodology.md
+  - docs/dev/doctor.md
+  - docs/blueprints/extend-default-model.md
+  - docs/security/**
+
+packageReleases: []
+
+skipIf:
+  - The project has no generated CRUD and does not expose or reuse ApiCrudDataAccessService or
+    createSelect.
+  - The project already rejects @crudAuth, keeps all generated CRUD admin-only, prevents all
+    handwritten API code from importing generated CRUD, and has removed traversal viewer state.
+
+verification:
+  - rg -n "@crudAuth|ApiCrudDataAccessService|ApiCrudDataAccessModule|createSelect|api/generated-crud" libs/api --glob '!libs/api/generated-crud/**'
+  - pnpm template:test-doctor-auth
+  - pnpm template:test-migration-tools
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+  - pnpm verify:selects
+  - pnpm nx test api-custom
+  - pnpm nx run api-custom:eslint:lint
+  - pnpm nx build api --skip-nx-cache
+  - git diff -- api-schema.graphql libs/shared/sdk/src/generated/graphql.ts
+
+agentHints:
+  - >
+    Apply this only after the generated CRUD module-composition migration. The project should use
+    @nestledjs/generators 3.0.3 or newer, register one ApiGeneratedCrudFeatureModule, and have no
+    custom resolver inheritance from Generated<Model>Resolver.
+  - >
+    Inventory every @crudAuth operation before deleting annotations. For each operation previously
+    reachable below admin, identify its frontend/SDK callers and replace it with a purpose-built
+    resolver, DTO, guard, and user/tenant-scoped service query. Do not simply delete access that the
+    product still needs, and do not reproduce the generated CRUD field name.
+  - >
+    Run pnpm db-update only after all @crudAuth annotations are removed. It does not boot NestJS or
+    refresh api-schema.graphql, and pnpm sdk reads that file rather than a live server. After each
+    batch that changes resolver or DTO signatures, verify DATABASE_URL, DIRECT_URL, and REDIS_URL
+    point only to disposable local services, boot the API until NestJS emits api-schema.graphql,
+    stop it, and then run pnpm sdk. Do not postpone schema refresh until the end. Compare the root
+    schema before and after: generated CRUD names remain admin-only, while replacement application
+    operations have distinct names and explicit inputs. Keep Doctor before and after generation so
+    the current generator cannot silently reintroduce lowered CRUD.
+  - >
+    Search all handwritten code under libs/api, not only resolver files, for generated Create*, Update*, List*,
+    filter DTOs, ApiCrudDataAccessService, ApiCrudDataAccessModule, and createSelect. Replace
+    user-facing uses with local DTOs and ApiCoreDataAccessService. ApiCoreDataAccessService is the
+    normal Prisma wrapper and remains allowed.
+  - >
+    When an explicit Prisma select must cover an existing SDK fragment, run
+    `python3 tools/fragment-to-select.py . <model-folder> [SELECT_NAME]`. The tool is part of the
+    template and unions the fields requested by that model's application fragments. It loads
+    fragment definitions from the complete application SDK tree, including another model's folder,
+    and filters fields through generated DATABASE_MODELS metadata so GraphQL-only @ResolveField
+    values are not emitted as Prisma columns. A missing fragment must fail instead of producing an
+    empty nested select. Review the output before using it: a requested field is not automatically
+    authorized, and the generated constant is a starting point rather than a security decision.
+    Store reusable constants in *.select.ts and immediately run `pnpm verify:selects`; the verifier
+    reloads the full Prisma schema and catches nonexistent fields, empty nested selects, and model
+    resolution failures after generation or later edits.
+  - >
+    Pay special attention to helpers that cast a generated List input and read
+    `filters.<foreignKey>` as a string. Typed filters represent that value as an operator object,
+    so the cast can compile while authorization fails at runtime. Replace the generated input with
+    an explicit foreign-key field. An interim parser may accept only `.equals`; never approximate
+    `in`, `contains`, or another multi-target predicate when authorizing exactly one record.
+  - >
+    Generated CRUD composition is forbidden even for super-admin-only custom operations. Define a
+    purpose-built DTO and explicit ApiCoreDataAccessService query, then declare admin auth on the
+    custom resolver at class or method level.
+  - >
+    Keep generated typed filter inputs for the admin data browser. Do not restore an untyped
+    GraphQLJSONObject filters field to CorePagingInput. User operations may expose only explicit,
+    bounded filter fields they actually support.
+  - >
+    Upgrade to @nestledjs/generators 3.0.3 before regenerating. Generator 3 inlines the recursive
+    selector as a non-exported generated CRUD implementation detail. Remove
+    ViewerContextInterceptor, delete the complete libs/api/core/helpers project, and remove its
+    tsconfig, path-alias, and Sonar references. Keep Doctor and ESLint migration guards so legacy
+    downstream imports fail with an actionable message.
+  - >
+    Regenerate the SDK after input or operation changes and update frontend GraphQL documents.
+    Unknown where/filter/relation arguments should fail GraphQL validation rather than reach Prisma.
+    Verify legitimate admin filters too: AND/OR/NOT, scalar not, and to-one is/isNot are available
+    but consume the same finite filter-depth budget as relation traversal.
+  - >
+    Use `pnpm nx g @nestledjs/generators:model-extension <Model> --no-interactive` when a model first
+    needs custom behavior. Add purpose-built DTOs and service methods to the generated empty shell;
+    do not add a second template-local scaffolder.
+  - >
+    Preserve @graphqlOmit and documented @skipCrud protections. They address schema-level sensitive
+    fields and models where even generic super-admin browsing is inappropriate.

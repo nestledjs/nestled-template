@@ -1,0 +1,20 @@
+query __AdminInvite($inviteId: String!) {
+  invite(inviteId: $inviteId) {
+    ...__AdminInviteDetails
+  }
+}
+
+query __AdminInvites($input: ListInviteInput) {
+  invites(input: $input) {
+    ...__AdminInviteSummary
+  }
+  counters: invitesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminInvitePagination($input: ListInviteInput) {
+  counters: invitesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

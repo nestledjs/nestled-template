@@ -1,0 +1,46 @@
+query AdminBillingPlans {
+  adminBillingPlans {
+    id
+    name
+    description
+    price
+    interval
+    active
+    features
+    limits
+    stripeProductId
+    stripePriceId
+    trialPeriodDays
+  }
+}
+
+query AdminBillingSubscriptions($input: AdminBillingSubscriptionsInput) {
+  adminBillingSubscriptions(input: $input) {
+    total
+    subscriptions {
+      id
+      status
+      organizationId
+      organization {
+        id
+        name
+        emails {
+          id
+          email
+          primary
+        }
+      }
+      plan {
+        id
+        name
+        price
+        interval
+      }
+      stripeCustomerId
+      stripeCurrentPeriodEnd
+      trialEnd
+      cancelAtPeriodEnd
+      createdAt
+    }
+  }
+}

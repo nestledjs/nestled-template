@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../dist/out-tsc",
+    // vite/client is needed because this config compiles libs/shared/utils sources through the
+    // path mappings, and those read `import.meta.env`.
+    //
+    // ./src/lib/image-upload/cloudinary-react.d.ts was listed here but has never existed in this
+    // repo — no such file, no deletion in history, and nothing under libs/web references
+    // cloudinary. A missing entry in `types` is a hard TS2688, which is why this target could
+    // never run.
+    "types": [
+      "node",
+      "vite/client",
+      "@nx/react/typings/cssmodule.d.ts",
+      "@nx/react/typings/image.d.ts"
+    ]
+  },
+  "exclude": [
+    "jest.config.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.tsx",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.js",
+    "src/**/*.test.js",
+    "src/**/*.spec.jsx",
+    "src/**/*.test.jsx"
+  ],
+  "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"]
+}

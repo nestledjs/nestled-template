@@ -1,0 +1,63 @@
+id: 2026-07-22-nestled-forms-upgrade
+title: Nestled Forms 0.8.0 and data-browser 1.0.17 upgrade
+priority: normal
+area: web
+type: deps
+delivery: hybrid
+
+intent: >
+  Upgrade the template to the breaking @nestledjs/forms 0.8.0 release line, publish
+  @nestledjs/data-browser 1.0.17 with the matching forms peer contract, and keep
+  Apollo-backed relation fields working under the new pluggable search-query adapter.
+
+why: >
+  @nestledjs/forms 0.8.0 no longer bundles Apollo in the main package. Any
+  SearchSelectApollo/SearchSelectMultiApollo field now throws during render unless
+  the app provides an ApolloSearchProvider inside the existing ApolloProvider.
+  @nestledjs/data-browser builds admin relation fields with FormFieldClass.searchSelectApollo,
+  so downstream projects that consume the published package need both the app wrapper
+  and the republished data-browser package. The forms release also moves direct
+  PhoneField imports to @nestledjs/forms/phone, starts enforcing fields that only
+  set required: true, and routes native/noValidate error display through theme slots.
+  Those are behavior changes, so every form in a downstream app needs a quick manual
+  validation and error-styling check after the dependency upgrade.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - apps/web/app/entry.client.tsx
+  - apps/web/app/entry.server.tsx
+  - libs/data-browser/package.json
+  - libs/data-browser/README.md
+
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.17
+    versionRange: '>=1.0.17'
+
+skipIf:
+  - The downstream project does not use @nestledjs/forms or @nestledjs/data-browser.
+  - The downstream project already runs @nestledjs/forms 0.8.x, wraps Apollo-backed form fields with ApolloSearchProvider, and runs @nestledjs/data-browser>=1.0.17 if it uses the admin data browser.
+
+verification:
+  - pnpm typecheck
+  - pnpm nx run web:build --skip-nx-cache --output-style=stream
+  - pnpm nx run data-browser:typecheck --skip-nx-cache --output-style=stream
+  - pnpm nx run data-browser:test --skip-nx-cache --output-style=stream
+  - pnpm nx run web:test --skip-nx-cache --output-style=stream
+  - pnpm template:validate-upgrade-notes
+  - pnpm format:check
+  - pnpm run nestled-doctor
+
+agentHints:
+  - 'Upgrade @nestledjs/forms and @nestledjs/forms-core together to 0.8.0. If the project uses @nestledjs/forms-native, upgrade it to 0.8.0 in the same change.'
+  - 'Downstream projects that consume @nestledjs/data-browser should bump it to >=1.0.17; do not copy libs/data-browser source.'
+  - 'If the app renders searchSelectApollo/searchSelectMultiApollo fields, import ApolloSearchProvider from @nestledjs/forms/apollo and render it inside the existing ApolloProvider. The template needs this because libs/data-browser builds relation fields with FormFieldClass.searchSelectApollo.'
+  - 'If the project does not use GraphQL-backed form search fields, do not add ApolloSearchProvider just for this upgrade; it may be able to remove @apollo/client from form-only surfaces.'
+  - 'Move any direct PhoneField imports from @nestledjs/forms to @nestledjs/forms/phone. Declarative FormFieldClass.phone fields are still field definitions, but direct component imports are now subpath-only.'
+  - 'Manual QA is required: check every form after migration. Required-only fields now block submit, so any form that relied on old pass-through behavior may need copy, defaults, or required flags adjusted.'
+  - 'Also re-check error styling for forms using noValidate or custom themes, because error display is routed through theme slots in 0.8.0.'
+  - 'Full upstream notes and snippets: https://nestledforms.com/docs/changelog'
+
+sourceRepo: nestled-dev-template

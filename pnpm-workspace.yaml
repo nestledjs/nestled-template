@@ -1,0 +1,28 @@
+packages:
+  # apps/* (not apps/**): apps are direct children, and the recursive glob would also discover build
+  # output as workspace packages — React Router emits apps/web/build/client/package.json, which flips
+  # the workspace from 3 to 5 projects and makes `pnpm install --frozen-lockfile` fail after a build.
+  - apps/*
+  # libs/** stays recursive: the published library package is nested under libs/.
+  - libs/**
+  - tools/*
+
+onlyBuiltDependencies:
+  - '@apollo/protobufjs'
+  - '@nestjs/core'
+  - '@parcel/watcher'
+  - '@prisma/adapter-pg'
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@prisma/extension-optimize'
+  - '@swc/core'
+  - '@tailwindcss/oxide'
+  - es5-ext
+  - esbuild
+  - express
+  - ioredis
+  - nx
+  - prisma
+  - prisma-graphql-type-decimal
+  - type-graphql
+  - unrs-resolver

@@ -1,0 +1,34 @@
+id: 2026-07-29-doctor-safe-file-walk
+title: Keep nestled-doctor running when file traversal hits broken entries
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Make `scripts/doctor.ts` tolerate filesystem entries that disappear, cannot be read, or point at
+  broken symlinks while the recursive walker is scanning the repository. The doctor now skips those
+  traversal-only failures and continues checking the rest of the tree instead of aborting before it
+  can report real findings.
+
+why: >
+  Downstream projects can contain ignored backup folders, native/mobile generated trees, or local
+  tool caches with unstable symlinks. A single stale entry should not crash `pnpm run
+  nestled-doctor` before normal source checks run. This does not suppress findings in readable
+  source files; it only prevents filesystem traversal errors from ending the whole process.
+
+affectedPaths:
+  - scripts/doctor.ts
+
+skipIf:
+  - The local doctor script already catches directory-read and stat failures while walking files.
+
+verification:
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Keep the fallback scoped to traversal helpers such as `walkFiles` and `directFiles`. Do not add
+    broad catches around individual doctor checks, because those should still report real findings.
+  - If adapting manually, prefer small `safeReadDir` and `safeStat` helpers over repeating try/catch
+    blocks throughout the script.

@@ -1,0 +1,11 @@
+diff --git a/libs/shared/utils/src/lib/date.ts b/libs/shared/utils/src/lib/date.ts
+index bd3a92d..a23f1f6 100644
+--- a/libs/shared/utils/src/lib/date.ts
++++ b/libs/shared/utils/src/lib/date.ts
+@@ -1,5 +1,5 @@
+ import dayjs from 'dayjs'
+-import utc from 'dayjs/plugin/utc'
++import utc from 'dayjs/plugin/utc.js'
+ 
+ dayjs.extend(utc)
+ 

@@ -1,0 +1,54 @@
+id: 2026-08-19-graphql-operation-methods-ast
+title: Operation methods are read from the AST — the line scanner captured the wrong body
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  `getGraphqlOperationMethods` moves to `doctor-source-analysis.ts` and is read from the TypeScript
+  AST. It returns the same `decorators` / `name` / `body` / `line` shape plus `text`, the entire
+  method including its parameter list. `checkResolverScopeAnchoring` now reads `text`. The
+  now-unused `getBlockSource` is deleted.
+
+why: >
+  The line scanner located a method's body by taking the first `{` after the declaration line. For
+  any method whose parameters contain an object literal — `@Args('id', { type: () => String })`,
+  which is most of them — that `{` is the literal, so the "body" was `{ type: () => String }`.
+
+  `checkResolverScopeAnchoring` built its subject as `decorators + body`, tested it for `@Args(`,
+  and found none, so it skipped the operation. The check was not noisy; it was silently doing
+  almost nothing, which is worse — it read as a passing check.
+
+  Confirmed by probe before the change: for a `deleteFile(@Args('uploadId', { type: () => String })
+  uploadId, @CtxUser() user)` the helper returned body `"{ type: () => String }"` and decorators
+  `"@Mutation(() => Boolean)"`. After the change the check fires on exactly that shape.
+
+  `text` exists because `@CtxUser()` is a PARAMETER decorator: it appears in neither `decorators`
+  nor `body`, so nothing reasoning about an operation's caller-scoping can work from those two.
+
+affectedPaths:
+  - scripts/doctor.ts
+  - scripts/doctor-source-analysis.ts
+  - scripts/doctor-source-analysis.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project does not carry the template's doctor.
+
+verification:
+  - pnpm exec vitest run scripts/
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Expect resolver-scope review findings to appear on adoption where there were none. They are not
+    new problems; they are operations the old extraction skipped. Each says "this resolver uses a
+    caller-supplied id in data access without an obvious @CtxUser anchor" — read it, do not silence
+    it. The same blind spot hid two live IDOR bugs in this template
+    (see 2026-08-19-storage-signed-url-and-org-files-idor).
+  - >
+    Two other checks share the helper — the audit-coverage heuristic and the emulation-security
+    check. Both read `decorators` only, or fall back to whole-file text, so their behaviour is
+    unchanged; they simply get a correct body now.

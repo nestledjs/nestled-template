@@ -1,0 +1,20 @@
+query __AdminCountry($countryId: String!) {
+  country(countryId: $countryId) {
+    ...__AdminCountryDetails
+  }
+}
+
+query __AdminCountries($input: ListCountryInput) {
+  countries(input: $input) {
+    ...__AdminCountrySummary
+  }
+  counters: countriesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminCountryPagination($input: ListCountryInput) {
+  counters: countriesCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

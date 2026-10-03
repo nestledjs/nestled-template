@@ -1,0 +1,20 @@
+query __AdminApiToken($apiTokenId: String!) {
+  apiToken(apiTokenId: $apiTokenId) {
+    ...__AdminApiTokenDetails
+  }
+}
+
+query __AdminApiTokens($input: ListApiTokenInput) {
+  apiTokens(input: $input) {
+    ...__AdminApiTokenSummary
+  }
+  counters: apiTokensCount(input: $input) {
+    ...CorePagingDetails
+  }
+}
+
+query __AdminApiTokenPagination($input: ListApiTokenInput) {
+  counters: apiTokensCount(input: $input) {
+    ...CorePagingDetails
+  }
+}

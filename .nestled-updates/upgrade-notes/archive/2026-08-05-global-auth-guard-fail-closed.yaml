@@ -1,0 +1,82 @@
+id: 2026-08-05-global-auth-guard-fail-closed
+title: Refuse operations that declare no access level, with a global auth guard
+priority: critical
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  NestJS applies no guard unless one is asked for, so an operation that omits `@UseGuards` is
+  reachable by an anonymous request. Nothing enforced otherwise at runtime, and the absence of a
+  decorator is indistinguishable from someone forgetting one.
+
+  Add `GlobalAuthGuard`, registered as an `APP_GUARD`, which refuses any operation that has not
+  declared an access level. Declare that level with the new `@Public()`, `@Authenticated()`, and
+  `@AdminOnly()` decorators, and annotate every existing operation with the one matching the guard
+  it already carries.
+
+  The guard declares intent rather than performing authentication. Global guards run before method
+  guards, so the request is not yet authenticated when it executes and it cannot evaluate identity —
+  the guard already attached to the operation still does the real check. That division is
+  deliberate: this guard exists to refuse the undeclared, not to re-implement authentication.
+
+  There is no fallback. Nothing substitutes for a declaration — not an attached guard, not a
+  throttler. Generated CRUD declares its own level from `@nestledjs/generators` 1.1.6 onward, which
+  is why this note requires that version.
+
+why: >
+  Every other finding in this review was a specific hole. This one is the shape of the system: the
+  default was open, so security depended on each author remembering. The audit that prompted this
+  work found operations that were fine only because nobody had forgotten yet, and one that had been
+  forgotten and was serving user records to anonymous callers.
+
+  Inverting the default means a new operation cannot ship reachable by accident. Making it public
+  becomes a deliberate, reviewable edit rather than an omission that looks identical to correct code.
+
+affectedPaths:
+  - package.json
+  - libs/api/utils/src/lib/guards/auth-level.decorator.ts
+  - libs/api/utils/src/lib/guards/auth-level.decorator.spec.ts
+  - libs/api/utils/src/lib/guards/global-auth.guard.ts
+  - libs/api/utils/src/lib/guards/global-auth.guard.spec.ts
+  - libs/api/utils/src/lib/guards/guards.module.ts
+  - libs/api/utils/src/index.ts
+  - apps/api/src/app.module.ts
+  - scripts/doctor.ts
+
+skipIf:
+  - The project already registers a fail-closed global guard and every operation declares its level.
+
+verification:
+  - pnpm nx test api-utils
+  - pnpm nx build api
+  - pnpm run nestled-doctor
+
+agentHints:
+  - Apply this together with the bump to @nestledjs/generators 1.1.6, in one change. The two are
+    mutually dependent and either half alone breaks the app in a different way. Taking the guard
+    without the bump leaves every generated operation undeclared, so all generated CRUD starts
+    refusing. Taking the bump without the guard produces generated code importing AdminOnly,
+    Authenticated and Public from a barrel that does not export them yet, which fails to compile
+    with an error that says nothing about upgrade ordering.
+  - Annotate every hand-written operation before registering the guard, never the other way round.
+    Registering it first makes each unannotated operation start refusing, which looks like a total
+    outage and invites reverting the whole change.
+  - Derive each annotation from the guard the operation already carries rather than from its name.
+    An admin guard becomes AdminOnly, an authenticated or organization-scoped guard becomes
+    Authenticated. Keep the existing UseGuards in place; the decorator declares intent and the guard
+    still enforces it.
+  - A throttler is not a declaration. An operation carrying only a throttler is public and rate
+    limited, so it needs Public, not Authenticated. Rate limiting bounds how often anyone may call
+    an operation, not who may call it.
+  - Do not forget REST controllers. They have the same exposure as resolvers and are easy to miss
+    because they are not where authorization work usually happens. Endpoints reached before a
+    session exists, or authenticating by other means such as a webhook signature or a bearer token,
+    should be declared public at the controller level with the reason stated inline.
+  - Verify against a running server, not only unit tests. Confirm that a public operation still
+    answers anonymously, that an authenticated one refuses anonymously, and that the refusal comes
+    from the operation's own guard rather than from the global guard. A refusal naming the global
+    guard means an operation lost its declaration.
+  - This is the highest-blast-radius change in this series. A mistake does not leak data, it locks
+    users out, which is why the verification above is worth running before deploying rather than
+    after.

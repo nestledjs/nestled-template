@@ -1,0 +1,17 @@
+mutation __AdminCreateOAuthAccount($input: CreateOAuthAccountInput!) {
+  createOAuthAccount(input: $input) {
+    ...__AdminOAuthAccountDetails
+  }
+}
+
+mutation __AdminDeleteOAuthAccount($oAuthAccountId: String!) {
+  deleteOAuthAccount(oAuthAccountId: $oAuthAccountId) {
+    id
+  }
+}
+
+mutation __AdminUpdateOAuthAccount($oAuthAccountId: String!, $input: UpdateOAuthAccountInput!) {
+  updateOAuthAccount(oAuthAccountId: $oAuthAccountId, input: $input) {
+    ...__AdminOAuthAccountDetails
+  }
+}

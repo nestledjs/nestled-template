@@ -1,0 +1,32 @@
+id: 2026-07-30-ignore-generated-router-types-in-format
+title: Ignore generated React Router types during formatting
+priority: normal
+area: infra
+type: cleanup
+delivery: code-patch
+
+intent: >
+  Keep formatter checks focused on maintained source files by excluding generated React Router
+  `.react-router` type output from Prettier.
+
+why: >
+  `nx format:check --all` was reporting generated route type files. Downstream projects should
+  ignore generated output and then run their own formatter locally, rather than copying
+  format-only hunks from the template into diverged project files.
+
+affectedPaths:
+  - .prettierignore
+
+skipIf:
+  - '`.prettierignore` already excludes `apps/web/.react-router/`.'
+  - The project does not commit React Router generated type output.
+
+verification:
+  - pnpm exec nx format:check --all
+  - pnpm format:check
+
+agentHints:
+  - Apply the generated-file ignore first, then run the downstream repo's own formatter.
+  - >
+    Do not copy the template's format-only source, docs, or upgrade-note hunks into downstream
+    repos; those files may have diverged and should be formatted in place.

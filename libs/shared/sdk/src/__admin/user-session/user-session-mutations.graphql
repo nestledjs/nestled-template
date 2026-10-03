@@ -1,0 +1,17 @@
+mutation __AdminCreateUserSession($input: CreateUserSessionInput!) {
+  createUserSession(input: $input) {
+    ...__AdminUserSessionDetails
+  }
+}
+
+mutation __AdminDeleteUserSession($userSessionId: String!) {
+  deleteUserSession(userSessionId: $userSessionId) {
+    id
+  }
+}
+
+mutation __AdminUpdateUserSession($userSessionId: String!, $input: UpdateUserSessionInput!) {
+  updateUserSession(userSessionId: $userSessionId, input: $input) {
+    ...__AdminUserSessionDetails
+  }
+}

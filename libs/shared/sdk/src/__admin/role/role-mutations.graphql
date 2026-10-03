@@ -1,0 +1,17 @@
+mutation __AdminCreateRole($input: CreateRoleInput!) {
+  createRole(input: $input) {
+    ...__AdminRoleDetails
+  }
+}
+
+mutation __AdminDeleteRole($roleId: String!) {
+  deleteRole(roleId: $roleId) {
+    id
+  }
+}
+
+mutation __AdminUpdateRole($roleId: String!, $input: UpdateRoleInput!) {
+  updateRole(roleId: $roleId, input: $input) {
+    ...__AdminRoleDetails
+  }
+}

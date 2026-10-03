@@ -1,0 +1,17 @@
+mutation __AdminCreateCountry($input: CreateCountryInput!) {
+  createCountry(input: $input) {
+    ...__AdminCountryDetails
+  }
+}
+
+mutation __AdminDeleteCountry($countryId: String!) {
+  deleteCountry(countryId: $countryId) {
+    id
+  }
+}
+
+mutation __AdminUpdateCountry($countryId: String!, $input: UpdateCountryInput!) {
+  updateCountry(countryId: $countryId, input: $input) {
+    ...__AdminCountryDetails
+  }
+}

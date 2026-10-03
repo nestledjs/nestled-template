@@ -1,0 +1,64 @@
+id: 2026-08-11-converge-01-dependencies
+title: "Convergence step 1 of 4: dependencies, lockfile and vulnerability backlog"
+priority: high
+area: infra
+type: deps
+delivery: code-patch
+
+intent: >
+  Refresh direct dependencies across the workspace, resolve vulnerable transitive packages with
+  narrow pnpm overrides, align peer-resolved runtime packages, and commit the resulting lockfile.
+  This is the first of four convergence steps and exists on its own because everything after it
+  installs, builds and tests against these versions; doing it later means running the whole suite
+  twice.
+
+  Replaces the individual note 2026-08-10-dependency-security-refresh, which described the same
+  work as a standalone upgrade.
+
+why: >
+  These projects were all cloned from a common baseline and then diverged, and the dependency
+  backlog is the part of that divergence that carries published CVEs rather than opinion. The
+  template's own default branch was reporting 163 Dependabot advisories, 8 of them critical, before
+  this refresh; every project cloned from it inherited the same tree.
+
+  It is separated from the security and tooling steps deliberately. A dependency bump that breaks a
+  build is diagnosed in seconds when it is the only thing that changed, and in hours when it lands
+  in the same commit as an authorization refactor.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - apps/web/package.json
+  - libs/shared/apollo/package.json
+
+packageReleases: []
+
+skipIf:
+  - The project already installs cleanly with a frozen lockfile and reports no advisories it has
+    not explicitly accepted.
+
+verification:
+  - pnpm install --frozen-lockfile
+  - pnpm audit
+  - pnpm typecheck
+  - pnpm test
+  - pnpm exec nx run api:build --skipNxCache
+
+agentHints:
+  - >
+    Take the template's versions rather than resolving your own. The point of this step is that
+    nine projects end on the same tree; a project that picks its own patch levels reintroduces the
+    divergence this convergence exists to remove.
+  - >
+    Run pnpm install --frozen-lockfile before anything else and treat a failure as the real result
+    of this step. A lockfile that cannot be installed from is the most common way a project silently
+    stops matching the template.
+  - >
+    Prefer narrow pnpm overrides for vulnerable transitive packages over bumping the direct parent
+    past a major. An override is visible, reviewable and reversible; a surprise major is none of
+    those.
+  - >
+    Record this id when the checks above pass. If the project genuinely has no advisories and
+    already matches, record it not-applicable WITH the reason -- a bare not-applicable is
+    indistinguishable from a project that skipped the step, and that ambiguity is what made the
+    previous backlog unreadable.
