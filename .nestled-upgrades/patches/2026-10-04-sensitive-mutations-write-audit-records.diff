@@ -1,0 +1,1410 @@
+diff --git a/.nestled-updates/doctor.config.json b/.nestled-updates/doctor.config.json
+index 243a48b..51cedf1 100644
+--- a/.nestled-updates/doctor.config.json
++++ b/.nestled-updates/doctor.config.json
+@@ -2,5 +2,6 @@
+   "selectFileSuffixes": [
+     ".select.ts"
+   ],
+-  "noSelectFiles": "This template returns GraphQL through generated CRUD and inline Prisma selects; it declares no reusable *.select.ts constants. A clone that adopts the select pattern should delete this key so the verifiers start checking its files."
++  "noSelectFiles": "This template returns GraphQL through generated CRUD and inline Prisma selects; it declares no reusable *.select.ts constants. A clone that adopts the select pattern should delete this key so the verifiers start checking its files.",
++  "noCheckableSelects": "The template's services and resolvers use inline Prisma selects and generated CRUD, not named select constants, so verify-fragments has nothing to compare against SDK fragments. A clone that adopts named select constants should delete this key so the check starts verifying them."
+ }
+diff --git a/.nestled-updates/upgrade-notes/2026-10-04-sensitive-mutations-write-audit-records.yaml b/.nestled-updates/upgrade-notes/2026-10-04-sensitive-mutations-write-audit-records.yaml
+new file mode 100644
+index 0000000..32a6e99
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-04-sensitive-mutations-write-audit-records.yaml
+@@ -0,0 +1,148 @@
++id: 2026-10-04-sensitive-mutations-write-audit-records
++title: Doctor 0.6.2 (hard-fail checks, --full) and AuditLog rows for every sensitive mutation
++priority: normal
++area: auth
++type: security
++delivery: hybrid
++
++intent: >
++  0. `@nestledjs/doctor` moves to 0.6.2. New and stricter checks fail hard: per-mutation
++  audit-coverage, raw NUL bytes in source, verify-fragments declarations, and repo-declared guards
++  (`.nestled-updates/security/declared-guards.json`). `nestled-doctor --full` fails on every review
++  finding and is how a repo gets clean once; normal runs then fail only on changed lines.
++
++  Every sensitive GraphQL mutation that changes account, organization membership, session or
++  billing state now writes an `AuditLog` row (`entityId`, `entityType`, `action`, `userId`,
++  `organizationId?`, `changes?`), so `nestled-doctor --full` passes its `audit-coverage` check
++  without exemptions.
++
++  1. The best-effort helper moves from `plugins/billing/audit-log.ts` to
++  `libs/api/custom/src/lib/shared/audit-log.ts` and is renamed `recordBillingAuditLog` ->
++  `recordAuditLog(data, { actorUserId, organizationId?, entityId, entityType, action, changes? })`.
++  It logs and swallows a failed write, so an audit failure never changes a mutation's result.
++  The billing sync and checkout/portal/cancel mutations already wrote rows through it; doctor 0.6.0
++  did not recognise the old name and reported them. Since 0.6.1 the doctor recognises `audit` as any part of
++  an identifier, so the rename is for clarity (the helper is no longer billing-only), not to satisfy
++  the check.
++
++  2. `OrganizationService` records ORGANIZATION_CREATED, ORGANIZATION_DELETED (no organizationId on
++  the row, since the organization is gone; entityId identifies it), ORGANIZATION_MEMBER_ADDED,
++  ORGANIZATION_INVITATION_RENEWED, ORGANIZATION_INVITATION_ACCEPTED,
++  ORGANIZATION_INVITATION_DECLINED and ACTIVE_ORGANIZATION_SWITCHED through its existing
++  `recordAuditLog`. `transferOrganizationOwnership` writes ORGANIZATION_OWNERSHIP_TRANSFERRED inside
++  the role-swap `$transaction`.
++
++  3. `AuthService` records USER_REGISTERED, USER_REGISTERED_WITH_INVITATION, PROFILE_UPDATED,
++  EMAIL_VERIFICATION_TOKEN_REISSUED (self-service resend only; see below), EMAIL_VERIFIED, EMAIL_CHANGE_VERIFIED,
++  TWO_FACTOR_SETUP_STARTED, TWO_FACTOR_CODE_VERIFIED / TWO_FACTOR_CODE_REJECTED (from
++  `verify2FALogin`, with `method: totp|backup_code`), LOGIN_2FA_COMPLETED, SESSION_INVALIDATED,
++  ALL_SESSIONS_INVALIDATED, ACCOUNT_DELETED and LOGOUT. `transferOrganizationOwnership` writes
++  ORGANIZATION_OWNERSHIP_TRANSFERRED inside its `$transaction`. Logout moves from
++  `SessionService.invalidateSession` in the resolver to a new `AuthService.logout(sessionId)`,
++  which invalidates the session and attributes the row to the session's owner.
++
++  4. `OAuthService` records OAUTH_ACCOUNT_LINKED and OAUTH_ACCOUNT_UNLINKED with the provider.
++
++  No secrets, tokens, codes, passwords, 2FA secrets or URLs are written to `changes`.
++
++  Where a mutation commits state and then sends mail (registration, invitation registration,
++  invitation renewal, verification-token reissue), the row is written after the commit and BEFORE
++  the send: the mailer rethrows, and a failed send must not leave a committed change unrecorded.
++  Logout's owner lookup is best-effort like the write, so it can never stop the cookie being cleared,
++  and the resolver now clears the cookie in a `finally`, so a failed invalidation (for example a
++  session already removed by cleanup) no longer leaves a dead credential in the browser.
++  LOGIN_2FA_COMPLETED is written after `signUser` succeeds, not before.
++
++  The PUBLIC verification resend is unauthenticated: the caller only named an address, so an
++  AuditLog row with that account as `userId` would claim the owner acted. It records a SecurityEvent
++  instead, like a password-reset request: new enum value `SecurityEventType.EMAIL_VERIFICATION_REQUESTED`
++  (migration `20261004190000_security_event_email_verification_requested`, a single
++  `ALTER TYPE ... ADD VALUE`), logged against the account with the request's IP and user agent.
++  `resendVerificationEmail` now takes the resolver's session info for that context.
++  `SecurityEventsService.logEvent` now contains a failed write inside its detached callback instead
++  of leaving an unhandled rejection.
++
++why: >
++  These mutations change who can sign in, who belongs to an organization, and what an
++  organization pays for, yet most left no record of who did it. Without that trail an operator
++  cannot reconstruct an account takeover, a membership change or an ownership transfer after the
++  fact. The doctor's audit-coverage check flags each one.
++
++  Public mutations write a row only once the acting user is known. `resendVerificationEmail` writes
++  nothing for an unknown or non-primary address, and the write is best-effort and does not alter
++  the response, so the endpoint still does not reveal which addresses belong to an account.
++  `logout` writes nothing when no token or no session is presented.
++
++affectedPaths:
++  - libs/api/prisma/src/lib/schemas/schema.prisma
++  - libs/api/prisma/src/lib/migrations/20261004190000_security_event_email_verification_requested/migration.sql
++  - libs/api/custom/src/lib/plugins/security/security-events.service.ts
++  - api-schema.graphql
++  - libs/shared/sdk/src/generated/graphql.ts
++  - apps/web/app/routes/admin/security-events/_index.tsx
++  - libs/api/custom/src/lib/shared/audit-log.ts
++  - libs/api/custom/src/lib/plugins/billing/audit-log.ts
++  - libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
++  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
++  - libs/api/custom/src/lib/default/organization/organization.service.ts
++  - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
++  - libs/api/custom/src/lib/plugins/auth/oauth.service.ts
++
++packageReleases:
++  - name: '@nestledjs/doctor'
++    targetVersion: 0.6.2
++    versionRange: 0.6.2
++
++skipIf:
++  - Never skip the doctor bump. Skip only the AuditLog code changes, and only when the project already writes audit rows for these mutations through its own mechanism and `nestled-doctor --full` passes.
++
++verification:
++  - pnpm exec nx run api-custom:test
++  - pnpm exec nx run api:typecheck
++  - pnpm exec nestled-doctor --full
++
++agentHints:
++  - >
++    Add the audit write next to each existing state change rather than overwriting the methods.
++    Where the state change is already inside a `$transaction`, add `auditLog.create` to that
++    transaction; elsewhere call `recordAuditLog(this.data, ...)`.
++  - >
++    The doctor recognises an audit write by `audit` appearing in an identifier (`auditLog`,
++    `recordAuditLog`, `this.auditService`, `runInAuditTransaction`, ...) or `SecurityEvent`, and
++    follows only `this.method()` and `this.<typed injected field>.method()` calls, up to three deep.
++    A project-local audit helper is detected as long as its name contains `audit`/`Audit` and it is
++    reached through one of those call shapes. Do not rename helpers to satisfy the check.
++  - >
++    Apply the enum migration through the project's normal migration path (it is additive and safe
++    to run before the new release serves). If the project has renamed or extended
++    `SecurityEventType`, add the value to its own enum and generate its own migration rather than
++    copying the template's. Then run `pnpm db-update` (the whole chain: generators, API schema
++    refresh, SDK). Not `db-update:generate` plus `pnpm sdk`: that compiles the SDK from a stale
++    api-schema.graphql. Any exhaustive `Record<SecurityEventType, ...>` map, such as the admin
++    security-events page's, needs the new entry or typecheck fails.
++  - >
++    `SecurityEventsService.logEvent` now catches a failed write inside its detached callback. It
++    previously caught only scheduling errors, so a database failure became an unhandled rejection.
++    Apply this even if the project keeps its own logEvent; every security event goes through it.
++  - >
++    The verifiers no longer pass when they examined nothing. If `pnpm verify:fragments` (or
++    `verify:selects` / `verify:select-coverage`) now exits 1 saying it checked nothing, either the
++    project genuinely has no checkable select constants, in which case declare why in
++    `.nestled-updates/doctor.config.json` (`noCheckableSelects` for fragments, `noSelectFiles` for
++    the select verifiers, each a one-sentence reason), or the search is missing the project's files,
++    in which case set `selectFileSuffixes`. The template declares both.
++  - >
++    Adopting doctor 0.6.x: run `pnpm exec nestled-doctor --full` once and fix every failure it lists
++    (not only audit-coverage), then normal runs fail only on changed lines. Record a mutation in
++    `.nestled-updates/security/audit-exemptions.json` only when it genuinely changes nothing worth
++    auditing, with a reason.
++  - >
++    Keep `resendVerificationEmail` indistinguishable for known and unknown addresses: record only in
++    the branch that actually sent, and never let the audit write throw.
++  - >
++    If the project has its own copies of `recordBillingAuditLog`, update the import to the shared
++    helper and rename the calls.
+diff --git a/api-schema.graphql b/api-schema.graphql
+index 88ff6f6..2d420c0 100644
+--- a/api-schema.graphql
++++ b/api-schema.graphql
+@@ -2814,6 +2814,7 @@ enum SecurityEventType {
+   API_TOKEN_REVOKED
+   API_TOKEN_ROTATED
+   EMAIL_CHANGED
++  EMAIL_VERIFICATION_REQUESTED
+   LOGIN_LOCATION_CHANGE
+   PASSWORD_CHANGED
+   PASSWORD_RESET_REQUESTED
+diff --git a/apps/web/app/routes/admin/security-events/_index.tsx b/apps/web/app/routes/admin/security-events/_index.tsx
+index d5b9756..d4aa900 100644
+--- a/apps/web/app/routes/admin/security-events/_index.tsx
++++ b/apps/web/app/routes/admin/security-events/_index.tsx
+@@ -82,6 +82,12 @@ const EVENT_TYPE_CONFIG: Record<
+     icon: KeyIcon,
+     color: 'blue',
+   },
++  [SecurityEventType.EmailVerificationRequested]: {
++    label: 'Verification Requested',
++    description: 'A verification email was requested for this account without signing in',
++    icon: UserCircleIcon,
++    color: 'blue',
++  },
+   [SecurityEventType.LoginLocationChange]: {
+     label: 'Location Change',
+     description: 'Login from new location detected',
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+index 8f77141..a955b67 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+@@ -254,7 +254,7 @@ describe('OrganizationService', () => {
+           role: { permissions: [{ subject: 'member', action: 'invite' }] },
+         } as any)
+         .mockResolvedValueOnce(null) // No existing member
+-      data.organizationMember.create.mockResolvedValue({} as any)
++      data.organizationMember.create.mockResolvedValue({ id: 'membership-789' } as any)
+       const result = await service.addOrganizationMember(userId, input)
+       expect(result).toBe(true)
+       expect(data.organizationMember.create).toHaveBeenCalledWith({
+@@ -264,6 +264,20 @@ describe('OrganizationService', () => {
+           roleId: input.roleId,
+         },
+       })
++      expect(data.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          userId,
++          organizationId: 'org-123',
++          entityId: 'new-user-456',
++          entityType: 'OrganizationMember',
++          action: 'ORGANIZATION_MEMBER_ADDED',
++          changes: {
++            addedUserId: 'new-user-456',
++            membershipId: 'membership-789',
++            roleId: 'role-member',
++          },
++        }),
++      })
+     })
+     it('should throw BadRequestException if user is already a member', async () => {
+       const userId = 'user-123'
+@@ -513,6 +527,15 @@ describe('OrganizationService', () => {
+         where: { id: 'invite-123' },
+         data: { status: 'ACCEPTED' },
+       })
++      expect(data.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          userId,
++          organizationId: 'org-123',
++          entityId: 'invite-123',
++          entityType: 'Invite',
++          action: 'ORGANIZATION_INVITATION_ACCEPTED',
++        }),
++      })
+     })
+     it('should throw BadRequestException for expired invitation', async () => {
+       const userId = 'user-123'
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.ts b/libs/api/custom/src/lib/default/organization/organization.service.ts
+index 6339d19..9700938 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.ts
+@@ -203,6 +203,15 @@ export class OrganizationService {
+       })
+     }
+ 
++    await this.recordAuditLog({
++      actorUserId: userId,
++      organizationId: organization.id,
++      entityId: organization.id,
++      entityType: 'Organization',
++      action: 'ORGANIZATION_CREATED',
++      changes: { name: organization.name },
++    })
++
+     Logger.log(`User ${userId} created organization: ${organization.name}`)
+ 
+     return organization
+@@ -266,6 +275,11 @@ export class OrganizationService {
+       throw new ForbiddenException('Only organization owners can delete the organization')
+     }
+ 
++    const organizationToDelete = await this.data.organization.findUnique({
++      where: { id: organizationId },
++      select: { name: true },
++    })
++
+     // Manually cascade delete related records before deleting organization
+     // This is necessary because the database schema doesn't have cascade deletes configured
+ 
+@@ -298,6 +312,16 @@ export class OrganizationService {
+       })
+     }
+ 
++    // No organizationId on the row: the organization no longer exists to reference (the FK would
++    // reject it). entityId still identifies it.
++    await this.recordAuditLog({
++      actorUserId: userId,
++      entityId: organizationId,
++      entityType: 'Organization',
++      action: 'ORGANIZATION_DELETED',
++      changes: { name: organizationToDelete?.name ?? null },
++    })
++
+     Logger.log(`User ${userId} deleted organization: ${organizationId}`)
+ 
+     return true
+@@ -327,7 +351,7 @@ export class OrganizationService {
+     }
+ 
+     // Add the member
+-    await this.data.organizationMember.create({
++    const member = await this.data.organizationMember.create({
+       data: {
+         userId: input.userId,
+         organizationId: input.organizationId,
+@@ -335,6 +359,19 @@ export class OrganizationService {
+       },
+     })
+ 
++    await this.recordAuditLog({
++      actorUserId: userId,
++      organizationId: input.organizationId,
++      entityId: input.userId,
++      entityType: 'OrganizationMember',
++      action: 'ORGANIZATION_MEMBER_ADDED',
++      changes: {
++        addedUserId: input.userId,
++        membershipId: member?.id ?? null,
++        roleId: input.roleId,
++      },
++    })
++
+     Logger.log(
+       `User ${userId} added member ${input.userId} to organization ${input.organizationId}`,
+     )
+@@ -672,6 +709,20 @@ export class OrganizationService {
+       },
+     })
+ 
++    // Recorded when the old link is replaced, not after delivery: sendTemplate rethrows, and a
++    // failed send still leaves the invitation renewed.
++    await this.recordAuditLog({
++      actorUserId: userId,
++      organizationId: invite.organizationId,
++      entityId: invite.id,
++      entityType: 'Invite',
++      action: 'ORGANIZATION_INVITATION_RENEWED',
++      changes: {
++        email: invite.email,
++        expiresAt: expiresAt.toISOString(),
++      },
++    })
++
+     // Get inviter details for email
+     const inviter = await this.data.user.findUnique({ where: { id: userId } })
+ 
+@@ -820,7 +871,7 @@ export class OrganizationService {
+       throw new BadRequestException('Invitation is missing a role')
+     }
+ 
+-    await this.data.organizationMember.create({
++    const membership = await this.data.organizationMember.create({
+       data: {
+         userId,
+         organizationId: invite.organizationId,
+@@ -843,6 +894,18 @@ export class OrganizationService {
+       })
+     }
+ 
++    await this.recordAuditLog({
++      actorUserId: userId,
++      organizationId: invite.organizationId,
++      entityId: invite.id,
++      entityType: 'Invite',
++      action: 'ORGANIZATION_INVITATION_ACCEPTED',
++      changes: {
++        membershipId: membership?.id ?? null,
++        roleId,
++      },
++    })
++
+     Logger.log(`User ${userId} accepted invitation to organization ${invite.organizationId}`)
+ 
+     return invite.organization
+@@ -883,6 +946,14 @@ export class OrganizationService {
+       data: { status: 'DECLINED' },
+     })
+ 
++    await this.recordAuditLog({
++      actorUserId: userId,
++      organizationId: invite.organizationId,
++      entityId: invite.id,
++      entityType: 'Invite',
++      action: 'ORGANIZATION_INVITATION_DECLINED',
++    })
++
+     Logger.log(`User ${userId} rejected invitation to organization ${invite.organizationId}`)
+ 
+     return true
+@@ -905,11 +976,29 @@ export class OrganizationService {
+     }
+ 
+     // Update active organization
++    const previous = await this.data.user.findUnique({
++      where: { id: userId },
++      select: { activeOrganizationId: true },
++    })
+     const user = await this.data.user.update({
+       where: { id: userId },
+       data: { activeOrganizationId: input.organizationId },
+     })
+ 
++    await this.recordAuditLog({
++      actorUserId: userId,
++      organizationId: input.organizationId,
++      entityId: userId,
++      entityType: 'User',
++      action: 'ACTIVE_ORGANIZATION_SWITCHED',
++      changes: {
++        activeOrganizationId: {
++          before: previous?.activeOrganizationId ?? null,
++          after: input.organizationId,
++        },
++      },
++    })
++
+     // Update cache with new active organization
+     if (this.authCache?.isEnabled()) {
+       await this.authCache.setUserActiveOrganization(userId, input.organizationId)
+@@ -1350,6 +1439,20 @@ export class OrganizationService {
+         where: { id: currentOwnerMember.id },
+         data: { roleId: targetMember.roleId }, // Give current owner the new owner's previous role
+       }),
++      this.data.auditLog.create({
++        data: {
++          userId,
++          organizationId: input.organizationId,
++          entityId: input.organizationId,
++          entityType: 'Organization',
++          action: 'ORGANIZATION_OWNERSHIP_TRANSFERRED',
++          changes: {
++            previousOwnerUserId: userId,
++            newOwnerUserId: input.newOwnerUserId,
++            previousOwnerNewRoleId: targetMember.roleId,
++          },
++        },
++      }),
+     ])
+ 
+     // Invalidate cached memberships for both users
+diff --git a/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts b/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+index 68ebc90..1ea90b3 100644
+--- a/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
++++ b/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+@@ -6,7 +6,7 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
+ import { StripeService } from '@nestled-template/api/integrations'
+ import { ConfigService } from '@nestled-template/api/config'
+ import { UsageService } from '../../plugins/billing/usage.service'
+-import { recordBillingAuditLog } from '../../plugins/billing/audit-log'
++import { recordAuditLog } from '../../shared/audit-log'
+ 
+ /**
+  * User Subscription Resolver
+@@ -98,7 +98,7 @@ export class UserSubscriptionResolver {
+       },
+     })
+ 
+-    await recordBillingAuditLog(this.prisma, {
++    await recordAuditLog(this.prisma, {
+       actorUserId: user.id,
+       organizationId: organization.id,
+       entityId: organization.id,
+@@ -138,7 +138,7 @@ export class UserSubscriptionResolver {
+       returnUrl: `${siteUrl}/settings/billing`,
+     })
+ 
+-    await recordBillingAuditLog(this.prisma, {
++    await recordAuditLog(this.prisma, {
+       actorUserId: user.id,
+       organizationId: user.activeOrganizationId,
+       entityId: subscription.id,
+@@ -180,7 +180,7 @@ export class UserSubscriptionResolver {
+       },
+     })
+ 
+-    await recordBillingAuditLog(this.prisma, {
++    await recordAuditLog(this.prisma, {
+       actorUserId: user.id,
+       organizationId: user.activeOrganizationId,
+       entityId: subscription.id,
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+index 4348ec1..05b3dc7 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+@@ -30,6 +30,7 @@ describe('AuthResolver', () => {
+       complete2FALogin: jest.fn().mockResolvedValue(token),
+       setCookie: jest.fn(),
+       clearCookie: jest.fn(),
++      logout: jest.fn().mockResolvedValue(undefined),
+       getCookieName: jest.fn().mockReturnValue('__session'),
+       decodeToken: jest.fn().mockReturnValue({ sessionId: 'session-1' }),
+       register: jest.fn().mockResolvedValue(token),
+@@ -152,10 +153,19 @@ describe('AuthResolver', () => {
+ 
+     expect(authService.decodeToken).toHaveBeenNthCalledWith(1, 'cookie-token')
+     expect(authService.decodeToken).toHaveBeenNthCalledWith(2, 'header-token')
+-    expect(sessionService.invalidateSession).toHaveBeenCalledTimes(2)
++    // Logout goes through AuthService so the session owner can be attributed in the audit log.
++    expect(authService.logout).toHaveBeenCalledTimes(2)
++    expect(authService.logout).toHaveBeenCalledWith('session-1')
+     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
+   })
+ 
++  it('clears the cookie even when session invalidation fails, and still reports the error', async () => {
++    authService.logout.mockRejectedValueOnce(new Error('Record to update not found'))
++
++    await expect(resolver.logout(context)).rejects.toThrow('Record to update not found')
++    expect(authService.clearCookie).toHaveBeenCalledTimes(1)
++  })
++
+   it('normalizes password recovery inputs and delegates account mutations with session data', async () => {
+     await resolver.forgotPassword(context, { email: ' ADA@EXAMPLE.COM ' } as any)
+     await resolver.resetPassword(context, { password: 'new-secret', token: 'reset-token' } as any)
+@@ -288,7 +298,7 @@ describe('AuthResolver', () => {
+   })
+ 
+   it('delegates verification and data ownership operations', async () => {
+-    await resolver.resendVerificationEmail('ada@example.com')
++    await resolver.resendVerificationEmail(context, 'ada@example.com')
+     await resolver.verifyEmail({ token: 'verify-token' } as any)
+     await resolver.verifyEmailChange('change-token')
+     await resolver.exportUserData(user)
+@@ -298,7 +308,11 @@ describe('AuthResolver', () => {
+       newOwnerUserId: 'user-2',
+     } as any)
+ 
+-    expect(authService.resendVerificationEmail).toHaveBeenCalledWith('ada@example.com', undefined)
++    expect(authService.resendVerificationEmail).toHaveBeenCalledWith(
++      'ada@example.com',
++      undefined,
++      sessionInfo,
++    )
+     expect(authService.verifyEmail).toHaveBeenCalledWith('verify-token')
+     expect(authService.verifyEmailChange).toHaveBeenCalledWith('change-token')
+     expect(authService.exportUserData).toHaveBeenCalledWith('user-1')
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+index ff74a52..e35ecd9 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+@@ -180,15 +180,19 @@ export class AuthResolver {
+       }
+     }
+ 
+-    if (token) {
+-      const sessionId = this.getSessionIdFromToken(token)
+-      if (sessionId) {
+-        await this.sessionService.invalidateSession(sessionId)
+-        Logger.log(`Session ${sessionId} invalidated during logout`)
++    // The cookie is cleared even when invalidation throws (e.g. a session already removed by
++    // cleanup): leaving a dead credential in the browser helps nobody. The error still propagates.
++    try {
++      if (token) {
++        const sessionId = this.getSessionIdFromToken(token)
++        if (sessionId) {
++          await this.service.logout(sessionId)
++          Logger.log(`Session ${sessionId} invalidated during logout`)
++        }
+       }
++    } finally {
++      this.service.clearCookie(context.res)
+     }
+-
+-    this.service.clearCookie(context.res)
+     return true
+   }
+ 
+@@ -258,10 +262,12 @@ export class AuthResolver {
+   @UseGuards(GqlThrottlerGuard)
+   @Public()
+   resendVerificationEmail(
++    @Context() context: NestContextType,
+     @Args('email') email: string,
+     @Args('captchaToken', { nullable: true }) captchaToken?: string,
+   ) {
+-    return this.service.resendVerificationEmail(email, captchaToken)
++    const sessionInfo = this.sessionService.extractSessionInfo(context.req)
++    return this.service.resendVerificationEmail(email, captchaToken, sessionInfo)
+   }
+ 
+   // Resend to the signed-in user's own primary address. No captcha and no rate limit: the caller
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+index 11eec7d..df40802 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+@@ -168,6 +168,7 @@ describe('AuthService', () => {
+       logAccountUnlocked: jest.fn().mockResolvedValue(undefined),
+       logPasswordChanged: jest.fn().mockResolvedValue(undefined),
+       logPasswordResetRequested: jest.fn().mockResolvedValue(undefined),
++      logEmailVerificationRequested: jest.fn().mockResolvedValue(undefined),
+       logEmailChanged: jest.fn().mockResolvedValue(undefined),
+       log2FAEnabled: jest.fn().mockResolvedValue(undefined),
+       log2FADisabled: jest.fn().mockResolvedValue(undefined),
+@@ -1122,6 +1123,28 @@ describe('AuthService', () => {
+       await expect(service.resendVerificationEmail('ada@example.com')).resolves.toBe(true)
+     })
+ 
++    it('records a public resend as a security event on the account, not as the owner acting', async () => {
++      // The caller only named an address; nothing proves the owner asked.
++      mockData.user.findFirst.mockResolvedValue({
++        id: 'user-1',
++        firstName: 'Ada',
++        emails: [{ email: 'ada@example.com', primary: true }],
++      })
++      mockData.email.findFirst.mockResolvedValue({ email: 'ada@example.com', primary: true })
++      mockData.user.update.mockResolvedValue({ id: 'user-1' })
++
++      await service.resendVerificationEmail('ada@example.com', undefined, {
++        ipAddress: '203.0.113.7',
++        userAgent: 'test-agent',
++      } as any)
++
++      expect(mockSecurityEvents.logEmailVerificationRequested).toHaveBeenCalledWith('user-1', {
++        ipAddress: '203.0.113.7',
++        userAgent: 'test-agent',
++      })
++      expect(mockData.auditLog.create).not.toHaveBeenCalled()
++    })
++
+     it('resendMyVerificationEmail still surfaces a send failure to the signed-in user', async () => {
+       // The authenticated path has nothing to hide: the caller owns the account, so a real
+       // delivery failure should be reported rather than swallowed.
+@@ -1135,6 +1158,14 @@ describe('AuthService', () => {
+       mockEmailService.sendTemplate.mockRejectedValue(new Error('connect ECONNREFUSED :1025'))
+ 
+       await expect(service.resendMyVerificationEmail('user-1')).rejects.toThrow(/ECONNREFUSED/)
++      // The new token was committed before the send failed, so the reissue is still recorded.
++      expect(mockData.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          userId: 'user-1',
++          action: 'EMAIL_VERIFICATION_TOKEN_REISSUED',
++          changes: { source: 'self' },
++        }),
++      })
+     })
+ 
+     it('marks the primary Email row verified alongside the User flag', async () => {
+@@ -1560,6 +1591,45 @@ describe('AuthService', () => {
+         where: { id: sessionId, userId },
+       })
+       expect(mockSessionService.invalidateSession).toHaveBeenCalledWith(sessionId)
++      expect(mockData.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          userId,
++          entityId: sessionId,
++          entityType: 'UserSession',
++          action: 'SESSION_INVALIDATED',
++        }),
++      })
++    })
++    it('should audit a logout against the session owner', async () => {
++      mockSessionService.invalidateSession.mockResolvedValue(undefined)
++      mockData.userSession.findUnique.mockResolvedValue({ userId: 'user-123' } as any)
++
++      await service.logout('session-1')
++
++      expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
++      expect(mockData.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          userId: 'user-123',
++          entityId: 'session-1',
++          entityType: 'UserSession',
++          action: 'LOGOUT',
++        }),
++      })
++    })
++    it('should not audit a logout whose session cannot be attributed', async () => {
++      mockSessionService.invalidateSession.mockResolvedValue(undefined)
++      mockData.userSession.findUnique.mockResolvedValue(null)
++
++      await service.logout('session-gone')
++
++      expect(mockData.auditLog.create).not.toHaveBeenCalled()
++    })
++    it('should still complete a logout when the audit attribution lookup fails', async () => {
++      mockSessionService.invalidateSession.mockResolvedValue(undefined)
++      mockData.userSession.findUnique.mockRejectedValue(new Error('connection reset'))
++
++      await expect(service.logout('session-1')).resolves.toBeUndefined()
++      expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
+     })
+     it('should invalidate all sessions except current', async () => {
+       const userId = 'user-123'
+@@ -1955,6 +2025,27 @@ describe('AuthService', () => {
+         expect(result.token).toBe('final-jwt-token')
+       }
+       expect(mockSessionService.createSession).toHaveBeenCalled()
++      expect(mockData.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({ userId: 'user-123', action: 'LOGIN_2FA_COMPLETED' }),
++      })
++    })
++    it('does not record a completed 2FA login when the session cannot be created', async () => {
++      mockJwtService.verify.mockReturnValue({ userId: 'user-123', temp2FA: true } as any)
++      mockData.user.findUnique.mockResolvedValue({
++        id: 'user-123',
++        username: 'testuser',
++        twoFactorSecret: '1234567890abcdef1234567890abcdef:fedcba0987654321fedcba0987654321',
++        twoFactorEnabled: true,
++        emails: [{ email: 'test@example.com', primary: true }],
++      } as any)
++      mockSessionService.createSession.mockRejectedValue(new Error('database unavailable'))
++
++      await expect(service.complete2FALogin('temp-jwt-token', '123456', {} as any)).rejects.toThrow(
++        'database unavailable',
++      )
++      expect(mockData.auditLog.create).not.toHaveBeenCalledWith({
++        data: expect.objectContaining({ action: 'LOGIN_2FA_COMPLETED' }),
++      })
+     })
+     it('should reject 2FA login with invalid temp token', async () => {
+       const tempToken = 'invalid-token'
+@@ -2208,6 +2299,16 @@ describe('AuthService', () => {
+       )
+       expect(result).toBe(true)
+       expect(mockData.organizationMember.update).toHaveBeenCalledTimes(2)
++      // Written as part of the role-swap transaction, not after it.
++      expect(mockData.auditLog.create).toHaveBeenCalledWith({
++        data: expect.objectContaining({
++          userId: currentOwnerId,
++          organizationId,
++          entityType: 'Organization',
++          action: 'ORGANIZATION_OWNERSHIP_TRANSFERRED',
++          changes: expect.objectContaining({ newOwnerUserId: newOwnerId }),
++        }),
++      })
+     })
+     it('should reject ownership transfer if current user is not owner', async () => {
+       const currentOwnerId = 'user-123'
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+index bf05a01..7c07651 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+@@ -52,6 +52,7 @@ import {
+   hashBackupCode,
+ } from './twofa.helper'
+ import { PlatformAccessControlService } from '../access-control'
++import { recordAuditLog } from '../../shared/audit-log'
+ 
+ const authUserRelations = {
+   emails: true,
+@@ -302,6 +303,15 @@ export class AuthService {
+         data: { activeOrganizationId: organization.id },
+       })
+ 
++      await recordAuditLog(this.data, {
++        actorUserId: user.id,
++        organizationId: organization.id,
++        entityId: user.id,
++        entityType: 'User',
++        action: 'USER_REGISTERED',
++        changes: { organizationId: organization.id, isSuperAdmin: user.isSuperAdmin },
++      })
++
+       // Send verification email
+       const validateEmailToken = generateEmailVerificationToken()
+       const validateEmailTokenExpires = generateExpireDate()
+@@ -401,6 +411,15 @@ export class AuthService {
+         data: { status: 'ACCEPTED' },
+       })
+ 
++      await recordAuditLog(this.data, {
++        actorUserId: user.id,
++        organizationId: invite.organizationId,
++        entityId: user.id,
++        entityType: 'User',
++        action: 'USER_REGISTERED_WITH_INVITATION',
++        changes: { inviteId: invite.id, roleId },
++      })
++
+       // Send verification email
+       const validateEmailToken = generateEmailVerificationToken()
+       const validateEmailTokenExpires = generateExpireDate()
+@@ -627,7 +646,11 @@ export class AuthService {
+    * user's PRIMARY address, because redeeming the token verifies whatever is primary. Returns false,
+    * sending nothing, when it is not. Callers remain responsible for authorising the send.
+    */
+-  private async sendVerificationEmail(user: User, email: string): Promise<boolean> {
++  private async sendVerificationEmail(
++    user: User,
++    email: string,
++    request: { source: 'self' } | { source: 'public'; sessionInfo?: SessionInfo },
++  ): Promise<boolean> {
+     const validateEmailToken = generateEmailVerificationToken()
+     const validateEmailTokenExpires = generateExpireDate()
+     const minted = await this.mintVerificationTokenForPrimary(
+@@ -639,6 +662,24 @@ export class AuthService {
+     if (!minted) {
+       return false
+     }
++    // Recorded once the new token is committed, not after delivery: the old link is already dead
++    // whether or not the mail goes out, and sendTemplate rethrows. Never includes the token.
++    if (request.source === 'self') {
++      await recordAuditLog(this.data, {
++        actorUserId: user.id,
++        entityId: user.id,
++        entityType: 'User',
++        action: 'EMAIL_VERIFICATION_TOKEN_REISSUED',
++        changes: { source: 'self' },
++      })
++    } else {
++      // Unauthenticated: the caller only named an address, so the account is the subject of this
++      // event, not its actor. A SecurityEvent says that; an AuditLog row would claim the owner acted.
++      await this.securityEvents.logEmailVerificationRequested(user.id, {
++        ipAddress: request.sessionInfo?.ipAddress,
++        userAgent: request.sessionInfo?.userAgent,
++      })
++    }
+     const appName = this.config.get('app.name')
+     const siteUrl = this.config.get('siteUrl')
+     const verificationUrl = `${siteUrl}/verify-email?token=${validateEmailToken}&type=initial`
+@@ -699,7 +740,11 @@ export class AuthService {
+    * ALWAYS returns true. Reporting "no user found" here would confirm whether any address is
+    * registered, to anyone, unauthenticated.
+    */
+-  async resendVerificationEmail(email: string, captchaToken?: string): Promise<boolean> {
++  async resendVerificationEmail(
++    email: string,
++    captchaToken?: string,
++    sessionInfo?: SessionInfo,
++  ): Promise<boolean> {
+     await this.turnstile.assertValid(captchaToken)
+ 
+     // findUserByEmail normalizes internally, so a raw address with stray whitespace or mixed case
+@@ -722,7 +767,10 @@ export class AuthService {
+     // unknown-address branch.
+     let sent = true
+     await this.sendWithoutRevealing(async () => {
+-      sent = await this.sendVerificationEmail(user, normalizedEmail)
++      sent = await this.sendVerificationEmail(user, normalizedEmail, {
++        source: 'public',
++        sessionInfo,
++      })
+     }, `Verification email to ${normalizedEmail}`)
+     if (!sent) {
+       Logger.warn(`Verification resend requested for non-primary address of user ${user.id}`)
+@@ -751,7 +799,9 @@ export class AuthService {
+ 
+     // False only if the primary changed between the read above and the mint — a concurrent
+     // changeEmail(), which has already mailed the new address its own link.
+-    const sent = await this.sendVerificationEmail(user, normalizeEmail(primaryEmail))
++    const sent = await this.sendVerificationEmail(user, normalizeEmail(primaryEmail), {
++      source: 'self',
++    })
+     if (!sent) {
+       throw new BadRequestException('Your email address just changed. Please try again.')
+     }
+@@ -831,6 +881,14 @@ export class AuthService {
+       )
+     }
+ 
++    await recordAuditLog(this.data, {
++      actorUserId: user.id,
++      entityId: user.id,
++      entityType: 'User',
++      action: 'EMAIL_VERIFIED',
++      changes: { primaryEmailRowsVerified: verifiedEmails.count },
++    })
++
+     // Send welcome email after successful verification
+     const appName = this.config.get('app.name')
+     const siteUrl = this.config.get('siteUrl')
+@@ -977,6 +1035,14 @@ export class AuthService {
+       return user
+     })
+ 
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: email.id,
++      entityType: 'Email',
++      action: 'EMAIL_CHANGE_VERIFIED',
++      changes: { email: email.email },
++    })
++
+     Logger.log(`Email change verified for user ${email.userId}: ${email.email}`)
+ 
+     return updatedUser
+@@ -1384,8 +1450,8 @@ export class AuthService {
+     })
+   }
+ 
+-  updateMyProfile(userId: string, input: UpdateMyProfileInput): Promise<User> {
+-    return this.data.user.update({
++  async updateMyProfile(userId: string, input: UpdateMyProfileInput): Promise<User> {
++    const updated = await this.data.user.update({
+       where: { id: userId },
+       data: {
+         firstName: input.firstName,
+@@ -1394,6 +1460,20 @@ export class AuthService {
+       },
+       include: authUserRelations,
+     })
++
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: userId,
++      entityType: 'User',
++      action: 'PROFILE_UPDATED',
++      changes: {
++        ...(input.firstName !== undefined && { firstName: input.firstName }),
++        ...(input.lastName !== undefined && { lastName: input.lastName }),
++        ...(input.displayName !== undefined && { displayName: input.displayName }),
++      },
++    })
++
++    return updated
+   }
+ 
+   getUserFromToken(token: string) {
+@@ -1527,6 +1607,14 @@ export class AuthService {
+       },
+     })
+ 
++    // Never the secret, QR code or otpauth URL: any of them is the second factor itself.
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: userId,
++      entityType: 'User',
++      action: 'TWO_FACTOR_SETUP_STARTED',
++    })
++
+     Logger.log(`2FA setup initiated for user ${userId}`)
+ 
+     return {
+@@ -1685,6 +1773,7 @@ export class AuthService {
+     const isValid = verify2FACode(secret, code, window)
+ 
+     if (isValid) {
++      await this.recordTwoFactorVerification(userId, true, 'totp')
+       return true
+     }
+ 
+@@ -1713,12 +1802,29 @@ export class AuthService {
+ 
+     if (affected === 1) {
+       Logger.log(`Backup code used for 2FA login by user ${userId}`)
++      await this.recordTwoFactorVerification(userId, true, 'backup_code')
+       return true
+     }
+ 
++    await this.recordTwoFactorVerification(userId, false)
+     return false
+   }
+ 
++  /** Never records the code itself. */
++  private recordTwoFactorVerification(
++    userId: string,
++    success: boolean,
++    method?: 'totp' | 'backup_code',
++  ): Promise<void> {
++    return recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: userId,
++      entityType: 'User',
++      action: success ? 'TWO_FACTOR_CODE_VERIFIED' : 'TWO_FACTOR_CODE_REJECTED',
++      ...(method && { changes: { method } }),
++    })
++  }
++
+   /**
+    * Complete 2FA login - verify code and return full session token
+    */
+@@ -1779,10 +1885,21 @@ export class AuthService {
+       },
+     })
+ 
++    // Return full session token. Recorded only once the session exists and the token is signed,
++    // so a failure in either does not leave a completed login in the trail.
++    const userToken = await this.signUser(user, rememberMe, undefined, sessionInfo)
++
++    await recordAuditLog(this.data, {
++      actorUserId: user.id,
++      entityId: user.id,
++      entityType: 'User',
++      action: 'LOGIN_2FA_COMPLETED',
++      changes: { rememberMe },
++    })
++
+     Logger.log(`2FA login completed for user ${userId}`)
+ 
+-    // Return full session token
+-    return this.signUser(user, rememberMe, undefined, sessionInfo)
++    return userToken
+   }
+ 
+   /**
+@@ -1817,15 +1934,58 @@ export class AuthService {
+     }
+ 
+     await this.sessionService.invalidateSession(sessionId)
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: sessionId,
++      entityType: 'UserSession',
++      action: 'SESSION_INVALIDATED',
++    })
+     Logger.log(`Session ${sessionId} invalidated by user ${userId}`)
+     return true
+   }
+ 
++  /**
++   * End the session a logout presented. Attributed to the session's owner; a session id that
++   * resolves to no session has nobody to attribute it to, so nothing is recorded.
++   */
++  async logout(sessionId: string): Promise<void> {
++    await this.sessionService.invalidateSession(sessionId)
++    // Best-effort like the write itself: a failed attribution lookup must not stop the resolver
++    // from clearing the cookie.
++    try {
++      const session = await this.data.userSession.findUnique({
++        where: { id: sessionId },
++        select: { userId: true },
++      })
++      if (session?.userId) {
++        await recordAuditLog(this.data, {
++          actorUserId: session.userId,
++          entityId: sessionId,
++          entityType: 'UserSession',
++          action: 'LOGOUT',
++        })
++      }
++    } catch (error) {
++      Logger.warn(
++        `Failed to attribute logout of session ${sessionId}: ${
++          error instanceof Error ? error.message : 'unknown error'
++        }`,
++      )
++    }
++  }
++
+   /**
+    * Invalidate all sessions except the current one
+    */
+   async invalidateAllSessions(userId: string, exceptSessionId?: string): Promise<number> {
+     const count = await this.sessionService.invalidateAllUserSessions(userId, exceptSessionId)
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: userId,
++      entityType: 'User',
++      action: 'ALL_SESSIONS_INVALIDATED',
++      changes: { count, keptCurrentSession: Boolean(exceptSessionId) },
++    })
+     Logger.log(
+       `User ${userId} invalidated ${count} sessions` +
+         (exceptSessionId ? ` (kept current session)` : ''),
+@@ -2022,6 +2182,14 @@ export class AuthService {
+       },
+     })
+ 
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: userId,
++      entityType: 'User',
++      action: 'ACCOUNT_DELETED',
++      changes: { softDelete: true },
++    })
++
+     Logger.warn(`User account deleted (soft delete): ${userId}`)
+ 
+     return true
+@@ -2099,6 +2267,20 @@ export class AuthService {
+         where: { id: newOwnerMembership.id },
+         data: { roleId: ownerRole.id },
+       }),
++      this.data.auditLog.create({
++        data: {
++          userId: currentOwnerId,
++          organizationId,
++          entityId: organizationId,
++          entityType: 'Organization',
++          action: 'ORGANIZATION_OWNERSHIP_TRANSFERRED',
++          changes: {
++            previousOwnerUserId: currentOwnerId,
++            newOwnerUserId,
++            previousOwnerNewRoleId: adminRole.id,
++          },
++        },
++      }),
+     ])
+ 
+     Logger.log(
+diff --git a/libs/api/custom/src/lib/plugins/auth/oauth.service.ts b/libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+index 041b637..313953c 100644
+--- a/libs/api/custom/src/lib/plugins/auth/oauth.service.ts
++++ b/libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+@@ -9,6 +9,7 @@ import { OAuth2Client } from 'google-auth-library'
+ import { OAuthApp } from '@octokit/oauth-app'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+ import { OAuthProvider } from './dto'
++import { recordAuditLog } from '../../shared/audit-log'
+ 
+ export interface OAuthUserProfile {
+   provider: OAuthProvider
+@@ -220,13 +221,21 @@ export class OAuthService {
+     }
+ 
+     // Create OAuth account link
+-    await this.data.oAuthAccount.create({
++    const account = await this.data.oAuthAccount.create({
+       data: {
+         provider,
+         providerUserId: profile.providerUserId,
+         userId,
+       },
+     })
++
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: account?.id ?? userId,
++      entityType: 'OAuthAccount',
++      action: 'OAUTH_ACCOUNT_LINKED',
++      changes: { provider },
++    })
+   }
+ 
+   /**
+@@ -261,6 +270,14 @@ export class OAuthService {
+         id: account.id,
+       },
+     })
++
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: account.id,
++      entityType: 'OAuthAccount',
++      action: 'OAUTH_ACCOUNT_UNLINKED',
++      changes: { provider },
++    })
+   }
+ 
+   /**
+diff --git a/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts b/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+index da6cb3b..2a42526 100644
+--- a/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
++++ b/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+@@ -9,8 +9,11 @@ import {
+ import { SyncService } from './sync.service'
+ import { Plan, Subscription, User } from '@nestled-template/api/core/models'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+-import { recordBillingAuditLog } from './audit-log'
+-import { AdminBillingSubscriptionsInput, AdminBillingSubscriptionsResponse } from './admin-billing.dto'
++import { recordAuditLog } from '../../shared/audit-log'
++import {
++  AdminBillingSubscriptionsInput,
++  AdminBillingSubscriptionsResponse,
++} from './admin-billing.dto'
+ 
+ /**
+  * Billing Resolver
+@@ -69,7 +72,7 @@ export class BillingResolver {
+   @RequirePlatformPermission('platform.billing.manage')
+   async syncStripeProducts(@CtxUser() user: User): Promise<boolean> {
+     const result = await this.syncService.syncAllProducts()
+-    await recordBillingAuditLog(this.data, {
++    await recordAuditLog(this.data, {
+       actorUserId: user.id,
+       entityId: 'stripe-products',
+       entityType: 'StripeProduct',
+@@ -83,7 +86,7 @@ export class BillingResolver {
+   @RequirePlatformPermission('platform.billing.manage')
+   async syncStripePrices(@CtxUser() user: User): Promise<boolean> {
+     const result = await this.syncService.syncAllPrices()
+-    await recordBillingAuditLog(this.data, {
++    await recordAuditLog(this.data, {
+       actorUserId: user.id,
+       entityId: 'stripe-prices',
+       entityType: 'StripePrice',
+@@ -100,7 +103,7 @@ export class BillingResolver {
+     @CtxUser() user: User,
+   ): Promise<boolean> {
+     await this.syncService.syncProductFromStripe(productId)
+-    await recordBillingAuditLog(this.data, {
++    await recordAuditLog(this.data, {
+       actorUserId: user.id,
+       entityId: productId,
+       entityType: 'StripeProduct',
+@@ -114,7 +117,7 @@ export class BillingResolver {
+   @RequirePlatformPermission('platform.billing.manage')
+   async syncStripePrice(@Args('priceId') priceId: string, @CtxUser() user: User): Promise<boolean> {
+     await this.syncService.syncPriceFromStripe(priceId)
+-    await recordBillingAuditLog(this.data, {
++    await recordAuditLog(this.data, {
+       actorUserId: user.id,
+       entityId: priceId,
+       entityType: 'StripePrice',
+@@ -131,7 +134,7 @@ export class BillingResolver {
+     @CtxUser() user: User,
+   ): Promise<boolean> {
+     await this.syncService.syncSubscriptionFromStripe(subscriptionId)
+-    await recordBillingAuditLog(this.data, {
++    await recordAuditLog(this.data, {
+       actorUserId: user.id,
+       entityId: subscriptionId,
+       entityType: 'StripeSubscription',
+diff --git a/libs/api/custom/src/lib/plugins/security/security-events.service.spec.ts b/libs/api/custom/src/lib/plugins/security/security-events.service.spec.ts
+index fb47a79..d2f8e3a 100644
+--- a/libs/api/custom/src/lib/plugins/security/security-events.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/security/security-events.service.spec.ts
+@@ -65,8 +65,21 @@ describe('SecurityEventsService', () => {
+         },
+       })
+     })
+-    // Note: Error handling is tested implicitly - the service catches all errors
+-    // internally and logs them without throwing, by design
++    it('contains a failed write instead of leaving an unhandled rejection', async () => {
++      const unhandled = jest.fn()
++      process.on('unhandledRejection', unhandled)
++      try {
++        mockData.securityEvent.create.mockRejectedValueOnce(new Error('database unavailable'))
++        await expect(
++          service.logEvent('user-123', SecurityEventType.PASSWORD_CHANGED),
++        ).resolves.toBeUndefined()
++        await new Promise(resolve => setImmediate(resolve))
++        await new Promise(resolve => setImmediate(resolve))
++        expect(unhandled).not.toHaveBeenCalled()
++      } finally {
++        process.off('unhandledRejection', unhandled)
++      }
++    })
+   })
+   describe('Specific Event Types', () => {
+     it('should log password changed event', async () => {
+diff --git a/libs/api/custom/src/lib/plugins/security/security-events.service.ts b/libs/api/custom/src/lib/plugins/security/security-events.service.ts
+index c491d59..3d5ddfa 100644
+--- a/libs/api/custom/src/lib/plugins/security/security-events.service.ts
++++ b/libs/api/custom/src/lib/plugins/security/security-events.service.ts
+@@ -23,25 +23,26 @@ export class SecurityEventsService {
+     eventType: SecurityEventType,
+     context?: SecurityEventContext,
+   ): Promise<void> {
+-    try {
+-      // Use setImmediate to make this async and non-blocking
+-      setImmediate(async () => {
+-        await this.data.securityEvent.create({
+-          data: {
+-            userId,
+-            eventType,
+-            ipAddress: context?.ipAddress,
+-            userAgent: context?.userAgent,
+-            metadata: context?.metadata || {},
+-          },
+-        })
+-      })
+-
+-      this.logger.log(`Security event logged: ${eventType} for user ${userId}`)
+-    } catch (error) {
+-      // Log error but don't throw - security logging should not break app flow
+-      this.logger.error(`Failed to log security event: ${eventType}`, error)
+-    }
++    // Use setImmediate to make this async and non-blocking. The write's failure is caught INSIDE
++    // the callback: by the time it runs this method has returned, so a try/catch around the
++    // scheduling cannot see it, and an uncaught rejection there would be an unhandled rejection
++    // that can bring the process down. Security logging must never break the app flow.
++    setImmediate(() => {
++      Promise.resolve()
++        .then(() =>
++          this.data.securityEvent.create({
++            data: {
++              userId,
++              eventType,
++              ipAddress: context?.ipAddress,
++              userAgent: context?.userAgent,
++              metadata: context?.metadata || {},
++            },
++          }),
++        )
++        .then(() => this.logger.log(`Security event logged: ${eventType} for user ${userId}`))
++        .catch(error => this.logger.error(`Failed to log security event: ${eventType}`, error))
++    })
+   }
+ 
+   /**
+@@ -73,6 +74,17 @@ export class SecurityEventsService {
+     return this.logEvent(userId, SecurityEventType.PASSWORD_RESET_REQUESTED, context)
+   }
+ 
++  /**
++   * Log an unauthenticated request for a fresh verification email on this account. The account is
++   * the subject, not the actor: whoever asked only had to know the address.
++   */
++  async logEmailVerificationRequested(
++    userId: string,
++    context?: SecurityEventContext,
++  ): Promise<void> {
++    return this.logEvent(userId, SecurityEventType.EMAIL_VERIFICATION_REQUESTED, context)
++  }
++
+   /**
+    * Log suspicious login attempt
+    */
+diff --git a/libs/api/custom/src/lib/plugins/billing/audit-log.ts b/libs/api/custom/src/lib/shared/audit-log.ts
+similarity index 56%
+rename from libs/api/custom/src/lib/plugins/billing/audit-log.ts
+rename to libs/api/custom/src/lib/shared/audit-log.ts
+index 35768e6..4b6c7e7 100644
+--- a/libs/api/custom/src/lib/plugins/billing/audit-log.ts
++++ b/libs/api/custom/src/lib/shared/audit-log.ts
+@@ -2,12 +2,14 @@ import { Logger } from '@nestjs/common'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+ import type { InputJsonValue } from '@nestled-template/api/prisma'
+ 
+-export type BillingAuditLogInput = {
++export type AuditLogInput = {
++  /** The user who performed the action. AuditLog.userId is a required FK to User. */
+   actorUserId: string
+-  organizationId?: string
++  organizationId?: string | null
+   entityId: string
+   entityType: string
+   action: string
++  /** Never put secrets, tokens, codes or passwords in here. */
+   changes?: InputJsonValue
+ }
+ 
+@@ -15,9 +17,16 @@ function errorMessage(error: unknown): string {
+   return error instanceof Error ? error.message : 'Unknown error'
+ }
+ 
+-export async function recordBillingAuditLog(
+-  data: ApiCoreDataAccessService,
+-  input: BillingAuditLogInput,
++/**
++ * Best-effort audit write for actions that are not already inside a transaction.
++ *
++ * A failed audit write is logged and swallowed: the action it describes has already happened, and
++ * failing the request afterwards would only tell the caller it did not. Where the state change runs
++ * in a transaction, write the audit row in that transaction instead (`tx.auditLog.create`).
++ */
++export async function recordAuditLog(
++  data: Pick<ApiCoreDataAccessService, 'auditLog'>,
++  input: AuditLogInput,
+ ): Promise<void> {
+   try {
+     await data.auditLog.create({
+diff --git a/libs/api/prisma/src/lib/migrations/20261004190000_security_event_email_verification_requested/migration.sql b/libs/api/prisma/src/lib/migrations/20261004190000_security_event_email_verification_requested/migration.sql
+new file mode 100644
+index 0000000..b3753d3
+--- /dev/null
++++ b/libs/api/prisma/src/lib/migrations/20261004190000_security_event_email_verification_requested/migration.sql
+@@ -0,0 +1,2 @@
++-- AlterEnum
++ALTER TYPE "SecurityEventType" ADD VALUE 'EMAIL_VERIFICATION_REQUESTED';
+diff --git a/libs/api/prisma/src/lib/schemas/schema.prisma b/libs/api/prisma/src/lib/schemas/schema.prisma
+index 0d02029..85fb4a6 100644
+--- a/libs/api/prisma/src/lib/schemas/schema.prisma
++++ b/libs/api/prisma/src/lib/schemas/schema.prisma
+@@ -544,6 +544,7 @@ enum SecurityEventType {
+   ACCOUNT_UNLOCKED
+   SUSPICIOUS_LOGIN_ATTEMPT
+   PASSWORD_RESET_REQUESTED
++  EMAIL_VERIFICATION_REQUESTED
+   LOGIN_LOCATION_CHANGE
+   API_TOKEN_CREATED
+   API_TOKEN_REVOKED
+diff --git a/libs/shared/sdk/src/generated/graphql.ts b/libs/shared/sdk/src/generated/graphql.ts
+index ff7ef15..0fdbac8 100644
+--- a/libs/shared/sdk/src/generated/graphql.ts
++++ b/libs/shared/sdk/src/generated/graphql.ts
+@@ -3765,6 +3765,7 @@ export enum SecurityEventType {
+   ApiTokenRevoked = 'API_TOKEN_REVOKED',
+   ApiTokenRotated = 'API_TOKEN_ROTATED',
+   EmailChanged = 'EMAIL_CHANGED',
++  EmailVerificationRequested = 'EMAIL_VERIFICATION_REQUESTED',
+   LoginLocationChange = 'LOGIN_LOCATION_CHANGE',
+   PasswordChanged = 'PASSWORD_CHANGED',
+   PasswordResetRequested = 'PASSWORD_RESET_REQUESTED',
+diff --git a/package.json b/package.json
+index fd64d56..05d3016 100644
+--- a/package.json
++++ b/package.json
+@@ -207,7 +207,7 @@
+     "@graphql-typed-document-node/core": "^3.2.0",
+     "@nestjs/schematics": "^11.1.0",
+     "@nestjs/testing": "^11.1.29",
+-    "@nestledjs/doctor": "0.5.2",
++    "@nestledjs/doctor": "0.6.2",
+     "@nx/eslint": "22.7.8",
+     "@nx/eslint-plugin": "22.7.8",
+     "@nx/jest": "22.7.8",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index aa1d7fa..5a51224 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -404,8 +404,8 @@ importers:
+         specifier: ^11.1.29
+         version: 11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29)(@nestjs/platform-express@11.1.29)
+       '@nestledjs/doctor':
+-        specifier: 0.5.2
+-        version: 0.5.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
++        specifier: 0.6.2
++        version: 0.6.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
+       '@nx/eslint':
+         specifier: 22.7.8
+         version: 22.7.8(54731966972b5fabcf66c95f47a10080)
+@@ -3968,8 +3968,8 @@ packages:
+       react: 19.1.0
+       react-router: ^7.0.0
+ 
+-  '@nestledjs/doctor@0.5.2':
+-    resolution: {integrity: sha512-zjKZ2uaeD1RybJ7QkTaaIt6Qa88ZyZV4ZGuf7tHhlKJK6HKEt3ky1tHO6hPJRl0hIqM1A3i5BBy0XGgQT7s6lQ==}
++  '@nestledjs/doctor@0.6.2':
++    resolution: {integrity: sha512-n/r2T2in2sjMcHJI19RlHNdMHrxxFSeoXFATWgIywbdutt3RhWIfdkDkA+Mo0JbMdanZVGXH5C72Akn1vC0gCA==}
+     hasBin: true
+     peerDependencies:
+       '@prisma/internals': '>=6'
+@@ -19132,7 +19132,7 @@ snapshots:
+       react: 19.1.0
+       react-router: 7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+ 
+-  '@nestledjs/doctor@0.5.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
++  '@nestledjs/doctor@0.6.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
+     dependencies:
+       graphql: 16.14.2
+       tslib: 2.8.1
