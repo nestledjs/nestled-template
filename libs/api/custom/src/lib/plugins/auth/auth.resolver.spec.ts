@@ -30,6 +30,7 @@ describe('AuthResolver', () => {
       complete2FALogin: jest.fn().mockResolvedValue(token),
       setCookie: jest.fn(),
       clearCookie: jest.fn(),
+      logout: jest.fn().mockResolvedValue(undefined),
       getCookieName: jest.fn().mockReturnValue('__session'),
       decodeToken: jest.fn().mockReturnValue({ sessionId: 'session-1' }),
       register: jest.fn().mockResolvedValue(token),
@@ -152,7 +153,9 @@ describe('AuthResolver', () => {
 
     expect(authService.decodeToken).toHaveBeenNthCalledWith(1, 'cookie-token')
     expect(authService.decodeToken).toHaveBeenNthCalledWith(2, 'header-token')
-    expect(sessionService.invalidateSession).toHaveBeenCalledTimes(2)
+    // Logout goes through AuthService so the session owner can be attributed in the audit log.
+    expect(authService.logout).toHaveBeenCalledTimes(2)
+    expect(authService.logout).toHaveBeenCalledWith('session-1')
     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
   })
 

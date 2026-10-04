@@ -203,6 +203,15 @@ export class OrganizationService {
       })
     }
 
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: organization.id,
+      entityId: organization.id,
+      entityType: 'Organization',
+      action: 'ORGANIZATION_CREATED',
+      changes: { name: organization.name },
+    })
+
     Logger.log(`User ${userId} created organization: ${organization.name}`)
 
     return organization
@@ -266,6 +275,11 @@ export class OrganizationService {
       throw new ForbiddenException('Only organization owners can delete the organization')
     }
 
+    const organizationToDelete = await this.data.organization.findUnique({
+      where: { id: organizationId },
+      select: { name: true },
+    })
+
     // Manually cascade delete related records before deleting organization
     // This is necessary because the database schema doesn't have cascade deletes configured
 
@@ -298,6 +312,16 @@ export class OrganizationService {
       })
     }
 
+    // No organizationId on the row: the organization no longer exists to reference (the FK would
+    // reject it). entityId still identifies it.
+    await this.recordAuditLog({
+      actorUserId: userId,
+      entityId: organizationId,
+      entityType: 'Organization',
+      action: 'ORGANIZATION_DELETED',
+      changes: { name: organizationToDelete?.name ?? null },
+    })
+
     Logger.log(`User ${userId} deleted organization: ${organizationId}`)
 
     return true
@@ -327,10 +351,23 @@ export class OrganizationService {
     }
 
     // Add the member
-    await this.data.organizationMember.create({
+    const member = await this.data.organizationMember.create({
       data: {
         userId: input.userId,
         organizationId: input.organizationId,
+        roleId: input.roleId,
+      },
+    })
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: input.organizationId,
+      entityId: input.userId,
+      entityType: 'OrganizationMember',
+      action: 'ORGANIZATION_MEMBER_ADDED',
+      changes: {
+        addedUserId: input.userId,
+        membershipId: member?.id ?? null,
         roleId: input.roleId,
       },
     })
@@ -672,6 +709,20 @@ export class OrganizationService {
       },
     })
 
+    // Recorded when the old link is replaced, not after delivery: sendTemplate rethrows, and a
+    // failed send still leaves the invitation renewed.
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: invite.organizationId,
+      entityId: invite.id,
+      entityType: 'Invite',
+      action: 'ORGANIZATION_INVITATION_RENEWED',
+      changes: {
+        email: invite.email,
+        expiresAt: expiresAt.toISOString(),
+      },
+    })
+
     // Get inviter details for email
     const inviter = await this.data.user.findUnique({ where: { id: userId } })
 
@@ -820,7 +871,7 @@ export class OrganizationService {
       throw new BadRequestException('Invitation is missing a role')
     }
 
-    await this.data.organizationMember.create({
+    const membership = await this.data.organizationMember.create({
       data: {
         userId,
         organizationId: invite.organizationId,
@@ -842,6 +893,18 @@ export class OrganizationService {
         data: { activeOrganizationId: invite.organizationId },
       })
     }
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: invite.organizationId,
+      entityId: invite.id,
+      entityType: 'Invite',
+      action: 'ORGANIZATION_INVITATION_ACCEPTED',
+      changes: {
+        membershipId: membership?.id ?? null,
+        roleId,
+      },
+    })
 
     Logger.log(`User ${userId} accepted invitation to organization ${invite.organizationId}`)
 
@@ -883,6 +946,14 @@ export class OrganizationService {
       data: { status: 'DECLINED' },
     })
 
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: invite.organizationId,
+      entityId: invite.id,
+      entityType: 'Invite',
+      action: 'ORGANIZATION_INVITATION_DECLINED',
+    })
+
     Logger.log(`User ${userId} rejected invitation to organization ${invite.organizationId}`)
 
     return true
@@ -905,9 +976,27 @@ export class OrganizationService {
     }
 
     // Update active organization
+    const previous = await this.data.user.findUnique({
+      where: { id: userId },
+      select: { activeOrganizationId: true },
+    })
     const user = await this.data.user.update({
       where: { id: userId },
       data: { activeOrganizationId: input.organizationId },
+    })
+
+    await this.recordAuditLog({
+      actorUserId: userId,
+      organizationId: input.organizationId,
+      entityId: userId,
+      entityType: 'User',
+      action: 'ACTIVE_ORGANIZATION_SWITCHED',
+      changes: {
+        activeOrganizationId: {
+          before: previous?.activeOrganizationId ?? null,
+          after: input.organizationId,
+        },
+      },
     })
 
     // Update cache with new active organization
@@ -1349,6 +1438,20 @@ export class OrganizationService {
       this.data.organizationMember.update({
         where: { id: currentOwnerMember.id },
         data: { roleId: targetMember.roleId }, // Give current owner the new owner's previous role
+      }),
+      this.data.auditLog.create({
+        data: {
+          userId,
+          organizationId: input.organizationId,
+          entityId: input.organizationId,
+          entityType: 'Organization',
+          action: 'ORGANIZATION_OWNERSHIP_TRANSFERRED',
+          changes: {
+            previousOwnerUserId: userId,
+            newOwnerUserId: input.newOwnerUserId,
+            previousOwnerNewRoleId: targetMember.roleId,
+          },
+        },
       }),
     ])
 

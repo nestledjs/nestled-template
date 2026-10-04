@@ -183,7 +183,7 @@ export class AuthResolver {
     if (token) {
       const sessionId = this.getSessionIdFromToken(token)
       if (sessionId) {
-        await this.sessionService.invalidateSession(sessionId)
+        await this.service.logout(sessionId)
         Logger.log(`Session ${sessionId} invalidated during logout`)
       }
     }
