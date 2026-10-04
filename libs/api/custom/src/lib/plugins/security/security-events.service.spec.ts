@@ -65,8 +65,21 @@ describe('SecurityEventsService', () => {
         },
       })
     })
-    // Note: Error handling is tested implicitly - the service catches all errors
-    // internally and logs them without throwing, by design
+    it('contains a failed write instead of leaving an unhandled rejection', async () => {
+      const unhandled = jest.fn()
+      process.on('unhandledRejection', unhandled)
+      try {
+        mockData.securityEvent.create.mockRejectedValueOnce(new Error('database unavailable'))
+        await expect(
+          service.logEvent('user-123', SecurityEventType.PASSWORD_CHANGED),
+        ).resolves.toBeUndefined()
+        await new Promise(resolve => setImmediate(resolve))
+        await new Promise(resolve => setImmediate(resolve))
+        expect(unhandled).not.toHaveBeenCalled()
+      } finally {
+        process.off('unhandledRejection', unhandled)
+      }
+    })
   })
   describe('Specific Event Types', () => {
     it('should log password changed event', async () => {

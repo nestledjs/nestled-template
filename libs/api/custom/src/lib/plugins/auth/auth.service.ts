@@ -649,7 +649,7 @@ export class AuthService {
   private async sendVerificationEmail(
     user: User,
     email: string,
-    source: 'public' | 'self',
+    request: { source: 'self' } | { source: 'public'; sessionInfo?: SessionInfo },
   ): Promise<boolean> {
     const validateEmailToken = generateEmailVerificationToken()
     const validateEmailTokenExpires = generateExpireDate()
@@ -664,13 +664,22 @@ export class AuthService {
     }
     // Recorded once the new token is committed, not after delivery: the old link is already dead
     // whether or not the mail goes out, and sendTemplate rethrows. Never includes the token.
-    await recordAuditLog(this.data, {
-      actorUserId: user.id,
-      entityId: user.id,
-      entityType: 'User',
-      action: 'EMAIL_VERIFICATION_TOKEN_REISSUED',
-      changes: { source },
-    })
+    if (request.source === 'self') {
+      await recordAuditLog(this.data, {
+        actorUserId: user.id,
+        entityId: user.id,
+        entityType: 'User',
+        action: 'EMAIL_VERIFICATION_TOKEN_REISSUED',
+        changes: { source: 'self' },
+      })
+    } else {
+      // Unauthenticated: the caller only named an address, so the account is the subject of this
+      // event, not its actor. A SecurityEvent says that; an AuditLog row would claim the owner acted.
+      await this.securityEvents.logEmailVerificationRequested(user.id, {
+        ipAddress: request.sessionInfo?.ipAddress,
+        userAgent: request.sessionInfo?.userAgent,
+      })
+    }
     const appName = this.config.get('app.name')
     const siteUrl = this.config.get('siteUrl')
     const verificationUrl = `${siteUrl}/verify-email?token=${validateEmailToken}&type=initial`
@@ -731,7 +740,11 @@ export class AuthService {
    * ALWAYS returns true. Reporting "no user found" here would confirm whether any address is
    * registered, to anyone, unauthenticated.
    */
-  async resendVerificationEmail(email: string, captchaToken?: string): Promise<boolean> {
+  async resendVerificationEmail(
+    email: string,
+    captchaToken?: string,
+    sessionInfo?: SessionInfo,
+  ): Promise<boolean> {
     await this.turnstile.assertValid(captchaToken)
 
     // findUserByEmail normalizes internally, so a raw address with stray whitespace or mixed case
@@ -754,7 +767,10 @@ export class AuthService {
     // unknown-address branch.
     let sent = true
     await this.sendWithoutRevealing(async () => {
-      sent = await this.sendVerificationEmail(user, normalizedEmail, 'public')
+      sent = await this.sendVerificationEmail(user, normalizedEmail, {
+        source: 'public',
+        sessionInfo,
+      })
     }, `Verification email to ${normalizedEmail}`)
     if (!sent) {
       Logger.warn(`Verification resend requested for non-primary address of user ${user.id}`)
@@ -783,7 +799,9 @@ export class AuthService {
 
     // False only if the primary changed between the read above and the mint — a concurrent
     // changeEmail(), which has already mailed the new address its own link.
-    const sent = await this.sendVerificationEmail(user, normalizeEmail(primaryEmail), 'self')
+    const sent = await this.sendVerificationEmail(user, normalizeEmail(primaryEmail), {
+      source: 'self',
+    })
     if (!sent) {
       throw new BadRequestException('Your email address just changed. Please try again.')
     }
@@ -1867,6 +1885,10 @@ export class AuthService {
       },
     })
 
+    // Return full session token. Recorded only once the session exists and the token is signed,
+    // so a failure in either does not leave a completed login in the trail.
+    const userToken = await this.signUser(user, rememberMe, undefined, sessionInfo)
+
     await recordAuditLog(this.data, {
       actorUserId: user.id,
       entityId: user.id,
@@ -1877,8 +1899,7 @@ export class AuthService {
 
     Logger.log(`2FA login completed for user ${userId}`)
 
-    // Return full session token
-    return this.signUser(user, rememberMe, undefined, sessionInfo)
+    return userToken
   }
 
   /**

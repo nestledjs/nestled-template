@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "SecurityEventType" ADD VALUE 'EMAIL_VERIFICATION_REQUESTED';

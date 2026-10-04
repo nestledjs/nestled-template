@@ -3765,6 +3765,7 @@ export enum SecurityEventType {
   ApiTokenRevoked = 'API_TOKEN_REVOKED',
   ApiTokenRotated = 'API_TOKEN_ROTATED',
   EmailChanged = 'EMAIL_CHANGED',
+  EmailVerificationRequested = 'EMAIL_VERIFICATION_REQUESTED',
   LoginLocationChange = 'LOGIN_LOCATION_CHANGE',
   PasswordChanged = 'PASSWORD_CHANGED',
   PasswordResetRequested = 'PASSWORD_RESET_REQUESTED',

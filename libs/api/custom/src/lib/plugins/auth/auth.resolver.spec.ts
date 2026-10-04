@@ -159,6 +159,13 @@ describe('AuthResolver', () => {
     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
   })
 
+  it('clears the cookie even when session invalidation fails, and still reports the error', async () => {
+    authService.logout.mockRejectedValueOnce(new Error('Record to update not found'))
+
+    await expect(resolver.logout(context)).rejects.toThrow('Record to update not found')
+    expect(authService.clearCookie).toHaveBeenCalledTimes(1)
+  })
+
   it('normalizes password recovery inputs and delegates account mutations with session data', async () => {
     await resolver.forgotPassword(context, { email: ' ADA@EXAMPLE.COM ' } as any)
     await resolver.resetPassword(context, { password: 'new-secret', token: 'reset-token' } as any)
@@ -291,7 +298,7 @@ describe('AuthResolver', () => {
   })
 
   it('delegates verification and data ownership operations', async () => {
-    await resolver.resendVerificationEmail('ada@example.com')
+    await resolver.resendVerificationEmail(context, 'ada@example.com')
     await resolver.verifyEmail({ token: 'verify-token' } as any)
     await resolver.verifyEmailChange('change-token')
     await resolver.exportUserData(user)
@@ -301,7 +308,11 @@ describe('AuthResolver', () => {
       newOwnerUserId: 'user-2',
     } as any)
 
-    expect(authService.resendVerificationEmail).toHaveBeenCalledWith('ada@example.com', undefined)
+    expect(authService.resendVerificationEmail).toHaveBeenCalledWith(
+      'ada@example.com',
+      undefined,
+      sessionInfo,
+    )
     expect(authService.verifyEmail).toHaveBeenCalledWith('verify-token')
     expect(authService.verifyEmailChange).toHaveBeenCalledWith('change-token')
     expect(authService.exportUserData).toHaveBeenCalledWith('user-1')
