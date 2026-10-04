@@ -1,0 +1,384 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-10-04-auth-tokens-verified-before-claims-are-trusted.yaml b/.nestled-updates/upgrade-notes/2026-10-04-auth-tokens-verified-before-claims-are-trusted.yaml
+new file mode 100644
+index 0000000..445b391
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-04-auth-tokens-verified-before-claims-are-trusted.yaml
+@@ -0,0 +1,59 @@
++id: 2026-10-04-auth-tokens-verified-before-claims-are-trusted
++title: Logout and end-emulation verify the token before trusting its claims
++priority: high
++area: auth
++type: security
++delivery: code-patch
++
++intent: >
++  Authentication hardening. `AuthService.decodeToken()` is replaced by
++  `verifyToken(token, { ignoreExpiration? })`, which returns a token's claims only when its
++  signature verifies (null otherwise), and every place that acted on claims read from a token now
++  uses it:
++
++  1. `AuthResolver.logout` reads `{ sessionId, userId }` with `verifyToken(token, { ignoreExpiration:
++  true })`, so an expired but genuine token can still end its own session. `AuthService.logout`
++  now takes `(sessionId, userId)` and invalidates the session, and records LOGOUT, only when the
++  session belongs to that user. A failed lookup propagates; the resolver still clears the cookie.
++
++  2. `AuthService.endEmulation(token)` verifies the token (expiry enforced) before reading it.
++
++  3. The resolver's current-session lookups (`changePassword`, `getUserSessions`) read the session
++  id from a verified token.
++
++why: >
++  Claims read with `jwtService.decode()` are not checked for signature or expiry, so they must not
++  decide which session, user or admin an operation acts on. Apply this release promptly; details
++  will be published in a security advisory after the fleet has updated.
++
++affectedPaths:
++  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
++  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
++
++packageReleases: []
++
++skipIf:
++  - The project has no `decodeToken`/`jwtService.decode()` call whose result decides which session, user or admin an operation acts on.
++
++verification:
++  - pnpm exec nx run api-custom:test
++  - pnpm exec nx run api:typecheck
++  - pnpm exec nestled-doctor
++
++agentHints:
++  - >
++    grep the API for `jwtService.decode(` and `decodeToken(`. Every call whose claims choose a
++    session, user, organization or admin to act on must verify instead. A decode of a token the
++    server itself just signed (the `UserToken.user` resolve field) can stay.
++  - >
++    Keep `ignoreExpiration: true` for logout only. Everywhere else an expired token must be refused.
++  - >
++    `AuthService.logout` now takes `(sessionId, userId)` and checks ownership before invalidating.
++    If the project's logout already went through `SessionService.invalidateSession` directly from the
++    resolver, route it through this method rather than adding the check in two places.
++  - >
++    Mocks: the auth resolver spec's AuthService mock gains `verifyToken` (returning `{ sessionId,
++    userId }`) in place of `decodeToken`; service specs that stubbed `jwtService.decode` for
++    endEmulation now stub `jwtService.verify`.
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+index 05b3dc7..019647c 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+@@ -32,7 +32,7 @@ describe('AuthResolver', () => {
+       clearCookie: jest.fn(),
+       logout: jest.fn().mockResolvedValue(undefined),
+       getCookieName: jest.fn().mockReturnValue('__session'),
+-      decodeToken: jest.fn().mockReturnValue({ sessionId: 'session-1' }),
++      verifyToken: jest.fn().mockReturnValue({ sessionId: 'session-1', userId: 'user-1' }),
+       register: jest.fn().mockResolvedValue(token),
+       registerWithInvitation: jest.fn().mockResolvedValue(token),
+       forgotPassword: jest.fn().mockResolvedValue(true),
+@@ -151,14 +151,26 @@ describe('AuthResolver', () => {
+     context.req.headers.authorization = 'Bearer header-token'
+     await expect(resolver.logout(context)).resolves.toBe(true)
+ 
+-    expect(authService.decodeToken).toHaveBeenNthCalledWith(1, 'cookie-token')
+-    expect(authService.decodeToken).toHaveBeenNthCalledWith(2, 'header-token')
++    expect(authService.verifyToken).toHaveBeenNthCalledWith(1, 'cookie-token', {
++      ignoreExpiration: true,
++    })
++    expect(authService.verifyToken).toHaveBeenNthCalledWith(2, 'header-token', {
++      ignoreExpiration: true,
++    })
+     // Logout goes through AuthService so the session owner can be attributed in the audit log.
+     expect(authService.logout).toHaveBeenCalledTimes(2)
+-    expect(authService.logout).toHaveBeenCalledWith('session-1')
++    expect(authService.logout).toHaveBeenCalledWith('session-1', 'user-1')
+     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
+   })
+ 
++  it('ends no session for a token whose signature does not verify, and still clears the cookie', async () => {
++    authService.verifyToken.mockReturnValueOnce(null)
++
++    await expect(resolver.logout(context)).resolves.toBe(true)
++    expect(authService.logout).not.toHaveBeenCalled()
++    expect(authService.clearCookie).toHaveBeenCalledTimes(1)
++  })
++
+   it('clears the cookie even when session invalidation fails, and still reports the error', async () => {
+     authService.logout.mockRejectedValueOnce(new Error('Record to update not found'))
+ 
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+index e35ecd9..d1443f3 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+@@ -57,6 +57,7 @@ type EmulatedUser = User & {
+ 
+ type SessionTokenPayload = {
+   sessionId?: string | null
++  userId?: string | null
+ }
+ 
+ @Resolver(() => UserToken)
+@@ -184,10 +185,10 @@ export class AuthResolver {
+     // cleanup): leaving a dead credential in the browser helps nobody. The error still propagates.
+     try {
+       if (token) {
+-        const sessionId = this.getSessionIdFromToken(token)
+-        if (sessionId) {
+-          await this.service.logout(sessionId)
+-          Logger.log(`Session ${sessionId} invalidated during logout`)
++        const session = this.getSessionFromToken(token)
++        if (session) {
++          await this.service.logout(session.sessionId, session.userId)
++          Logger.log(`Session ${session.sessionId} invalidated during logout`)
+         }
+       }
+     } finally {
+@@ -547,12 +548,30 @@ export class AuthResolver {
+     )
+   }
+ 
++  /** The current session's id, from a token whose signature verifies. */
+   private getSessionIdFromToken(token?: string): string | undefined {
+     if (!token) {
+       return undefined
+     }
++    return this.service.verifyToken<SessionTokenPayload>(token)?.sessionId ?? undefined
++  }
++
++  /**
++   * The session a logout may end. Logout is public, so the token's signature must verify before its
++   * claims are believed; a forged token naming someone else's session would otherwise end it. An
++   * expired but genuine token still ends its own session.
++   */
++  private getSessionFromToken(token?: string): { sessionId: string; userId: string } | undefined {
++    if (!token) {
++      return undefined
++    }
+ 
+-    const decoded = this.service.decodeToken<SessionTokenPayload>(token)
+-    return decoded?.sessionId ?? undefined
++    const verified = this.service.verifyToken<SessionTokenPayload>(token, {
++      ignoreExpiration: true,
++    })
++    if (!verified?.sessionId || !verified.userId) {
++      return undefined
++    }
++    return { sessionId: verified.sessionId, userId: verified.userId }
+   }
+ }
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+index df40802..03f5e20 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+@@ -1604,7 +1604,7 @@ describe('AuthService', () => {
+       mockSessionService.invalidateSession.mockResolvedValue(undefined)
+       mockData.userSession.findUnique.mockResolvedValue({ userId: 'user-123' } as any)
+ 
+-      await service.logout('session-1')
++      await service.logout('session-1', 'user-123')
+ 
+       expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
+       expect(mockData.auditLog.create).toHaveBeenCalledWith({
+@@ -1616,20 +1616,27 @@ describe('AuthService', () => {
+         }),
+       })
+     })
+-    it('should not audit a logout whose session cannot be attributed', async () => {
+-      mockSessionService.invalidateSession.mockResolvedValue(undefined)
++    it('should end nothing for a session that no longer exists', async () => {
+       mockData.userSession.findUnique.mockResolvedValue(null)
+ 
+-      await service.logout('session-gone')
++      await service.logout('session-gone', 'user-123')
+ 
++      expect(mockSessionService.invalidateSession).not.toHaveBeenCalled()
+       expect(mockData.auditLog.create).not.toHaveBeenCalled()
+     })
+-    it('should still complete a logout when the audit attribution lookup fails', async () => {
+-      mockSessionService.invalidateSession.mockResolvedValue(undefined)
++    it('should not end or record a session that belongs to someone else', async () => {
++      mockData.userSession.findUnique.mockResolvedValue({ userId: 'victim-1' } as any)
++
++      await service.logout('victim-session', 'user-123')
++
++      expect(mockSessionService.invalidateSession).not.toHaveBeenCalled()
++      expect(mockData.auditLog.create).not.toHaveBeenCalled()
++    })
++    it('should surface a failed session lookup rather than end an unchecked session', async () => {
+       mockData.userSession.findUnique.mockRejectedValue(new Error('connection reset'))
+ 
+-      await expect(service.logout('session-1')).resolves.toBeUndefined()
+-      expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
++      await expect(service.logout('session-1', 'user-123')).rejects.toThrow('connection reset')
++      expect(mockSessionService.invalidateSession).not.toHaveBeenCalled()
+     })
+     it('should invalidate all sessions except current', async () => {
+       const userId = 'user-123'
+@@ -2146,8 +2153,7 @@ describe('AuthService', () => {
+         username: 'admin',
+         emails: [{ email: 'admin@example.com', primary: true }],
+       }
+-      // Use decode instead of verify - implementation uses jwtService.decode()
+-      mockJwtService.decode.mockReturnValue(mockDecoded as any)
++      mockJwtService.verify.mockReturnValue(mockDecoded as any)
+       mockData.user.findUnique.mockResolvedValue(mockAdmin as any)
+       mockData.auditLog.create.mockResolvedValue({} as any)
+       mockSessionService.createSession.mockResolvedValue({
+@@ -2175,8 +2181,22 @@ describe('AuthService', () => {
+       mockData.auditLog.create.mockResolvedValue({} as any)
+       await expect(service.endEmulation(normalToken)).rejects.toThrow()
+     })
+-    it('should reject end emulation when original admin no longer exists', async () => {
++    it('refuses an emulation token whose signature does not verify', async () => {
++      // A forged token could otherwise name any admin as originalAdminId and be handed their session.
++      mockJwtService.verify.mockImplementation(() => {
++        throw new Error('invalid signature')
++      })
+       mockJwtService.decode.mockReturnValue({
++        userId: 'user-456',
++        isEmulating: true,
++        originalAdminId: 'admin-123',
++      } as any)
++
++      await expect(service.endEmulation('forged-token')).rejects.toThrow('Not currently emulating')
++      expect(mockJwtService.sign).not.toHaveBeenCalled()
++    })
++    it('should reject end emulation when original admin no longer exists', async () => {
++      mockJwtService.verify.mockReturnValue({
+         userId: 'user-456',
+         isEmulating: true,
+         originalAdminId: 'missing-admin',
+@@ -2188,6 +2208,41 @@ describe('AuthService', () => {
+       )
+     })
+   })
++  describe('verifyToken', () => {
++    // A real JwtService, so the expiry and signature checks themselves are exercised, not a mock.
++    const signer = new JwtService({ secret: 'test-secret' })
++    const otherSigner = new JwtService({ secret: 'another-secret' })
++    const nowSeconds = () => Math.floor(Date.now() / 1000)
++
++    beforeEach(() => {
++      mockJwtService.verify.mockImplementation((token: string, options?: any) =>
++        signer.verify(token, options),
++      )
++    })
++
++    it('returns the claims of a valid token', () => {
++      const token = signer.sign({ userId: 'user-1', sessionId: 'session-1' })
++      expect(service.verifyToken(token)).toMatchObject({ userId: 'user-1', sessionId: 'session-1' })
++    })
++
++    it('refuses an expired token by default and accepts it only when asked to', () => {
++      const expired = signer.sign({
++        userId: 'user-1',
++        sessionId: 'session-1',
++        exp: nowSeconds() - 60,
++      })
++      expect(service.verifyToken(expired)).toBeNull()
++      expect(service.verifyToken(expired, { ignoreExpiration: true })).toMatchObject({
++        sessionId: 'session-1',
++      })
++    })
++
++    it('refuses a token signed with another secret in both modes', () => {
++      const forged = otherSigner.sign({ userId: 'user-1', sessionId: 'session-1' })
++      expect(service.verifyToken(forged)).toBeNull()
++      expect(service.verifyToken(forged, { ignoreExpiration: true })).toBeNull()
++    })
++  })
+   describe('User Data Export', () => {
+     it('should export user data', async () => {
+       const userId = 'user-123'
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+index 7c07651..da2572d 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+@@ -1182,8 +1182,9 @@ export class AuthService {
+   }
+ 
+   async endEmulation(token: string): Promise<UserToken> {
+-    // Decode the current token to get emulation data
+-    const decoded = this.decodeToken<EmulationTokenPayload>(token)
++    // Verified, not decoded: the admin this returns to is read from the token, so an unverified
++    // token could name any admin.
++    const decoded = this.verifyToken<EmulationTokenPayload>(token)
+ 
+     if (!decoded?.isEmulating || !decoded?.originalAdminId || !decoded?.userId) {
+       throw new BadRequestException('Not currently emulating a user')
+@@ -1526,14 +1527,22 @@ export class AuthService {
+     return this.config.getOrThrow<{ name: string }>('api.cookie').name
+   }
+ 
+-  public decodeToken<TPayload extends object = Record<string, unknown>>(
++  /**
++   * The token's claims, or null when its signature does not verify against JWT_SECRET. Never act
++   * on a token's claims without this: `decode()` checks nothing, so anyone can write a token naming
++   * any user, session or admin. `ignoreExpiration` is for logout only, where an expired but genuine
++   * token may still end its own session.
++   */
++  public verifyToken<TPayload extends object = Record<string, unknown>>(
+     token: string,
++    options: { ignoreExpiration?: boolean } = {},
+   ): TPayload | null {
+     try {
+-      const decoded = this.jwtService.decode(token)
+-      return decoded && typeof decoded === 'object' ? (decoded as TPayload) : null
+-    } catch (error) {
+-      Logger.error('Failed to decode JWT token:', error)
++      const verified: unknown = this.jwtService.verify(token, {
++        ignoreExpiration: options.ignoreExpiration ?? false,
++      })
++      return verified && typeof verified === 'object' ? (verified as TPayload) : null
++    } catch {
+       return null
+     }
+   }
+@@ -1948,30 +1957,24 @@ export class AuthService {
+    * End the session a logout presented. Attributed to the session's owner; a session id that
+    * resolves to no session has nobody to attribute it to, so nothing is recorded.
+    */
+-  async logout(sessionId: string): Promise<void> {
+-    await this.sessionService.invalidateSession(sessionId)
+-    // Best-effort like the write itself: a failed attribution lookup must not stop the resolver
+-    // from clearing the cookie.
+-    try {
+-      const session = await this.data.userSession.findUnique({
+-        where: { id: sessionId },
+-        select: { userId: true },
+-      })
+-      if (session?.userId) {
+-        await recordAuditLog(this.data, {
+-          actorUserId: session.userId,
+-          entityId: sessionId,
+-          entityType: 'UserSession',
+-          action: 'LOGOUT',
+-        })
+-      }
+-    } catch (error) {
+-      Logger.warn(
+-        `Failed to attribute logout of session ${sessionId}: ${
+-          error instanceof Error ? error.message : 'unknown error'
+-        }`,
+-      )
++  async logout(sessionId: string, userId: string): Promise<void> {
++    // Only the token's own session: a verified token naming a session that belongs to someone else
++    // ends nothing and records nothing.
++    const session = await this.data.userSession.findUnique({
++      where: { id: sessionId },
++      select: { userId: true },
++    })
++    if (!session || session.userId !== userId) {
++      Logger.warn(`Logout presented session ${sessionId}, which does not belong to user ${userId}`)
++      return
+     }
++    await this.sessionService.invalidateSession(sessionId)
++    await recordAuditLog(this.data, {
++      actorUserId: userId,
++      entityId: sessionId,
++      entityType: 'UserSession',
++      action: 'LOGOUT',
++    })
+   }
+ 
+   /**
