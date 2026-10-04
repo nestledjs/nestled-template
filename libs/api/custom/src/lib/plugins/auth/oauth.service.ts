@@ -9,6 +9,7 @@ import { OAuth2Client } from 'google-auth-library'
 import { OAuthApp } from '@octokit/oauth-app'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { OAuthProvider } from './dto'
+import { recordAuditLog } from '../../shared/audit-log'
 
 export interface OAuthUserProfile {
   provider: OAuthProvider
@@ -220,12 +221,20 @@ export class OAuthService {
     }
 
     // Create OAuth account link
-    await this.data.oAuthAccount.create({
+    const account = await this.data.oAuthAccount.create({
       data: {
         provider,
         providerUserId: profile.providerUserId,
         userId,
       },
+    })
+
+    await recordAuditLog(this.data, {
+      actorUserId: userId,
+      entityId: account?.id ?? userId,
+      entityType: 'OAuthAccount',
+      action: 'OAUTH_ACCOUNT_LINKED',
+      changes: { provider },
     })
   }
 
@@ -260,6 +269,14 @@ export class OAuthService {
       where: {
         id: account.id,
       },
+    })
+
+    await recordAuditLog(this.data, {
+      actorUserId: userId,
+      entityId: account.id,
+      entityType: 'OAuthAccount',
+      action: 'OAUTH_ACCOUNT_UNLINKED',
+      changes: { provider },
     })
   }
 

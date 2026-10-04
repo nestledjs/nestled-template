@@ -254,7 +254,7 @@ describe('OrganizationService', () => {
           role: { permissions: [{ subject: 'member', action: 'invite' }] },
         } as any)
         .mockResolvedValueOnce(null) // No existing member
-      data.organizationMember.create.mockResolvedValue({} as any)
+      data.organizationMember.create.mockResolvedValue({ id: 'membership-789' } as any)
       const result = await service.addOrganizationMember(userId, input)
       expect(result).toBe(true)
       expect(data.organizationMember.create).toHaveBeenCalledWith({
@@ -263,6 +263,20 @@ describe('OrganizationService', () => {
           organizationId: input.organizationId,
           roleId: input.roleId,
         },
+      })
+      expect(data.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId,
+          organizationId: 'org-123',
+          entityId: 'new-user-456',
+          entityType: 'OrganizationMember',
+          action: 'ORGANIZATION_MEMBER_ADDED',
+          changes: {
+            addedUserId: 'new-user-456',
+            membershipId: 'membership-789',
+            roleId: 'role-member',
+          },
+        }),
       })
     })
     it('should throw BadRequestException if user is already a member', async () => {
@@ -512,6 +526,15 @@ describe('OrganizationService', () => {
       expect(data.invite.update).toHaveBeenCalledWith({
         where: { id: 'invite-123' },
         data: { status: 'ACCEPTED' },
+      })
+      expect(data.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId,
+          organizationId: 'org-123',
+          entityId: 'invite-123',
+          entityType: 'Invite',
+          action: 'ORGANIZATION_INVITATION_ACCEPTED',
+        }),
       })
     })
     it('should throw BadRequestException for expired invitation', async () => {

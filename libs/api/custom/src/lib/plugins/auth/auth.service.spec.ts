@@ -168,6 +168,7 @@ describe('AuthService', () => {
       logAccountUnlocked: jest.fn().mockResolvedValue(undefined),
       logPasswordChanged: jest.fn().mockResolvedValue(undefined),
       logPasswordResetRequested: jest.fn().mockResolvedValue(undefined),
+      logEmailVerificationRequested: jest.fn().mockResolvedValue(undefined),
       logEmailChanged: jest.fn().mockResolvedValue(undefined),
       log2FAEnabled: jest.fn().mockResolvedValue(undefined),
       log2FADisabled: jest.fn().mockResolvedValue(undefined),
@@ -1122,6 +1123,28 @@ describe('AuthService', () => {
       await expect(service.resendVerificationEmail('ada@example.com')).resolves.toBe(true)
     })
 
+    it('records a public resend as a security event on the account, not as the owner acting', async () => {
+      // The caller only named an address; nothing proves the owner asked.
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        firstName: 'Ada',
+        emails: [{ email: 'ada@example.com', primary: true }],
+      })
+      mockData.email.findFirst.mockResolvedValue({ email: 'ada@example.com', primary: true })
+      mockData.user.update.mockResolvedValue({ id: 'user-1' })
+
+      await service.resendVerificationEmail('ada@example.com', undefined, {
+        ipAddress: '203.0.113.7',
+        userAgent: 'test-agent',
+      } as any)
+
+      expect(mockSecurityEvents.logEmailVerificationRequested).toHaveBeenCalledWith('user-1', {
+        ipAddress: '203.0.113.7',
+        userAgent: 'test-agent',
+      })
+      expect(mockData.auditLog.create).not.toHaveBeenCalled()
+    })
+
     it('resendMyVerificationEmail still surfaces a send failure to the signed-in user', async () => {
       // The authenticated path has nothing to hide: the caller owns the account, so a real
       // delivery failure should be reported rather than swallowed.
@@ -1135,6 +1158,14 @@ describe('AuthService', () => {
       mockEmailService.sendTemplate.mockRejectedValue(new Error('connect ECONNREFUSED :1025'))
 
       await expect(service.resendMyVerificationEmail('user-1')).rejects.toThrow(/ECONNREFUSED/)
+      // The new token was committed before the send failed, so the reissue is still recorded.
+      expect(mockData.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'user-1',
+          action: 'EMAIL_VERIFICATION_TOKEN_REISSUED',
+          changes: { source: 'self' },
+        }),
+      })
     })
 
     it('marks the primary Email row verified alongside the User flag', async () => {
@@ -1560,6 +1591,45 @@ describe('AuthService', () => {
         where: { id: sessionId, userId },
       })
       expect(mockSessionService.invalidateSession).toHaveBeenCalledWith(sessionId)
+      expect(mockData.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId,
+          entityId: sessionId,
+          entityType: 'UserSession',
+          action: 'SESSION_INVALIDATED',
+        }),
+      })
+    })
+    it('should audit a logout against the session owner', async () => {
+      mockSessionService.invalidateSession.mockResolvedValue(undefined)
+      mockData.userSession.findUnique.mockResolvedValue({ userId: 'user-123' } as any)
+
+      await service.logout('session-1')
+
+      expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
+      expect(mockData.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'user-123',
+          entityId: 'session-1',
+          entityType: 'UserSession',
+          action: 'LOGOUT',
+        }),
+      })
+    })
+    it('should not audit a logout whose session cannot be attributed', async () => {
+      mockSessionService.invalidateSession.mockResolvedValue(undefined)
+      mockData.userSession.findUnique.mockResolvedValue(null)
+
+      await service.logout('session-gone')
+
+      expect(mockData.auditLog.create).not.toHaveBeenCalled()
+    })
+    it('should still complete a logout when the audit attribution lookup fails', async () => {
+      mockSessionService.invalidateSession.mockResolvedValue(undefined)
+      mockData.userSession.findUnique.mockRejectedValue(new Error('connection reset'))
+
+      await expect(service.logout('session-1')).resolves.toBeUndefined()
+      expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
     })
     it('should invalidate all sessions except current', async () => {
       const userId = 'user-123'
@@ -1955,6 +2025,27 @@ describe('AuthService', () => {
         expect(result.token).toBe('final-jwt-token')
       }
       expect(mockSessionService.createSession).toHaveBeenCalled()
+      expect(mockData.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 'user-123', action: 'LOGIN_2FA_COMPLETED' }),
+      })
+    })
+    it('does not record a completed 2FA login when the session cannot be created', async () => {
+      mockJwtService.verify.mockReturnValue({ userId: 'user-123', temp2FA: true } as any)
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-123',
+        username: 'testuser',
+        twoFactorSecret: '1234567890abcdef1234567890abcdef:fedcba0987654321fedcba0987654321',
+        twoFactorEnabled: true,
+        emails: [{ email: 'test@example.com', primary: true }],
+      } as any)
+      mockSessionService.createSession.mockRejectedValue(new Error('database unavailable'))
+
+      await expect(service.complete2FALogin('temp-jwt-token', '123456', {} as any)).rejects.toThrow(
+        'database unavailable',
+      )
+      expect(mockData.auditLog.create).not.toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'LOGIN_2FA_COMPLETED' }),
+      })
     })
     it('should reject 2FA login with invalid temp token', async () => {
       const tempToken = 'invalid-token'
@@ -2208,6 +2299,16 @@ describe('AuthService', () => {
       )
       expect(result).toBe(true)
       expect(mockData.organizationMember.update).toHaveBeenCalledTimes(2)
+      // Written as part of the role-swap transaction, not after it.
+      expect(mockData.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: currentOwnerId,
+          organizationId,
+          entityType: 'Organization',
+          action: 'ORGANIZATION_OWNERSHIP_TRANSFERRED',
+          changes: expect.objectContaining({ newOwnerUserId: newOwnerId }),
+        }),
+      })
     })
     it('should reject ownership transfer if current user is not owner', async () => {
       const currentOwnerId = 'user-123'

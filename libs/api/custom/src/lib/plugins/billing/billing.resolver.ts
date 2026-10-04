@@ -9,8 +9,11 @@ import {
 import { SyncService } from './sync.service'
 import { Plan, Subscription, User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
-import { recordBillingAuditLog } from './audit-log'
-import { AdminBillingSubscriptionsInput, AdminBillingSubscriptionsResponse } from './admin-billing.dto'
+import { recordAuditLog } from '../../shared/audit-log'
+import {
+  AdminBillingSubscriptionsInput,
+  AdminBillingSubscriptionsResponse,
+} from './admin-billing.dto'
 
 /**
  * Billing Resolver
@@ -69,7 +72,7 @@ export class BillingResolver {
   @RequirePlatformPermission('platform.billing.manage')
   async syncStripeProducts(@CtxUser() user: User): Promise<boolean> {
     const result = await this.syncService.syncAllProducts()
-    await recordBillingAuditLog(this.data, {
+    await recordAuditLog(this.data, {
       actorUserId: user.id,
       entityId: 'stripe-products',
       entityType: 'StripeProduct',
@@ -83,7 +86,7 @@ export class BillingResolver {
   @RequirePlatformPermission('platform.billing.manage')
   async syncStripePrices(@CtxUser() user: User): Promise<boolean> {
     const result = await this.syncService.syncAllPrices()
-    await recordBillingAuditLog(this.data, {
+    await recordAuditLog(this.data, {
       actorUserId: user.id,
       entityId: 'stripe-prices',
       entityType: 'StripePrice',
@@ -100,7 +103,7 @@ export class BillingResolver {
     @CtxUser() user: User,
   ): Promise<boolean> {
     await this.syncService.syncProductFromStripe(productId)
-    await recordBillingAuditLog(this.data, {
+    await recordAuditLog(this.data, {
       actorUserId: user.id,
       entityId: productId,
       entityType: 'StripeProduct',
@@ -114,7 +117,7 @@ export class BillingResolver {
   @RequirePlatformPermission('platform.billing.manage')
   async syncStripePrice(@Args('priceId') priceId: string, @CtxUser() user: User): Promise<boolean> {
     await this.syncService.syncPriceFromStripe(priceId)
-    await recordBillingAuditLog(this.data, {
+    await recordAuditLog(this.data, {
       actorUserId: user.id,
       entityId: priceId,
       entityType: 'StripePrice',
@@ -131,7 +134,7 @@ export class BillingResolver {
     @CtxUser() user: User,
   ): Promise<boolean> {
     await this.syncService.syncSubscriptionFromStripe(subscriptionId)
-    await recordBillingAuditLog(this.data, {
+    await recordAuditLog(this.data, {
       actorUserId: user.id,
       entityId: subscriptionId,
       entityType: 'StripeSubscription',

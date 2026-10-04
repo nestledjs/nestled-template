@@ -6,7 +6,7 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
 import { StripeService } from '@nestled-template/api/integrations'
 import { ConfigService } from '@nestled-template/api/config'
 import { UsageService } from '../../plugins/billing/usage.service'
-import { recordBillingAuditLog } from '../../plugins/billing/audit-log'
+import { recordAuditLog } from '../../shared/audit-log'
 
 /**
  * User Subscription Resolver
@@ -98,7 +98,7 @@ export class UserSubscriptionResolver {
       },
     })
 
-    await recordBillingAuditLog(this.prisma, {
+    await recordAuditLog(this.prisma, {
       actorUserId: user.id,
       organizationId: organization.id,
       entityId: organization.id,
@@ -138,7 +138,7 @@ export class UserSubscriptionResolver {
       returnUrl: `${siteUrl}/settings/billing`,
     })
 
-    await recordBillingAuditLog(this.prisma, {
+    await recordAuditLog(this.prisma, {
       actorUserId: user.id,
       organizationId: user.activeOrganizationId,
       entityId: subscription.id,
@@ -180,7 +180,7 @@ export class UserSubscriptionResolver {
       },
     })
 
-    await recordBillingAuditLog(this.prisma, {
+    await recordAuditLog(this.prisma, {
       actorUserId: user.id,
       organizationId: user.activeOrganizationId,
       entityId: subscription.id,

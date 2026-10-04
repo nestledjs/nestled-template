@@ -82,6 +82,12 @@ const EVENT_TYPE_CONFIG: Record<
     icon: KeyIcon,
     color: 'blue',
   },
+  [SecurityEventType.EmailVerificationRequested]: {
+    label: 'Verification Requested',
+    description: 'A verification email was requested for this account without signing in',
+    icon: UserCircleIcon,
+    color: 'blue',
+  },
   [SecurityEventType.LoginLocationChange]: {
     label: 'Location Change',
     description: 'Login from new location detected',

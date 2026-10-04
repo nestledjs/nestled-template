@@ -1,0 +1,148 @@
+id: 2026-10-04-sensitive-mutations-write-audit-records
+title: Doctor 0.6.2 (hard-fail checks, --full) and AuditLog rows for every sensitive mutation
+priority: normal
+area: auth
+type: security
+delivery: hybrid
+
+intent: >
+  0. `@nestledjs/doctor` moves to 0.6.2. New and stricter checks fail hard: per-mutation
+  audit-coverage, raw NUL bytes in source, verify-fragments declarations, and repo-declared guards
+  (`.nestled-updates/security/declared-guards.json`). `nestled-doctor --full` fails on every review
+  finding and is how a repo gets clean once; normal runs then fail only on changed lines.
+
+  Every sensitive GraphQL mutation that changes account, organization membership, session or
+  billing state now writes an `AuditLog` row (`entityId`, `entityType`, `action`, `userId`,
+  `organizationId?`, `changes?`), so `nestled-doctor --full` passes its `audit-coverage` check
+  without exemptions.
+
+  1. The best-effort helper moves from `plugins/billing/audit-log.ts` to
+  `libs/api/custom/src/lib/shared/audit-log.ts` and is renamed `recordBillingAuditLog` ->
+  `recordAuditLog(data, { actorUserId, organizationId?, entityId, entityType, action, changes? })`.
+  It logs and swallows a failed write, so an audit failure never changes a mutation's result.
+  The billing sync and checkout/portal/cancel mutations already wrote rows through it; doctor 0.6.0
+  did not recognise the old name and reported them. Since 0.6.1 the doctor recognises `audit` as any part of
+  an identifier, so the rename is for clarity (the helper is no longer billing-only), not to satisfy
+  the check.
+
+  2. `OrganizationService` records ORGANIZATION_CREATED, ORGANIZATION_DELETED (no organizationId on
+  the row, since the organization is gone; entityId identifies it), ORGANIZATION_MEMBER_ADDED,
+  ORGANIZATION_INVITATION_RENEWED, ORGANIZATION_INVITATION_ACCEPTED,
+  ORGANIZATION_INVITATION_DECLINED and ACTIVE_ORGANIZATION_SWITCHED through its existing
+  `recordAuditLog`. `transferOrganizationOwnership` writes ORGANIZATION_OWNERSHIP_TRANSFERRED inside
+  the role-swap `$transaction`.
+
+  3. `AuthService` records USER_REGISTERED, USER_REGISTERED_WITH_INVITATION, PROFILE_UPDATED,
+  EMAIL_VERIFICATION_TOKEN_REISSUED (self-service resend only; see below), EMAIL_VERIFIED, EMAIL_CHANGE_VERIFIED,
+  TWO_FACTOR_SETUP_STARTED, TWO_FACTOR_CODE_VERIFIED / TWO_FACTOR_CODE_REJECTED (from
+  `verify2FALogin`, with `method: totp|backup_code`), LOGIN_2FA_COMPLETED, SESSION_INVALIDATED,
+  ALL_SESSIONS_INVALIDATED, ACCOUNT_DELETED and LOGOUT. `transferOrganizationOwnership` writes
+  ORGANIZATION_OWNERSHIP_TRANSFERRED inside its `$transaction`. Logout moves from
+  `SessionService.invalidateSession` in the resolver to a new `AuthService.logout(sessionId)`,
+  which invalidates the session and attributes the row to the session's owner.
+
+  4. `OAuthService` records OAUTH_ACCOUNT_LINKED and OAUTH_ACCOUNT_UNLINKED with the provider.
+
+  No secrets, tokens, codes, passwords, 2FA secrets or URLs are written to `changes`.
+
+  Where a mutation commits state and then sends mail (registration, invitation registration,
+  invitation renewal, verification-token reissue), the row is written after the commit and BEFORE
+  the send: the mailer rethrows, and a failed send must not leave a committed change unrecorded.
+  Logout's owner lookup is best-effort like the write, so it can never stop the cookie being cleared,
+  and the resolver now clears the cookie in a `finally`, so a failed invalidation (for example a
+  session already removed by cleanup) no longer leaves a dead credential in the browser.
+  LOGIN_2FA_COMPLETED is written after `signUser` succeeds, not before.
+
+  The PUBLIC verification resend is unauthenticated: the caller only named an address, so an
+  AuditLog row with that account as `userId` would claim the owner acted. It records a SecurityEvent
+  instead, like a password-reset request: new enum value `SecurityEventType.EMAIL_VERIFICATION_REQUESTED`
+  (migration `20261004190000_security_event_email_verification_requested`, a single
+  `ALTER TYPE ... ADD VALUE`), logged against the account with the request's IP and user agent.
+  `resendVerificationEmail` now takes the resolver's session info for that context.
+  `SecurityEventsService.logEvent` now contains a failed write inside its detached callback instead
+  of leaving an unhandled rejection.
+
+why: >
+  These mutations change who can sign in, who belongs to an organization, and what an
+  organization pays for, yet most left no record of who did it. Without that trail an operator
+  cannot reconstruct an account takeover, a membership change or an ownership transfer after the
+  fact. The doctor's audit-coverage check flags each one.
+
+  Public mutations write a row only once the acting user is known. `resendVerificationEmail` writes
+  nothing for an unknown or non-primary address, and the write is best-effort and does not alter
+  the response, so the endpoint still does not reveal which addresses belong to an account.
+  `logout` writes nothing when no token or no session is presented.
+
+affectedPaths:
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - libs/api/prisma/src/lib/migrations/20261004190000_security_event_email_verification_requested/migration.sql
+  - libs/api/custom/src/lib/plugins/security/security-events.service.ts
+  - api-schema.graphql
+  - libs/shared/sdk/src/generated/graphql.ts
+  - apps/web/app/routes/admin/security-events/_index.tsx
+  - libs/api/custom/src/lib/shared/audit-log.ts
+  - libs/api/custom/src/lib/plugins/billing/audit-log.ts
+  - libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+
+packageReleases:
+  - name: '@nestledjs/doctor'
+    targetVersion: 0.6.2
+    versionRange: 0.6.2
+
+skipIf:
+  - Never skip the doctor bump. Skip only the AuditLog code changes, and only when the project already writes audit rows for these mutations through its own mechanism and `nestled-doctor --full` passes.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api:typecheck
+  - pnpm exec nestled-doctor --full
+
+agentHints:
+  - >
+    Add the audit write next to each existing state change rather than overwriting the methods.
+    Where the state change is already inside a `$transaction`, add `auditLog.create` to that
+    transaction; elsewhere call `recordAuditLog(this.data, ...)`.
+  - >
+    The doctor recognises an audit write by `audit` appearing in an identifier (`auditLog`,
+    `recordAuditLog`, `this.auditService`, `runInAuditTransaction`, ...) or `SecurityEvent`, and
+    follows only `this.method()` and `this.<typed injected field>.method()` calls, up to three deep.
+    A project-local audit helper is detected as long as its name contains `audit`/`Audit` and it is
+    reached through one of those call shapes. Do not rename helpers to satisfy the check.
+  - >
+    Apply the enum migration through the project's normal migration path (it is additive and safe
+    to run before the new release serves). If the project has renamed or extended
+    `SecurityEventType`, add the value to its own enum and generate its own migration rather than
+    copying the template's. Then run `pnpm db-update` (the whole chain: generators, API schema
+    refresh, SDK). Not `db-update:generate` plus `pnpm sdk`: that compiles the SDK from a stale
+    api-schema.graphql. Any exhaustive `Record<SecurityEventType, ...>` map, such as the admin
+    security-events page's, needs the new entry or typecheck fails.
+  - >
+    `SecurityEventsService.logEvent` now catches a failed write inside its detached callback. It
+    previously caught only scheduling errors, so a database failure became an unhandled rejection.
+    Apply this even if the project keeps its own logEvent; every security event goes through it.
+  - >
+    The verifiers no longer pass when they examined nothing. If `pnpm verify:fragments` (or
+    `verify:selects` / `verify:select-coverage`) now exits 1 saying it checked nothing, either the
+    project genuinely has no checkable select constants, in which case declare why in
+    `.nestled-updates/doctor.config.json` (`noCheckableSelects` for fragments, `noSelectFiles` for
+    the select verifiers, each a one-sentence reason), or the search is missing the project's files,
+    in which case set `selectFileSuffixes`. The template declares both.
+  - >
+    Adopting doctor 0.6.x: run `pnpm exec nestled-doctor --full` once and fix every failure it lists
+    (not only audit-coverage), then normal runs fail only on changed lines. Record a mutation in
+    `.nestled-updates/security/audit-exemptions.json` only when it genuinely changes nothing worth
+    auditing, with a reason.
+  - >
+    Keep `resendVerificationEmail` indistinguishable for known and unknown addresses: record only in
+    the branch that actually sent, and never let the audit write throw.
+  - >
+    If the project has its own copies of `recordBillingAuditLog`, update the import to the shared
+    helper and rename the calls.

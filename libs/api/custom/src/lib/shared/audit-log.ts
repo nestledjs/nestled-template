@@ -2,12 +2,14 @@ import { Logger } from '@nestjs/common'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import type { InputJsonValue } from '@nestled-template/api/prisma'
 
-export type BillingAuditLogInput = {
+export type AuditLogInput = {
+  /** The user who performed the action. AuditLog.userId is a required FK to User. */
   actorUserId: string
-  organizationId?: string
+  organizationId?: string | null
   entityId: string
   entityType: string
   action: string
+  /** Never put secrets, tokens, codes or passwords in here. */
   changes?: InputJsonValue
 }
 
@@ -15,9 +17,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
 }
 
-export async function recordBillingAuditLog(
-  data: ApiCoreDataAccessService,
-  input: BillingAuditLogInput,
+/**
+ * Best-effort audit write for actions that are not already inside a transaction.
+ *
+ * A failed audit write is logged and swallowed: the action it describes has already happened, and
+ * failing the request afterwards would only tell the caller it did not. Where the state change runs
+ * in a transaction, write the audit row in that transaction instead (`tx.auditLog.create`).
+ */
+export async function recordAuditLog(
+  data: Pick<ApiCoreDataAccessService, 'auditLog'>,
+  input: AuditLogInput,
 ): Promise<void> {
   try {
     await data.auditLog.create({

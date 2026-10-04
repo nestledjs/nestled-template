@@ -180,15 +180,19 @@ export class AuthResolver {
       }
     }
 
-    if (token) {
-      const sessionId = this.getSessionIdFromToken(token)
-      if (sessionId) {
-        await this.sessionService.invalidateSession(sessionId)
-        Logger.log(`Session ${sessionId} invalidated during logout`)
+    // The cookie is cleared even when invalidation throws (e.g. a session already removed by
+    // cleanup): leaving a dead credential in the browser helps nobody. The error still propagates.
+    try {
+      if (token) {
+        const sessionId = this.getSessionIdFromToken(token)
+        if (sessionId) {
+          await this.service.logout(sessionId)
+          Logger.log(`Session ${sessionId} invalidated during logout`)
+        }
       }
+    } finally {
+      this.service.clearCookie(context.res)
     }
-
-    this.service.clearCookie(context.res)
     return true
   }
 
@@ -258,10 +262,12 @@ export class AuthResolver {
   @UseGuards(GqlThrottlerGuard)
   @Public()
   resendVerificationEmail(
+    @Context() context: NestContextType,
     @Args('email') email: string,
     @Args('captchaToken', { nullable: true }) captchaToken?: string,
   ) {
-    return this.service.resendVerificationEmail(email, captchaToken)
+    const sessionInfo = this.sessionService.extractSessionInfo(context.req)
+    return this.service.resendVerificationEmail(email, captchaToken, sessionInfo)
   }
 
   // Resend to the signed-in user's own primary address. No captcha and no rate limit: the caller

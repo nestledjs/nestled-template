@@ -2,5 +2,6 @@
   "selectFileSuffixes": [
     ".select.ts"
   ],
-  "noSelectFiles": "This template returns GraphQL through generated CRUD and inline Prisma selects; it declares no reusable *.select.ts constants. A clone that adopts the select pattern should delete this key so the verifiers start checking its files."
+  "noSelectFiles": "This template returns GraphQL through generated CRUD and inline Prisma selects; it declares no reusable *.select.ts constants. A clone that adopts the select pattern should delete this key so the verifiers start checking its files.",
+  "noCheckableSelects": "The template's services and resolvers use inline Prisma selects and generated CRUD, not named select constants, so verify-fragments has nothing to compare against SDK fragments. A clone that adopts named select constants should delete this key so the check starts verifying them."
 }
