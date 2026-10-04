@@ -119,6 +119,21 @@ describe('SecurityEventsService', () => {
         }),
       })
     })
+    it('should log an unauthenticated verification email request with its request context', async () => {
+      await service.logEmailVerificationRequested('user-123', {
+        ipAddress: '203.0.113.7',
+        userAgent: 'test-agent',
+      })
+      await new Promise(resolve => setImmediate(resolve))
+      expect(mockData.securityEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'user-123',
+          eventType: SecurityEventType.EMAIL_VERIFICATION_REQUESTED,
+          ipAddress: '203.0.113.7',
+          userAgent: 'test-agent',
+        }),
+      })
+    })
     it('should log suspicious login with reason', async () => {
       await service.logSuspiciousLogin('user-123', 'New location detected')
       await new Promise(resolve => setImmediate(resolve))

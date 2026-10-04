@@ -1,5 +1,5 @@
 id: 2026-10-04-sensitive-mutations-write-audit-records
-title: Doctor 0.6.2 (hard-fail checks, --full) and AuditLog rows for every sensitive mutation
+title: Doctor 0.6.2 (hard-fail checks, --full) and audit records for the sensitive mutations that had none
 priority: normal
 area: auth
 type: security
@@ -11,10 +11,14 @@ intent: >
   (`.nestled-updates/security/declared-guards.json`). `nestled-doctor --full` fails on every review
   finding and is how a repo gets clean once; normal runs then fail only on changed lines.
 
-  Every sensitive GraphQL mutation that changes account, organization membership, session or
-  billing state now writes an `AuditLog` row (`entityId`, `entityType`, `action`, `userId`,
-  `organizationId?`, `changes?`), so `nestled-doctor --full` passes its `audit-coverage` check
-  without exemptions.
+  The 33 sensitive GraphQL mutations that `nestled-doctor --full` reported as writing no audit
+  record now write one, so the template passes `audit-coverage` without exemptions. Most gain an
+  `AuditLog` row (`entityId`, `entityType`, `action`, `userId`, `organizationId?`, `changes?`); the
+  unauthenticated verification resend gains a `SecurityEvent` (below). Mutations that were already
+  covered keep their existing mechanism: password changes, 2FA enable/disable, email changes,
+  account lock/unlock and API-token events go on writing `SecurityEvent` rows, and the admin and
+  access-control mutations their existing `AuditLog` rows. Both are accepted audit records; do not
+  add a second one where either already exists.
 
   1. The best-effort helper moves from `plugins/billing/audit-log.ts` to
   `libs/api/custom/src/lib/shared/audit-log.ts` and is renamed `recordBillingAuditLog` ->
@@ -106,6 +110,10 @@ verification:
   - pnpm exec nestled-doctor --full
 
 agentHints:
+  - >
+    Only add an audit record where `nestled-doctor --full` reports none. A mutation that already
+    writes a SecurityEvent or an AuditLog (in its body or a method it calls) is covered; adding the
+    other as well produces duplicate, inconsistent trails.
   - >
     Add the audit write next to each existing state change rather than overwriting the methods.
     Where the state change is already inside a `$transaction`, add `auditLog.create` to that
