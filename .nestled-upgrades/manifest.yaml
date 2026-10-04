@@ -1,7 +1,7 @@
 schemaVersion: 1
 generatedAt: 2026-10-04
 channels:
-  canary: 2026.10.2
+  canary: 2026.10.3
   stable: 2026.10.1
 releases:
   - id: 2026.08.0
@@ -130,3 +130,23 @@ releases:
           - name: "@nestledjs/doctor"
             targetVersion: 0.6.2
             versionRange: 0.6.2
+  - id: 2026.10.3
+    date: 2026-10-04
+    title: Authentication hardening
+    templateCommit: 57af158
+    notes:
+      - id: 2026-10-04-auth-tokens-verified-before-claims-are-trusted
+        title: Logout and end-emulation verify the token before trusting its claims
+        delivery: code-patch
+        intent: "Authentication hardening. `AuthService.decodeToken()` is replaced by `verifyToken(token, { ignoreExpiration? })`, which returns a token's claims only when its signature verifies (null otherwise), and every place that acted on claims read from a token now uses it: 1. `AuthResolver.logout` reads `{ sessionId, userId }` with `verifyToken(token, { ignoreExpiration: true })`, so an expired but genuine token can still end its own session. `AuthService.logout` now takes `(sessionId, userId)` and invalidates the session, and records LOGOUT, only when the session belongs to that user. A failed lookup propagates; the resolver still clears the cookie. 2. `AuthService.endEmulation(token)` verifies the token (expiry enforced) before reading it. 3. The resolver's current-session lookups (`changePassword`, `getUserSessions`) read the session id from a verified token."
+        area: auth
+        affectedPaths:
+          - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+        verification:
+          - "pnpm exec nx run api-custom:test"
+          - "pnpm exec nx run api:typecheck"
+          - pnpm exec nestled-doctor
+        patch: patches/2026-10-04-auth-tokens-verified-before-claims-are-trusted.diff
