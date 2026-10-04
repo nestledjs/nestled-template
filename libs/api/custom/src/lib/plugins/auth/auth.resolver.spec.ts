@@ -32,7 +32,7 @@ describe('AuthResolver', () => {
       clearCookie: jest.fn(),
       logout: jest.fn().mockResolvedValue(undefined),
       getCookieName: jest.fn().mockReturnValue('__session'),
-      decodeToken: jest.fn().mockReturnValue({ sessionId: 'session-1' }),
+      verifyToken: jest.fn().mockReturnValue({ sessionId: 'session-1', userId: 'user-1' }),
       register: jest.fn().mockResolvedValue(token),
       registerWithInvitation: jest.fn().mockResolvedValue(token),
       forgotPassword: jest.fn().mockResolvedValue(true),
@@ -151,12 +151,24 @@ describe('AuthResolver', () => {
     context.req.headers.authorization = 'Bearer header-token'
     await expect(resolver.logout(context)).resolves.toBe(true)
 
-    expect(authService.decodeToken).toHaveBeenNthCalledWith(1, 'cookie-token')
-    expect(authService.decodeToken).toHaveBeenNthCalledWith(2, 'header-token')
+    expect(authService.verifyToken).toHaveBeenNthCalledWith(1, 'cookie-token', {
+      ignoreExpiration: true,
+    })
+    expect(authService.verifyToken).toHaveBeenNthCalledWith(2, 'header-token', {
+      ignoreExpiration: true,
+    })
     // Logout goes through AuthService so the session owner can be attributed in the audit log.
     expect(authService.logout).toHaveBeenCalledTimes(2)
-    expect(authService.logout).toHaveBeenCalledWith('session-1')
+    expect(authService.logout).toHaveBeenCalledWith('session-1', 'user-1')
     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
+  })
+
+  it('ends no session for a token whose signature does not verify, and still clears the cookie', async () => {
+    authService.verifyToken.mockReturnValueOnce(null)
+
+    await expect(resolver.logout(context)).resolves.toBe(true)
+    expect(authService.logout).not.toHaveBeenCalled()
+    expect(authService.clearCookie).toHaveBeenCalledTimes(1)
   })
 
   it('clears the cookie even when session invalidation fails, and still reports the error', async () => {

@@ -57,6 +57,7 @@ type EmulatedUser = User & {
 
 type SessionTokenPayload = {
   sessionId?: string | null
+  userId?: string | null
 }
 
 @Resolver(() => UserToken)
@@ -184,10 +185,10 @@ export class AuthResolver {
     // cleanup): leaving a dead credential in the browser helps nobody. The error still propagates.
     try {
       if (token) {
-        const sessionId = this.getSessionIdFromToken(token)
-        if (sessionId) {
-          await this.service.logout(sessionId)
-          Logger.log(`Session ${sessionId} invalidated during logout`)
+        const session = this.getSessionFromToken(token)
+        if (session) {
+          await this.service.logout(session.sessionId, session.userId)
+          Logger.log(`Session ${session.sessionId} invalidated during logout`)
         }
       }
     } finally {
@@ -547,12 +548,30 @@ export class AuthResolver {
     )
   }
 
+  /** The current session's id, from a token whose signature verifies. */
   private getSessionIdFromToken(token?: string): string | undefined {
     if (!token) {
       return undefined
     }
+    return this.service.verifyToken<SessionTokenPayload>(token)?.sessionId ?? undefined
+  }
 
-    const decoded = this.service.decodeToken<SessionTokenPayload>(token)
-    return decoded?.sessionId ?? undefined
+  /**
+   * The session a logout may end. Logout is public, so the token's signature must verify before its
+   * claims are believed; a forged token naming someone else's session would otherwise end it. An
+   * expired but genuine token still ends its own session.
+   */
+  private getSessionFromToken(token?: string): { sessionId: string; userId: string } | undefined {
+    if (!token) {
+      return undefined
+    }
+
+    const verified = this.service.verifyToken<SessionTokenPayload>(token, {
+      ignoreExpiration: true,
+    })
+    if (!verified?.sessionId || !verified.userId) {
+      return undefined
+    }
+    return { sessionId: verified.sessionId, userId: verified.userId }
   }
 }

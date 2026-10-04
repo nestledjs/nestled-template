@@ -1604,7 +1604,7 @@ describe('AuthService', () => {
       mockSessionService.invalidateSession.mockResolvedValue(undefined)
       mockData.userSession.findUnique.mockResolvedValue({ userId: 'user-123' } as any)
 
-      await service.logout('session-1')
+      await service.logout('session-1', 'user-123')
 
       expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
       expect(mockData.auditLog.create).toHaveBeenCalledWith({
@@ -1616,20 +1616,27 @@ describe('AuthService', () => {
         }),
       })
     })
-    it('should not audit a logout whose session cannot be attributed', async () => {
-      mockSessionService.invalidateSession.mockResolvedValue(undefined)
+    it('should end nothing for a session that no longer exists', async () => {
       mockData.userSession.findUnique.mockResolvedValue(null)
 
-      await service.logout('session-gone')
+      await service.logout('session-gone', 'user-123')
 
+      expect(mockSessionService.invalidateSession).not.toHaveBeenCalled()
       expect(mockData.auditLog.create).not.toHaveBeenCalled()
     })
-    it('should still complete a logout when the audit attribution lookup fails', async () => {
-      mockSessionService.invalidateSession.mockResolvedValue(undefined)
+    it('should not end or record a session that belongs to someone else', async () => {
+      mockData.userSession.findUnique.mockResolvedValue({ userId: 'victim-1' } as any)
+
+      await service.logout('victim-session', 'user-123')
+
+      expect(mockSessionService.invalidateSession).not.toHaveBeenCalled()
+      expect(mockData.auditLog.create).not.toHaveBeenCalled()
+    })
+    it('should surface a failed session lookup rather than end an unchecked session', async () => {
       mockData.userSession.findUnique.mockRejectedValue(new Error('connection reset'))
 
-      await expect(service.logout('session-1')).resolves.toBeUndefined()
-      expect(mockSessionService.invalidateSession).toHaveBeenCalledWith('session-1')
+      await expect(service.logout('session-1', 'user-123')).rejects.toThrow('connection reset')
+      expect(mockSessionService.invalidateSession).not.toHaveBeenCalled()
     })
     it('should invalidate all sessions except current', async () => {
       const userId = 'user-123'
@@ -2146,8 +2153,7 @@ describe('AuthService', () => {
         username: 'admin',
         emails: [{ email: 'admin@example.com', primary: true }],
       }
-      // Use decode instead of verify - implementation uses jwtService.decode()
-      mockJwtService.decode.mockReturnValue(mockDecoded as any)
+      mockJwtService.verify.mockReturnValue(mockDecoded as any)
       mockData.user.findUnique.mockResolvedValue(mockAdmin as any)
       mockData.auditLog.create.mockResolvedValue({} as any)
       mockSessionService.createSession.mockResolvedValue({
@@ -2175,8 +2181,22 @@ describe('AuthService', () => {
       mockData.auditLog.create.mockResolvedValue({} as any)
       await expect(service.endEmulation(normalToken)).rejects.toThrow()
     })
-    it('should reject end emulation when original admin no longer exists', async () => {
+    it('refuses an emulation token whose signature does not verify', async () => {
+      // A forged token could otherwise name any admin as originalAdminId and be handed their session.
+      mockJwtService.verify.mockImplementation(() => {
+        throw new Error('invalid signature')
+      })
       mockJwtService.decode.mockReturnValue({
+        userId: 'user-456',
+        isEmulating: true,
+        originalAdminId: 'admin-123',
+      } as any)
+
+      await expect(service.endEmulation('forged-token')).rejects.toThrow('Not currently emulating')
+      expect(mockJwtService.sign).not.toHaveBeenCalled()
+    })
+    it('should reject end emulation when original admin no longer exists', async () => {
+      mockJwtService.verify.mockReturnValue({
         userId: 'user-456',
         isEmulating: true,
         originalAdminId: 'missing-admin',
@@ -2186,6 +2206,41 @@ describe('AuthService', () => {
       await expect(service.endEmulation('emulation-token')).rejects.toThrow(
         'Original admin user not found',
       )
+    })
+  })
+  describe('verifyToken', () => {
+    // A real JwtService, so the expiry and signature checks themselves are exercised, not a mock.
+    const signer = new JwtService({ secret: 'test-secret' })
+    const otherSigner = new JwtService({ secret: 'another-secret' })
+    const nowSeconds = () => Math.floor(Date.now() / 1000)
+
+    beforeEach(() => {
+      mockJwtService.verify.mockImplementation((token: string, options?: any) =>
+        signer.verify(token, options),
+      )
+    })
+
+    it('returns the claims of a valid token', () => {
+      const token = signer.sign({ userId: 'user-1', sessionId: 'session-1' })
+      expect(service.verifyToken(token)).toMatchObject({ userId: 'user-1', sessionId: 'session-1' })
+    })
+
+    it('refuses an expired token by default and accepts it only when asked to', () => {
+      const expired = signer.sign({
+        userId: 'user-1',
+        sessionId: 'session-1',
+        exp: nowSeconds() - 60,
+      })
+      expect(service.verifyToken(expired)).toBeNull()
+      expect(service.verifyToken(expired, { ignoreExpiration: true })).toMatchObject({
+        sessionId: 'session-1',
+      })
+    })
+
+    it('refuses a token signed with another secret in both modes', () => {
+      const forged = otherSigner.sign({ userId: 'user-1', sessionId: 'session-1' })
+      expect(service.verifyToken(forged)).toBeNull()
+      expect(service.verifyToken(forged, { ignoreExpiration: true })).toBeNull()
     })
   })
   describe('User Data Export', () => {

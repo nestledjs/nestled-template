@@ -1182,8 +1182,9 @@ export class AuthService {
   }
 
   async endEmulation(token: string): Promise<UserToken> {
-    // Decode the current token to get emulation data
-    const decoded = this.decodeToken<EmulationTokenPayload>(token)
+    // Verified, not decoded: the admin this returns to is read from the token, so an unverified
+    // token could name any admin.
+    const decoded = this.verifyToken<EmulationTokenPayload>(token)
 
     if (!decoded?.isEmulating || !decoded?.originalAdminId || !decoded?.userId) {
       throw new BadRequestException('Not currently emulating a user')
@@ -1526,14 +1527,22 @@ export class AuthService {
     return this.config.getOrThrow<{ name: string }>('api.cookie').name
   }
 
-  public decodeToken<TPayload extends object = Record<string, unknown>>(
+  /**
+   * The token's claims, or null when its signature does not verify against JWT_SECRET. Never act
+   * on a token's claims without this: `decode()` checks nothing, so anyone can write a token naming
+   * any user, session or admin. `ignoreExpiration` is for logout only, where an expired but genuine
+   * token may still end its own session.
+   */
+  public verifyToken<TPayload extends object = Record<string, unknown>>(
     token: string,
+    options: { ignoreExpiration?: boolean } = {},
   ): TPayload | null {
     try {
-      const decoded = this.jwtService.decode(token)
-      return decoded && typeof decoded === 'object' ? (decoded as TPayload) : null
-    } catch (error) {
-      Logger.error('Failed to decode JWT token:', error)
+      const verified: unknown = this.jwtService.verify(token, {
+        ignoreExpiration: options.ignoreExpiration ?? false,
+      })
+      return verified && typeof verified === 'object' ? (verified as TPayload) : null
+    } catch {
       return null
     }
   }
@@ -1948,30 +1957,24 @@ export class AuthService {
    * End the session a logout presented. Attributed to the session's owner; a session id that
    * resolves to no session has nobody to attribute it to, so nothing is recorded.
    */
-  async logout(sessionId: string): Promise<void> {
-    await this.sessionService.invalidateSession(sessionId)
-    // Best-effort like the write itself: a failed attribution lookup must not stop the resolver
-    // from clearing the cookie.
-    try {
-      const session = await this.data.userSession.findUnique({
-        where: { id: sessionId },
-        select: { userId: true },
-      })
-      if (session?.userId) {
-        await recordAuditLog(this.data, {
-          actorUserId: session.userId,
-          entityId: sessionId,
-          entityType: 'UserSession',
-          action: 'LOGOUT',
-        })
-      }
-    } catch (error) {
-      Logger.warn(
-        `Failed to attribute logout of session ${sessionId}: ${
-          error instanceof Error ? error.message : 'unknown error'
-        }`,
-      )
+  async logout(sessionId: string, userId: string): Promise<void> {
+    // Only the token's own session: a verified token naming a session that belongs to someone else
+    // ends nothing and records nothing.
+    const session = await this.data.userSession.findUnique({
+      where: { id: sessionId },
+      select: { userId: true },
+    })
+    if (!session || session.userId !== userId) {
+      Logger.warn(`Logout presented session ${sessionId}, which does not belong to user ${userId}`)
+      return
     }
+    await this.sessionService.invalidateSession(sessionId)
+    await recordAuditLog(this.data, {
+      actorUserId: userId,
+      entityId: sessionId,
+      entityType: 'UserSession',
+      action: 'LOGOUT',
+    })
   }
 
   /**

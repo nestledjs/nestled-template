@@ -1,0 +1,59 @@
+id: 2026-10-04-auth-tokens-verified-before-claims-are-trusted
+title: Logout and end-emulation verify the token before trusting its claims
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Authentication hardening. `AuthService.decodeToken()` is replaced by
+  `verifyToken(token, { ignoreExpiration? })`, which returns a token's claims only when its
+  signature verifies (null otherwise), and every place that acted on claims read from a token now
+  uses it:
+
+  1. `AuthResolver.logout` reads `{ sessionId, userId }` with `verifyToken(token, { ignoreExpiration:
+  true })`, so an expired but genuine token can still end its own session. `AuthService.logout`
+  now takes `(sessionId, userId)` and invalidates the session, and records LOGOUT, only when the
+  session belongs to that user. A failed lookup propagates; the resolver still clears the cookie.
+
+  2. `AuthService.endEmulation(token)` verifies the token (expiry enforced) before reading it.
+
+  3. The resolver's current-session lookups (`changePassword`, `getUserSessions`) read the session
+  id from a verified token.
+
+why: >
+  Claims read with `jwtService.decode()` are not checked for signature or expiry, so they must not
+  decide which session, user or admin an operation acts on. Apply this release promptly; details
+  will be published in a security advisory after the fleet has updated.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project has no `decodeToken`/`jwtService.decode()` call whose result decides which session, user or admin an operation acts on.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api:typecheck
+  - pnpm exec nestled-doctor
+
+agentHints:
+  - >
+    grep the API for `jwtService.decode(` and `decodeToken(`. Every call whose claims choose a
+    session, user, organization or admin to act on must verify instead. A decode of a token the
+    server itself just signed (the `UserToken.user` resolve field) can stay.
+  - >
+    Keep `ignoreExpiration: true` for logout only. Everywhere else an expired token must be refused.
+  - >
+    `AuthService.logout` now takes `(sessionId, userId)` and checks ownership before invalidating.
+    If the project's logout already went through `SessionService.invalidateSession` directly from the
+    resolver, route it through this method rather than adding the check in two places.
+  - >
+    Mocks: the auth resolver spec's AuthService mock gains `verifyToken` (returning `{ sessionId,
+    userId }`) in place of `decodeToken`; service specs that stubbed `jwtService.decode` for
+    endEmulation now stub `jwtService.verify`.
