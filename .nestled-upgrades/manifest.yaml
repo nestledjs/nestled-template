@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-04
+generatedAt: 2026-10-05
 channels:
-  canary: 2026.10.3
+  canary: 2026.10.4
   stable: 2026.10.3
 releases:
   - id: 2026.08.0
@@ -150,3 +150,116 @@ releases:
           - "pnpm exec nx run api:typecheck"
           - pnpm exec nestled-doctor
         patch: patches/2026-10-04-auth-tokens-verified-before-claims-are-trusted.diff
+  - id: 2026.10.4
+    date: 2026-10-05
+    title: Authentication and authorization hardening
+    templateCommit: d44b9c3
+    notes:
+      - id: 2026-10-05-auth-email-and-guard-hardening
+        title: Email verification writes, staff email edits, the global auth guard and rejected 2FA codes
+        delivery: code-patch
+        intent: "Authentication hardening across email verification, staff email edits, the global guard and the 2FA audit trail. Independent of 2026-10-05-auth-generation-claim; apply either first. 1. `AuthService.verifyEmail()` and `verifyEmailChange()` include the token's expiry in their compare-and-set (`validateEmailTokenExpires: { gt: now }` on the User `updateMany`; `verifyExpires: { gt: now }` on the Email `updateMany`), so the expiry is checked by the same write that consumes the token, not only by the read before it. 2. `AuthService.register()` and `registerWithInvitation()` store the signup verification token through `mintVerificationTokenForPrimary()`, the guarded mint `sendVerificationEmail()` already uses: the token is stored only while the registered address is still the primary one, and no verification email is sent otherwise. 3. `verifyEmailChange()` returns the user as read inside the transaction after the Email row is verified, with the auth relations (`emails`, ...), instead of the result of the earlier User write. 4. `AdminService.verifyEmail()` writes the User row first inside its transaction (the same lock order as `changeEmail()`), then verifies the Email by compare-and-set on `{ id, userId, email }` (the address read before the transaction). If the address changed, nothing is verified and it throws \"This email address changed; reload and try again\". `emailValidated` is set only if the row is primary when re-read under that lock. The existing email-belongs-to-user check stays. 5. `StaffEmailService.staffUpdateEmail()`: a changed address (compared with `normalizeEmail`) is stored with `verified: false` and its pending `verifyToken`/`verifyExpires` cleared, whatever the input says, so it also cannot be made primary in the same call. A primary address can be neither changed nor set `verified: false` through this path; it throws a BadRequest asking to add, verify and promote another address first. `staffUpdateEmail()` and `staffDeleteEmail()` now write the owning User row first in their transaction (an `updatedAt` write, the lock order above), and after their Email writes set `User.emailValidated` from the primary address as it then stands (true only if a primary exists and is verified), so verifying, promoting or deleting through these paths cannot leave the flag out of step with the primary. 6. `GlobalAuthGuard` accepts only the documented levels (`public`, `authenticated`, `admin`) under `AUTH_LEVEL_KEY`. Any other value, including non-strings, is refused as undeclared. 7. A rejected two-factor code is recorded as a SecurityEvent on the account (`SecurityEventType.TWO_FACTOR_CODE_REJECTED`, new `SecurityEventsService.logTwoFactorCodeRejected`, with the request's IP and user agent) instead of an AuditLog row with the account owner as actor. `verify2FALogin(userId, code, sessionInfo?)` takes the request context; `complete2FALogin()` passes it. A verified code stays an AuditLog `TWO_FACTOR_CODE_VERIFIED` entry. Additive migration `20261005150000_security_event_two_factor_code_rejected`; the admin security-events page labels the new type."
+        area: auth
+        affectedPaths:
+          - libs/api/prisma/src/lib/schemas/schema.prisma
+          - libs/api/prisma/src/lib/migrations/20261005150000_security_event_two_factor_code_rejected/migration.sql
+          - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+          - libs/api/custom/src/lib/plugins/admin/admin.service.ts
+          - libs/api/custom/src/lib/plugins/admin/admin.service.spec.ts
+          - libs/api/custom/src/lib/default/email/email.service.ts
+          - libs/api/custom/src/lib/default/email/email.service.spec.ts
+          - libs/api/custom/src/lib/plugins/security/security-events.service.ts
+          - libs/api/custom/src/lib/plugins/security/security-events.service.spec.ts
+          - libs/api/utils/src/lib/guards/global-auth.guard.ts
+          - libs/api/utils/src/lib/guards/global-auth.guard.spec.ts
+          - apps/web/app/routes/admin/security-events/_index.tsx
+          - apps/api-e2e/src/auth/auth-email-guards.spec.ts
+          - apps/api-e2e/src/support/test-db.ts
+        verification:
+          - "pnpm exec nx run api-custom:test"
+          - "pnpm exec nx run api-utils:test"
+          - pnpm exec nx run-many -t typecheck
+          - pnpm exec nestled-doctor
+          - "pnpm test:e2e src/auth/auth-email-guards.spec.ts"
+        patch: patches/2026-10-05-auth-email-and-guard-hardening.diff
+      - id: 2026-10-05-auth-generation-claim
+        title: Every JWT and API token carries a per-user auth generation; emulation tokens get revocable sessions
+        delivery: code-patch
+        intent: "Authentication hardening. A new column `User.authGeneration Int @default(0)` (marked `@graphqlOmit`, migration `20261005120000_user_auth_generation`) is a per-user counter. Every JWT the API signs carries it as the `authGeneration` claim, and a token is accepted only while the claim equals the user's current value. A missing claim reads as 0, the starting value for every user, so tokens issued before this release keep working until the user's counter first moves. 1. New `auth-token-claims.ts` in the auth plugin: `AuthTokenClaims`, `claimedAuthGeneration()` and `isAuthTokenCurrent(data, claims, user)`, which checks the generation, that the token's session (if any) is valid and owned by the right user, and, for emulation tokens, the emulating admin's generation. `AuthService.isTokenCurrent()` wraps it. 2. `JwtStrategy.validate()` calls `auth.isTokenCurrent(payload, user)` after loading the user and refuses the request when it returns false. This replaces its direct `isSessionValid()` call. `McpOAuthController /mcp/authorize` applies the same check to the session cookie it reads, and refuses emulation tokens (403 `access_denied`). 3. The counter is incremented (`authGeneration: { increment: 1 }`) inside the same write or transaction as: `AuthService.resetPassword()` (the compare-and-set that consumes the token), `AuthService.deleteUserAccount()`, `AdminService.forcePasswordReset()` and `AdminService.deactivateUser()`. `changePassword()` does NOT increment it, because it keeps the caller's current session; it still revokes the other sessions as before. 4. Tokens are signed with the generation read when the credential was checked, never re-read at signing time. `signUser()` takes an optional fifth argument `{ authGeneration?, adminAuthGeneration? }` and otherwise uses `user.authGeneration` (reading the row only when the caller's object lacks it). `createTemp2FAToken()` now takes `{ id, authGeneration }` instead of a user id and puts the claim in the 2FA temp token; `complete2FALogin()` refuses a temp token whose claim no longer matches and signs the session with the temp token's generation. 5. Emulation tokens are revocable. `emulateUser(input, adminId, { sessionInfo?, adminAuthGeneration?, replacedSessionId? })` creates a UserSession owned by the ADMIN and signs a token carrying that session, the target's generation and the admin's generation (`adminAuthGeneration`). Emulation tokens without a session are refused, including ones issued before this release. When the request authenticated with the admin's session cookie (no bearer header), the resolver passes that session as `replacedSessionId` and it is ended once the emulation token is issued, since the new cookie replaces it. `endEmulation(token, sessionInfo?)` ends the emulation session by compare-and-set and returns the admin to a new session of their own (previously the admin token it issued had no session). `AuthResolver.logout` ends an emulation token's session as the admin's. 6. `AuthCacheService` session-validity entries are fenced. `invalidateSession()` writes a short tombstone instead of deleting the key, and `setSessionValid(id, true)` only fills an empty key (`SET NX`), so a request that read a session as valid before it was revoked cannot write that stale value back after the revocation. 7. API tokens are bound to the generation too. New column `ApiToken.authGeneration Int @default(0)` (`@graphqlOmit`, migration `20261005130000_api_token_auth_generation`) records the owner's generation at issue. `ApiTokensService.generateApiToken()` and `rotateApiToken()` take it as an optional third argument (the resolver passes the authenticated row's value; MCP passes the value from the session that authorized the code, carried on `StoredAuthCode.authGeneration` into `McpOAuthService.createAccessToken(userId, organizationId, authGeneration)`). `validateApiToken()` loads the owner with the token and refuses it when the generations differ or the owner is inactive. So password reset, forced reset, deactivation and account deletion stop the owner's existing API tokens; the token rows themselves are left as they are (not marked revoked). 8. Inactive accounts (`User.isActive === false`) are refused by `JwtStrategy` on both the session token and the API token path, by `complete2FALogin()`, and by the OAuth callback (redirect with `error=account_disabled`), in addition to the password login that already refused them. 9. Any change of `User.isActive`, in either direction and by any path (application code, generated CRUD, nested writes, raw SQL), moves `authGeneration` on. This is enforced in the database by a `BEFORE UPDATE OF \"isActive\"` trigger (migration `20261005140000_auth_generation_follows_is_active`), which leaves alone an update that already moves the counter itself. Reactivating an account therefore never brings back tokens issued before it was deactivated. 10. Emulation tokens last 1 hour instead of 7 days. Every session row now records when its token expires (`UserSession.expiresAt DateTime?`, migration `20261005140100_user_session_expires_at`): `signUser()` passes it to `SessionService.createSession(userId, sessionInfo, twoFactorVerified, expiresAt?)`. `isAuthTokenCurrent()` refuses a session past its `expiresAt`, and `getUserActiveSessions()` (and so the concurrent-session limit) leaves expired sessions out. Sessions created before this release have no `expiresAt` and are governed by their token alone. 11. A revoked session stays revoked and a session's expiry can only move earlier, by any path including generated CRUD (`updateUserSession`). Enforced in the database by a `BEFORE UPDATE OF \"isValid\", \"expiresAt\"` trigger (migration `20261005160000_user_session_revocation_is_final`) that raises on `isValid` false -> true and on a later or cleared `expiresAt`. Revoking a session and reading sessions (admin user details, the data browser, `getUserSessions`) are unchanged."
+        area: auth
+        affectedPaths:
+          - libs/api/prisma/src/lib/schemas/schema.prisma
+          - libs/api/prisma/src/lib/migrations/20261005120000_user_auth_generation/migration.sql
+          - libs/api/prisma/src/lib/migrations/20261005130000_api_token_auth_generation/migration.sql
+          - libs/api/prisma/src/lib/migrations/20261005140000_auth_generation_follows_is_active/migration.sql
+          - libs/api/prisma/src/lib/migrations/20261005140100_user_session_expires_at/migration.sql
+          - libs/api/prisma/src/lib/migrations/20261005160000_user_session_revocation_is_final/migration.sql
+          - libs/api/custom/src/lib/plugins/auth/session.service.ts
+          - libs/api/custom/src/lib/plugins/auth/session.service.spec.ts
+          - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts
+          - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts
+          - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.resolver.ts
+          - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.resolver.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/auth-token-claims.ts
+          - libs/api/custom/src/lib/plugins/auth/auth-token-claims.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/oauth.controller.ts
+          - libs/api/custom/src/lib/plugins/auth/oauth.controller.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+          - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+          - libs/api/custom/src/lib/plugins/admin/admin.service.ts
+          - libs/api/custom/src/lib/plugins/admin/admin.service.spec.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+          - libs/api/utils/src/lib/services/auth-cache.service.ts
+          - libs/api/utils/src/lib/services/auth-cache.service.spec.ts
+          - apps/api-e2e/src/auth/auth-generation.spec.ts
+          - apps/api-e2e/src/support/test-db.ts
+        verification:
+          - "pnpm exec nx run api-custom:test"
+          - "pnpm exec nx run api-utils:test"
+          - "pnpm exec nx run api:typecheck"
+          - pnpm exec nestled-doctor
+          - "pnpm test:e2e src/auth/auth-generation.spec.ts"
+        patch: patches/2026-10-05-auth-generation-claim.diff
+      - id: 2026-10-05-organization-context-and-billing-authorization
+        title: Organization context is always membership-checked; billing operations require billing permissions
+        delivery: code-patch
+        intent: "Authorization hardening for organization-scoped work. Independent of 2026-10-05-auth-generation-claim and 2026-10-05-auth-email-and-guard-hardening; apply in any order. 1. `TenancyMiddleware` is removed, with its registration in `AppModule.configure()`, the `TenancyModule` import, its exports from the custom library's middleware barrel, and its spec. Nest middleware runs before guards, so it never saw an authenticated user and never did anything. Organization context comes only from `OrganizationContextService.attach()`, called by `GqlAuthGuard`, `GqlOrganizationScopedGuard` and `AccessPolicyGuard`. `AuthCacheService` is still provided by the global `GuardsModule`. 2. `OrganizationContextService.attach()` resolves the organization first (explicit id, scoped API token, `x-organization-id`, active organization) and reuses `req.organizationContext` only when its `userId` is the request's user and its `organizationId` is that organization. Otherwise it clears `req.organizationContext` and recomputes it from the membership, leaving it unset when there is no membership. 3. `UserSubscriptionResolver` (`default/subscription/user-subscription.resolver.ts`) drops its class-level `@Authenticated()`/`@UseGuards(GqlAuthGuard)`. `createCheckoutSession`, `createPortalSession` and `cancelSubscription` use `@RequireOrganizationPermission(['billing:manage'])`; `currentSubscription` and `currentUsage` use `@RequireOrganizationPermission(['billing:read', 'billing:manage'])`. All five act on `@CtxOrganizationId()`, the organization the permission was checked in, instead of `user.activeOrganizationId`. With the seeded roles, Owner can do everything, Admin can read, and Member can do neither. `availablePlans` stays public. `currentPlan` stays available to any member (feature gating needs it) but reads the organization from the context `GqlAuthGuard` attached, through the new `@CtxOptionalOrganizationId()` decorator (api/utils), returning null when there is none. The guard baseline is updated for the five operations. 4. Removing a membership clears the removed user's `activeOrganizationId` when it names that organization, in the same transaction: `OrganizationService.removeOrganizationMember()` and `userDeleteOrganization()` (which now runs its deletes in one transaction and clears every user whose active organization was the deleted one). Nothing derives authority from the raw field any more: the billing resolvers above, `currentPlan`, and `SubscriptionGuard` (which now calls `attach()` and refuses when there is no context) all use the membership-checked context. `userCreateOrganization()` and `acceptOrganizationInvitation()` replace an active organization the user is no longer a member of, as they already did an empty one. 5. Web: `SubscriptionProvider` (`libs/web`) only requests `currentSubscription` when the active membership holds `billing:read`, `billing:manage` or `all:manage` (or the user is a super admin), and otherwise reports no subscription. The billing settings page was already limited to owners."
+        area: auth
+        affectedPaths:
+          - apps/api/src/app.module.ts
+          - libs/api/custom/src/lib/middleware/index.ts
+          - libs/api/custom/src/lib/middleware/tenancy.middleware.ts
+          - libs/api/custom/src/lib/middleware/tenancy.middleware.spec.ts
+          - libs/api/custom/src/lib/middleware/tenancy.module.ts
+          - libs/api/utils/src/lib/services/organization-context.service.ts
+          - libs/api/utils/src/lib/services/organization-context.service.spec.ts
+          - libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+          - libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts
+          - libs/api/utils/src/lib/guards/subscription.guard.ts
+          - libs/api/utils/src/lib/guards/subscription.guard.spec.ts
+          - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+          - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
+          - libs/api/custom/src/lib/default/plan/user-plan.resolver.ts
+          - libs/api/custom/src/lib/default/plan/user-plan.resolver.spec.ts
+          - libs/api/custom/src/lib/default/organization/organization.service.ts
+          - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+          - libs/web/src/lib/contexts/subscription.context.tsx
+          - libs/web/src/lib/contexts/subscription.context.spec.tsx
+          - .nestled-updates/security/guard-baseline.json
+          - apps/api-e2e/src/auth/organization-billing.spec.ts
+        verification:
+          - "pnpm exec nx run api-custom:test"
+          - "pnpm exec nx run api-utils:test"
+          - "pnpm exec nx run web-components:test"
+          - pnpm exec nx run-many -t typecheck
+          - pnpm exec nestled-doctor
+          - "pnpm test:e2e src/auth/organization-billing.spec.ts"
+        patch: patches/2026-10-05-organization-context-and-billing-authorization.diff
