@@ -1,49 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import * as speakeasy from 'speakeasy'
 import { TestHelpers, type TestUser } from '../support/test-helpers'
 import { UserFactory } from '../support/factories/user.factory'
+import { sql } from '../support/test-db'
 
 /**
  * A password reset retires every credential issued before it: session tokens, API tokens and
  * pending 2FA temp tokens alike.
  */
-
-const testDatabaseUrl =
-  process.env.TEST_DATABASE_URL ||
-  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
-
-/**
- * Run one statement against the test database and return its unaligned, tuples-only output.
- * Values are passed as psql variables.
- */
-function sql(statement: string, variables: Record<string, string>): string {
-  const url = new URL(testDatabaseUrl)
-  const args = [
-    '-U',
-    url.username || 'postgres',
-    '-h',
-    url.hostname || 'localhost',
-    '-p',
-    url.port || '5432',
-    '-d',
-    url.pathname.slice(1).split('?')[0],
-    '-v',
-    'ON_ERROR_STOP=1',
-    '-At',
-  ]
-  for (const [name, value] of Object.entries(variables)) {
-    args.push('-v', `${name}=${value}`)
-  }
-  return execFileSync('psql', args, {
-    input: statement,
-    env: { ...process.env, PGPASSWORD: url.password || 'postgres' },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
-    .toString()
-    .trim()
-}
 
 /** Stand in for the emailed link: put a known reset token on the account. */
 function issueResetToken(userId: string): string {

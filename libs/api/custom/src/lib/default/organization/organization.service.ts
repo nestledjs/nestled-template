@@ -96,9 +96,6 @@ export class OrganizationService {
   }
 
   /**
-   * Check if user is owner of organization
-   */
-  /**
    * Whether the user's active organization is one they are still a member of. A value left behind
    * by a membership removed some other way grants nothing, and is replaced like an empty one.
    */
@@ -115,6 +112,9 @@ export class OrganizationService {
     return membership !== null
   }
 
+  /**
+   * Check if user is owner of organization
+   */
   private async isOwner(userId: string, organizationId: string): Promise<boolean> {
     const member = await this.data.organizationMember.findFirst({
       where: {

@@ -126,6 +126,7 @@ affectedPaths:
   - libs/api/utils/src/lib/services/auth-cache.service.ts
   - libs/api/utils/src/lib/services/auth-cache.service.spec.ts
   - apps/api-e2e/src/auth/auth-generation.spec.ts
+  - apps/api-e2e/src/support/test-db.ts
 
 packageReleases: []
 
