@@ -952,4 +952,7 @@ export class UserSession {
 
   @Field(() => Boolean)
   twoFactorVerified!: boolean
+
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  expiresAt?: Date | null
 }

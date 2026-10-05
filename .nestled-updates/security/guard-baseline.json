@@ -38,11 +38,11 @@
     "currentPlan": ["GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts": {
-    "currentSubscription": ["GqlAuthGuard"],
-    "createCheckoutSession": ["GqlAuthGuard"],
-    "createPortalSession": ["GqlAuthGuard"],
-    "cancelSubscription": ["GqlAuthGuard"],
-    "currentUsage": ["GqlAuthGuard"]
+    "currentSubscription": ["AccessPolicyGuard", "GqlAuthGuard"],
+    "createCheckoutSession": ["AccessPolicyGuard", "GqlAuthGuard"],
+    "createPortalSession": ["AccessPolicyGuard", "GqlAuthGuard"],
+    "cancelSubscription": ["AccessPolicyGuard", "GqlAuthGuard"],
+    "currentUsage": ["AccessPolicyGuard", "GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/default/user-preference/user-preference.resolver.ts": {
     "userCreateUserPreference": ["GqlAuthGuard"],

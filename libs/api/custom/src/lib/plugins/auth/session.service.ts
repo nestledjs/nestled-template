@@ -25,12 +25,14 @@ export class SessionService {
 
   /**
    * Create a new session in the database
-   * Returns session ID to be included in JWT
+   * Returns session ID to be included in JWT. `expiresAt` is when that JWT expires; the session is
+   * not counted as active, or accepted, after it.
    */
   async createSession(
     userId: string,
     sessionInfo: SessionInfo,
     twoFactorVerified = false,
+    expiresAt?: Date,
   ): Promise<string> {
     // Check concurrent session limit
     await this.enforceSessionLimit(userId)
@@ -43,6 +45,7 @@ export class SessionService {
         twoFactorVerified,
         isValid: true,
         lastActiveAt: new Date(),
+        expiresAt,
       },
     })
 
@@ -116,6 +119,7 @@ export class SessionService {
       where: {
         userId,
         isValid: true,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
       orderBy: {
         lastActiveAt: 'desc',

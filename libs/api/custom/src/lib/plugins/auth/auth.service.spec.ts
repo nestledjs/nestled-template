@@ -169,6 +169,7 @@ describe('AuthService', () => {
       logPasswordChanged: jest.fn().mockResolvedValue(undefined),
       logPasswordResetRequested: jest.fn().mockResolvedValue(undefined),
       logEmailVerificationRequested: jest.fn().mockResolvedValue(undefined),
+      logTwoFactorCodeRejected: jest.fn().mockResolvedValue(undefined),
       logEmailChanged: jest.fn().mockResolvedValue(undefined),
       log2FAEnabled: jest.fn().mockResolvedValue(undefined),
       log2FADisabled: jest.fn().mockResolvedValue(undefined),
@@ -321,6 +322,8 @@ describe('AuthService', () => {
       mockData.permission.findMany.mockResolvedValue([])
       mockData.role.findFirst.mockResolvedValue(mockRole as any)
       mockData.organizationMember.create.mockResolvedValue({} as any)
+      // The verification token is stored only while this is still the primary address.
+      mockData.email.findFirst.mockResolvedValue({ email: 'test@example.com', primary: true })
       mockSessionService.createSession.mockResolvedValue('session-123')
       mockJwtService.sign.mockReturnValue('jwt-token')
       const sessionInfo = {
@@ -454,6 +457,56 @@ describe('AuthService', () => {
           }),
         }),
       )
+    })
+    it('signs the session with the auth generation read alongside the password check', async () => {
+      ;(validatePassword as jest.Mock).mockReturnValue(true)
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-123',
+        password: 'hashed-password',
+        lockedUntil: null,
+        failedLoginCount: 0,
+        isActive: true,
+        twoFactorEnabled: false,
+        authGeneration: 4,
+        emails: [{ email: 'test@example.com', primary: true }],
+      } as any)
+      // A later read would see a newer generation; the token must not pick it up.
+      mockData.user.findUnique.mockResolvedValue({ authGeneration: 5 } as any)
+      mockSessionService.createSession.mockResolvedValue('session-123')
+      mockJwtService.sign.mockReturnValue('jwt-token')
+
+      await service.login({ email: 'test@example.com', password: 'TestPassword123!' }, {} as any)
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        { userId: 'user-123', authGeneration: 4, sessionId: 'session-123' },
+        { expiresIn: '7d' },
+      )
+    })
+    it('puts the auth generation in the 2FA temp token', async () => {
+      ;(validatePassword as jest.Mock).mockReturnValue(true)
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-123',
+        password: 'hashed-password',
+        lockedUntil: null,
+        failedLoginCount: 0,
+        isActive: true,
+        twoFactorEnabled: true,
+        authGeneration: 2,
+        emails: [{ email: 'test@example.com', primary: true }],
+      } as any)
+      mockJwtService.sign.mockReturnValue('temp-token')
+
+      const result = await service.login(
+        { email: 'test@example.com', password: 'TestPassword123!' },
+        {} as any,
+      )
+
+      expect(result).toMatchObject({ requires2FA: true, tempToken: 'temp-token' })
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-123', temp2FA: true, authGeneration: 2 }),
+        { expiresIn: '5m' },
+      )
+      expect(mockSessionService.createSession).not.toHaveBeenCalled()
     })
     it('should reject login with invalid password', async () => {
       const loginInput = {
@@ -682,26 +735,26 @@ describe('AuthService', () => {
   describe('createTemp2FAToken', () => {
     // Shared by the password login path and the OAuth callbacks. The payload shape is what
     // complete2FALogin verifies, so it is asserted directly rather than only through login().
-    it('signs a 5-minute temp2FA payload', () => {
+    it('signs a 5-minute temp2FA payload carrying the auth generation', () => {
       mockJwtService.sign.mockReturnValue('temp-2fa-token')
 
-      const token = service.createTemp2FAToken('user-123', true)
+      const token = service.createTemp2FAToken({ id: 'user-123', authGeneration: 3 }, true)
 
       expect(token).toBe('temp-2fa-token')
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        { userId: 'user-123', temp2FA: true, remember: true },
+        { userId: 'user-123', temp2FA: true, remember: true, authGeneration: 3 },
         { expiresIn: '5m' },
       )
     })
 
     it('defaults remember to false when not supplied', () => {
-      // The OAuth callbacks call this with the user id only.
+      // The OAuth callbacks call this with the user row only.
       mockJwtService.sign.mockReturnValue('temp-2fa-token')
 
-      service.createTemp2FAToken('user-123')
+      service.createTemp2FAToken({ id: 'user-123', authGeneration: 0 })
 
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        { userId: 'user-123', temp2FA: true, remember: false },
+        { userId: 'user-123', temp2FA: true, remember: false, authGeneration: 0 },
         { expiresIn: '5m' },
       )
     })
@@ -804,6 +857,43 @@ describe('AuthService', () => {
     })
   })
   describe('Email Verification', () => {
+    it('stores the signup token only while the address is still primary, and sends nothing otherwise', async () => {
+      ;(hashPassword as jest.Mock).mockReturnValue('hashed-password')
+      ;(require('./auth.helper').generateUsernameSlug as jest.Mock).mockReturnValue('test-user')
+      ;(require('./auth.helper').generateToken as jest.Mock).mockReturnValue('verification-token')
+      ;(require('./auth.helper').generateExpireDate as jest.Mock).mockReturnValue(new Date())
+      mockData.user.count.mockResolvedValue(1)
+      mockData.user.findUnique.mockResolvedValue(null)
+      mockData.user.create.mockResolvedValue({ id: 'user-123' } as any)
+      mockData.user.update.mockResolvedValue({} as any)
+      mockData.organization.create.mockResolvedValue({ id: 'org-123' } as any)
+      mockData.permission.findMany.mockResolvedValue([])
+      mockData.role.findFirst.mockResolvedValue({ id: 'role-123', name: 'Owner' } as any)
+      mockData.organizationMember.create.mockResolvedValue({} as any)
+      // By the time the token is stored, the primary address is a different one.
+      mockData.email.findFirst.mockResolvedValue({ email: 'other@example.com', primary: true })
+      mockSessionService.createSession.mockResolvedValue('session-123')
+      mockJwtService.sign.mockReturnValue('jwt-token')
+
+      await service.register(
+        { email: 'test@example.com', password: 'TestPassword123!', firstName: 'T', lastName: 'U' },
+        {} as any,
+      )
+
+      // Written inside the guarded transaction, which rolled back.
+      expect(mockData.$transaction).toHaveBeenCalled()
+      expect(mockData.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: {
+          validateEmailToken: expect.any(String),
+          validateEmailTokenExpires: expect.any(Date),
+        },
+      })
+      expect(mockEmailService.sendTemplate).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ templateId: 'email-verification' }),
+      )
+    })
     it('should send verification email on registration', async () => {
       const registerInput = {
         email: 'test@example.com',
@@ -824,6 +914,7 @@ describe('AuthService', () => {
       mockData.permission.findMany.mockResolvedValue([])
       mockData.role.findFirst.mockResolvedValue({ id: 'role-123', name: 'Owner' } as any)
       mockData.organizationMember.create.mockResolvedValue({} as any)
+      mockData.email.findFirst.mockResolvedValue({ email: 'test@example.com', primary: true })
       mockSessionService.createSession.mockResolvedValue('session-123')
       mockJwtService.sign.mockReturnValue('jwt-token')
       await service.register(registerInput, {} as any)
@@ -952,7 +1043,11 @@ describe('AuthService', () => {
       // Consumed by compare-and-set: only while the token is still the one on the account.
       expect(mockData.user.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'user-123', validateEmailToken: token },
+          where: {
+            id: 'user-123',
+            validateEmailToken: token,
+            validateEmailTokenExpires: { gt: expect.any(Date) },
+          },
           data: expect.objectContaining({
             emailValidated: true,
             validateEmailToken: null,
@@ -1353,6 +1448,42 @@ describe('AuthService', () => {
       expect(mockSecurityEvents.logPasswordChanged).not.toHaveBeenCalled()
     })
 
+    it('moves the auth generation in the same transaction as the new password', async () => {
+      mockData.user.findFirst.mockResolvedValue({
+        id: 'user-123',
+        password: 'old-hash',
+        passwordResetToken: 'tok',
+        passwordResetExpires: new Date(Date.now() + 3600000),
+      })
+      ;(validatePassword as jest.Mock).mockReturnValue(false)
+      ;(hashPassword as jest.Mock).mockReturnValue('new-hash')
+      mockData.passwordHistory.findMany.mockResolvedValue([])
+      const tx = {
+        user: {
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'user-123' }),
+        },
+        passwordHistory: { create: jest.fn() },
+        userSession: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
+      }
+      mockData.$transaction.mockImplementation(async (fn: any) => fn(tx))
+
+      await service.resetPassword('NewPassword123!', 'tok', {} as any)
+
+      // One statement: the token is consumed, the password written and the generation moved
+      // together, on the transaction client.
+      expect(tx.user.updateMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({ id: 'user-123', passwordResetToken: 'tok' }),
+        data: expect.objectContaining({
+          password: 'new-hash',
+          passwordResetToken: null,
+          authGeneration: { increment: 1 },
+        }),
+      })
+      expect(mockData.user.updateMany).not.toHaveBeenCalled()
+      expect(mockData.user.update).not.toHaveBeenCalled()
+    })
+
     it('refuses a token a concurrent reset already consumed', async () => {
       // Both requests passed the initial read; the first cleared the token, so the second's
       // compare-and-set matches nothing. It must not write the password, history, or sessions.
@@ -1702,6 +1833,8 @@ describe('AuthService', () => {
           data: expect.objectContaining({
             isActive: false,
             deactivatedAt: expect.any(Date),
+            // Same write as the deactivation and the session revocation.
+            authGeneration: { increment: 1 },
           }),
         }),
       )
@@ -1788,13 +1921,18 @@ describe('AuthService', () => {
         id: 'user-123',
         emailValidated: true,
       } as any)
+      mockData.user.findUniqueOrThrow.mockResolvedValue({
+        id: 'user-123',
+        emailValidated: true,
+        emails: [{ id: 'email-123', email: 'new@example.com', verified: true }],
+      } as any)
       const result = await service.verifyEmailChange(token)
       expect(result).toBeDefined()
       expect(result.emailValidated).toBe(true)
-      // Compare-and-set: the row must still carry this token when it is consumed.
+      // Compare-and-set: the row must still carry this token, unexpired, when it is consumed.
       expect(mockData.email.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'email-123', verifyToken: token },
+          where: { id: 'email-123', verifyToken: token, verifyExpires: { gt: expect.any(Date) } },
           data: expect.objectContaining({
             verified: true,
             verifyToken: null,
@@ -1802,6 +1940,35 @@ describe('AuthService', () => {
           }),
         }),
       )
+    })
+    it('returns the user as read after the address was verified, with its emails', async () => {
+      const order: string[] = []
+      mockData.email.findFirst.mockResolvedValue({
+        id: 'email-123',
+        email: 'new@example.com',
+        userId: 'user-123',
+        verifyToken: 'tok',
+        verifyExpires: new Date(Date.now() + 3600000),
+        user: { id: 'user-123' },
+      })
+      mockData.email.updateMany.mockImplementation(async () => {
+        order.push('email')
+        return { count: 1 }
+      })
+      mockData.user.findUniqueOrThrow.mockImplementation(async (args: any) => {
+        order.push('read')
+        expect(args.include).toEqual(expect.objectContaining({ emails: true }))
+        return {
+          id: 'user-123',
+          emailValidated: true,
+          emails: [{ id: 'email-123', verified: true }],
+        }
+      })
+
+      const result = await service.verifyEmailChange('tok')
+
+      expect(order).toEqual(['email', 'read'])
+      expect(result.emails?.[0]?.verified).toBe(true)
     })
     it('rejects an email-change token that was replaced after it was read', async () => {
       // A second changeEmail() rewrites the same row with a new address and token. A link mailed
@@ -2016,6 +2183,7 @@ describe('AuthService', () => {
         // Use properly formatted encrypted secret: ivHex:encrypted
         twoFactorSecret: '1234567890abcdef1234567890abcdef:fedcba0987654321fedcba0987654321',
         twoFactorEnabled: true,
+        authGeneration: 0,
         emails: [{ email: 'test@example.com', primary: true }],
       }
       // Implementation now verifies (signature + expiry), not just decodes, the temp 2FA token.
@@ -2043,6 +2211,7 @@ describe('AuthService', () => {
         username: 'testuser',
         twoFactorSecret: '1234567890abcdef1234567890abcdef:fedcba0987654321fedcba0987654321',
         twoFactorEnabled: true,
+        authGeneration: 0,
         emails: [{ email: 'test@example.com', primary: true }],
       } as any)
       mockSessionService.createSession.mockRejectedValue(new Error('database unavailable'))
@@ -2054,6 +2223,60 @@ describe('AuthService', () => {
         data: expect.objectContaining({ action: 'LOGIN_2FA_COMPLETED' }),
       })
     })
+    it('refuses a temp token issued under an earlier auth generation', async () => {
+      // The temp token predates a password reset: it was issued under generation 0, the user is
+      // now on 1. The code is never checked and no session is created.
+      mockJwtService.verify.mockReturnValue({ userId: 'user-123', temp2FA: true } as any)
+      mockData.user.findUnique.mockResolvedValue({ id: 'user-123', authGeneration: 1 } as any)
+      const twofa = require('./twofa.helper')
+
+      await expect(service.complete2FALogin('temp-jwt-token', '123456', {} as any)).rejects.toThrow(
+        'Invalid or expired 2FA token',
+      )
+      expect(twofa.verify2FACode).not.toHaveBeenCalled()
+      expect(mockData.$executeRaw).not.toHaveBeenCalled()
+      expect(mockSessionService.createSession).not.toHaveBeenCalled()
+      expect(mockJwtService.sign).not.toHaveBeenCalled()
+    })
+    it('refuses to complete a 2FA login for an inactive account', async () => {
+      mockJwtService.verify.mockReturnValue({ userId: 'user-123', temp2FA: true } as any)
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-123',
+        authGeneration: 0,
+        isActive: false,
+      } as any)
+
+      await expect(service.complete2FALogin('temp-jwt-token', '123456', {} as any)).rejects.toThrow(
+        'Account has been disabled',
+      )
+      expect(mockSessionService.createSession).not.toHaveBeenCalled()
+      expect(mockJwtService.sign).not.toHaveBeenCalled()
+    })
+    it("signs the completed login under the temp token's auth generation", async () => {
+      mockJwtService.verify.mockReturnValue({
+        userId: 'user-123',
+        temp2FA: true,
+        authGeneration: 1,
+      } as any)
+      // First read: the generation check. Later reads (code check, user load) return the user.
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-123',
+        twoFactorEnabled: true,
+        twoFactorSecret: 'encrypted-secret',
+        authGeneration: 1,
+        emails: [{ email: 'test@example.com', primary: true }],
+      } as any)
+      ;(require('./twofa.helper').verify2FACode as jest.Mock).mockReturnValue(true)
+      mockSessionService.createSession.mockResolvedValue('session-1')
+      mockJwtService.sign.mockReturnValue('session-token')
+
+      await service.complete2FALogin('temp-jwt-token', '123456', {} as any)
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        { userId: 'user-123', authGeneration: 1, sessionId: 'session-1' },
+        { expiresIn: '7d' },
+      )
+    })
     it('should reject 2FA login with invalid temp token', async () => {
       const tempToken = 'invalid-token'
       const code = '123456'
@@ -2061,6 +2284,27 @@ describe('AuthService', () => {
         throw new Error('Invalid token')
       })
       await expect(service.complete2FALogin(tempToken, code, {} as any)).rejects.toThrow()
+    })
+    it('records a rejected code as a security event on the account, not as its action', async () => {
+      ;(require('./twofa.helper').verify2FACode as jest.Mock).mockReturnValueOnce(false)
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-123',
+        twoFactorEnabled: true,
+        twoFactorSecret: 'encrypted-secret',
+      } as any)
+      mockData.$executeRaw.mockResolvedValueOnce(0)
+
+      await expect(
+        service.verify2FALogin('user-123', '000000', { ipAddress: '1.2.3.4', userAgent: 'ua' }),
+      ).resolves.toBe(false)
+
+      expect(mockSecurityEvents.logTwoFactorCodeRejected).toHaveBeenCalledWith('user-123', {
+        ipAddress: '1.2.3.4',
+        userAgent: 'ua',
+      })
+      expect(mockData.auditLog.create).not.toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'TWO_FACTOR_CODE_REJECTED' }),
+      })
     })
     it('should reject complete 2FA login when code verification fails', async () => {
       const tempToken = 'temp-jwt-token'
@@ -2070,6 +2314,7 @@ describe('AuthService', () => {
         twoFactorEnabled: true,
         twoFactorSecret: 'encrypted-secret',
         twoFactorRecoveryCodes: [],
+        authGeneration: 0,
       } as any)
       ;(require('./twofa.helper').verify2FACode as jest.Mock).mockReturnValue(false)
 
@@ -2116,6 +2361,68 @@ describe('AuthService', () => {
         originalAdminId: adminId,
       })
     })
+    it("gives the emulation token a session owned by the admin and both users' generations", async () => {
+      mockData.user.findUnique.mockResolvedValue({
+        id: 'user-456',
+        authGeneration: 1,
+        emails: [{ email: 'target@example.com', primary: true }],
+      } as any)
+      mockSessionService.createSession.mockResolvedValue('emulation-session')
+      mockJwtService.sign.mockReturnValue('emulation-jwt-token')
+
+      await service.emulateUser({ userId: 'user-456' }, 'admin-123', {
+        sessionInfo: { ipAddress: '1.2.3.4' },
+        adminAuthGeneration: 3,
+      })
+
+      const before = Date.now()
+      expect(mockSessionService.createSession).toHaveBeenCalledWith(
+        'admin-123',
+        { ipAddress: '1.2.3.4' },
+        false,
+        expect.any(Date),
+      )
+      // Emulation is short-lived, and its session expires with its token.
+      const sessionExpiry = mockSessionService.createSession.mock.calls[0][3] as Date
+      expect(sessionExpiry.getTime()).toBeGreaterThan(before + 59 * 60 * 1000)
+      expect(sessionExpiry.getTime()).toBeLessThanOrEqual(before + 60 * 60 * 1000)
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        {
+          userId: 'user-456',
+          authGeneration: 1,
+          isEmulating: true,
+          originalAdminId: 'admin-123',
+          adminAuthGeneration: 3,
+          sessionId: 'emulation-session',
+        },
+        { expiresIn: '1h' },
+      )
+    })
+    it("ends the admin's replaced session once the emulation token is issued", async () => {
+      mockData.user.findUnique.mockResolvedValue({ id: 'user-456', authGeneration: 0 } as any)
+      mockSessionService.createSession.mockResolvedValue('emulation-session')
+      mockJwtService.sign.mockReturnValue('emulation-jwt-token')
+
+      await service.emulateUser({ userId: 'user-456' }, 'admin-123', {
+        adminAuthGeneration: 0,
+        replacedSessionId: 'admin-session',
+      })
+
+      // Only the admin's own, still-valid session.
+      expect(mockData.userSession.updateMany).toHaveBeenCalledWith({
+        where: { id: 'admin-session', userId: 'admin-123', isValid: true },
+        data: { isValid: false },
+      })
+    })
+    it('ends no session when none is being replaced', async () => {
+      mockData.user.findUnique.mockResolvedValue({ id: 'user-456', authGeneration: 0 } as any)
+      mockSessionService.createSession.mockResolvedValue('emulation-session')
+      mockJwtService.sign.mockReturnValue('emulation-jwt-token')
+
+      await service.emulateUser({ userId: 'user-456' }, 'admin-123', { adminAuthGeneration: 0 })
+
+      expect(mockData.userSession.updateMany).not.toHaveBeenCalled()
+    })
     it('should reject emulation if target user not found', async () => {
       const adminId = 'admin-123'
       const targetUserId = 'nonexistent-user'
@@ -2147,29 +2454,74 @@ describe('AuthService', () => {
         userId: 'user-456',
         isEmulating: true,
         originalAdminId: 'admin-123',
+        sessionId: 'emulation-session',
+        authGeneration: 0,
+        adminAuthGeneration: 2,
       }
       const mockAdmin = {
         id: 'admin-123',
         username: 'admin',
+        authGeneration: 2,
         emails: [{ email: 'admin@example.com', primary: true }],
       }
       mockJwtService.verify.mockReturnValue(mockDecoded as any)
       mockData.user.findUnique.mockResolvedValue(mockAdmin as any)
+      mockData.userSession.updateMany.mockResolvedValue({ count: 1 })
       mockData.auditLog.create.mockResolvedValue({} as any)
-      mockSessionService.createSession.mockResolvedValue({
-        id: 'session-admin',
-        userId: mockAdmin.id,
-      } as any)
+      mockSessionService.createSession.mockResolvedValue('session-admin')
       mockJwtService.sign.mockReturnValue('admin-jwt-token')
-      const result = await service.endEmulation(emulationToken)
+      const result = await service.endEmulation(emulationToken, { ipAddress: '1.2.3.4' })
       expect(result).toBeDefined()
       expect(result.token).toBe('admin-jwt-token')
-      expect(mockJwtService.sign).toHaveBeenCalled()
-      const signCall = mockJwtService.sign.mock.calls[0]
-      expect(signCall[0]).toMatchObject({
-        userId: 'admin-123',
-        // Note: isEmulating is omitted (not set to false) when not emulating
+      // The emulation session ends, and the admin gets a session of their own.
+      expect(mockData.userSession.updateMany).toHaveBeenCalledWith({
+        where: { id: 'emulation-session', userId: 'admin-123', isValid: true },
+        data: { isValid: false },
       })
+      expect(mockSessionService.createSession).toHaveBeenCalledWith(
+        'admin-123',
+        { ipAddress: '1.2.3.4' },
+        false,
+        expect.any(Date),
+      )
+      const signCall = mockJwtService.sign.mock.calls[0]
+      expect(signCall[0]).toEqual({
+        userId: 'admin-123',
+        authGeneration: 2,
+        sessionId: 'session-admin',
+      })
+    })
+    it('refuses to end an emulation whose session has already ended', async () => {
+      mockJwtService.verify.mockReturnValue({
+        userId: 'user-456',
+        isEmulating: true,
+        originalAdminId: 'admin-123',
+        sessionId: 'emulation-session',
+        adminAuthGeneration: 0,
+      } as any)
+      mockData.user.findUnique.mockResolvedValue({ id: 'admin-123', authGeneration: 0 } as any)
+      mockData.userSession.updateMany.mockResolvedValue({ count: 0 })
+
+      await expect(service.endEmulation('emulation-token')).rejects.toThrow(
+        'Not currently emulating',
+      )
+      expect(mockJwtService.sign).not.toHaveBeenCalled()
+    })
+    it("refuses to end an emulation once the admin's auth generation has moved on", async () => {
+      mockJwtService.verify.mockReturnValue({
+        userId: 'user-456',
+        isEmulating: true,
+        originalAdminId: 'admin-123',
+        sessionId: 'emulation-session',
+        adminAuthGeneration: 0,
+      } as any)
+      mockData.user.findUnique.mockResolvedValue({ id: 'admin-123', authGeneration: 1 } as any)
+
+      await expect(service.endEmulation('emulation-token')).rejects.toThrow(
+        'Not currently emulating',
+      )
+      expect(mockSessionService.createSession).not.toHaveBeenCalled()
+      expect(mockJwtService.sign).not.toHaveBeenCalled()
     })
     it('should reject end emulation with non-emulation token', async () => {
       const normalToken = 'normal-jwt-token'
@@ -2537,11 +2889,21 @@ describe('AuthService', () => {
         userId: 'user-new',
       } as any)
       mockJwtService.sign.mockReturnValue('new-jwt-token')
+      mockData.email.findFirst.mockResolvedValue({ email: 'invited@example.com', primary: true })
       const result = await service.registerWithInvitation(payload, {} as any)
       expect(result).toBeDefined()
       if (result) {
         expect(result.token).toBe('new-jwt-token')
       }
+      // The token is stored by the guarded mint, inside its transaction, and then mailed.
+      expect(mockData.$transaction).toHaveBeenCalled()
+      expect(mockData.email.findFirst).toHaveBeenCalledWith({
+        where: { userId: 'user-new', primary: true },
+      })
+      expect(mockEmailService.sendTemplate).toHaveBeenCalledWith(
+        'invited@example.com',
+        expect.objectContaining({ templateId: 'email-verification' }),
+      )
     })
     it('should reject invalid invitation token', async () => {
       const payload = {

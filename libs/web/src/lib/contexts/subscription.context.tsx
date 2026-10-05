@@ -35,12 +35,34 @@ interface SubscriptionProviderProps {
   readonly children: ReactNode
 }
 
+type BillingPermission = { subject?: string | null; action?: string | null }
+
+/**
+ * The API serves the organization's subscription only to members holding `billing:read` or
+ * `billing:manage` there. Members without them do not ask, and see no subscription details.
+ */
+function canReadBilling(
+  isSuperAdmin: boolean | null | undefined,
+  permissions: readonly BillingPermission[] | null | undefined,
+): boolean {
+  if (isSuperAdmin) return true
+  return (permissions ?? []).some(
+    p =>
+      (p.subject === 'billing' && (p.action === 'read' || p.action === 'manage')) ||
+      (p.subject === 'all' && p.action === 'manage'),
+  )
+}
+
 export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
-  const { activeOrganization } = useGlobalCtx()
+  const { user, activeOrganization, activeOrganizationMember } = useGlobalCtx()
+  const billingReadable = canReadBilling(
+    user?.isSuperAdmin,
+    activeOrganizationMember?.role?.permissions,
+  )
 
   // Fetch current subscription for active organization
   const { data, loading, error } = useQuery<CurrentSubscriptionQuery>(CurrentSubscription, {
-    skip: !activeOrganization?.id,
+    skip: !activeOrganization?.id || !billingReadable,
     fetchPolicy: 'cache-and-network',
   })
 

@@ -26,12 +26,13 @@ const createFixture = () => {
     update: jest.fn(),
     updateMany: jest.fn(),
   }
-  const transaction: EmailTransaction = { email }
+  const user = { update: jest.fn().mockResolvedValue({}) }
+  const transaction: EmailTransaction = { email, user }
   const data: EmailDataAccess = {
     $transaction: callback => callback(transaction),
   }
 
-  return { email, service: new StaffEmailService(data) }
+  return { email, user, service: new StaffEmailService(data) }
 }
 
 describe('StaffEmailService', () => {
@@ -52,6 +53,128 @@ describe('StaffEmailService', () => {
       where: { id: current.id },
       data: { primary: true },
     })
+  })
+
+  it('stores a changed address unverified, whatever the input says, and drops its pending token', async () => {
+    const { email, service } = createFixture()
+    email.findUnique.mockResolvedValue(
+      buildEmail({ verifyToken: 'pending', verifyExpires: new Date('2026-12-01') }),
+    )
+    email.update.mockResolvedValue(buildEmail())
+
+    await service.staffUpdateEmail('email-1', { email: 'new@example.com', verified: true })
+
+    expect(email.update).toHaveBeenCalledWith({
+      where: { id: 'email-1' },
+      data: {
+        email: 'new@example.com',
+        verified: false,
+        verifyToken: null,
+        verifyExpires: null,
+      },
+    })
+  })
+
+  it('does not make a changed address primary, since it starts unverified', async () => {
+    const { email, service } = createFixture()
+    email.findUnique.mockResolvedValue(buildEmail())
+
+    await expect(
+      service.staffUpdateEmail('email-1', {
+        email: 'new@example.com',
+        verified: true,
+        primary: true,
+      }),
+    ).rejects.toThrow('Cannot set an unverified email as primary')
+    expect(email.update).not.toHaveBeenCalled()
+  })
+
+  it('leaves verification alone when the address is unchanged apart from case and spacing', async () => {
+    const { email, service } = createFixture()
+    email.findUnique.mockResolvedValue(buildEmail())
+    email.update.mockResolvedValue(buildEmail())
+
+    await service.staffUpdateEmail('email-1', { email: ' User@Example.com ', public: true })
+
+    expect(email.update).toHaveBeenCalledWith({
+      where: { id: 'email-1' },
+      data: { email: ' User@Example.com ', public: true },
+    })
+  })
+
+  it('refuses to change or unverify a primary address', async () => {
+    const { email, service } = createFixture()
+    email.findUnique.mockResolvedValue(buildEmail({ primary: true }))
+
+    await expect(
+      service.staffUpdateEmail('email-1', { email: 'new@example.com' }),
+    ).rejects.toBeInstanceOf(BadRequestException)
+    await expect(service.staffUpdateEmail('email-1', { verified: false })).rejects.toThrow(
+      'A primary email cannot be changed or unverified',
+    )
+    expect(email.update).not.toHaveBeenCalled()
+  })
+
+  it('keeps emailValidated in step when the primary is verified, writing the User row first', async () => {
+    const { email, user, service } = createFixture()
+    const order: string[] = []
+    user.update.mockImplementation(async (args: { data: object }) => {
+      order.push(`user:${Object.keys(args.data).join(',')}`)
+      return {}
+    })
+    email.update.mockImplementation(async () => {
+      order.push('email')
+      return buildEmail({ primary: true, verified: true })
+    })
+    email.findUnique.mockResolvedValue(buildEmail({ primary: true, verified: false }))
+    email.findFirst.mockResolvedValue(buildEmail({ primary: true, verified: true }))
+
+    await service.staffUpdateEmail('email-1', { verified: true })
+
+    expect(order).toEqual(['user:updatedAt', 'email', 'user:emailValidated'])
+    expect(user.update).toHaveBeenLastCalledWith({
+      where: { id: 'user-1' },
+      data: { emailValidated: true },
+    })
+  })
+
+  it('sets emailValidated from the new primary when a verified address is promoted', async () => {
+    const { email, user, service } = createFixture()
+    email.findUnique.mockResolvedValue(buildEmail({ verified: true }))
+    email.updateMany.mockResolvedValue({ count: 1 })
+    email.update.mockResolvedValue(buildEmail({ primary: true }))
+    email.findFirst.mockResolvedValue(buildEmail({ primary: true, verified: true }))
+
+    await service.staffUpdateEmail('email-1', { primary: true })
+
+    expect(user.update).toHaveBeenLastCalledWith({
+      where: { id: 'user-1' },
+      data: { emailValidated: true },
+    })
+  })
+
+  it('clears emailValidated when the account is left with no verified primary', async () => {
+    const { email, user, service } = createFixture()
+    email.findUnique.mockResolvedValue(buildEmail({ primary: true }))
+    email.update.mockResolvedValue(buildEmail({ primary: false }))
+    email.findFirst.mockResolvedValue(null)
+
+    await service.staffUpdateEmail('email-1', { primary: false })
+
+    expect(user.update).toHaveBeenLastCalledWith({
+      where: { id: 'user-1' },
+      data: { emailValidated: false },
+    })
+  })
+
+  it('touches no User row for an organization address', async () => {
+    const { email, user, service } = createFixture()
+    email.findUnique.mockResolvedValue(buildEmail({ userId: null, organizationId: 'org-1' }))
+    email.update.mockResolvedValue(buildEmail())
+
+    await service.staffUpdateEmail('email-1', { public: true })
+
+    expect(user.update).not.toHaveBeenCalled()
   })
 
   it('rejects promotion of an unverified email', async () => {
@@ -83,6 +206,30 @@ describe('StaffEmailService', () => {
       data: { primary: true },
     })
     expect(email.delete).toHaveBeenCalledWith({ where: { id: current.id } })
+  })
+
+  it('sets emailValidated from the promoted replacement when a primary is deleted', async () => {
+    const { email, user, service } = createFixture()
+    const current = buildEmail({ primary: true, verified: false })
+    const replacement = buildEmail({ id: 'email-2', primary: false, verified: true })
+    email.findUnique.mockResolvedValue(current)
+    // First lookup: the replacement to promote. Second: the primary after the delete.
+    email.findFirst
+      .mockResolvedValueOnce(replacement)
+      .mockResolvedValueOnce({ ...replacement, primary: true })
+    email.update.mockResolvedValue({ ...replacement, primary: true })
+    email.delete.mockResolvedValue(current)
+
+    await service.staffDeleteEmail(current.id)
+
+    expect(user.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'user-1' },
+      data: { updatedAt: expect.any(Date) },
+    })
+    expect(user.update).toHaveBeenLastCalledWith({
+      where: { id: 'user-1' },
+      data: { emailValidated: true },
+    })
   })
 
   it('rejects deletion when a primary email has no verified replacement', async () => {

@@ -36,6 +36,7 @@ describe('McpOAuthController', () => {
       consumeAuthCode: jest.fn(),
       verifyPkce: jest.fn(),
       createAccessToken: jest.fn(),
+      isSessionTokenCurrent: jest.fn().mockResolvedValue(true),
     } as any
     config = {
       get: jest.fn((key: string) => (key === 'siteUrl' ? 'https://app.example.com' : undefined)),
@@ -117,7 +118,7 @@ describe('McpOAuthController', () => {
     const res = createResponse()
     oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
     oauth.validateOrgMembership.mockResolvedValue(true)
-    jwtService.verify.mockReturnValue({ userId: 'user-123' } as any)
+    jwtService.verify.mockReturnValue({ userId: 'user-123', authGeneration: 3 } as any)
 
     await controller.authorize(
       {
@@ -133,12 +134,68 @@ describe('McpOAuthController', () => {
     expect(oauth.createAuthCode).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'user-123',
+        authGeneration: 3,
         organizationId: 'org-123',
         clientId: 'client-123',
       }),
     )
     expect(res.redirect).toHaveBeenCalledWith(
       'https://client.example.com/callback?code=auth-code-123',
+    )
+  })
+
+  it('refuses to authorize a client from an emulation session', async () => {
+    const res = createResponse()
+    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+    oauth.validateOrgMembership.mockResolvedValue(true)
+    jwtService.verify.mockReturnValue({
+      userId: 'user-123',
+      sessionId: 'emulation-session',
+      isEmulating: true,
+      originalAdminId: 'admin-1',
+    } as any)
+
+    await controller.authorize(
+      {
+        client_id: 'client-123',
+        redirect_uri: 'https://client.example.com/callback',
+        code_challenge: 'challenge',
+        org: 'org-123',
+      },
+      { ...req, cookies: { __session: 'cookie-token' } } as any,
+      res,
+    )
+
+    expect(oauth.createAuthCode).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'access_denied' }))
+  })
+
+  it('sends the user to login when the cookie session is no longer current', async () => {
+    const res = createResponse()
+    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+    oauth.validateOrgMembership.mockResolvedValue(true)
+    jwtService.verify.mockReturnValue({ userId: 'user-123', sessionId: 'session-1' } as any)
+    oauth.isSessionTokenCurrent.mockResolvedValue(false)
+
+    await controller.authorize(
+      {
+        client_id: 'client-123',
+        redirect_uri: 'https://client.example.com/callback',
+        code_challenge: 'challenge',
+        org: 'org-123',
+      },
+      { ...req, cookies: { __session: 'cookie-token' } } as any,
+      res,
+    )
+
+    expect(oauth.isSessionTokenCurrent).toHaveBeenCalledWith({
+      userId: 'user-123',
+      sessionId: 'session-1',
+    })
+    expect(oauth.createAuthCode).not.toHaveBeenCalled()
+    expect(res.redirect).toHaveBeenCalledWith(
+      expect.stringContaining('https://app.example.com/login?redirect='),
     )
   })
 
@@ -189,6 +246,7 @@ describe('McpOAuthController', () => {
       codeChallenge: 'challenge',
       codeChallengeMethod: 'S256',
       userId: 'user-123',
+      authGeneration: 3,
       organizationId: 'org-123',
       scope: 'openid',
     } as any)
@@ -206,6 +264,7 @@ describe('McpOAuthController', () => {
       res,
     )
 
+    expect(oauth.createAccessToken).toHaveBeenCalledWith('user-123', 'org-123', 3)
     expect(res.json).toHaveBeenCalledWith({
       access_token: 'api-token-123',
       token_type: 'bearer',

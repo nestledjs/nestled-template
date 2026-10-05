@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "SecurityEventType" ADD VALUE 'TWO_FACTOR_CODE_REJECTED';

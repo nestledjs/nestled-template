@@ -58,6 +58,8 @@ type EmulatedUser = User & {
 type SessionTokenPayload = {
   sessionId?: string | null
   userId?: string | null
+  isEmulating?: boolean | null
+  originalAdminId?: string | null
 }
 
 @Resolver(() => UserToken)
@@ -293,7 +295,15 @@ export class AuthResolver {
     @CtxUser() admin: User,
     @Args('input') input: EmulateUserInput,
   ): Promise<UserToken> {
-    const userToken = await this.service.emulateUser(input, admin.id)
+    const sessionInfo = this.sessionService.extractSessionInfo(context.req)
+    // The admin row JwtStrategy loaded for this request, so the emulation token is bound to the
+    // generation the admin's own credentials were checked under.
+    const { authGeneration } = admin as User & { authGeneration?: number }
+    const userToken = await this.service.emulateUser(input, admin.id, {
+      sessionInfo,
+      adminAuthGeneration: authGeneration,
+      replacedSessionId: this.getReplacedCookieSessionId(context, admin.id),
+    })
     if (!userToken?.token) {
       throw new Error('Unable to emulate user')
     }
@@ -357,7 +367,8 @@ export class AuthResolver {
       throw new Error('No authentication token found')
     }
 
-    const userToken = await this.service.endEmulation(token)
+    const sessionInfo = this.sessionService.extractSessionInfo(context.req)
+    const userToken = await this.service.endEmulation(token, sessionInfo)
     if (!userToken?.token) {
       throw new Error('Unable to end emulation')
     }
@@ -549,6 +560,26 @@ export class AuthResolver {
   }
 
   /** The current session's id, from a token whose signature verifies. */
+  /**
+   * The admin's own cookie session that setting a new cookie is about to replace, if this request
+   * authenticated with it. A request that authenticated with a bearer header keeps its token, so
+   * nothing is replaced.
+   */
+  private getReplacedCookieSessionId(
+    context: NestContextType,
+    adminId: string,
+  ): string | undefined {
+    if (context.req.headers?.authorization?.startsWith('Bearer ')) {
+      return undefined
+    }
+    const token = context.req.cookies?.[this.service.getCookieName()]
+    const claims = token ? this.service.verifyToken<SessionTokenPayload>(token) : null
+    if (!claims?.sessionId || claims.isEmulating || claims.userId !== adminId) {
+      return undefined
+    }
+    return claims.sessionId
+  }
+
   private getSessionIdFromToken(token?: string): string | undefined {
     if (!token) {
       return undefined
@@ -559,7 +590,8 @@ export class AuthResolver {
   /**
    * The session a logout may end. Logout is public, so the token's signature must verify before its
    * claims are believed; a forged token naming someone else's session would otherwise end it. An
-   * expired but genuine token still ends its own session.
+   * expired but genuine token still ends its own session. An emulation token's session belongs to
+   * the emulating admin, so that is whose session it ends.
    */
   private getSessionFromToken(token?: string): { sessionId: string; userId: string } | undefined {
     if (!token) {
@@ -569,9 +601,10 @@ export class AuthResolver {
     const verified = this.service.verifyToken<SessionTokenPayload>(token, {
       ignoreExpiration: true,
     })
-    if (!verified?.sessionId || !verified.userId) {
+    const ownerId = verified?.isEmulating ? verified.originalAdminId : verified?.userId
+    if (!verified?.sessionId || !ownerId) {
       return undefined
     }
-    return { sessionId: verified.sessionId, userId: verified.userId }
+    return { sessionId: verified.sessionId, userId: ownerId }
   }
 }

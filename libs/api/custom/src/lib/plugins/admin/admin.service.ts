@@ -451,6 +451,8 @@ export class AdminService {
         data: {
           isActive: false,
           deactivatedAt: new Date(),
+          // Retire every token issued to the account, not only those tied to a session
+          authGeneration: { increment: 1 },
         },
         include: {
           emails: true,
@@ -519,17 +521,30 @@ export class AdminService {
       throw new BadRequestException('Email does not belong to the selected user')
     }
 
+    // User row first, the same lock order as changeEmail() and the self-service verification, so
+    // a concurrent address change on this account serializes with this instead of interleaving.
+    // The Email write is a compare-and-set on the address read above: if it changed in the
+    // meantime, nothing is verified and the admin is asked to reload.
     const user = await this.prisma.$transaction(async transaction => {
-      await transaction.email.update({
-        where: { id: emailId },
+      await transaction.user.update({
+        where: { id: userId },
+        data: { updatedAt: new Date() },
+      })
+
+      const verified = await transaction.email.updateMany({
+        where: { id: emailId, userId, email: email.email },
         data: {
           verified: true,
           verifyToken: null,
           verifyExpires: null,
         },
       })
+      if (verified.count === 0) {
+        throw new BadRequestException('This email address changed; reload and try again')
+      }
 
-      if (email.primary) {
+      const current = await transaction.email.findUnique({ where: { id: emailId } })
+      if (current?.primary) {
         await transaction.user.update({
           where: { id: userId },
           data: { emailValidated: true },
@@ -579,6 +594,8 @@ export class AdminService {
         data: {
           passwordResetToken: resetToken,
           passwordResetExpires: resetExpires,
+          // Retire every token issued to the account, not only those tied to a session
+          authGeneration: { increment: 1 },
         },
         include: {
           emails: true,

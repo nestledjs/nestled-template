@@ -46,8 +46,9 @@ why: >
   Password reset. `changePassword()` already revoked other sessions, but the account-recovery path
   did not. A session stolen before the reset kept working after it, which defeats the main reason a
   user resets a password. The JWT strategy already rejects tokens whose `UserSession.isValid` is
-  false and session validity is not cached, so marking the rows invalid takes effect on the next
-  request.
+  false and reads it from the database, not from a cache, so marking the rows invalid takes effect
+  on the next request. (`AuthCacheService` does offer session-validity caching; see
+  2026-10-05-auth-generation-claim for projects that use it.)
 
   Verification tokens. `verifyEmail()` marks whatever is the PRIMARY email verified at redemption
   time; the token itself is not bound to an address. Two paths could put a token in the hands of
@@ -98,7 +99,8 @@ agentHints:
   - >
     The reset transaction updates UserSession directly rather than calling
     SessionService.invalidateAllUserSessions, because that method cannot join a transaction. If the
-    project caches session validity anywhere, invalidate that cache after the commit.
+    project caches session validity anywhere, invalidate that cache after the commit, in a way a
+    concurrent refill cannot undo (2026-10-05-auth-generation-claim fences `AuthCacheService`).
   - >
     The non-primary resend branch must stay indistinguishable from the unknown-address branch. It
     returns true and calls addBruteForceDelay(), so the endpoint still does not reveal which

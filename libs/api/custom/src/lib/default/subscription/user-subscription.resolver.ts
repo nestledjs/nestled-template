@@ -1,6 +1,9 @@
 import { Resolver, Query, Mutation, Args } from '@nestjs/graphql'
-import { UseGuards } from '@nestjs/common'
-import { Authenticated, CtxUser, GqlAuthGuard } from '@nestled-template/api/utils'
+import {
+  CtxOrganizationId,
+  CtxUser,
+  RequireOrganizationPermission,
+} from '@nestled-template/api/utils'
 import { Subscription, User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { StripeService } from '@nestled-template/api/integrations'
@@ -13,10 +16,13 @@ import { recordAuditLog } from '../../shared/audit-log'
  *
  * Provides user-facing queries and mutations for managing subscriptions.
  * This is separate from the generated admin Subscription resolver.
+ *
+ * Every operation acts on the request's organization context: the organization the caller's
+ * membership was checked against (x-organization-id or their active organization), never the raw
+ * `user.activeOrganizationId`. Reads need `billing:read` (or `billing:manage`) there; changes need
+ * `billing:manage`.
  */
-@Authenticated()
 @Resolver(() => Subscription)
-@UseGuards(GqlAuthGuard)
 export class UserSubscriptionResolver {
   constructor(
     private readonly prisma: ApiCoreDataAccessService,
@@ -29,13 +35,12 @@ export class UserSubscriptionResolver {
    * Get current user's organization subscription
    */
   @Query(() => Subscription, { nullable: true })
-  async currentSubscription(@CtxUser() user: User): Promise<Subscription | null> {
-    if (!user.activeOrganizationId) {
-      return null
-    }
-
+  @RequireOrganizationPermission(['billing:read', 'billing:manage'])
+  async currentSubscription(
+    @CtxOrganizationId() organizationId: string,
+  ): Promise<Subscription | null> {
     return this.prisma.subscription.findUnique({
-      where: { organizationId: user.activeOrganizationId },
+      where: { organizationId },
       include: { plan: true },
     })
   }
@@ -44,16 +49,14 @@ export class UserSubscriptionResolver {
    * Create a Stripe Checkout session to subscribe to a plan
    */
   @Mutation(() => String)
+  @RequireOrganizationPermission(['billing:manage'])
   async createCheckoutSession(
     @Args('priceId') priceId: string,
     @CtxUser() user: User,
+    @CtxOrganizationId() organizationId: string,
   ): Promise<string> {
-    if (!user.activeOrganizationId) {
-      throw new Error('No active organization selected')
-    }
-
     const organization = await this.prisma.organization.findUnique({
-      where: { id: user.activeOrganizationId },
+      where: { id: organizationId },
       include: {
         emails: { where: { primary: true } },
         subscription: true,
@@ -118,13 +121,13 @@ export class UserSubscriptionResolver {
    * Create a Stripe Billing Portal session to manage subscription
    */
   @Mutation(() => String)
-  async createPortalSession(@CtxUser() user: User): Promise<string> {
-    if (!user.activeOrganizationId) {
-      throw new Error('No active organization selected')
-    }
-
+  @RequireOrganizationPermission(['billing:manage'])
+  async createPortalSession(
+    @CtxUser() user: User,
+    @CtxOrganizationId() organizationId: string,
+  ): Promise<string> {
     const subscription = await this.prisma.subscription.findUnique({
-      where: { organizationId: user.activeOrganizationId },
+      where: { organizationId },
     })
 
     if (!subscription?.stripeCustomerId) {
@@ -140,7 +143,7 @@ export class UserSubscriptionResolver {
 
     await recordAuditLog(this.prisma, {
       actorUserId: user.id,
-      organizationId: user.activeOrganizationId,
+      organizationId,
       entityId: subscription.id,
       entityType: 'Subscription',
       action: 'BILLING_PORTAL_SESSION_CREATED',
@@ -156,13 +159,13 @@ export class UserSubscriptionResolver {
    * Cancel subscription (at end of billing period)
    */
   @Mutation(() => Subscription)
-  async cancelSubscription(@CtxUser() user: User): Promise<Subscription> {
-    if (!user.activeOrganizationId) {
-      throw new Error('No active organization selected')
-    }
-
+  @RequireOrganizationPermission(['billing:manage'])
+  async cancelSubscription(
+    @CtxUser() user: User,
+    @CtxOrganizationId() organizationId: string,
+  ): Promise<Subscription> {
     const subscription = await this.prisma.subscription.findUnique({
-      where: { organizationId: user.activeOrganizationId },
+      where: { organizationId },
     })
 
     if (!subscription?.stripeSubscriptionId) {
@@ -182,7 +185,7 @@ export class UserSubscriptionResolver {
 
     await recordAuditLog(this.prisma, {
       actorUserId: user.id,
-      organizationId: user.activeOrganizationId,
+      organizationId,
       entityId: subscription.id,
       entityType: 'Subscription',
       action: 'SUBSCRIPTION_CANCEL_AT_PERIOD_END',
@@ -198,12 +201,9 @@ export class UserSubscriptionResolver {
    * Get usage data for current organization
    */
   @Query(() => String)
-  async currentUsage(@CtxUser() user: User): Promise<string> {
-    if (!user.activeOrganizationId) {
-      throw new Error('No active organization selected')
-    }
-
-    const usageData = await this.usage.getUsageWithLimits(user.activeOrganizationId)
+  @RequireOrganizationPermission(['billing:read', 'billing:manage'])
+  async currentUsage(@CtxOrganizationId() organizationId: string): Promise<string> {
+    const usageData = await this.usage.getUsageWithLimits(organizationId)
     return JSON.stringify(usageData)
   }
 }

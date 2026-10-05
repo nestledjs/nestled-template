@@ -1,4 +1,6 @@
-import { Logger } from '@nestjs/common'
+import { ExecutionContext, ForbiddenException, Logger } from '@nestjs/common'
+import { Reflector } from '@nestjs/core'
+import { AccessPolicyGuard, OrganizationContextService } from '@nestled-template/api/utils'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { Subscription, User } from '@nestled-template/api/core/models'
 import { ConfigService } from '@nestled-template/api/config'
@@ -116,7 +118,7 @@ describe('UserSubscriptionResolver audit coverage', () => {
       url: 'https://checkout.stripe.test/cs-1',
     })
 
-    await expect(resolver.createCheckoutSession('price-1', createUser())).resolves.toBe(
+    await expect(resolver.createCheckoutSession('price-1', createUser(), 'org-1')).resolves.toBe(
       'https://checkout.stripe.test/cs-1',
     )
 
@@ -146,7 +148,7 @@ describe('UserSubscriptionResolver audit coverage', () => {
       url: 'https://billing.stripe.test/session',
     })
 
-    await expect(resolver.createPortalSession(createUser())).resolves.toBe(
+    await expect(resolver.createPortalSession(createUser(), 'org-1')).resolves.toBe(
       'https://billing.stripe.test/session',
     )
 
@@ -176,7 +178,9 @@ describe('UserSubscriptionResolver audit coverage', () => {
     data.subscription.update.mockResolvedValue(updatedSubscription)
     stripe.cancelSubscription.mockResolvedValue({ id: 'stripe-sub-1' })
 
-    await expect(resolver.cancelSubscription(createUser())).resolves.toBe(updatedSubscription)
+    await expect(resolver.cancelSubscription(createUser(), 'org-1')).resolves.toBe(
+      updatedSubscription,
+    )
 
     expect(stripe.cancelSubscription).toHaveBeenCalledWith('stripe-sub-1', false)
     expect(data.auditLog.create).toHaveBeenCalledWith({
@@ -207,11 +211,93 @@ describe('UserSubscriptionResolver audit coverage', () => {
       url: 'https://checkout.stripe.test/cs-1',
     })
 
-    await expect(resolver.createCheckoutSession('price-1', createUser())).resolves.toBe(
+    await expect(resolver.createCheckoutSession('price-1', createUser(), 'org-1')).resolves.toBe(
       'https://checkout.stripe.test/cs-1',
     )
     expect(Logger.warn).toHaveBeenCalledWith(
       'Failed to record audit log BILLING_CHECKOUT_SESSION_CREATED for Organization org-1: audit unavailable',
     )
   })
+})
+
+describe('UserSubscriptionResolver billing authorization', () => {
+  const roles = {
+    Owner: [
+      { subject: 'billing', action: 'manage' },
+      { subject: 'billing', action: 'read' },
+    ],
+    Admin: [{ subject: 'billing', action: 'read' }],
+    Member: [{ subject: 'organization', action: 'read' }],
+  }
+
+  // The real guard and context service, over a membership table the test controls.
+  function authorize(
+    operation: keyof UserSubscriptionResolver,
+    membership: keyof typeof roles | null,
+    user = { id: 'user-1', activeOrganizationId: 'org-1', isSuperAdmin: false },
+  ) {
+    const data = {
+      organizationMember: {
+        findFirst: jest.fn().mockResolvedValue(
+          membership
+            ? {
+                roleId: `role-${membership}`,
+                role: { name: membership, permissions: roles[membership] },
+              }
+            : null,
+        ),
+      },
+    }
+    const guard = new AccessPolicyGuard(
+      new Reflector(),
+      {} as never,
+      new OrganizationContextService(data as never),
+    )
+    const req: { headers: object; user: typeof user; organizationContext?: unknown } = {
+      headers: {},
+      user,
+    }
+    const context = {
+      getType: () => 'http',
+      switchToHttp: () => ({ getRequest: () => req }),
+      getHandler: () => UserSubscriptionResolver.prototype[operation],
+      getClass: () => UserSubscriptionResolver,
+    } as unknown as ExecutionContext
+    return { result: guard.canActivate(context), req, data }
+  }
+
+  const mutations = ['createCheckoutSession', 'createPortalSession', 'cancelSubscription'] as const
+  const reads = ['currentSubscription', 'currentUsage'] as const
+
+  it.each(mutations)('lets an Owner run %s against their organization', async operation => {
+    const { result, req } = authorize(operation, 'Owner')
+    await expect(result).resolves.toBe(true)
+    expect(req.organizationContext).toEqual(expect.objectContaining({ organizationId: 'org-1' }))
+  })
+
+  it.each(mutations)('refuses %s to an Admin, who can only read billing', async operation => {
+    await expect(authorize(operation, 'Admin').result).rejects.toBeInstanceOf(ForbiddenException)
+  })
+
+  it.each([...mutations, ...reads])(
+    'refuses %s to a Member without billing permissions',
+    async operation => {
+      await expect(authorize(operation, 'Member').result).rejects.toBeInstanceOf(ForbiddenException)
+    },
+  )
+
+  it.each(reads)('lets an Admin read %s', async operation => {
+    await expect(authorize(operation, 'Admin').result).resolves.toBe(true)
+  })
+
+  it.each([...mutations, ...reads])(
+    'refuses %s to a removed member whose active organization still names the organization',
+    async operation => {
+      const { result, data } = authorize(operation, null)
+      await expect(result).rejects.toBeInstanceOf(ForbiddenException)
+      expect(data.organizationMember.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'user-1', organizationId: 'org-1' } }),
+      )
+    },
+  )
 })

@@ -88,8 +88,8 @@ describe('OrganizationContextService', () => {
     )
   })
 
-  it('reuses an attached organization context when no explicit organization is requested', async () => {
-    const { authCache, data, service } = createService()
+  it('reuses an attached context built for this user and the organization this call resolves', async () => {
+    const { data, service } = createService()
     const organizationContext = {
       organizationId: 'org-1',
       userId: 'user-1',
@@ -100,13 +100,71 @@ describe('OrganizationContextService', () => {
 
     const context = await service.attach({
       headers: {},
-      user: { id: 'user-1', isSuperAdmin: false },
+      user: { id: 'user-1', activeOrganizationId: 'org-1', isSuperAdmin: false },
       organizationContext,
     } as never)
 
     expect(context).toBe(organizationContext)
-    expect(authCache.getUserActiveOrganization).not.toHaveBeenCalled()
     expect(data.organizationMember.findFirst).not.toHaveBeenCalled()
+  })
+
+  it('does not return an attached context built for another user', async () => {
+    const { data, service } = createService()
+    data.organizationMember.findFirst.mockResolvedValue(null)
+    const foreign = {
+      organizationId: 'org-1',
+      userId: 'user-2',
+      roleId: 'role-owner',
+      roleName: 'Owner',
+      permissions: [{ subject: 'all', action: 'manage' }],
+    }
+    const req = {
+      headers: {},
+      user: { id: 'user-1', activeOrganizationId: 'org-1', isSuperAdmin: false },
+      organizationContext: foreign,
+    }
+
+    await expect(service.attach(req as never)).resolves.toBeUndefined()
+    expect(data.organizationMember.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-1', organizationId: 'org-1' } }),
+    )
+    // Cleared, so nothing downstream can read it either.
+    expect(req.organizationContext).toBeUndefined()
+  })
+
+  it('recomputes when the attached context is for a different organization', async () => {
+    const { data, service } = createService()
+    const other = {
+      organizationId: 'org-2',
+      userId: 'user-1',
+      roleId: 'role-owner',
+      roleName: 'Owner',
+      permissions: [{ subject: 'all', action: 'manage' }],
+    }
+
+    const context = await service.attach({
+      headers: { 'x-organization-id': 'org-1' },
+      user: { id: 'user-1', isSuperAdmin: false },
+      organizationContext: other,
+    } as never)
+
+    expect(context?.organizationId).toBe('org-1')
+    expect(context?.roleId).toBe('role-1')
+    expect(data.organizationMember.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-1', organizationId: 'org-1' } }),
+    )
+  })
+
+  it('gives no context for an active organization the user is no longer a member of', async () => {
+    const { data, service } = createService()
+    data.organizationMember.findFirst.mockResolvedValue(null)
+
+    await expect(
+      service.attach({
+        headers: {},
+        user: { id: 'user-1', activeOrganizationId: 'org-left', isSuperAdmin: false },
+      } as never),
+    ).resolves.toBeUndefined()
   })
 
   it('adds all:manage for super admins without mutating cached permissions', async () => {

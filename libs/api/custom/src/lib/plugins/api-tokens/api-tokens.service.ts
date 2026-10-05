@@ -15,11 +15,16 @@ export class ApiTokensService {
   ) {}
 
   /**
-   * Generate a cryptographically secure API token
+   * Generate a cryptographically secure API token.
+   *
+   * `authGeneration` is the owner's User.authGeneration as read when the issuing request
+   * authenticated (the row JwtStrategy loaded). The token is only valid while the owner's value is
+   * unchanged. Omitted, it is read here.
    */
   async generateApiToken(
     userId: string,
     input: GenerateApiTokenInput,
+    authGeneration?: number,
   ): Promise<GenerateApiTokenOutput> {
     const organizationId = input.organizationId?.trim() || undefined
 
@@ -39,6 +44,7 @@ export class ApiTokensService {
         name: input.name,
         tokenHash,
         userId,
+        authGeneration: authGeneration ?? (await this.currentAuthGeneration(userId)),
         expiresAt: input.expiresAt,
         organizationId,
         lastUsedAt: null,
@@ -113,6 +119,7 @@ export class ApiTokensService {
   async rotateApiToken(
     userId: string,
     input: RotateApiTokenInput,
+    authGeneration?: number,
   ): Promise<GenerateApiTokenOutput> {
     // Get the existing token
     const oldToken = await this.data.apiToken.findUnique({
@@ -133,6 +140,7 @@ export class ApiTokensService {
         name: oldToken.name,
         tokenHash: newTokenHash,
         userId,
+        authGeneration: authGeneration ?? (await this.currentAuthGeneration(userId)),
         expiresAt: oldToken.expiresAt,
         organizationId: oldToken.organizationId ?? undefined,
         lastUsedAt: null,
@@ -181,9 +189,17 @@ export class ApiTokensService {
         tokenHash,
         revoked: false,
       },
+      include: { user: { select: { authGeneration: true, isActive: true } } },
     })
 
     if (!apiToken) {
+      return null
+    }
+
+    // Issued under an earlier auth generation (the owner's credentials were reset or revoked since),
+    // or the owner's account is disabled.
+    if (apiToken.authGeneration !== apiToken.user.authGeneration || !apiToken.user.isActive) {
+      this.logger.warn(`API token no longer current for its owner: ${apiToken.id}`)
       return null
     }
 
@@ -248,5 +264,13 @@ export class ApiTokensService {
     })
 
     return Boolean(membership)
+  }
+
+  private async currentAuthGeneration(userId: string): Promise<number> {
+    const user = await this.data.user.findUnique({
+      where: { id: userId },
+      select: { authGeneration: true },
+    })
+    return user?.authGeneration ?? 0
   }
 }

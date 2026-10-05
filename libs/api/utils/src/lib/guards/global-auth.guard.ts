@@ -8,6 +8,8 @@ import {
 import { Reflector } from '@nestjs/core'
 import { AUTH_LEVEL_KEY, AuthLevel } from './auth-level.decorator'
 
+const AUTH_LEVELS: ReadonlySet<unknown> = new Set<AuthLevel>(['public', 'authenticated', 'admin'])
+
 /**
  * Fail-closed default for every operation.
  *
@@ -40,12 +42,11 @@ export class GlobalAuthGuard implements CanActivate {
     const handler = context.getHandler()
     const controller = context.getClass()
 
-    const level = this.reflector.getAllAndOverride<AuthLevel | undefined>(AUTH_LEVEL_KEY, [
-      handler,
-      controller,
-    ])
+    const level = this.reflector.getAllAndOverride<unknown>(AUTH_LEVEL_KEY, [handler, controller])
 
-    if (level) return true
+    // Only the documented levels pass. Anything else, including a mistyped or foreign value under
+    // the same key, is treated as undeclared.
+    if (AUTH_LEVELS.has(level)) return true
 
     this.logger.error(
       `${controller.name}.${handler.name} declares no access level; add @Public(), @Authenticated(), or @AdminOnly().`,

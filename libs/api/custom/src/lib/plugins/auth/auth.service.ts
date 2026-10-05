@@ -53,6 +53,7 @@ import {
 } from './twofa.helper'
 import { PlatformAccessControlService } from '../access-control'
 import { recordAuditLog } from '../../shared/audit-log'
+import { AuthTokenClaims, claimedAuthGeneration, isAuthTokenCurrent } from './auth-token-claims'
 
 const authUserRelations = {
   emails: true,
@@ -67,16 +68,28 @@ const authUserRelations = {
  */
 class StaleVerificationAddressError extends Error {}
 
-type AuthTokenPayload = {
-  userId: string
-  isEmulating?: boolean
-  originalAdminId?: string
-  sessionId?: string
-}
-
-type EmulationTokenPayload = AuthTokenPayload & {
+type EmulationTokenPayload = AuthTokenClaims & {
   isEmulating: true
   originalAdminId: string
+}
+
+const HOUR_MS = 60 * 60 * 1000
+const DAY_MS = 24 * HOUR_MS
+
+/**
+ * Session token lifetimes: the JWT `expiresIn`, and the same span for the session row's expiresAt.
+ * Emulation is an admin acting as another user, so it is kept short; the admin can start it again.
+ */
+const TOKEN_LIFETIMES = {
+  standard: { expiresIn: '7d', ms: 7 * DAY_MS },
+  remembered: { expiresIn: '30d', ms: 30 * DAY_MS },
+  emulation: { expiresIn: '1h', ms: HOUR_MS },
+} as const
+
+/** Generations to sign with, when the caller read them together with the credential check. */
+type SignUserOptions = {
+  authGeneration?: number
+  adminAuthGeneration?: number
 }
 
 @Injectable()
@@ -312,26 +325,36 @@ export class AuthService {
         changes: { organizationId: organization.id, isSuperAdmin: user.isSuperAdmin },
       })
 
-      // Send verification email
+      // Send verification email. Minted through the same guarded path as every resend: the token
+      // is stored only while `primaryEmail` is still the account's primary address.
       const validateEmailToken = generateEmailVerificationToken()
       const validateEmailTokenExpires = generateExpireDate()
-      await this.data.user.update({
-        where: { id: user.id },
-        data: { validateEmailToken, validateEmailTokenExpires },
-      })
-      const appName = this.config.get('app.name')
-      const siteUrl = this.config.get('siteUrl')
-      const verificationUrl = `${siteUrl}/verify-email?token=${validateEmailToken}&type=initial`
+      const minted = await this.mintVerificationTokenForPrimary(
+        user.id,
+        primaryEmail,
+        validateEmailToken,
+        validateEmailTokenExpires,
+      )
+      if (minted) {
+        const appName = this.config.get('app.name')
+        const siteUrl = this.config.get('siteUrl')
+        const verificationUrl = `${siteUrl}/verify-email?token=${validateEmailToken}&type=initial`
 
-      await this.emailService.sendTemplate(primaryEmail, {
-        templateId: 'email-verification',
-        variables: {
-          userName: user?.firstName || 'there',
-          verificationUrl,
-          appName,
-          expirationHours: 24,
-        },
-      })
+        await this.emailService.sendTemplate(primaryEmail, {
+          templateId: 'email-verification',
+          variables: {
+            userName: user?.firstName || 'there',
+            verificationUrl,
+            appName,
+            expirationHours: 24,
+          },
+        })
+      } else {
+        Logger.warn(
+          `Registration for user ${user.id}: primary address changed before the verification ` +
+            `token was stored; no verification email sent`,
+        )
+      }
 
       Logger.log(
         `✓ User registered: ${primaryEmail} (SuperAdmin: ${user.isSuperAdmin}, Org: ${organization.name})`,
@@ -420,27 +443,36 @@ export class AuthService {
         changes: { inviteId: invite.id, roleId },
       })
 
-      // Send verification email
+      // Send verification email, through the same guarded mint as register() and every resend.
       const validateEmailToken = generateEmailVerificationToken()
       const validateEmailTokenExpires = generateExpireDate()
-      await this.data.user.update({
-        where: { id: user.id },
-        data: { validateEmailToken, validateEmailTokenExpires },
-      })
+      const minted = await this.mintVerificationTokenForPrimary(
+        user.id,
+        normalizeEmail(cleanEmail),
+        validateEmailToken,
+        validateEmailTokenExpires,
+      )
 
-      const appName = this.config.get('app.name')
-      const siteUrl = this.config.get('siteUrl')
-      const verificationUrl = `${siteUrl}/verify-email?token=${validateEmailToken}&type=initial`
+      if (minted) {
+        const appName = this.config.get('app.name')
+        const siteUrl = this.config.get('siteUrl')
+        const verificationUrl = `${siteUrl}/verify-email?token=${validateEmailToken}&type=initial`
 
-      await this.emailService.sendTemplate(cleanEmail, {
-        templateId: 'email-verification',
-        variables: {
-          userName: user?.firstName || 'there',
-          verificationUrl,
-          appName,
-          expirationHours: 24,
-        },
-      })
+        await this.emailService.sendTemplate(cleanEmail, {
+          templateId: 'email-verification',
+          variables: {
+            userName: user?.firstName || 'there',
+            verificationUrl,
+            appName,
+            expirationHours: 24,
+          },
+        })
+      } else {
+        Logger.warn(
+          `Invitation registration for user ${user.id}: primary address changed before the ` +
+            `verification token was stored; no verification email sent`,
+        )
+      }
 
       Logger.log(
         `✓ User registered via invitation: ${cleanEmail} joined ${invite.organization.name}`,
@@ -586,7 +618,7 @@ export class AuthService {
 
     // Check if 2FA is enabled
     if (user.twoFactorEnabled) {
-      const tempToken = this.createTemp2FAToken(user.id, input.remember || false)
+      const tempToken = this.createTemp2FAToken(user, input.remember || false)
 
       Logger.log(`2FA required for login: ${email}`)
 
@@ -843,7 +875,11 @@ export class AuthService {
     // stand in for that check: it may be stale by the time this runs.
     const result = await this.data.$transaction(async tx => {
       const consumed = await tx.user.updateMany({
-        where: { id: user.id, validateEmailToken: token },
+        where: {
+          id: user.id,
+          validateEmailToken: token,
+          validateEmailTokenExpires: { gt: new Date() },
+        },
         data: {
           emailValidated: true,
           validateEmailToken: null,
@@ -1016,13 +1052,16 @@ export class AuthService {
     // same row with a new address and a new token, so the read above can be stale: without the
     // compare-and-set, a link mailed to address A would verify address B written after it.
     // User row first, matching changeEmail(); throwing rolls the User update back.
+    // The expiry is part of the compare-and-set too, so a token that expires after the read above
+    // cannot still be redeemed. The user is returned as read after the Email write, with its emails,
+    // so the response shows the address verified.
     const updatedUser = await this.data.$transaction(async tx => {
-      const user = await tx.user.update({
+      await tx.user.update({
         where: { id: userId },
         data: { emailValidated: true },
       })
       const consumed = await tx.email.updateMany({
-        where: { id: email.id, verifyToken: token },
+        where: { id: email.id, verifyToken: token, verifyExpires: { gt: new Date() } },
         data: {
           verified: true,
           verifyToken: null,
@@ -1032,7 +1071,7 @@ export class AuthService {
       if (consumed.count === 0) {
         throw new NotFoundException('Invalid or already used verification token')
       }
-      return user
+      return tx.user.findUniqueOrThrow({ where: { id: userId }, include: authUserRelations })
     })
 
     await recordAuditLog(this.data, {
@@ -1142,7 +1181,24 @@ export class AuthService {
     return true
   }
 
-  async emulateUser(input: EmulateUserInput, adminId: string) {
+  /**
+   * Options:
+   * - `adminAuthGeneration`: the admin's generation as read when their own request authenticated
+   *   (JwtStrategy's user row). Omitted, it is read here.
+   * - `replacedSessionId`: the admin's session whose cookie the emulation token replaces. It is
+   *   ended once the emulation token exists, so it is not left valid with nobody holding it.
+   *   endEmulation gives the admin a new session. Omit it when the admin's credential is not being
+   *   replaced (a bearer-header client keeps its token).
+   */
+  async emulateUser(
+    input: EmulateUserInput,
+    adminId: string,
+    options: {
+      sessionInfo?: SessionInfo
+      adminAuthGeneration?: number
+      replacedSessionId?: string
+    } = {},
+  ) {
     Logger.log(`🎭 EmulateUser called: adminId=${adminId}, targetUserId=${input?.userId}`)
 
     const user = await this.data.user.findUnique({
@@ -1175,13 +1231,24 @@ export class AuthService {
 
     Logger.log(`Admin ${adminId} started emulating user ${user.id}`)
 
-    // Sign user with emulation flag
-    const result = this.signUser(user, false, adminId)
+    // Sign user with emulation flag. The token gets a session owned by the admin, so it can be
+    // revoked like any other session of theirs.
+    const result = await this.signUser(user, false, adminId, options.sessionInfo, {
+      adminAuthGeneration: options.adminAuthGeneration,
+    })
+
+    if (options.replacedSessionId) {
+      await this.data.userSession.updateMany({
+        where: { id: options.replacedSessionId, userId: adminId, isValid: true },
+        data: { isValid: false },
+      })
+    }
+
     Logger.log(`🎭 EmulateUser: Returning token with emulation flag`)
     return result
   }
 
-  async endEmulation(token: string): Promise<UserToken> {
+  async endEmulation(token: string, sessionInfo?: SessionInfo): Promise<UserToken> {
     // Verified, not decoded: the admin this returns to is read from the token, so an unverified
     // token could name any admin.
     const decoded = this.verifyToken<EmulationTokenPayload>(token)
@@ -1197,6 +1264,23 @@ export class AuthService {
     const admin = await this.data.user.findUnique({ where: { id: adminId } })
     if (!admin) {
       throw new NotFoundException('Original admin user not found')
+    }
+
+    const adminAuthGeneration = claimedAuthGeneration(decoded.adminAuthGeneration)
+    if (admin.authGeneration !== adminAuthGeneration) {
+      throw new BadRequestException('Not currently emulating a user')
+    }
+
+    // End the emulation session by compare-and-set, so the emulation token stops working and the
+    // same token cannot be exchanged for an admin session twice.
+    const ended = decoded.sessionId
+      ? await this.data.userSession.updateMany({
+          where: { id: decoded.sessionId, userId: adminId, isValid: true },
+          data: { isValid: false },
+        })
+      : { count: 0 }
+    if (ended.count === 0) {
+      throw new BadRequestException('Not currently emulating a user')
     }
 
     // Log emulation end to AuditLog
@@ -1215,8 +1299,11 @@ export class AuthService {
 
     Logger.log(`Admin ${adminId} ended emulation of user ${emulatedUserId}`)
 
-    // Return admin to their own session (no emulation)
-    return this.signUser(admin)
+    // Return admin to a session of their own (no emulation), under the generation the emulation
+    // token was issued with.
+    return this.signUser(admin, false, undefined, sessionInfo ?? {}, {
+      authGeneration: adminAuthGeneration,
+    })
   }
 
   /**
@@ -1319,6 +1406,10 @@ export class AuthService {
     // stolen session, so every existing session goes. Unlike changePassword there is no current
     // session to spare — the reset flow is unauthenticated and the user signs in afterwards.
     //
+    // Sessions are not the only credentials: the auth generation also moves, which retires every
+    // token issued under the old one (including 2FA temp tokens and any token still being issued
+    // by a login that checked the old password).
+    //
     // The revocation commits in the SAME transaction as the new password and the consumed token.
     // Run separately, a failure after the password write would leave the reset done, the token
     // spent, and every stolen session still valid. Logging and mail follow the commit.
@@ -1338,6 +1429,7 @@ export class AuthService {
           passwordResetToken: null,
           passwordResetExpires: null,
           password: hashedPassword,
+          authGeneration: { increment: 1 },
         },
       })
       if (consumed.count === 0) {
@@ -1400,47 +1492,75 @@ export class AuthService {
    *
    * Every login path that authenticates a first factor (password, OAuth, ...) must route
    * 2FA-enabled users through this instead of `signUser`, otherwise the second factor is skipped.
+   * Pass the user row the first factor was checked against: its `authGeneration` goes in the
+   * token, and complete2FALogin refuses the token once that generation has moved on.
    */
-  createTemp2FAToken(userId: string, rememberMe = false): string {
+  createTemp2FAToken(user: { id: string; authGeneration: number }, rememberMe = false): string {
     return this.jwtService.sign(
-      { userId, temp2FA: true, remember: rememberMe },
+      {
+        userId: user.id,
+        temp2FA: true,
+        remember: rememberMe,
+        authGeneration: user.authGeneration,
+      },
       { expiresIn: '5m' },
     )
   }
 
+  /**
+   * Sign a session token. The token carries the user's auth generation as read together with the
+   * credential check: `options.authGeneration` when given, else `user.authGeneration`. Re-reading it
+   * here would let a token issued during a concurrent revocation outlive it, so the row is read only
+   * when the caller's object does not have it.
+   *
+   * An emulation token's session is owned by the admin and also carries the admin's generation.
+   */
   async signUser(
-    user: User,
+    user: User & { authGeneration?: number },
     rememberMe = false,
     emulatingAdminId?: string,
     sessionInfo?: SessionInfo,
+    options: SignUserOptions = {},
   ): Promise<UserToken> {
-    // Remember Me: 30 days, otherwise: 7 days
-    const expiresIn = rememberMe ? '30d' : '7d'
+    // Emulation: 1 hour. Otherwise Remember Me: 30 days, else 7 days.
+    let lifetime: (typeof TOKEN_LIFETIMES)[keyof typeof TOKEN_LIFETIMES] = TOKEN_LIFETIMES.standard
+    if (emulatingAdminId) {
+      lifetime = TOKEN_LIFETIMES.emulation
+    } else if (rememberMe) {
+      lifetime = TOKEN_LIFETIMES.remembered
+    }
 
-    const payload: AuthTokenPayload = { userId: user.id }
+    const payload: AuthTokenClaims = {
+      userId: user.id,
+      authGeneration: options.authGeneration ?? (await this.authGenerationOf(user)),
+    }
 
     // If emulating, add emulation data to JWT
     Logger.log(`🔍 signUser called with emulatingAdminId: ${emulatingAdminId}`)
     if (emulatingAdminId) {
       payload.isEmulating = true
       payload.originalAdminId = emulatingAdminId
+      payload.adminAuthGeneration =
+        options.adminAuthGeneration ?? (await this.authGenerationOf({ id: emulatingAdminId }))
       Logger.log(`🎭 Emulation JWT created: userId=${user?.id}, adminId=${emulatingAdminId}`)
     } else {
       Logger.log(`⚠️ No emulatingAdminId provided - creating normal JWT`)
     }
 
-    // Create session if session info is provided
-    if (sessionInfo) {
+    // Create session if session info is provided. Emulation always gets one, owned by the admin:
+    // JwtStrategy refuses emulation tokens without a session, since nothing could revoke them.
+    if (sessionInfo || emulatingAdminId) {
       const sessionId = await this.sessionService.createSession(
-        user.id,
-        sessionInfo,
+        emulatingAdminId ?? user.id,
+        sessionInfo ?? {},
         false, // 2FA verification status - will be updated later if needed
+        new Date(Date.now() + lifetime.ms),
       )
       payload.sessionId = sessionId
     }
 
     Logger.log(`📦 Final JWT payload before signing:`, JSON.stringify(payload))
-    const token = this.jwtService.sign(payload, { expiresIn })
+    const token = this.jwtService.sign(payload, { expiresIn: lifetime.expiresIn })
     return { token, user }
   }
 
@@ -1449,6 +1569,30 @@ export class AuthService {
       where: { id: userId },
       include: authUserRelations,
     })
+  }
+
+  /**
+   * Whether a verified token's claims still hold for `user`, the row JwtStrategy loaded for it:
+   * same auth generation, a valid session owned by the right user, and for emulation the admin's
+   * generation too. See isAuthTokenCurrent.
+   */
+  isTokenCurrent(
+    claims: AuthTokenClaims,
+    user: { id: string; authGeneration: number },
+  ): Promise<boolean> {
+    return isAuthTokenCurrent(this.data, claims, user)
+  }
+
+  private async authGenerationOf(user: { id: string; authGeneration?: number }): Promise<number> {
+    if (typeof user.authGeneration === 'number') {
+      return user.authGeneration
+    }
+    const row = await this.data.user.findUnique({
+      where: { id: user.id },
+      select: { authGeneration: true },
+    })
+    // No row means no user, and JwtStrategy refuses a token whose user does not exist.
+    return row?.authGeneration ?? 0
   }
 
   async updateMyProfile(userId: string, input: UpdateMyProfileInput): Promise<User> {
@@ -1763,7 +1907,7 @@ export class AuthService {
   /**
    * Verify 2FA code during login
    */
-  async verify2FALogin(userId: string, code: string): Promise<boolean> {
+  async verify2FALogin(userId: string, code: string, sessionInfo?: SessionInfo): Promise<boolean> {
     const user = await this.data.user.findUnique({ where: { id: userId } })
 
     if (!user) {
@@ -1782,7 +1926,7 @@ export class AuthService {
     const isValid = verify2FACode(secret, code, window)
 
     if (isValid) {
-      await this.recordTwoFactorVerification(userId, true, 'totp')
+      await this.recordTwoFactorVerification(userId, 'totp')
       return true
     }
 
@@ -1811,26 +1955,31 @@ export class AuthService {
 
     if (affected === 1) {
       Logger.log(`Backup code used for 2FA login by user ${userId}`)
-      await this.recordTwoFactorVerification(userId, true, 'backup_code')
+      await this.recordTwoFactorVerification(userId, 'backup_code')
       return true
     }
 
-    await this.recordTwoFactorVerification(userId, false)
+    // A rejected code is a SecurityEvent on the account, not an AuditLog row with the owner as
+    // actor: at sign-in the caller has only passed the password step, so the account is the subject
+    // of this event, not the one acting.
+    await this.securityEvents.logTwoFactorCodeRejected(userId, {
+      ipAddress: sessionInfo?.ipAddress,
+      userAgent: sessionInfo?.userAgent,
+    })
     return false
   }
 
   /** Never records the code itself. */
   private recordTwoFactorVerification(
     userId: string,
-    success: boolean,
-    method?: 'totp' | 'backup_code',
+    method: 'totp' | 'backup_code',
   ): Promise<void> {
     return recordAuditLog(this.data, {
       actorUserId: userId,
       entityId: userId,
       entityType: 'User',
-      action: success ? 'TWO_FACTOR_CODE_VERIFIED' : 'TWO_FACTOR_CODE_REJECTED',
-      ...(method && { changes: { method } }),
+      action: 'TWO_FACTOR_CODE_VERIFIED',
+      changes: { method },
     })
   }
 
@@ -1845,7 +1994,12 @@ export class AuthService {
     // Verify (not just decode) the temp token: check the signature and expiry against JWT_SECRET.
     // `decode()` performs neither, so a client could forge `{ temp2FA, userId }` for any victim and
     // drop the password factor entirely, as well as bypass the intended 5-minute lifetime.
-    let decoded: { temp2FA?: boolean; userId?: string; remember?: boolean } | null = null
+    let decoded: {
+      temp2FA?: boolean
+      userId?: string
+      remember?: boolean
+      authGeneration?: number
+    } | null = null
     try {
       decoded = this.jwtService.verify(tempToken)
     } catch {
@@ -1858,9 +2012,23 @@ export class AuthService {
 
     const userId = decoded.userId
     const rememberMe = decoded.remember || false
+    const authGeneration = claimedAuthGeneration(decoded.authGeneration)
+
+    // The first factor this token stands for was checked under the user's generation at the time.
+    // Once it has moved on (a password reset, say), the token no longer proves anything.
+    const current = await this.data.user.findUnique({
+      where: { id: userId },
+      select: { authGeneration: true, isActive: true },
+    })
+    if (current?.authGeneration !== authGeneration) {
+      throw new BadRequestException('Invalid or expired 2FA token')
+    }
+    if (current.isActive === false) {
+      throw new BadRequestException('Account has been disabled. Please contact support.')
+    }
 
     // Verify the 2FA code
-    const isValid = await this.verify2FALogin(userId, code)
+    const isValid = await this.verify2FALogin(userId, code, sessionInfo)
 
     if (!isValid) {
       throw new BadRequestException('Invalid 2FA code. Please try again.')
@@ -1896,7 +2064,11 @@ export class AuthService {
 
     // Return full session token. Recorded only once the session exists and the token is signed,
     // so a failure in either does not leave a completed login in the trail.
-    const userToken = await this.signUser(user, rememberMe, undefined, sessionInfo)
+    // Signed under the temp token's generation, not a fresh read, so a revocation that lands
+    // while this login completes still applies to the session it issues.
+    const userToken = await this.signUser(user, rememberMe, undefined, sessionInfo, {
+      authGeneration,
+    })
 
     await recordAuditLog(this.data, {
       actorUserId: user.id,
@@ -2175,6 +2347,8 @@ export class AuthService {
       data: {
         isActive: false,
         deactivatedAt: new Date(),
+        // Retire every token issued to the account, not only those tied to a session
+        authGeneration: { increment: 1 },
         // Invalidate all sessions
         activeSessions: {
           updateMany: {

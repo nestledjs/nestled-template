@@ -50,6 +50,8 @@ describe('AdminService', () => {
       email: {
         findUnique: jest.fn(),
         update: jest.fn(),
+        // Compare-and-set on the address; 1 = the address was unchanged.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       $transaction: jest.fn(callback => callback(mockData)),
     }
@@ -500,6 +502,8 @@ describe('AdminService', () => {
         data: {
           isActive: false,
           deactivatedAt: expect.any(Date),
+          // Same transaction as the session revocation: retires every token the user holds.
+          authGeneration: { increment: 1 },
         },
         include: { emails: true },
       })
@@ -559,14 +563,53 @@ describe('AdminService', () => {
       mockData.user.findUnique.mockResolvedValue(mockUser as any)
       const result = await service.verifyEmail('actor-1', 'user-123', 'email-123')
       expect(result.emailValidated).toBe(true)
-      expect(mockData.email.update).toHaveBeenCalledWith({
-        where: { id: 'email-123' },
+      expect(mockData.email.updateMany).toHaveBeenCalledWith({
+        where: { id: 'email-123', userId: 'user-123', email: 'user@example.com' },
         data: {
           verified: true,
           verifyToken: null,
           verifyExpires: null,
         },
       })
+    })
+    it('writes the User row before the Email row', async () => {
+      const order: string[] = []
+      mockData.email.findUnique.mockResolvedValue({
+        id: 'email-123',
+        email: 'user@example.com',
+        userId: 'user-123',
+        primary: false,
+      } as any)
+      mockData.user.update.mockImplementation(async () => {
+        order.push('user')
+        return {}
+      })
+      mockData.email.updateMany.mockImplementation(async () => {
+        order.push('email')
+        return { count: 1 }
+      })
+      mockData.user.findUnique.mockResolvedValue({ id: 'user-123', emails: [] } as any)
+
+      await service.verifyEmail('actor-1', 'user-123', 'email-123')
+
+      expect(order).toEqual(['user', 'email'])
+    })
+    it('verifies nothing when the address changed after it was read', async () => {
+      mockData.email.findUnique.mockResolvedValue({
+        id: 'email-123',
+        email: 'old@example.com',
+        userId: 'user-123',
+        primary: true,
+      } as any)
+      mockData.email.updateMany.mockResolvedValue({ count: 0 })
+
+      await expect(service.verifyEmail('actor-1', 'user-123', 'email-123')).rejects.toThrow(
+        'This email address changed',
+      )
+      expect(mockData.user.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { emailValidated: true } }),
+      )
+      expect(mockData.auditLog.create).not.toHaveBeenCalled()
     })
     it('should update user emailValidated flag for primary email', async () => {
       const mockEmail = {
@@ -600,7 +643,9 @@ describe('AdminService', () => {
         emails: [],
       } as any)
       await service.verifyEmail('actor-1', 'user-123', 'email-123')
-      expect(mockData.user.update).not.toHaveBeenCalled()
+      expect(mockData.user.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { emailValidated: true } }),
+      )
     })
     it('should throw if updated user cannot be loaded after verification', async () => {
       mockData.email.update.mockResolvedValue({} as any)
@@ -625,7 +670,7 @@ describe('AdminService', () => {
       await expect(service.verifyEmail('actor-1', 'user-123', 'email-123')).rejects.toThrow(
         'Email does not belong to the selected user',
       )
-      expect(mockData.email.update).not.toHaveBeenCalled()
+      expect(mockData.email.updateMany).not.toHaveBeenCalled()
     })
 
     it('reports a missing email separately from an ownership mismatch', async () => {
@@ -634,7 +679,7 @@ describe('AdminService', () => {
       await expect(service.verifyEmail('actor-1', 'user-123', 'missing-email')).rejects.toThrow(
         'Email missing-email not found',
       )
-      expect(mockData.email.update).not.toHaveBeenCalled()
+      expect(mockData.email.updateMany).not.toHaveBeenCalled()
     })
   })
   describe('forcePasswordReset', () => {
@@ -656,6 +701,8 @@ describe('AdminService', () => {
           data: {
             passwordResetToken: expect.any(String),
             passwordResetExpires: expect.any(Date),
+            // Same transaction as the session revocation: retires every token the user holds.
+            authGeneration: { increment: 1 },
           },
         }),
       )

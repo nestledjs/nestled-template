@@ -5,6 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt'
 import { User } from '@nestled-template/api/core/models'
 import { AuthService } from '../auth.service'
 import { ApiTokensService } from '../../api-tokens/api-tokens.service'
+import type { AuthTokenClaims } from '../auth-token-claims'
 
 const API_TOKEN_USER_KEY = '__apiTokenUser' as const
 
@@ -105,15 +106,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     })
   }
 
-  async validate(
-    req: Request,
-    payload: {
-      userId: string
-      sessionId?: string
-      isEmulating?: boolean
-      originalAdminId?: string
-    },
-  ): Promise<User> {
+  async validate(req: Request, payload: AuthTokenClaims): Promise<User> {
     const apiTokenUser = (req as ApiTokenRequest)[API_TOKEN_USER_KEY]
     if (apiTokenUser) {
       return apiTokenUser
@@ -123,16 +116,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Invalid JWT payload.')
     }
     const user = await this.auth.validateUser(payload.userId)
-    if (!user) {
+    if (!user || user.isActive === false) {
       throw new UnauthorizedException('User from token not found or invalid.')
     }
 
-    // Validate session if sessionId is present in the token
-    if (payload.sessionId) {
-      const isSessionValid = await this.auth.isSessionValid(payload.sessionId)
-      if (!isSessionValid) {
-        throw new UnauthorizedException('Session has been invalidated.')
-      }
+    // The token's auth generation, its session (if any) and, for emulation, the admin's
+    // generation must all still be current.
+    if (!(await this.auth.isTokenCurrent(payload, user))) {
+      throw new UnauthorizedException('Session has been invalidated.')
     }
 
     // Attach emulation metadata to user object if present in JWT
@@ -190,7 +181,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         }
 
         const user = await this.auth.validateUser(result.userId)
-        if (!user) {
+        if (!user || user.isActive === false) {
           return this.fail({ message: 'User not found for API token' }, 401)
         }
 

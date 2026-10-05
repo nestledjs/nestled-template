@@ -209,3 +209,109 @@ describe('JwtStrategy API token authentication', () => {
     expect(extractJwt(strategy, req)).toBe(tokenFromCookieParser)
   })
 })
+
+describe('JwtStrategy session token validation', () => {
+  let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
+  let strategy: JwtStrategy
+  const req = { headers: {} } as Request
+
+  beforeEach(() => {
+    process.env['JWT_SECRET'] = 'test-secret'
+    auth = {
+      validateUser: jest.fn().mockResolvedValue({ id: 'user-1', authGeneration: 1 }),
+      isTokenCurrent: jest.fn().mockResolvedValue(true),
+    }
+    strategy = new JwtStrategy(auth as never, { validateApiToken: jest.fn() } as never)
+  })
+
+  it('accepts a token whose claims are current', async () => {
+    const payload = { userId: 'user-1', sessionId: 'session-1', authGeneration: 1 }
+
+    await expect(strategy.validate(req, payload)).resolves.toEqual({
+      id: 'user-1',
+      authGeneration: 1,
+    })
+    expect(auth.isTokenCurrent).toHaveBeenCalledWith(payload, {
+      id: 'user-1',
+      authGeneration: 1,
+    })
+  })
+
+  it('refuses a token issued under an earlier auth generation', async () => {
+    auth.isTokenCurrent.mockResolvedValue(false)
+
+    await expect(
+      strategy.validate(req, { userId: 'user-1', sessionId: 'session-1', authGeneration: 0 }),
+    ).rejects.toThrow('Session has been invalidated.')
+  })
+
+  it('refuses a token whose user no longer exists, before any other check', async () => {
+    auth.validateUser.mockResolvedValue(null)
+
+    await expect(strategy.validate(req, { userId: 'user-1' })).rejects.toThrow(
+      'User from token not found or invalid.',
+    )
+    expect(auth.isTokenCurrent).not.toHaveBeenCalled()
+  })
+
+  it('attaches emulation metadata only after the token is found current', async () => {
+    const payload = {
+      userId: 'user-1',
+      sessionId: 'emulation-session',
+      isEmulating: true,
+      originalAdminId: 'admin-1',
+      adminAuthGeneration: 0,
+    }
+
+    await expect(strategy.validate(req, payload)).resolves.toMatchObject({
+      id: 'user-1',
+      isEmulating: true,
+      originalAdminId: 'admin-1',
+    })
+
+    auth.isTokenCurrent.mockResolvedValue(false)
+    await expect(strategy.validate(req, payload)).rejects.toThrow('Session has been invalidated.')
+  })
+})
+
+describe('JwtStrategy inactive accounts', () => {
+  let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
+  let apiTokensService: { validateApiToken: jest.Mock }
+  let strategy: JwtStrategy
+
+  beforeEach(() => {
+    process.env['JWT_SECRET'] = 'test-secret'
+    auth = {
+      validateUser: jest
+        .fn()
+        .mockResolvedValue({ id: 'user-1', authGeneration: 0, isActive: false }),
+      isTokenCurrent: jest.fn().mockResolvedValue(true),
+    }
+    apiTokensService = { validateApiToken: jest.fn() }
+    strategy = new JwtStrategy(auth as never, apiTokensService as never)
+    ;(strategy as any).success = jest.fn()
+    ;(strategy as any).fail = jest.fn()
+  })
+
+  it('refuses a session token whose user is inactive', async () => {
+    await expect(
+      strategy.validate({ headers: {} } as Request, { userId: 'user-1', sessionId: 'session-1' }),
+    ).rejects.toThrow('User from token not found or invalid.')
+  })
+
+  it('refuses an API token whose user is inactive', async () => {
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: null,
+    })
+
+    await strategy.authenticate({ headers: { authorization: `Bearer ${'a'.repeat(64)}` } } as any)
+
+    expect((strategy as any).success).not.toHaveBeenCalled()
+    expect((strategy as any).fail).toHaveBeenCalledWith(
+      { message: 'User not found for API token' },
+      401,
+    )
+  })
+})

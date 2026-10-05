@@ -867,6 +867,7 @@ input CreateUserPreferenceInput {
 input CreateUserSessionInput {
   createdAt: DateTime
   deviceInfo: String
+  expiresAt: DateTime
   id: String
   ipAddress: String
   isValid: Boolean
@@ -1713,6 +1714,7 @@ input ListUserPreferenceInput {
 input ListUserSessionInput {
   createdAt: DateTime
   deviceInfo: String
+  expiresAt: DateTime
   filters: UserSessionFilterInput
   id: String
   ipAddress: String
@@ -2820,6 +2822,7 @@ enum SecurityEventType {
   PASSWORD_RESET_REQUESTED
   RECOVERY_CODES_GENERATED
   SUSPICIOUS_LOGIN_ATTEMPT
+  TWO_FACTOR_CODE_REJECTED
   TWO_FACTOR_DISABLED
   TWO_FACTOR_ENABLED
 }
@@ -3704,6 +3707,7 @@ input UpdateUserPreferenceInput {
 input UpdateUserSessionInput {
   createdAt: DateTime
   deviceInfo: String
+  expiresAt: DateTime
   id: String
   ipAddress: String
   isValid: Boolean
@@ -4023,6 +4027,7 @@ input UserRelationFilterInput2 {
 type UserSession {
   createdAt: DateTime!
   deviceInfo: String
+  expiresAt: DateTime
   id: String!
   ipAddress: String
   isValid: Boolean!
@@ -4039,6 +4044,7 @@ input UserSessionFilterInput {
   OR: [UserSessionFilterInput2!]
   createdAt: DateTimeFilterInput
   deviceInfo: StringFilterInput
+  expiresAt: DateTimeFilterInput
   id: StringFilterInput
   ipAddress: StringFilterInput
   isValid: BooleanFilterInput
@@ -4055,6 +4061,7 @@ input UserSessionFilterInput2 {
   OR: [UserSessionFilterInput3!]
   createdAt: DateTimeFilterInput
   deviceInfo: StringFilterInput
+  expiresAt: DateTimeFilterInput
   id: StringFilterInput
   ipAddress: StringFilterInput
   isValid: BooleanFilterInput
@@ -4068,6 +4075,7 @@ input UserSessionFilterInput2 {
 input UserSessionFilterInput3 {
   createdAt: DateTimeFilterInput
   deviceInfo: StringFilterInput
+  expiresAt: DateTimeFilterInput
   id: StringFilterInput
   ipAddress: StringFilterInput
   isValid: BooleanFilterInput
