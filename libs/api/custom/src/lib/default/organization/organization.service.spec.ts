@@ -21,6 +21,7 @@ describe('OrganizationService', () => {
       user: {
         findUnique: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       role: {
         create: jest.fn(),
@@ -91,6 +92,27 @@ describe('OrganizationService', () => {
     jest.clearAllMocks()
   })
   describe('userCreateOrganization', () => {
+    it('replaces an active organization the user is no longer a member of', async () => {
+      data.organization.create.mockResolvedValue({ id: 'org-new', name: 'New' } as any)
+      data.permission.findMany.mockResolvedValue([])
+      data.role.create.mockResolvedValue({ id: 'role-1' } as any)
+      data.role.findFirst.mockResolvedValue({ id: 'role-owner', name: 'Owner' } as any)
+      data.organizationMember.create.mockResolvedValue({} as any)
+      data.user.findUnique.mockResolvedValue({ activeOrganizationId: 'org-left' } as any)
+      // No membership in the organization the stale value names.
+      data.organizationMember.findFirst.mockResolvedValue(null)
+
+      await service.userCreateOrganization('user-123', { name: 'New' })
+
+      expect(data.organizationMember.findFirst).toHaveBeenCalledWith({
+        where: { userId: 'user-123', organizationId: 'org-left' },
+        select: { id: true },
+      })
+      expect(data.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: { activeOrganizationId: 'org-new' },
+      })
+    })
     it('should create organization with Owner role and member', async () => {
       const userId = 'user-123'
       const input = { name: 'Test Org' }
@@ -222,8 +244,10 @@ describe('OrganizationService', () => {
       expect(data.organizationMember.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
       expect(data.role.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
       expect(data.organization.delete).toHaveBeenCalledWith({ where: { id: organizationId } })
-      expect(data.user.update).toHaveBeenCalledWith({
-        where: { id: userId },
+      // Every former member's active organization, not only the caller's, in the same transaction.
+      expect(data.$transaction).toHaveBeenCalled()
+      expect(data.user.updateMany).toHaveBeenCalledWith({
+        where: { activeOrganizationId: organizationId },
         data: { activeOrganizationId: null },
       })
     })
@@ -297,6 +321,37 @@ describe('OrganizationService', () => {
     })
   })
   describe('removeOrganizationMember', () => {
+    it("clears the removed member's active organization in the same transaction", async () => {
+      const order: string[] = []
+      data.organizationMember.findFirst
+        .mockResolvedValueOnce({
+          role: { permissions: [{ subject: 'member', action: 'remove' }] },
+        } as any)
+        .mockResolvedValueOnce({ role: { name: 'Member' } } as any)
+        .mockResolvedValueOnce({ id: 'member-to-delete' } as any)
+      data.organizationMember.delete.mockImplementation(async () => order.push('delete'))
+      data.user.updateMany.mockImplementation(async () => {
+        order.push('clear')
+        return { count: 1 }
+      })
+      data.$transaction.mockImplementation(async (fn: any) => {
+        order.push('begin')
+        const result = await fn(data)
+        order.push('commit')
+        return result
+      })
+
+      await service.removeOrganizationMember('user-123', {
+        organizationId: 'org-123',
+        userId: 'target-user-456',
+      })
+
+      expect(data.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'target-user-456', activeOrganizationId: 'org-123' },
+        data: { activeOrganizationId: null },
+      })
+      expect(order).toEqual(['begin', 'delete', 'clear', 'commit'])
+    })
     it('should remove member when user has permission', async () => {
       const userId = 'user-123'
       const input = {

@@ -22,14 +22,33 @@ vi.mock('@nestled-template/shared/sdk', () => ({
 }))
 
 const activeOrganization = { id: 'org-1', name: 'Example Org' }
-
-function wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <GlobalContextProvider activeOrganization={activeOrganization as any}>
-      <SubscriptionProvider>{children}</SubscriptionProvider>
-    </GlobalContextProvider>
-  )
+const owner = {
+  role: {
+    name: 'Owner',
+    permissions: [
+      { subject: 'billing', action: 'read' },
+      { subject: 'billing', action: 'manage' },
+    ],
+  },
 }
+const member = {
+  role: { name: 'Member', permissions: [{ subject: 'organization', action: 'read' }] },
+}
+
+function wrapperFor(activeOrganizationMember: unknown) {
+  return function Wrapper({ children }: { children: React.ReactNode }) {
+    return (
+      <GlobalContextProvider
+        activeOrganization={activeOrganization as any}
+        activeOrganizationMember={activeOrganizationMember as any}
+      >
+        <SubscriptionProvider>{children}</SubscriptionProvider>
+      </GlobalContextProvider>
+    )
+  }
+}
+
+const wrapper = wrapperFor(owner)
 
 describe('SubscriptionProvider', () => {
   beforeEach(() => {
@@ -136,5 +155,32 @@ describe('SubscriptionProvider', () => {
     expect(result.current.hasFeature).toBe(false)
     expect(result.current.hasFeatures).toBe(false)
     expect(result.current.hasAnyFeature).toBe(false)
+  })
+
+  it('does not request billing details for a member without billing permissions', () => {
+    useQuery.mockReturnValue({ loading: false, error: null, data: undefined })
+
+    const { result } = renderHook(() => useSubscriptionContext(), { wrapper: wrapperFor(member) })
+
+    expect(useQuery).toHaveBeenCalledWith(expect.anything(), {
+      skip: true,
+      fetchPolicy: 'cache-and-network',
+    })
+    expect(result.current.subscription).toBeNull()
+    expect(result.current.hasActiveSubscription).toBe(false)
+  })
+
+  it('degrades to no subscription when the request is refused', () => {
+    useQuery.mockReturnValue({
+      loading: false,
+      error: new Error('You do not have permission to perform this operation'),
+      data: undefined,
+    })
+
+    const { result } = renderHook(() => useSubscriptionContext(), { wrapper })
+
+    expect(result.current.subscription).toBeNull()
+    expect(result.current.plan).toBeNull()
+    expect(result.current.error?.message).toMatch(/permission/)
   })
 })

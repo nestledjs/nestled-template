@@ -1,0 +1,111 @@
+id: 2026-10-05-auth-email-and-guard-hardening
+title: Email verification writes, staff email edits, the global auth guard and rejected 2FA codes
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Authentication hardening across email verification, staff email edits, the global guard and the
+  2FA audit trail. Independent of 2026-10-05-auth-generation-claim; apply either first.
+
+  1. `AuthService.verifyEmail()` and `verifyEmailChange()` include the token's expiry in their
+  compare-and-set (`validateEmailTokenExpires: { gt: now }` on the User `updateMany`;
+  `verifyExpires: { gt: now }` on the Email `updateMany`), so the expiry is checked by the same write
+  that consumes the token, not only by the read before it.
+
+  2. `AuthService.register()` and `registerWithInvitation()` store the signup verification token
+  through `mintVerificationTokenForPrimary()`, the guarded mint `sendVerificationEmail()` already
+  uses: the token is stored only while the registered address is still the primary one, and no
+  verification email is sent otherwise.
+
+  3. `verifyEmailChange()` returns the user as read inside the transaction after the Email row is
+  verified, with the auth relations (`emails`, ...), instead of the result of the earlier User write.
+
+  4. `AdminService.verifyEmail()` writes the User row first inside its transaction (the same lock
+  order as `changeEmail()`), then verifies the Email by compare-and-set on `{ id, userId, email }`
+  (the address read before the transaction). If the address changed, nothing is verified and it
+  throws "This email address changed; reload and try again". `emailValidated` is set only if the
+  row is primary when re-read under that lock. The existing email-belongs-to-user check stays.
+
+  5. `StaffEmailService.staffUpdateEmail()`: a changed address (compared with `normalizeEmail`) is
+  stored with `verified: false` and its pending `verifyToken`/`verifyExpires` cleared, whatever the
+  input says, so it also cannot be made primary in the same call. A primary address can be neither
+  changed nor set `verified: false` through this path; it throws a BadRequest asking to add, verify
+  and promote another address first. `staffUpdateEmail()` and `staffDeleteEmail()` now write the
+  owning User row first in their transaction (an `updatedAt` write, the lock order above), and after
+  their Email writes set `User.emailValidated` from the primary address as it then stands (true only
+  if a primary exists and is verified), so verifying, promoting or deleting through these paths
+  cannot leave the flag out of step with the primary.
+
+  6. `GlobalAuthGuard` accepts only the documented levels (`public`, `authenticated`, `admin`) under
+  `AUTH_LEVEL_KEY`. Any other value, including non-strings, is refused as undeclared.
+
+  7. A rejected two-factor code is recorded as a SecurityEvent on the account
+  (`SecurityEventType.TWO_FACTOR_CODE_REJECTED`, new `SecurityEventsService.logTwoFactorCodeRejected`,
+  with the request's IP and user agent) instead of an AuditLog row with the account owner as actor.
+  `verify2FALogin(userId, code, sessionInfo?)` takes the request context; `complete2FALogin()` passes
+  it. A verified code stays an AuditLog `TWO_FACTOR_CODE_VERIFIED` entry. Additive migration
+  `20261005150000_security_event_two_factor_code_rejected`; the admin security-events page labels
+  the new type.
+
+why: >
+  Authentication hardening: each change makes a check happen in the write that depends on it, or
+  makes a recorded or returned value describe what actually happened. Apply this release promptly;
+  details will be published in a security advisory after the fleet has updated.
+
+affectedPaths:
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - libs/api/prisma/src/lib/migrations/20261005150000_security_event_two_factor_code_rejected/migration.sql
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.service.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.service.spec.ts
+  - libs/api/custom/src/lib/default/email/email.service.ts
+  - libs/api/custom/src/lib/default/email/email.service.spec.ts
+  - libs/api/custom/src/lib/plugins/security/security-events.service.ts
+  - libs/api/custom/src/lib/plugins/security/security-events.service.spec.ts
+  - libs/api/utils/src/lib/guards/global-auth.guard.ts
+  - libs/api/utils/src/lib/guards/global-auth.guard.spec.ts
+  - apps/web/app/routes/admin/security-events/_index.tsx
+  - apps/api-e2e/src/auth/auth-email-guards.spec.ts
+  - apps/api-e2e/src/support/test-db.ts
+
+packageReleases: []
+
+skipIf:
+  - The project has replaced AuthService email verification, the staff email mutations, GlobalAuthGuard and the 2FA login flow with its own implementations.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api-utils:test
+  - pnpm exec nx run-many -t typecheck
+  - pnpm exec nestled-doctor
+  - pnpm test:e2e src/auth/auth-email-guards.spec.ts
+
+agentHints:
+  - >
+    These are edits inside existing methods. Where the project's versions have diverged, apply each
+    by hand and keep the project's own behaviour around them.
+  - >
+    Add `TWO_FACTOR_CODE_REJECTED` to `SecurityEventType`, copy the migration folder as-is, run
+    `pnpm db-update`, and add the label to the admin security-events map (the page's
+    `Record<SecurityEventType, ...>` will not typecheck without it).
+  - >
+    grep for every place the project writes `validateEmailToken` outside the guarded mint
+    (project-local signup or invitation flows) and route it through
+    `mintVerificationTokenForPrimary()`.
+  - >
+    Any project-local code that marks an Email verified, or rewrites an address, should follow the
+    same rules: User row first, compare-and-set on the address, a changed address starts unverified,
+    and a primary address is never unverified.
+  - >
+    If the project added its own access levels, add them to the guard's accepted set in the same
+    change that introduces the decorator; the guard now refuses anything it does not list.
+  - >
+    Mocks: AuthService specs give `securityEvents` a `logTwoFactorCodeRejected` mock, give
+    `email.findFirst` the primary row in register tests (otherwise the guarded mint refuses and no
+    email is sent), stub `user.findUniqueOrThrow` for verifyEmailChange, and expect the expiry in the
+    compare-and-set `where`. AdminService specs give `email.updateMany` a `{ count: 1 }` result.
+    StaffEmailService specs give the transaction fixture a `user: { update }` mock (the
+    `EmailTransaction` type now includes it).

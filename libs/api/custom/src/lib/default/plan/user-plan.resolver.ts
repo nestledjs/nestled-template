@@ -1,7 +1,12 @@
 import { Resolver, Query } from '@nestjs/graphql'
 import { UseGuards } from '@nestjs/common'
-import { Authenticated, CtxUser, GqlAuthGuard, Public } from '@nestled-template/api/utils'
-import { Plan, User } from '@nestled-template/api/core/models'
+import {
+  Authenticated,
+  CtxOptionalOrganizationId,
+  GqlAuthGuard,
+  Public,
+} from '@nestled-template/api/utils'
+import { Plan } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 
 /**
@@ -27,18 +32,24 @@ export class UserPlanResolver {
   }
 
   /**
-   * Get the current organization's plan
+   * Get the current organization's plan.
+   *
+   * Any member may read it (it is what feature gating needs), but only for an organization they are
+   * a member of: the organization comes from the context GqlAuthGuard attached after checking the
+   * membership, never from the raw `user.activeOrganizationId`.
    */
   @Query(() => Plan, { nullable: true })
   @UseGuards(GqlAuthGuard)
   @Authenticated()
-  async currentPlan(@CtxUser() user: User): Promise<Plan | null> {
-    if (!user.activeOrganizationId) {
+  async currentPlan(
+    @CtxOptionalOrganizationId() organizationId: string | null,
+  ): Promise<Plan | null> {
+    if (!organizationId) {
       return null
     }
 
     const subscription = await this.prisma.subscription.findUnique({
-      where: { organizationId: user.activeOrganizationId },
+      where: { organizationId },
       include: { plan: true },
     })
 

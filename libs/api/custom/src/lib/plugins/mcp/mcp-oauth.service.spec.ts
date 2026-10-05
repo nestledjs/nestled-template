@@ -62,6 +62,7 @@ describe('McpOAuthService', () => {
   describe('Auth Code Lifecycle', () => {
     const baseParams = {
       userId: 'user-1',
+      authGeneration: 0,
       organizationId: 'org-1',
       clientId: 'client-1',
       redirectUri: 'https://example.com/cb',
@@ -158,20 +159,23 @@ describe('McpOAuthService', () => {
   describe('Access Token Creation', () => {
     it('should create an org-scoped API token', async () => {
       mockApiTokensService.generateApiToken.mockResolvedValue({ token: 'plain-token-abc' } as any)
-      const token = await service.createAccessToken('user-1', 'org-1')
+      const token = await service.createAccessToken('user-1', 'org-1', 2)
       expect(token).toBe('plain-token-abc')
+      // The token is bound to the generation of the session that authorized the code.
       expect(mockApiTokensService.generateApiToken).toHaveBeenCalledWith(
         'user-1',
         expect.objectContaining({ organizationId: 'org-1' }),
+        2,
       )
     })
 
     it('should create a token without org scope when organizationId is null', async () => {
       mockApiTokensService.generateApiToken.mockResolvedValue({ token: 'plain-token-xyz' } as any)
-      await service.createAccessToken('user-1', null)
+      await service.createAccessToken('user-1', null, 0)
       expect(mockApiTokensService.generateApiToken).toHaveBeenCalledWith(
         'user-1',
         expect.objectContaining({ organizationId: undefined }),
+        0,
       )
     })
   })

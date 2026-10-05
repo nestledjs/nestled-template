@@ -86,6 +86,14 @@ export class SecurityEventsService {
   }
 
   /**
+   * Log a rejected two-factor code. At sign-in the caller has passed only the password step, so the
+   * account is the subject of this event, not its actor.
+   */
+  async logTwoFactorCodeRejected(userId: string, context?: SecurityEventContext): Promise<void> {
+    return this.logEvent(userId, SecurityEventType.TWO_FACTOR_CODE_REJECTED, context)
+  }
+
+  /**
    * Log suspicious login attempt
    */
   async logSuspiciousLogin(

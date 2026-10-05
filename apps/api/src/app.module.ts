@@ -14,8 +14,6 @@ import {
   SecurityEventsModule,
   StoragePluginModule,
   SubscriptionModule,
-  TenancyMiddleware,
-  TenancyModule,
   UserPreferenceModule,
   EmailModule,
   PlatformAccessControlModule,
@@ -60,7 +58,6 @@ export const pluginModules = [
   SecurityEventsModule,
   ApiTokensModule,
   StoragePluginModule,
-  TenancyModule,
   StripeModule,
   BillingModule,
   McpModule,
@@ -99,7 +96,8 @@ export class AppModule implements NestModule {
     // Apply API token auth middleware to MCP routes.
     consumer.apply(ApiTokenAuthMiddleware).forRoutes(McpController)
 
-    // Apply tenancy middleware to GraphQL endpoint (runs after authentication)
-    consumer.apply(TenancyMiddleware).forRoutes({ path: 'graphql', method: RequestMethod.ALL })
+    // Organization context is attached by the guards (GqlAuthGuard, GqlOrganizationScopedGuard,
+    // AccessPolicyGuard) through OrganizationContextService, after authentication. Middleware runs
+    // before guards, so it cannot do that job.
   }
 }

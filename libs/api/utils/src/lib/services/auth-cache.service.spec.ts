@@ -2,6 +2,7 @@ import { AuthCacheService } from './auth-cache.service'
 import { OrganizationContext } from '../types/nest-context-type'
 
 type RedisMock = {
+  set: jest.Mock
   setex: jest.Mock
   get: jest.Mock
   del: jest.Mock
@@ -10,6 +11,7 @@ type RedisMock = {
 
 function createRedisMock(): RedisMock {
   return {
+    set: jest.fn().mockResolvedValue('OK'),
     setex: jest.fn().mockResolvedValue('OK'),
     get: jest.fn().mockResolvedValue(null),
     del: jest.fn().mockResolvedValue(1),
@@ -51,7 +53,9 @@ describe('AuthCacheService', () => {
     const service = new AuthCacheService(redis as never)
 
     await service.setSessionValid('session-1', true)
-    expect(redis.setex).toHaveBeenCalledWith('auth:session:session-1', 900, '1')
+    expect(redis.set).toHaveBeenCalledWith('auth:session:session-1', '1', 'EX', 900, 'NX')
+    await service.setSessionValid('session-1', false)
+    expect(redis.setex).toHaveBeenCalledWith('auth:session:session-1', 900, '0')
 
     redis.get.mockResolvedValueOnce('1').mockResolvedValueOnce('0').mockResolvedValueOnce(null)
     await expect(service.getSessionValid('session-1')).resolves.toBe(true)
@@ -59,7 +63,35 @@ describe('AuthCacheService', () => {
     await expect(service.getSessionValid('session-1')).resolves.toBeNull()
 
     await service.invalidateSession('session-1')
-    expect(redis.del).toHaveBeenCalledWith('auth:session:session-1')
+    expect(redis.setex).toHaveBeenLastCalledWith('auth:session:session-1', 900, '0')
+  })
+
+  it('does not let a refill read before an invalidation restore the session as valid', async () => {
+    // A minimal Redis with the semantics the service relies on: SETEX, SET ... NX, GET, DEL.
+    const store = new Map<string, string>()
+    const redis = {
+      get: jest.fn(async (key: string) => store.get(key) ?? null),
+      setex: jest.fn(async (key: string, _ttl: number, value: string) => {
+        store.set(key, value)
+        return 'OK'
+      }),
+      set: jest.fn(async (key: string, value: string, ...args: unknown[]) => {
+        if (args.includes('NX') && store.has(key)) return null
+        store.set(key, value)
+        return 'OK'
+      }),
+      del: jest.fn(async (key: string) => (store.delete(key) ? 1 : 0)),
+      keys: jest.fn(async () => []),
+    }
+    const service = new AuthCacheService(redis as never)
+
+    // Request A misses the cache and reads the session as valid from the database. Before it
+    // writes that result back, the session is revoked and the cache entry invalidated.
+    await expect(service.getSessionValid('session-1')).resolves.toBeNull()
+    await service.invalidateSession('session-1')
+    await service.setSessionValid('session-1', true)
+
+    await expect(service.getSessionValid('session-1')).resolves.toBe(false)
   })
 
   it('stores and reads membership context as JSON', async () => {
@@ -123,6 +155,7 @@ describe('AuthCacheService', () => {
 
   it('returns cache misses instead of throwing when Redis operations fail', async () => {
     const redis = createRedisMock()
+    redis.set.mockRejectedValue(new Error('write failed'))
     redis.setex.mockRejectedValue(new Error('write failed'))
     redis.get.mockRejectedValue(new Error('read failed'))
     redis.del.mockRejectedValue(new Error('delete failed'))

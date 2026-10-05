@@ -3,9 +3,12 @@ import { ConfigService } from '@nestjs/config'
 import { randomBytes, createHash } from 'node:crypto'
 import { ApiTokensService } from '../api-tokens/api-tokens.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+import { AuthTokenClaims, isAuthTokenCurrent } from '../auth/auth-token-claims'
 
 export interface StoredAuthCode {
   userId: string
+  /** The user's auth generation from the session that authorized the code. */
+  authGeneration: number
   organizationId: string | null
   clientId: string
   redirectUri: string
@@ -33,6 +36,18 @@ export class McpOAuthService {
     private readonly apiTokensService: ApiTokensService,
     private readonly data: ApiCoreDataAccessService,
   ) {}
+
+  /**
+   * The same check JwtStrategy applies, for the session cookie /authorize reads directly: pass
+   * claims only from a verified token.
+   */
+  async isSessionTokenCurrent(claims: AuthTokenClaims): Promise<boolean> {
+    const user = await this.data.user.findUnique({
+      where: { id: claims.userId },
+      select: { id: true, authGeneration: true },
+    })
+    return user ? isAuthTokenCurrent(this.data, claims, user) : false
+  }
 
   getMcpBaseUrl(req?: { protocol: string; get: (name: string) => string | undefined }): string {
     if (req) {
@@ -112,11 +127,19 @@ export class McpOAuthService {
     return !!membership
   }
 
-  async createAccessToken(userId: string, organizationId: string | null): Promise<string> {
-    const result = await this.apiTokensService.generateApiToken(userId, {
-      name: `MCP (${new Date().toISOString()})`,
-      organizationId: organizationId ?? undefined,
-    })
+  async createAccessToken(
+    userId: string,
+    organizationId: string | null,
+    authGeneration: number,
+  ): Promise<string> {
+    const result = await this.apiTokensService.generateApiToken(
+      userId,
+      {
+        name: `MCP (${new Date().toISOString()})`,
+        organizationId: organizationId ?? undefined,
+      },
+      authGeneration,
+    )
     return result.token
   }
 }

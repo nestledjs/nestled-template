@@ -4,6 +4,7 @@ import { Request, Response } from 'express'
 import { ConfigService } from '@nestjs/config'
 import { McpOAuthService } from './mcp-oauth.service'
 import { Public } from '@nestled-template/api/utils'
+import { AuthTokenClaims, claimedAuthGeneration } from '../auth/auth-token-claims'
 
 interface AuthorizeQuery {
   client_id: string
@@ -106,7 +107,8 @@ export class McpOAuthController {
         .json({ error: 'invalid_client', error_description: 'Unknown client_id' })
     }
 
-    const userId = this.getUserIdFromCookie(req)
+    const session = await this.getSessionFromCookie(req)
+    const userId = session?.userId
 
     const authorizeParams = new URLSearchParams({
       client_id: clientId,
@@ -118,8 +120,17 @@ export class McpOAuthController {
     })
     const authorizeUrl = `${mcpBase}/authorize?${authorizeParams.toString()}`
 
-    if (!userId) {
+    if (!session || !userId) {
       return res.redirect(`${siteUrl}/login?redirect=${encodeURIComponent(authorizeUrl)}`)
+    }
+
+    // A client authorized here gets a long-lived credential of its own. Under emulation that would
+    // be a credential for the emulated user that outlives the emulation, so it is refused.
+    if (session.isEmulating) {
+      return res.status(403).json({
+        error: 'access_denied',
+        error_description: 'Clients cannot be authorized while emulating a user',
+      })
     }
 
     const organizationId = await this.resolveOrganizationId(
@@ -133,6 +144,7 @@ export class McpOAuthController {
 
     const code = this.oauth.createAuthCode({
       userId,
+      authGeneration: claimedAuthGeneration(session.authGeneration),
       organizationId,
       clientId,
       redirectUri,
@@ -216,7 +228,11 @@ export class McpOAuthController {
         .json({ error: 'invalid_grant', error_description: 'PKCE verification failed' })
     }
 
-    const accessToken = await this.oauth.createAccessToken(authCode.userId, authCode.organizationId)
+    const accessToken = await this.oauth.createAccessToken(
+      authCode.userId,
+      authCode.organizationId,
+      authCode.authGeneration,
+    )
     this.logger.log(
       `MCP OAuth token issued for user ${authCode.userId} org=${authCode.organizationId}`,
     )
@@ -224,16 +240,21 @@ export class McpOAuthController {
     return res.json({ access_token: accessToken, token_type: 'bearer', scope: authCode.scope })
   }
 
-  private getUserIdFromCookie(req: Request): string | null {
+  /** The verified, still-current session token from the cookie, or null. */
+  private async getSessionFromCookie(req: Request): Promise<AuthTokenClaims | null> {
     const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
     const cookieToken = (req.cookies as Record<string, string>)?.[cookieName]
     if (!cookieToken) return null
+    let payload: AuthTokenClaims
     try {
-      const payload = this.jwtService.verify<{ userId: string }>(cookieToken)
-      return payload?.userId ?? null
+      payload = this.jwtService.verify<AuthTokenClaims>(cookieToken)
     } catch {
       return null
     }
+    if (!payload?.userId) return null
+    // A genuine but revoked session must not authorize a new client, any more than it can make an
+    // API request.
+    return (await this.oauth.isSessionTokenCurrent(payload)) ? payload : null
   }
 
   private buildMetadata(req: Request) {

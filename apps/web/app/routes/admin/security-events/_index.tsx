@@ -112,6 +112,12 @@ const EVENT_TYPE_CONFIG: Record<
     icon: KeyIcon,
     color: 'amber',
   },
+  [SecurityEventType.TwoFactorCodeRejected]: {
+    label: '2FA Code Rejected',
+    description: 'An incorrect two-factor code was entered for this account',
+    icon: ShieldExclamationIcon,
+    color: 'amber',
+  },
 }
 
 // Extract SecurityEventItem component to reduce cognitive complexity

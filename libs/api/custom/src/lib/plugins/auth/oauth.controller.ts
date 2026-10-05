@@ -92,13 +92,18 @@ export class OAuthController {
       // Find or create user
       const user = await this.oauthService.findOrCreateUserFromOAuth(profile)
 
+      // A disabled account cannot sign in by any route, password or provider.
+      if (user.isActive === false) {
+        return errorRedirect('account_disabled')
+      }
+
       // A verified OAuth identity is only the FIRST factor. Users who enabled 2FA must still be
       // challenged for it, exactly as in the password login path — otherwise anyone holding the
       // provider account (or a provider session on a shared machine) gets in with the second
       // factor skipped. Mint the short-lived hand-off token and bounce to the login page's 2FA
       // step; no session row and no auth cookie exist until complete2FALogin succeeds.
       if (user.twoFactorEnabled) {
-        const tempToken = this.authService.createTemp2FAToken(user.id)
+        const tempToken = this.authService.createTemp2FAToken(user)
         const params = new URLSearchParams({ oauth_2fa: tempToken, provider })
         return res.redirect(`${siteUrl}/login?${params.toString()}`)
       }

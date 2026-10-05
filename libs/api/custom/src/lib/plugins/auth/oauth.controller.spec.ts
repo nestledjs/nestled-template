@@ -105,10 +105,29 @@ describe('OAuthController', () => {
       expect(target.hash).toBe('')
     })
 
+    it('refuses an inactive account without issuing a session or a 2FA challenge', async () => {
+      oauthService.findOrCreateUserFromOAuth.mockResolvedValue({
+        id: 'u-1',
+        isActive: false,
+        twoFactorEnabled: true,
+        authGeneration: 0,
+      } as never)
+
+      await invoke(controller, res as unknown as Response, req)
+
+      expect(authService.signUser).not.toHaveBeenCalled()
+      expect(authService.createTemp2FAToken).not.toHaveBeenCalled()
+      expect(authService.setCookie).not.toHaveBeenCalled()
+      const target = new URL(res.redirect.mock.calls[0][0] as unknown as string)
+      expect(target.pathname).toBe('/auth/oauth-error')
+      expect(target.searchParams.get('error')).toBe('account_disabled')
+    })
+
     it('challenges for 2FA instead of issuing a session when the user has 2FA enabled', async () => {
       oauthService.findOrCreateUserFromOAuth.mockResolvedValue({
         id: 'u-1',
         twoFactorEnabled: true,
+        authGeneration: 2,
       } as never)
 
       await invoke(controller, res as unknown as Response, req)
@@ -117,7 +136,10 @@ describe('OAuthController', () => {
       expect(authService.signUser).not.toHaveBeenCalled()
       expect(authService.setCookie).not.toHaveBeenCalled()
 
-      expect(authService.createTemp2FAToken).toHaveBeenCalledWith('u-1')
+      // The whole row, so the temp token carries the user's auth generation.
+      expect(authService.createTemp2FAToken).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'u-1', authGeneration: 2 }),
+      )
       expect(res.redirect).toHaveBeenCalledWith(
         `${SITE_URL}/login?oauth_2fa=temp-2fa-jwt&provider=${provider}`,
       )

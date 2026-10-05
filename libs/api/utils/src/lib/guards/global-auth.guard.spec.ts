@@ -78,6 +78,23 @@ describe('GlobalAuthGuard', () => {
     expect(guardWith({ level: 'admin' }).canActivate(contextFor())).toBe(true)
   })
 
+  it('refuses any value that is not one of the documented levels', () => {
+    for (const level of ['Public', 'superadmin', 'true', 'anonymous', ' public']) {
+      expect(() => guardWith({ level }).canActivate(contextFor())).toThrow(ForbiddenException)
+    }
+  })
+
+  it('refuses a non-string value under the auth level key', () => {
+    const guard = (value: unknown) => {
+      const reflector = new Reflector()
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(value as never)
+      return new GlobalAuthGuard(reflector)
+    }
+    for (const value of [true, 1, {}, ['public']]) {
+      expect(() => guard(value).canActivate(contextFor())).toThrow(ForbiddenException)
+    }
+  })
+
   it('does not accept an attached guard in place of a declaration', () => {
     // The bridge that allowed this existed only until generators 1.1.6 emitted decorators on
     // generated CRUD. Inferring intent from whichever guards are attached is what let a throttler

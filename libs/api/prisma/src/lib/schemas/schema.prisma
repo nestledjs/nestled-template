@@ -41,6 +41,10 @@ model ApiToken {
   expiresAt      DateTime?
   lastUsedAt     DateTime?
   revoked        Boolean       @default(false)
+  // The owner's User.authGeneration when the token was issued; the token stops working once the
+  // owner's value moves on.
+  /// @graphqlOmit
+  authGeneration Int           @default(0)
   organizationId String?
   organization   Organization? @relation("ApiToken_belongsTo_Organization", fields: [organizationId], references: [id], onDelete: SetNull)
 }
@@ -436,6 +440,11 @@ model User {
   lastFailedLogin           DateTime?
   failedLoginCount          Int                      @default(0)
   lockedUntil               DateTime?
+  // Bumped whenever every credential the user holds must stop working (password reset, forced
+  // reset, deactivation). Every JWT carries the value it was issued under; a mismatch is refused.
+  // A database trigger (migration 20261005140000) also bumps it on any change of isActive.
+  /// @graphqlOmit
+  authGeneration            Int                      @default(0)
   AuditLog                  AuditLog[]
   UserPreference            UserPreference[]
   TeamMember                TeamMember[]
@@ -473,6 +482,8 @@ model UserSession {
   ipAddress         String?
   isValid           Boolean  @default(true)
   twoFactorVerified Boolean  @default(false)
+  // When the token issued with this session expires. Null on sessions created before it existed.
+  expiresAt         DateTime?
 }
 
 /// @skipCrud
@@ -549,6 +560,7 @@ enum SecurityEventType {
   API_TOKEN_CREATED
   API_TOKEN_REVOKED
   API_TOKEN_ROTATED
+  TWO_FACTOR_CODE_REJECTED
 }
 
 enum StorageProvider {

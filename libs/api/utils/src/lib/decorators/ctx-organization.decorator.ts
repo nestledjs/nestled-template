@@ -39,3 +39,15 @@ export const CtxOrganizationId = createParamDecorator(
     return organizationContext.organizationId
   },
 )
+
+/**
+ * The organization id from the request's membership-checked context, or null when there is none
+ * (no active organization, or one the user is no longer a member of). For reads that answer "nothing"
+ * rather than refuse in that case.
+ */
+export const CtxOptionalOrganizationId = createParamDecorator(
+  (data: unknown, ctx: ExecutionContext): string | null => {
+    const gqlContext = GqlExecutionContext.create(ctx).getContext()
+    return gqlContext.req.organizationContext?.organizationId ?? null
+  },
+)

@@ -908,6 +908,7 @@ export type CreateUserPreferenceInput = {
 export type CreateUserSessionInput = {
   createdAt?: InputMaybe<Scalars['DateTime']['input']>
   deviceInfo?: InputMaybe<Scalars['String']['input']>
+  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
   id?: InputMaybe<Scalars['String']['input']>
   ipAddress?: InputMaybe<Scalars['String']['input']>
   isValid?: InputMaybe<Scalars['Boolean']['input']>
@@ -1742,6 +1743,7 @@ export type ListUserPreferenceInput = {
 export type ListUserSessionInput = {
   createdAt?: InputMaybe<Scalars['DateTime']['input']>
   deviceInfo?: InputMaybe<Scalars['String']['input']>
+  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
   filters?: InputMaybe<UserSessionFilterInput>
   id?: InputMaybe<Scalars['String']['input']>
   ipAddress?: InputMaybe<Scalars['String']['input']>
@@ -3771,6 +3773,7 @@ export enum SecurityEventType {
   PasswordResetRequested = 'PASSWORD_RESET_REQUESTED',
   RecoveryCodesGenerated = 'RECOVERY_CODES_GENERATED',
   SuspiciousLoginAttempt = 'SUSPICIOUS_LOGIN_ATTEMPT',
+  TwoFactorCodeRejected = 'TWO_FACTOR_CODE_REJECTED',
   TwoFactorDisabled = 'TWO_FACTOR_DISABLED',
   TwoFactorEnabled = 'TWO_FACTOR_ENABLED',
 }
@@ -4661,6 +4664,7 @@ export type UpdateUserPreferenceInput = {
 export type UpdateUserSessionInput = {
   createdAt?: InputMaybe<Scalars['DateTime']['input']>
   deviceInfo?: InputMaybe<Scalars['String']['input']>
+  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
   id?: InputMaybe<Scalars['String']['input']>
   ipAddress?: InputMaybe<Scalars['String']['input']>
   isValid?: InputMaybe<Scalars['Boolean']['input']>
@@ -4981,6 +4985,7 @@ export type UserSession = {
   __typename?: 'UserSession'
   createdAt: Scalars['DateTime']['output']
   deviceInfo?: Maybe<Scalars['String']['output']>
+  expiresAt?: Maybe<Scalars['DateTime']['output']>
   id: Scalars['String']['output']
   ipAddress?: Maybe<Scalars['String']['output']>
   isValid: Scalars['Boolean']['output']
@@ -4997,6 +5002,7 @@ export type UserSessionFilterInput = {
   OR?: InputMaybe<Array<UserSessionFilterInput2>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   deviceInfo?: InputMaybe<StringFilterInput>
+  expiresAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   ipAddress?: InputMaybe<StringFilterInput>
   isValid?: InputMaybe<BooleanFilterInput>
@@ -5013,6 +5019,7 @@ export type UserSessionFilterInput2 = {
   OR?: InputMaybe<Array<UserSessionFilterInput3>>
   createdAt?: InputMaybe<DateTimeFilterInput>
   deviceInfo?: InputMaybe<StringFilterInput>
+  expiresAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   ipAddress?: InputMaybe<StringFilterInput>
   isValid?: InputMaybe<BooleanFilterInput>
@@ -5026,6 +5033,7 @@ export type UserSessionFilterInput2 = {
 export type UserSessionFilterInput3 = {
   createdAt?: InputMaybe<DateTimeFilterInput>
   deviceInfo?: InputMaybe<StringFilterInput>
+  expiresAt?: InputMaybe<DateTimeFilterInput>
   id?: InputMaybe<StringFilterInput>
   ipAddress?: InputMaybe<StringFilterInput>
   isValid?: InputMaybe<BooleanFilterInput>
@@ -8411,6 +8419,7 @@ export type __AdminUserSessionSummaryFragment = {
   ipAddress?: string | null
   isValid: boolean
   twoFactorVerified: boolean
+  expiresAt?: any | null
   user?: { __typename?: 'User'; id: string } | null
 }
 
@@ -8425,6 +8434,7 @@ export type __AdminUserSessionDetailsFragment = {
   ipAddress?: string | null
   isValid: boolean
   twoFactorVerified: boolean
+  expiresAt?: any | null
   user?: { __typename?: 'User'; id: string } | null
 }
 
@@ -8445,6 +8455,7 @@ export type __AdminCreateUserSessionMutation = {
     ipAddress?: string | null
     isValid: boolean
     twoFactorVerified: boolean
+    expiresAt?: any | null
     user?: { __typename?: 'User'; id: string } | null
   } | null
 }
@@ -8476,6 +8487,7 @@ export type __AdminUpdateUserSessionMutation = {
     ipAddress?: string | null
     isValid: boolean
     twoFactorVerified: boolean
+    expiresAt?: any | null
     user?: { __typename?: 'User'; id: string } | null
   } | null
 }
@@ -8497,6 +8509,7 @@ export type __AdminUserSessionQuery = {
     ipAddress?: string | null
     isValid: boolean
     twoFactorVerified: boolean
+    expiresAt?: any | null
     user?: { __typename?: 'User'; id: string } | null
   } | null
 }
@@ -8518,6 +8531,7 @@ export type __AdminUserSessionsQuery = {
     ipAddress?: string | null
     isValid: boolean
     twoFactorVerified: boolean
+    expiresAt?: any | null
     user?: { __typename?: 'User'; id: string } | null
   }> | null
   counters?: {
@@ -13436,6 +13450,7 @@ export const __AdminUserSessionSummaryFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
           { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'user' },
@@ -13479,6 +13494,7 @@ export const __AdminUserSessionDetailsFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
           { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'user' },
@@ -24974,6 +24990,7 @@ export const __AdminCreateUserSession = {
           { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
           { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'user' },
@@ -25116,6 +25133,7 @@ export const __AdminUpdateUserSession = {
           { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
           { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'user' },
@@ -25202,6 +25220,7 @@ export const __AdminUserSession = {
           { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
           { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'user' },
@@ -25300,6 +25319,7 @@ export const __AdminUserSessions = {
           { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
           { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'user' },

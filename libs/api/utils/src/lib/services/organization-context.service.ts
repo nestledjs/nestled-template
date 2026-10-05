@@ -25,11 +25,18 @@ export class OrganizationContextService {
     requestedOrganizationId?: string,
   ): Promise<OrganizationContext | undefined> {
     if (!req.user) return undefined
-    if (!requestedOrganizationId && req.organizationContext) return req.organizationContext
 
     const organizationId = requestedOrganizationId ?? (await this.resolveOrganizationId(req))
     if (!organizationId) return undefined
-    if (req.organizationContext?.organizationId === organizationId) return req.organizationContext
+
+    // A context already on the request is reused only when it was built for this user and this
+    // organization. Anything else is recomputed from the membership, and cleared if there is none,
+    // so a decorator reading req.organizationContext later never sees a context nobody checked.
+    const existing = req.organizationContext
+    if (existing?.userId === req.user.id && existing.organizationId === organizationId) {
+      return existing
+    }
+    req.organizationContext = undefined
 
     const cachedContext = await this.getCachedMembership(req.user.id, organizationId)
     if (cachedContext) {

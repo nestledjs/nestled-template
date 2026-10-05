@@ -5,6 +5,11 @@ import { User, ApiToken } from '@nestled-template/api/core/models'
 import { ApiTokensService } from './api-tokens.service'
 import { GenerateApiTokenInput, RotateApiTokenInput, GenerateApiTokenOutput } from './dto'
 
+/** The generation JwtStrategy's row carried for the authenticated user (not a GraphQL field). */
+function authGenerationOf(user: User): number | undefined {
+  return (user as User & { authGeneration?: number }).authGeneration
+}
+
 @Resolver(() => ApiToken)
 export class ApiTokensResolver {
   constructor(private readonly service: ApiTokensService) {}
@@ -16,7 +21,7 @@ export class ApiTokensResolver {
     @CtxUser() user: User,
     @Args('input') input: GenerateApiTokenInput,
   ): Promise<GenerateApiTokenOutput> {
-    return this.service.generateApiToken(user.id, input)
+    return this.service.generateApiToken(user.id, input, authGenerationOf(user))
   }
 
   @Query(() => [ApiToken])
@@ -40,6 +45,6 @@ export class ApiTokensResolver {
     @CtxUser() user: User,
     @Args('input') input: RotateApiTokenInput,
   ): Promise<GenerateApiTokenOutput> {
-    return this.service.rotateApiToken(user.id, input)
+    return this.service.rotateApiToken(user.id, input, authGenerationOf(user))
   }
 }

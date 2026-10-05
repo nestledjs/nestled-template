@@ -933,6 +933,9 @@ export class UserSessionFilterInput3 {
 
   @Field(() => BooleanFilterInput, { nullable: true })
   twoFactorVerified?: BooleanFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  expiresAt?: DateTimeFilterInput
 }
 
 @InputType()
@@ -2634,6 +2637,9 @@ export class UserSessionFilterInput2 {
 
   @Field(() => BooleanFilterInput, { nullable: true })
   twoFactorVerified?: BooleanFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  expiresAt?: DateTimeFilterInput
 
   @Field(() => [UserSessionFilterInput3], { nullable: true })
   AND?: UserSessionFilterInput3[]
@@ -4594,6 +4600,9 @@ export class UserSessionFilterInput {
 
   @Field(() => BooleanFilterInput, { nullable: true })
   twoFactorVerified?: BooleanFilterInput
+
+  @Field(() => DateTimeFilterInput, { nullable: true })
+  expiresAt?: DateTimeFilterInput
 
   @Field(() => [UserSessionFilterInput2], { nullable: true })
   AND?: UserSessionFilterInput2[]
@@ -7111,6 +7120,9 @@ export class CreateUserSessionInput {
 
   @Field({ nullable: true })
   twoFactorVerified?: boolean
+
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  expiresAt?: Date
 }
 
 @InputType()
@@ -7141,6 +7153,9 @@ export class UpdateUserSessionInput {
 
   @Field({ nullable: true })
   twoFactorVerified?: boolean
+
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  expiresAt?: Date
 }
 
 @InputType()
@@ -7174,4 +7189,7 @@ export class ListUserSessionInput extends CorePagingInput {
 
   @Field({ nullable: true })
   twoFactorVerified?: boolean
+
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  expiresAt?: Date
 }

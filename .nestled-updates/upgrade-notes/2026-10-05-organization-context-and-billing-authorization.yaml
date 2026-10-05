@@ -1,0 +1,121 @@
+id: 2026-10-05-organization-context-and-billing-authorization
+title: Organization context is always membership-checked; billing operations require billing permissions
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Authorization hardening for organization-scoped work. Independent of
+  2026-10-05-auth-generation-claim and 2026-10-05-auth-email-and-guard-hardening; apply in any
+  order.
+
+  1. `TenancyMiddleware` is removed, with its registration in `AppModule.configure()`, the
+  `TenancyModule` import, its exports from the custom library's middleware barrel, and its spec.
+  Nest middleware runs before guards, so it never saw an authenticated user and never did anything.
+  Organization context comes only from `OrganizationContextService.attach()`, called by
+  `GqlAuthGuard`, `GqlOrganizationScopedGuard` and `AccessPolicyGuard`. `AuthCacheService` is still
+  provided by the global `GuardsModule`.
+
+  2. `OrganizationContextService.attach()` resolves the organization first (explicit id, scoped API
+  token, `x-organization-id`, active organization) and reuses `req.organizationContext` only when its
+  `userId` is the request's user and its `organizationId` is that organization. Otherwise it clears
+  `req.organizationContext` and recomputes it from the membership, leaving it unset when there is no
+  membership.
+
+  3. `UserSubscriptionResolver` (`default/subscription/user-subscription.resolver.ts`) drops its
+  class-level `@Authenticated()`/`@UseGuards(GqlAuthGuard)`. `createCheckoutSession`,
+  `createPortalSession` and `cancelSubscription` use
+  `@RequireOrganizationPermission(['billing:manage'])`; `currentSubscription` and `currentUsage` use
+  `@RequireOrganizationPermission(['billing:read', 'billing:manage'])`. All five act on
+  `@CtxOrganizationId()`, the organization the permission was checked in, instead of
+  `user.activeOrganizationId`. With the seeded roles, Owner can do everything, Admin can read, and
+  Member can do neither. `availablePlans` stays public. `currentPlan` stays available to any member
+  (feature gating needs it) but reads the organization from the context `GqlAuthGuard` attached,
+  through the new `@CtxOptionalOrganizationId()` decorator (api/utils), returning null when there is
+  none. The guard baseline is updated for the five operations.
+
+  4. Removing a membership clears the removed user's `activeOrganizationId` when it names that
+  organization, in the same transaction: `OrganizationService.removeOrganizationMember()` and
+  `userDeleteOrganization()` (which now runs its deletes in one transaction and clears every user
+  whose active organization was the deleted one). Nothing derives authority from the raw field any
+  more: the billing resolvers above, `currentPlan`, and `SubscriptionGuard` (which now calls
+  `attach()` and refuses when there is no context) all use the membership-checked context.
+  `userCreateOrganization()` and `acceptOrganizationInvitation()` replace an active organization the
+  user is no longer a member of, as they already did an empty one.
+
+  5. Web: `SubscriptionProvider` (`libs/web`) only requests `currentSubscription` when the active
+  membership holds `billing:read`, `billing:manage` or `all:manage` (or the user is a super admin),
+  and otherwise reports no subscription. The billing settings page was already limited to owners.
+
+why: >
+  Authorization hardening: organization-scoped and billing operations now depend only on a
+  membership checked in the same request, with the permission the seeded roles assign for billing.
+  Apply this release promptly; details will be published in a security advisory after the fleet has
+  updated.
+
+affectedPaths:
+  - apps/api/src/app.module.ts
+  - libs/api/custom/src/lib/middleware/index.ts
+  - libs/api/custom/src/lib/middleware/tenancy.middleware.ts
+  - libs/api/custom/src/lib/middleware/tenancy.middleware.spec.ts
+  - libs/api/custom/src/lib/middleware/tenancy.module.ts
+  - libs/api/utils/src/lib/services/organization-context.service.ts
+  - libs/api/utils/src/lib/services/organization-context.service.spec.ts
+  - libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+  - libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts
+  - libs/api/utils/src/lib/guards/subscription.guard.ts
+  - libs/api/utils/src/lib/guards/subscription.guard.spec.ts
+  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
+  - libs/api/custom/src/lib/default/plan/user-plan.resolver.ts
+  - libs/api/custom/src/lib/default/plan/user-plan.resolver.spec.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+  - libs/web/src/lib/contexts/subscription.context.tsx
+  - libs/web/src/lib/contexts/subscription.context.spec.tsx
+  - .nestled-updates/security/guard-baseline.json
+  - apps/api-e2e/src/auth/organization-billing.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project has replaced organization context resolution, the billing resolvers and organization membership management with its own implementations.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api-utils:test
+  - pnpm exec nx run web-components:test
+  - pnpm exec nx run-many -t typecheck
+  - pnpm exec nestled-doctor
+  - pnpm test:e2e src/auth/organization-billing.spec.ts
+
+agentHints:
+  - >
+    Before deleting `TenancyMiddleware`, grep the project for `TenancyMiddleware`, `TenancyModule`
+    and readers of `req.organizationContext` outside guards. Anything that relied on the middleware
+    never received a context from it; route it through `OrganizationContextService.attach()` (or put
+    the operation behind `GqlOrganizationScopedGuard` / `RequireOrganizationPermission`).
+  - >
+    grep for `activeOrganizationId` in resolvers, services and guards. Any read that decides which
+    organization an operation acts on must use `@CtxOrganizationId()` / `req.organizationContext`
+    set by a guard, not the user field. Writes that set or clear the field are fine.
+  - >
+    Every project-local path that deletes an `OrganizationMember` (leave organization, admin removal,
+    account deletion that hard-deletes memberships) should clear
+    `activeOrganizationId` in the same transaction when it names that organization.
+  - >
+    Billing is now limited by role. If the project gave billing actions to roles other than Owner,
+    grant them `billing:manage` (or `billing:read` for read-only) in its role seed or role editor.
+    Members without either no longer receive `currentSubscription`; project UI that gates member
+    features on subscription status should use `currentPlan`, which any member may read.
+  - >
+    If the project added its own billing queries or mutations, give them the same
+    `RequireOrganizationPermission` declarations and run `pnpm security:update-guard-baseline`,
+    then review the baseline diff.
+  - >
+    Mocks: `UserSubscriptionResolver` methods take the organization id as their last argument;
+    `UserPlanResolver.currentPlan` takes the organization id (or null); `SubscriptionGuard` takes an
+    `OrganizationContextService`; OrganizationService specs give the data mock `user.updateMany`;
+    `SubscriptionProvider` tests give `GlobalContextProvider` an `activeOrganizationMember` holding
+    `billing:read`.

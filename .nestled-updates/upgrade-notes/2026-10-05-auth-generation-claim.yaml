@@ -1,0 +1,210 @@
+id: 2026-10-05-auth-generation-claim
+title: Every JWT and API token carries a per-user auth generation; emulation tokens get revocable sessions
+priority: high
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Authentication hardening. A new column `User.authGeneration Int @default(0)` (marked
+  `@graphqlOmit`, migration `20261005120000_user_auth_generation`) is a per-user counter. Every JWT
+  the API signs carries it as the `authGeneration` claim, and a token is accepted only while the
+  claim equals the user's current value. A missing claim reads as 0, the starting value for every
+  user, so tokens issued before this release keep working until the user's counter first moves.
+
+  1. New `auth-token-claims.ts` in the auth plugin: `AuthTokenClaims`, `claimedAuthGeneration()`
+  and `isAuthTokenCurrent(data, claims, user)`, which checks the generation, that the token's
+  session (if any) is valid and owned by the right user, and, for emulation tokens, the emulating
+  admin's generation. `AuthService.isTokenCurrent()` wraps it.
+
+  2. `JwtStrategy.validate()` calls `auth.isTokenCurrent(payload, user)` after loading the user and
+  refuses the request when it returns false. This replaces its direct `isSessionValid()` call.
+  `McpOAuthController /mcp/authorize` applies the same check to the session cookie it reads, and
+  refuses emulation tokens (403 `access_denied`).
+
+  3. The counter is incremented (`authGeneration: { increment: 1 }`) inside the same write or
+  transaction as: `AuthService.resetPassword()` (the compare-and-set that consumes the token),
+  `AuthService.deleteUserAccount()`, `AdminService.forcePasswordReset()` and
+  `AdminService.deactivateUser()`. `changePassword()` does NOT increment it, because it keeps the
+  caller's current session; it still revokes the other sessions as before.
+
+  4. Tokens are signed with the generation read when the credential was checked, never re-read at
+  signing time. `signUser()` takes an optional fifth argument `{ authGeneration?,
+  adminAuthGeneration? }` and otherwise uses `user.authGeneration` (reading the row only when the
+  caller's object lacks it). `createTemp2FAToken()` now takes `{ id, authGeneration }` instead of a
+  user id and puts the claim in the 2FA temp token; `complete2FALogin()` refuses a temp token whose
+  claim no longer matches and signs the session with the temp token's generation.
+
+  5. Emulation tokens are revocable. `emulateUser(input, adminId, { sessionInfo?,
+  adminAuthGeneration?, replacedSessionId? })` creates a UserSession owned by the ADMIN and signs a
+  token carrying that session, the target's generation and the admin's generation
+  (`adminAuthGeneration`). Emulation tokens without a session are refused, including ones issued
+  before this release. When the request authenticated with the admin's session cookie (no bearer
+  header), the resolver passes that session as `replacedSessionId` and it is ended once the
+  emulation token is issued, since the new cookie replaces it.
+  `endEmulation(token, sessionInfo?)` ends the emulation session by compare-and-set and returns the
+  admin to a new session of their own (previously the admin token it issued had no session).
+  `AuthResolver.logout` ends an emulation token's session as the admin's.
+
+  6. `AuthCacheService` session-validity entries are fenced. `invalidateSession()` writes a short
+  tombstone instead of deleting the key, and `setSessionValid(id, true)` only fills an empty key
+  (`SET NX`), so a request that read a session as valid before it was revoked cannot write that
+  stale value back after the revocation.
+
+  7. API tokens are bound to the generation too. New column `ApiToken.authGeneration Int
+  @default(0)` (`@graphqlOmit`, migration `20261005130000_api_token_auth_generation`) records the
+  owner's generation at issue. `ApiTokensService.generateApiToken()` and `rotateApiToken()` take it
+  as an optional third argument (the resolver passes the authenticated row's value; MCP passes the
+  value from the session that authorized the code, carried on `StoredAuthCode.authGeneration` into
+  `McpOAuthService.createAccessToken(userId, organizationId, authGeneration)`).
+  `validateApiToken()` loads the owner with the token and refuses it when the generations differ or
+  the owner is inactive. So password reset, forced reset, deactivation and account deletion stop the
+  owner's existing API tokens; the token rows themselves are left as they are (not marked revoked).
+
+  8. Inactive accounts (`User.isActive === false`) are refused by `JwtStrategy` on both the session
+  token and the API token path, by `complete2FALogin()`, and by the OAuth callback (redirect with
+  `error=account_disabled`), in addition to the password login that already refused them.
+
+  9. Any change of `User.isActive`, in either direction and by any path (application code,
+  generated CRUD, nested writes, raw SQL), moves `authGeneration` on. This is enforced in the
+  database by a `BEFORE UPDATE OF "isActive"` trigger (migration
+  `20261005140000_auth_generation_follows_is_active`), which leaves alone an update that already
+  moves the counter itself. Reactivating an account therefore never brings back tokens issued
+  before it was deactivated.
+
+  10. Emulation tokens last 1 hour instead of 7 days. Every session row now records when its token
+  expires (`UserSession.expiresAt DateTime?`, migration `20261005140100_user_session_expires_at`):
+  `signUser()` passes it to `SessionService.createSession(userId, sessionInfo, twoFactorVerified,
+  expiresAt?)`. `isAuthTokenCurrent()` refuses a session past its `expiresAt`, and
+  `getUserActiveSessions()` (and so the concurrent-session limit) leaves expired sessions out.
+  Sessions created before this release have no `expiresAt` and are governed by their token alone.
+
+  11. A revoked session stays revoked and a session's expiry can only move earlier, by any path
+  including generated CRUD (`updateUserSession`). Enforced in the database by a `BEFORE UPDATE OF
+  "isValid", "expiresAt"` trigger (migration `20261005160000_user_session_revocation_is_final`) that
+  raises on `isValid` false -> true and on a later or cleared `expiresAt`. Revoking a session and
+  reading sessions (admin user details, the data browser, `getUserSessions`) are unchanged.
+
+why: >
+  Authentication hardening: revoking a user's credentials now reaches every token the API issues,
+  not only those tied to a session row, through one check made on every authenticated request.
+  Correction to 2026-10-01-auth-recovery-revokes-sessions-and-stale-verification-tokens, which said
+  session validity is not cached: the template's request path reads it from the database, but
+  `AuthCacheService` does provide session-validity caching, and a project that uses it needs the
+  fencing in item 6, because deleting the key after the commit is not enough on its own. Apply this
+  release promptly; details will be published in a security advisory after the fleet has updated.
+
+affectedPaths:
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - libs/api/prisma/src/lib/migrations/20261005120000_user_auth_generation/migration.sql
+  - libs/api/prisma/src/lib/migrations/20261005130000_api_token_auth_generation/migration.sql
+  - libs/api/prisma/src/lib/migrations/20261005140000_auth_generation_follows_is_active/migration.sql
+  - libs/api/prisma/src/lib/migrations/20261005140100_user_session_expires_at/migration.sql
+  - libs/api/prisma/src/lib/migrations/20261005160000_user_session_revocation_is_final/migration.sql
+  - libs/api/custom/src/lib/plugins/auth/session.service.ts
+  - libs/api/custom/src/lib/plugins/auth/session.service.spec.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.resolver.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.resolver.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth-token-claims.ts
+  - libs/api/custom/src/lib/plugins/auth/auth-token-claims.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.controller.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.service.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.service.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+  - libs/api/utils/src/lib/services/auth-cache.service.ts
+  - libs/api/utils/src/lib/services/auth-cache.service.spec.ts
+  - apps/api-e2e/src/auth/auth-generation.spec.ts
+  - apps/api-e2e/src/support/test-db.ts
+
+packageReleases: []
+
+skipIf:
+  - The project has replaced the template's JWT issuing and JwtStrategy validation with its own authentication provider.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run api-utils:test
+  - pnpm exec nx run api:typecheck
+  - pnpm exec nestled-doctor
+  - pnpm test:e2e src/auth/auth-generation.spec.ts
+
+agentHints:
+  - >
+    Add both generation columns (`User.authGeneration`, `ApiToken.authGeneration`) with
+    `/// @graphqlOmit` directly above each, and `UserSession.expiresAt DateTime?`. Copy all five
+    migration folders as-is (two are triggers, which Prisma does not model, so they exist only in
+    their migrations), then run `pnpm db-update`. Apply migrations with `prisma migrate deploy` / `pnpm
+    prisma:migrate`; a database built with `prisma db push` alone does not get the trigger. The field must stay out of the GraphQL types and generated
+    CRUD inputs: a writable counter could be set back to an earlier value.
+  - >
+    Find every place the project signs a JWT (`grep -rn "jwtService.sign\|signUser(\|createTemp2FAToken("`)
+    and make each one carry the generation that was read together with the credential check: pass
+    the Prisma row you validated (it has `authGeneration`) or the value explicitly. Re-reading the
+    counter just before signing defeats the check.
+  - >
+    Increment the counter inside the same transaction or single update as any project-local path
+    that should revoke every credential a user holds (admin lockouts, account deletion, recovery
+    flows). Do not add it to flows that keep the caller signed in, such as `changePassword` or
+    "sign out other devices"; those keep revoking individual sessions.
+  - >
+    Any project-local code that authenticates a user from a JWT outside `JwtStrategy` (cookie reads
+    in controllers, websocket handshakes, SSE endpoints) must verify the token and then call
+    `isAuthTokenCurrent()` (or `AuthService.isTokenCurrent()`), as `/mcp/authorize` now does.
+  - >
+    If the project caches the user row that `JwtStrategy` compares against (for example through
+    `AuthCacheService.setUser`), the cached copy must be evicted in the same places the counter is
+    incremented, or read `authGeneration` from the database.
+  - >
+    Mocks: `JwtStrategy` specs give the `AuthService` mock `isTokenCurrent` (in place of
+    `isSessionValid`); OAuth controller specs expect `createTemp2FAToken(user)`; auth resolver
+    specs expect `emulateUser(input, adminId, sessionInfo, adminAuthGeneration)` and
+    `endEmulation(token, sessionInfo)`; AuthService specs give the user rows returned to
+    `complete2FALogin` an `authGeneration` matching the temp token's (0 when the token has none) and
+    give `userSession.updateMany` a `{ count: 1 }` result for endEmulation; `AuthCacheService` specs
+    give the Redis mock `set`.
+  - >
+    Behaviour change for API tokens: after a password reset, forced reset, deactivation or account
+    deletion, the user's existing API tokens stop working and must be re-issued. They still list as
+    not revoked. Any project-local code that creates `ApiToken` rows directly must set
+    `authGeneration` from the issuing request's user row, or call `generateApiToken` with it.
+  - >
+    Inactive accounts: any project-local sign-in route (magic links, SSO, invitation acceptance that
+    signs the user in) must refuse `isActive === false` the way the template's routes now do.
+    Setting `isActive` through generated CRUD or a project-local admin path does not move the
+    generation, so the `isActive` checks are what stop such an account; prefer routing deactivation
+    through `AdminService.deactivateUser`.
+  - >
+    Emulation: starting emulation now ends the admin's cookie session the request came in on
+    (bearer-header requests keep theirs), and the admin gets a fresh session from `endEmulation`.
+    A project-local caller of `emulateUser` passes `{ sessionInfo, adminAuthGeneration,
+    replacedSessionId }`. `/mcp/authorize` refuses emulation sessions.
+  - >
+    More mocks: `ApiTokensService` specs give the `apiToken.findFirst` result an `authGeneration`
+    and a `user: { authGeneration, isActive }` matching it, and the data mock a
+    `user.findUnique`; MCP specs give `StoredAuthCode` an `authGeneration` and expect
+    `createAccessToken(userId, organizationId, authGeneration)`.
+  - >
+    Do not try to reproduce the `isActive` trigger in application code instead; it is the one place
+    generated CRUD and nested writes cannot bypass. If the project already moves `authGeneration` in
+    the same update that changes `isActive`, the trigger leaves that value alone.
+  - >
+    Emulation sessions now end after 1 hour, after which the admin signs in again. Mocks:
+    `SessionService.createSession` gains a fourth argument (`expect.any(Date)`), emulation tokens are
+    signed with `{ expiresIn: '1h' }`, and the `getUserActiveSessions` query gains
+    `OR: [{ expiresAt: null }, { expiresAt: { gt: <now> } }]`.
+  - >
+    The session trigger raises on any update that sets `isValid` back to true or extends `expiresAt`.
+    If project code ever did either (for example "restore session"), replace it with a new sign-in;
+    such an update now fails. Generated CRUD keeps reading and revoking sessions.

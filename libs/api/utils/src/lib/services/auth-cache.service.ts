@@ -75,16 +75,21 @@ export class AuthCacheService {
   // ==================== Session Methods ====================
 
   /**
-   * Cache session validity status
+   * Cache session validity status, as just read from the database.
+   *
+   * A "valid" result only fills an empty key (SET NX). The read behind it may predate a
+   * revocation whose tombstone (see invalidateSession) is already in place, and that tombstone
+   * must win. Session revocation is terminal, so an "invalid" result always overwrites.
    */
   async setSessionValid(sessionId: string, isValid: boolean): Promise<void> {
     if (!this.redis) return
     try {
-      await this.redis.setex(
-        `${this.PREFIX.SESSION}${sessionId}`,
-        this.TTL.SESSION,
-        isValid ? '1' : '0',
-      )
+      const key = `${this.PREFIX.SESSION}${sessionId}`
+      if (isValid) {
+        await this.redis.set(key, '1', 'EX', this.TTL.SESSION, 'NX')
+      } else {
+        await this.redis.setex(key, this.TTL.SESSION, '0')
+      }
     } catch (error) {
       this.logger.warn(`Failed to cache session: ${(error as Error).message}`)
     }
@@ -106,12 +111,16 @@ export class AuthCacheService {
   }
 
   /**
-   * Invalidate a session (e.g., on logout)
+   * Invalidate a session (e.g., on logout). Call after the revocation commits.
+   *
+   * Writes an "invalid" tombstone rather than deleting the key: after a delete, a request that read
+   * the session as valid before the commit could still write "valid" back. setSessionValid never
+   * overwrites the tombstone, which lives for the session TTL, far longer than any such request.
    */
   async invalidateSession(sessionId: string): Promise<void> {
     if (!this.redis) return
     try {
-      await this.redis.del(`${this.PREFIX.SESSION}${sessionId}`)
+      await this.redis.setex(`${this.PREFIX.SESSION}${sessionId}`, this.TTL.SESSION, '0')
     } catch (error) {
       this.logger.warn(`Failed to invalidate session: ${(error as Error).message}`)
     }

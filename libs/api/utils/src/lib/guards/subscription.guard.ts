@@ -8,12 +8,16 @@ import {
 import { GqlExecutionContext } from '@nestjs/graphql'
 import { SubscriptionStatus } from '@nestled-template/api/prisma'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+import { OrganizationContextService } from '../services/organization-context.service'
 
 /**
  * Subscription Guard
  *
  * Protects GraphQL resolvers by requiring an active subscription.
  * Use this guard on resolvers that should only be accessible to paying customers.
+ *
+ * The organization is the request's membership-checked context (OrganizationContextService), never
+ * the raw `user.activeOrganizationId`, which can still name an organization the user has left.
  *
  * Usage:
  *   @UseGuards(GqlAuthGuard, SubscriptionGuard)
@@ -22,7 +26,10 @@ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access
  */
 @Injectable()
 export class SubscriptionGuard implements CanActivate {
-  constructor(private readonly prisma: ApiCoreDataAccessService) {}
+  constructor(
+    private readonly prisma: ApiCoreDataAccessService,
+    private readonly organizationContext: OrganizationContextService,
+  ) {}
 
   private isWithinGracePeriod(subscription: { stripeCurrentPeriodEnd?: Date | null }): boolean {
     const gracePeriodDays = 3
@@ -42,8 +49,8 @@ export class SubscriptionGuard implements CanActivate {
       throw new HttpException('Authentication required', HttpStatus.UNAUTHORIZED)
     }
 
-    const activeOrganizationId = user.activeOrganizationId
-    if (!activeOrganizationId) {
+    const organization = await this.organizationContext.attach(req)
+    if (!organization) {
       throw new HttpException(
         'No active organization. Please select an organization.',
         HttpStatus.FORBIDDEN,
@@ -52,7 +59,7 @@ export class SubscriptionGuard implements CanActivate {
 
     // Get organization's subscription
     const subscription = await this.prisma.subscription.findUnique({
-      where: { organizationId: activeOrganizationId },
+      where: { organizationId: organization.organizationId },
       include: { plan: true },
     })
 

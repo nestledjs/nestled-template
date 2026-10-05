@@ -8,6 +8,7 @@ fragment __AdminUserSessionSummary on UserSession {
   ipAddress
   isValid
   twoFactorVerified
+  expiresAt
   user {
     id
   }

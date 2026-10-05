@@ -69,6 +69,17 @@ describe('SessionService', () => {
         },
       })
     })
+    it("stores the session's expiry alongside it", async () => {
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000)
+      mockData.userSession.findMany.mockResolvedValue([])
+      mockData.userSession.create.mockResolvedValue({ id: 'session-789' } as any)
+
+      await service.createSession('user-123', {}, false, expiresAt)
+
+      expect(mockData.userSession.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ expiresAt }),
+      })
+    })
     it('should create session with 2FA verified flag', async () => {
       const userId = 'user-123'
       const sessionInfo: SessionInfo = {
@@ -203,6 +214,8 @@ describe('SessionService', () => {
         where: {
           userId: 'user-123',
           isValid: true,
+          // A session whose token has expired is not active, and does not count toward the limit.
+          OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
         },
         orderBy: {
           lastActiveAt: 'desc',

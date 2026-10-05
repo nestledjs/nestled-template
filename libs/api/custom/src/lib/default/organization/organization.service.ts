@@ -96,6 +96,23 @@ export class OrganizationService {
   }
 
   /**
+   * Whether the user's active organization is one they are still a member of. A value left behind
+   * by a membership removed some other way grants nothing, and is replaced like an empty one.
+   */
+  private async hasUsableActiveOrganization(userId: string): Promise<boolean> {
+    const user = await this.data.user.findUnique({
+      where: { id: userId },
+      select: { activeOrganizationId: true },
+    })
+    if (!user?.activeOrganizationId) return false
+    const membership = await this.data.organizationMember.findFirst({
+      where: { userId, organizationId: user.activeOrganizationId },
+      select: { id: true },
+    })
+    return membership !== null
+  }
+
+  /**
    * Check if user is owner of organization
    */
   private async isOwner(userId: string, organizationId: string): Promise<boolean> {
@@ -194,9 +211,8 @@ export class OrganizationService {
       },
     })
 
-    // Set as active organization if user doesn't have one
-    const user = await this.data.user.findUnique({ where: { id: userId } })
-    if (!user?.activeOrganizationId) {
+    // Set as active organization if user doesn't have a usable one
+    if (!(await this.hasUsableActiveOrganization(userId))) {
       await this.data.user.update({
         where: { id: userId },
         data: { activeOrganizationId: organization.id },
@@ -281,35 +297,38 @@ export class OrganizationService {
     })
 
     // Manually cascade delete related records before deleting organization
-    // This is necessary because the database schema doesn't have cascade deletes configured
+    // This is necessary because the database schema doesn't have cascade deletes configured.
+    // One transaction, so a failure part-way leaves no organization with half its records gone.
+    await this.data.$transaction(async tx => {
+      // Delete all pending invitations
+      await tx.invite.deleteMany({
+        where: { organizationId },
+      })
 
-    // Delete all pending invitations
-    await this.data.invite.deleteMany({
-      where: { organizationId },
-    })
+      // Delete all organization members
+      await tx.organizationMember.deleteMany({
+        where: { organizationId },
+      })
 
-    // Delete all organization members
-    await this.data.organizationMember.deleteMany({
-      where: { organizationId },
-    })
-
-    // Delete all roles (Prisma will handle disconnecting permissions via implicit many-to-many)
-    await this.data.role.deleteMany({
-      where: { organizationId },
-    })
-
-    // Delete the organization
-    await this.data.organization.delete({
-      where: { id: organizationId },
-    })
-
-    // If this was the user's active organization, clear it
-    const user = await this.data.user.findUnique({ where: { id: userId } })
-    if (user?.activeOrganizationId === organizationId) {
-      await this.data.user.update({
-        where: { id: userId },
+      // Every former member whose active organization was this one, not only the caller.
+      await tx.user.updateMany({
+        where: { activeOrganizationId: organizationId },
         data: { activeOrganizationId: null },
       })
+
+      // Delete all roles (Prisma will handle disconnecting permissions via implicit many-to-many)
+      await tx.role.deleteMany({
+        where: { organizationId },
+      })
+
+      // Delete the organization
+      await tx.organization.delete({
+        where: { id: organizationId },
+      })
+    })
+
+    if (this.authCache?.isEnabled()) {
+      await this.authCache.invalidateOrganizationMemberships(organizationId)
     }
 
     // No organizationId on the row: the organization no longer exists to reference (the FK would
@@ -418,8 +437,15 @@ export class OrganizationService {
       throw new NotFoundException('Member not found in this organization')
     }
 
-    await this.data.organizationMember.delete({
-      where: { id: member.id },
+    // The membership and the removed user's active organization (when it is this one) go together.
+    await this.data.$transaction(async tx => {
+      await tx.organizationMember.delete({
+        where: { id: member.id },
+      })
+      await tx.user.updateMany({
+        where: { id: input.userId, activeOrganizationId: input.organizationId },
+        data: { activeOrganizationId: null },
+      })
     })
 
     await this.recordAuditLog({
@@ -885,9 +911,8 @@ export class OrganizationService {
       data: { status: 'ACCEPTED' },
     })
 
-    // Set as active organization if user doesn't have one
-    const user = await this.data.user.findUnique({ where: { id: userId } })
-    if (!user?.activeOrganizationId) {
+    // Set as active organization if user doesn't have a usable one
+    if (!(await this.hasUsableActiveOrganization(userId))) {
       await this.data.user.update({
         where: { id: userId },
         data: { activeOrganizationId: invite.organizationId },

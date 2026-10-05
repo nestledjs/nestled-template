@@ -123,12 +123,64 @@ describe('AuthResolver', () => {
       resolver.registerWithInvitation(context, { invitationToken: 'invite-token' } as any),
     ).resolves.toBe(token)
     await expect(
-      resolver.emulateUser(context, { id: 'admin-1' } as any, { userId: 'user-2' } as any),
+      resolver.emulateUser(
+        context,
+        { id: 'admin-1', authGeneration: 3 } as any,
+        { userId: 'user-2' } as any,
+      ),
     ).resolves.toBe(token)
 
     expect(authService.setCookie).toHaveBeenCalledTimes(5)
     expect(authService.complete2FALogin).toHaveBeenCalledWith('temp-token', '123456', sessionInfo)
-    expect(authService.emulateUser).toHaveBeenCalledWith({ userId: 'user-2' }, 'admin-1')
+    // The admin's generation comes from the row JwtStrategy loaded for this request.
+    expect(authService.emulateUser).toHaveBeenCalledWith({ userId: 'user-2' }, 'admin-1', {
+      sessionInfo,
+      adminAuthGeneration: 3,
+      // The cookie names another user's session, so it is not the admin's to end.
+      replacedSessionId: undefined,
+    })
+  })
+
+  describe('emulateUser ends the admin cookie session it replaces', () => {
+    const admin = { id: 'admin-1', authGeneration: 0 } as any
+    const emulate = () => resolver.emulateUser(context, admin, { userId: 'user-2' } as any)
+    const replaced = () => authService.emulateUser.mock.calls[0][2]?.replacedSessionId
+
+    it("passes the admin's cookie session when the request authenticated with it", async () => {
+      authService.verifyToken.mockReturnValue({ sessionId: 'admin-session', userId: 'admin-1' })
+
+      await emulate()
+
+      // Expiry enforced: an expired cookie did not authenticate this request.
+      expect(authService.verifyToken).toHaveBeenCalledWith('cookie-token')
+      expect(replaced()).toBe('admin-session')
+    })
+
+    it('leaves a bearer-header client its session', async () => {
+      authService.verifyToken.mockReturnValue({ sessionId: 'admin-session', userId: 'admin-1' })
+      context.req.headers.authorization = 'Bearer header-token'
+
+      await emulate()
+
+      expect(replaced()).toBeUndefined()
+    })
+
+    it('ends nothing when there is no cookie, or the cookie is an emulation token', async () => {
+      context.req.cookies = {}
+      await emulate()
+      expect(replaced()).toBeUndefined()
+
+      jest.clearAllMocks()
+      context.req.cookies = { __session: 'cookie-token' }
+      authService.verifyToken.mockReturnValue({
+        sessionId: 'emulation-session',
+        userId: 'admin-1',
+        isEmulating: true,
+        originalAdminId: 'admin-0',
+      })
+      await emulate()
+      expect(replaced()).toBeUndefined()
+    })
   })
 
   it('rejects token-creating mutations when the service does not return a token', async () => {
@@ -161,6 +213,18 @@ describe('AuthResolver', () => {
     expect(authService.logout).toHaveBeenCalledTimes(2)
     expect(authService.logout).toHaveBeenCalledWith('session-1', 'user-1')
     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
+  })
+
+  it("ends an emulation token's session as the emulating admin's", async () => {
+    authService.verifyToken.mockReturnValueOnce({
+      sessionId: 'emulation-session',
+      userId: 'user-2',
+      isEmulating: true,
+      originalAdminId: 'admin-1',
+    })
+
+    await expect(resolver.logout(context)).resolves.toBe(true)
+    expect(authService.logout).toHaveBeenCalledWith('emulation-session', 'admin-1')
   })
 
   it('ends no session for a token whose signature does not verify, and still clears the cookie', async () => {
@@ -227,7 +291,7 @@ describe('AuthResolver', () => {
       ),
     ).rejects.toThrow('No authentication token found')
 
-    expect(authService.endEmulation).toHaveBeenCalledWith('cookie-token')
+    expect(authService.endEmulation).toHaveBeenCalledWith('cookie-token', sessionInfo)
   })
 
   // The role gate used to be an inline `if (!user.isSuperAdmin) throw` in the resolver body:

@@ -6,6 +6,8 @@ import { SecurityEventsService } from '../security/security-events.service'
 import { GenerateApiTokenInput, RotateApiTokenInput } from './dto'
 import { createHash } from 'node:crypto'
 describe('ApiTokensService', () => {
+  // The token owner's row, as validateApiToken loads it with the token.
+  const currentOwner = { authGeneration: 0, isActive: true }
   let service: ApiTokensService
   let mockData: any
   let mockSecurityEvents: jest.Mocked<SecurityEventsService>
@@ -20,6 +22,9 @@ describe('ApiTokensService', () => {
       },
       organizationMember: {
         findFirst: jest.fn(),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ authGeneration: 0 }),
       },
     }
     mockSecurityEvents = {
@@ -68,6 +73,7 @@ describe('ApiTokensService', () => {
           name: 'Production API Token',
           tokenHash: expect.any(String),
           userId,
+          authGeneration: 0,
           expiresAt: input.expiresAt,
           organizationId: undefined,
           lastUsedAt: null,
@@ -351,10 +357,50 @@ describe('ApiTokensService', () => {
     })
   })
   describe('Token Validation', () => {
+    it("records the issuing request's auth generation on a new token", async () => {
+      mockData.apiToken.create.mockResolvedValue({ id: 'token-1' })
+
+      await service.generateApiToken('user-123', { name: 'CLI' }, 4)
+
+      expect(mockData.apiToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 'user-123', authGeneration: 4 }),
+      })
+      // Taken from the caller, not re-read.
+      expect(mockData.user.findUnique).not.toHaveBeenCalled()
+    })
+    it("refuses a token issued under an earlier generation than its owner's", async () => {
+      mockData.apiToken.findFirst.mockResolvedValue({
+        id: 'token-123',
+        userId: 'user-123',
+        authGeneration: 0,
+        organizationId: null,
+        revoked: false,
+        expiresAt: null,
+        user: { authGeneration: 1, isActive: true },
+      })
+
+      await expect(service.validateApiToken('a'.repeat(64))).resolves.toBeNull()
+      expect(mockData.apiToken.update).not.toHaveBeenCalled()
+    })
+    it('refuses a token whose owner is inactive', async () => {
+      mockData.apiToken.findFirst.mockResolvedValue({
+        id: 'token-123',
+        userId: 'user-123',
+        authGeneration: 0,
+        organizationId: null,
+        revoked: false,
+        expiresAt: null,
+        user: { authGeneration: 0, isActive: false },
+      })
+
+      await expect(service.validateApiToken('a'.repeat(64))).resolves.toBeNull()
+    })
     it('should validate a valid token', async () => {
       const plainToken = 'a'.repeat(64) // 64 hex chars
       const tokenHash = createHash('sha256').update(plainToken).digest('hex')
       const mockApiToken = {
+        user: currentOwner,
+        authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
         tokenHash,
@@ -374,6 +420,7 @@ describe('ApiTokensService', () => {
           tokenHash,
           revoked: false,
         },
+        include: { user: { select: { authGeneration: true, isActive: true } } },
       })
     })
     it('should return null for invalid token', async () => {
@@ -384,6 +431,8 @@ describe('ApiTokensService', () => {
     it('should validate current membership for an organization-scoped token', async () => {
       const plainToken = 'a'.repeat(64)
       mockData.apiToken.findFirst.mockResolvedValue({
+        user: currentOwner,
+        authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
         organizationId: 'org-123',
@@ -405,6 +454,8 @@ describe('ApiTokensService', () => {
     })
     it('should reject an organization-scoped token after membership is removed', async () => {
       mockData.apiToken.findFirst.mockResolvedValue({
+        user: currentOwner,
+        authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
         organizationId: 'org-123',
@@ -420,6 +471,8 @@ describe('ApiTokensService', () => {
       const plainToken = 'a'.repeat(64)
       const tokenHash = createHash('sha256').update(plainToken).digest('hex')
       const mockApiToken = {
+        user: currentOwner,
+        authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
         tokenHash,
@@ -441,6 +494,8 @@ describe('ApiTokensService', () => {
       const plainToken = 'a'.repeat(64)
       const tokenHash = createHash('sha256').update(plainToken).digest('hex')
       const mockApiToken = {
+        user: currentOwner,
+        authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
         tokenHash,
@@ -460,6 +515,8 @@ describe('ApiTokensService', () => {
       const plainToken = 'a'.repeat(64)
       const tokenHash = createHash('sha256').update(plainToken).digest('hex')
       mockData.apiToken.findFirst.mockResolvedValue({
+        user: currentOwner,
+        authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
         tokenHash,
@@ -502,6 +559,8 @@ describe('ApiTokensService', () => {
       const testToken = 'test-token-value'
       const expectedHash = createHash('sha256').update(testToken).digest('hex')
       mockData.apiToken.findFirst.mockResolvedValue({
+        user: currentOwner,
+        authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
         tokenHash: expectedHash,

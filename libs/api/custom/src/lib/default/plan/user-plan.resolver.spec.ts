@@ -1,6 +1,5 @@
 import { AUTH_LEVEL_KEY } from '@nestled-template/api/utils'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
-import { User } from '@nestled-template/api/core/models'
 import { UserPlanResolver } from './user-plan.resolver'
 
 type DataMock = {
@@ -40,16 +39,21 @@ describe('UserPlanResolver', () => {
     expect(Reflect.getMetadata(AUTH_LEVEL_KEY, resolver.availablePlans)).toBe('public')
   })
 
-  it('keeps organization plan lookup authenticated and scoped to the current user', async () => {
-    const user = Object.assign(new User(), { id: 'user-1', activeOrganizationId: 'org-1' })
+  it("reads the plan of the request's membership-checked organization", async () => {
     data.subscription.findUnique.mockResolvedValue({ plan: { id: 'plan-1' } })
-
-    await expect(resolver.currentPlan(user)).resolves.toEqual({ id: 'plan-1' })
+    // The id CtxOptionalOrganizationId reads from the context GqlAuthGuard attached.
+    await expect(resolver.currentPlan('org-1')).resolves.toEqual({ id: 'plan-1' })
 
     expect(data.subscription.findUnique).toHaveBeenCalledWith({
       where: { organizationId: 'org-1' },
       include: { plan: true },
     })
     expect(Reflect.getMetadata(AUTH_LEVEL_KEY, resolver.currentPlan)).toBe('authenticated')
+  })
+
+  it('returns no plan when the active organization is not a current membership', async () => {
+    // GqlAuthGuard attaches no context for a stale activeOrganizationId, so the decorator gives null.
+    await expect(resolver.currentPlan(null)).resolves.toBeNull()
+    expect(data.subscription.findUnique).not.toHaveBeenCalled()
   })
 })
