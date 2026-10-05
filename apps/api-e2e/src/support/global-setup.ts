@@ -179,6 +179,21 @@ module.exports = async function globalSetup() {
   // Use the workspace root which should be the current working directory
   const projectRoot = process.cwd()
 
+  // Apply migrations first: some of them carry database objects Prisma's schema can't describe
+  // (triggers), which `db push` alone never creates. `db push` then reconciles anything newer.
+  console.log('🔄 Applying migrations...')
+  try {
+    execSync('pnpm prisma migrate deploy', {
+      cwd: projectRoot,
+      env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
+      stdio: 'inherit',
+    })
+    console.log('✅ Migrations applied')
+  } catch (error) {
+    console.error('❌ Failed to apply migrations')
+    throw error
+  }
+
   // Ensure database schema is up to date
   console.log('🔄 Syncing database schema...')
   try {

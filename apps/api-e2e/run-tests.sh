@@ -55,9 +55,16 @@ fi
 npx vitest run --config apps/api-e2e/vitest.config.mts "$@" 2>&1 | tee "$TMPFILE"
 EXIT_CODE=${PIPESTATUS[0]}
 
-# Read the captured output
-OUTPUT=$(cat "$TMPFILE")
+# Read the captured output, without colour codes, so the summary lines can be matched reliably
+OUTPUT=$(sed -E 's/\x1b\[[0-9;]*m//g' "$TMPFILE")
 rm -f "$TMPFILE"
+
+# Vitest's summary reads e.g. "Test Files  1 failed | 28 passed (29)". Any failed count there means
+# the run failed, whatever else was printed.
+SUMMARY_HAS_FAILURES=false
+if echo "$OUTPUT" | grep -qE '^[[:space:]]*(Test Files|Tests)[[:space:]].*[0-9]+ failed'; then
+  SUMMARY_HAS_FAILURES=true
+fi
 
 # Check if tests actually passed by looking for success indicators
 SEPARATOR="════════════════════════════════════════════════════════════"
@@ -71,9 +78,10 @@ if [[ $EXIT_CODE -eq 0 ]]; then
   echo "✅ E2E Tests PASSED"
   echo "$SEPARATOR"
   exit 0
-elif echo "$OUTPUT" | grep -q "✅ Cleanup complete - all tests passed!" && \
-   echo "$OUTPUT" | grep -q "Test Files.*passed" && \
-   echo "$OUTPUT" | grep -q "Tests.*passed"; then
+elif [[ "$SUMMARY_HAS_FAILURES" == false ]] && \
+   echo "$OUTPUT" | grep -q "✅ Cleanup complete - all tests passed!" && \
+   echo "$OUTPUT" | grep -qE '^[[:space:]]*Test Files[[:space:]].*passed' && \
+   echo "$OUTPUT" | grep -qE '^[[:space:]]*Tests[[:space:]].*passed'; then
   # Non-zero exit but the run completed with all tests passing: the intentional SIGKILL-to-prevent-
   # hanging case. The marker fallback is retained only for this.
   echo ""
