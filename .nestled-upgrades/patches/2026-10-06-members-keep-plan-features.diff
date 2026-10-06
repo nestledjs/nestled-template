@@ -1,0 +1,1197 @@
+diff --git a/.nestled-updates/sdk-contract-baseline.json b/.nestled-updates/sdk-contract-baseline.json
+index 05ef00d..226ae17 100644
+--- a/.nestled-updates/sdk-contract-baseline.json
++++ b/.nestled-updates/sdk-contract-baseline.json
+@@ -1,6 +1,5 @@
+ {
+   "apiWithoutSdk": [
+-    "currentPlan",
+     "currentUsage",
+     "securityEventsByType",
+     "securitySummary",
+diff --git a/.nestled-updates/security/guard-baseline.json b/.nestled-updates/security/guard-baseline.json
+index e38e38c..50a1721 100644
+--- a/.nestled-updates/security/guard-baseline.json
++++ b/.nestled-updates/security/guard-baseline.json
+@@ -39,6 +39,7 @@
+   },
+   "libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts": {
+     "currentSubscription": ["AccessPolicyGuard", "GqlAuthGuard"],
++    "currentSubscriptionActive": ["GqlOrganizationScopedGuard"],
+     "createCheckoutSession": ["AccessPolicyGuard", "GqlAuthGuard"],
+     "createPortalSession": ["AccessPolicyGuard", "GqlAuthGuard"],
+     "cancelSubscription": ["AccessPolicyGuard", "GqlAuthGuard"],
+diff --git a/.nestled-updates/upgrade-notes/2026-10-05-auth-generation-claim.yaml b/.nestled-updates/upgrade-notes/2026-10-05-auth-generation-claim.yaml
+index b8215a5..3c8eb8d 100644
+--- a/.nestled-updates/upgrade-notes/2026-10-05-auth-generation-claim.yaml
++++ b/.nestled-updates/upgrade-notes/2026-10-05-auth-generation-claim.yaml
+@@ -208,3 +208,18 @@ agentHints:
+     The session trigger raises on any update that sets `isValid` back to true or extends `expiresAt`.
+     If project code ever did either (for example "restore session"), replace it with a new sign-in;
+     such an update now fails. Generated CRUD keeps reading and revoking sessions.
++  - >
++    The `isActive` trigger assumes a `User.isActive` column. A project that gates accounts with a
++    different flag (for example a `deleted` flag or a ban `status` column) must write the trigger on
++    that flag instead.
++  - >
++    `ApiToken.authGeneration` defaults to 0, which only matches owners whose generation is 0. A
++    project that maps the auth generation onto an existing per-user counter (for example a
++    token-version column already above 0) must backfill each existing API token's generation from
++    its owner in the same migration, or every outstanding API token stops working on deploy.
++  - >
++    Flows that create a pending invalid session and validate it later (for example two-factor
++    challenge rows), or that slide a session's expiry, must mint a new session instead: the
++    session trigger refuses both updates. Projects whose e2e builds the database with `db push`
++    must apply migrations first, or the trigger is missing in tests (see
++    2026-10-06-members-keep-plan-features).
+diff --git a/.nestled-updates/upgrade-notes/2026-10-06-members-keep-plan-features.yaml b/.nestled-updates/upgrade-notes/2026-10-06-members-keep-plan-features.yaml
+new file mode 100644
+index 0000000..60c89f1
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-06-members-keep-plan-features.yaml
+@@ -0,0 +1,148 @@
++id: 2026-10-06-members-keep-plan-features
++title: Members keep their organization's plan features; e2e setup handles a test database built by db push
++priority: high
++area: billing
++type: correctness
++delivery: code-patch
++
++intent: >
++  Fixes two regressions from 2026-10-05-organization-context-and-billing-authorization (release
++  2026.10.4).
++
++  1. Members keep plan features. Since 2026.10.4, `SubscriptionProvider` (`libs/web`) does not
++  request `currentSubscription` for a member without `billing:read`/`billing:manage`, so for them
++  `plan` was null, `hasFeature()`/`useHasFeature()` returned false and `hasActiveSubscription` was
++  false. UI that gates on plan features or on an active subscription locked Members out of an
++  organization that is paying.
++
++  API: `UserSubscriptionResolver` gains `currentSubscriptionActive: Boolean!`, which any member of
++  the organization may read. It answers only whether the organization's subscription is ACTIVE or
++  TRIALING, selects nothing but the status, and acts on `@CtxOrganizationId()`, the organization
++  the caller's membership was checked against. It is guarded by
++  `@UseGuards(GqlOrganizationScopedGuard)` + `@Authenticated()`, so it needs a current membership
++  and no billing permission: a non-member, or a removed member whose active organization still
++  names the organization, is refused. `currentSubscription` and the other billing operations keep
++  their `RequireOrganizationPermission` declarations. The guard baseline gains the operation. The
++  SDK gains `CurrentPlan` (`plan-queries.graphql`) and `CurrentSubscriptionActive`
++  (`subscription-queries.graphql`); `currentPlan` leaves the SDK contract baseline's
++  API-without-SDK list.
++
++  Web: for members without billing permissions `SubscriptionProvider` takes `plan` (and therefore
++  `hasFeature`, `checkLimit`, `isWithinLimit`, `usePlan`, `RequirePlan`) from `currentPlan`, and
++  `hasActiveSubscription` from `currentSubscriptionActive`; it never issues `currentSubscription`
++  for them. Members with `billing:read`/`billing:manage` (or `all:manage`, or super admins) keep
++  the detailed `currentSubscription` path unchanged. `subscription`, `isTrialing`, `isCanceled`,
++  `isPastDue`, `trialEndsAt` and `periodEndsAt` stay billing-only (null/false for members), so
++  `SubscriptionStatusBanner` shows a member no trial, payment or cancellation banner, and its
++  optional "no subscription" banner only when the organization really has no active subscription.
++
++  2. E2E global setup and an existing test database. 2026.10.4 made
++  `apps/api-e2e/src/support/global-setup.ts` run `prisma migrate deploy` before `db push`. A local
++  test database built earlier by `db push` alone has tables but no `_prisma_migrations` history,
++  and `migrate deploy` refuses it with P3005. The setup now detects P3005, empties the test
++  database's `public` schema and applies the migrations from scratch, then continues with
++  `db push` and the seed as before. It only does so for a database on localhost whose name marks
++  it as a test database (`nestled_template_test` by default) and refuses anything else. A fresh
++  database (CI) and one that already has migration history are migrated as before. The reset is
++  done with psql rather than `prisma migrate reset`, which Prisma refuses to run unattended when
++  it detects a coding agent; the e2e setup is routinely run by one.
++
++  The e2e setup also starts the API (`pnpm nx serve api`) as the leader of its own process group,
++  and teardown kills that group (`apps/api-e2e/src/support/api-process.ts`). Killing only the pnpm
++  process left `nx serve` and the API running on the e2e port, so the next local run refused to
++  start ("Refusing to run e2e against an API this suite did not start").
++
++why: >
++  Since 2026.10.4, clones that gate navigation, settings pages or routes on plan features or on an
++  active subscription locked out every Member, and clones that redirect to a subscribe page when
++  there is no active subscription sent Members of paying organizations there. Members need to know
++  what their organization's plan allows, not its billing details. Separately, the 2026.10.4 e2e
++  setup failed outright on any developer test database built before it, until it was reset by
++  hand.
++
++affectedPaths:
++  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
++  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
++  - libs/shared/sdk/src/graphql/plan/plan-queries.graphql
++  - libs/shared/sdk/src/graphql/subscription/subscription-queries.graphql
++  - libs/shared/sdk/src/generated/graphql.ts
++  - api-schema.graphql
++  - .nestled-updates/security/guard-baseline.json
++  - .nestled-updates/sdk-contract-baseline.json
++  - libs/web/src/lib/contexts/subscription.context.tsx
++  - libs/web/src/lib/contexts/subscription.context.spec.tsx
++  - apps/api-e2e/src/support/global-setup.ts
++  - apps/api-e2e/src/support/global-teardown.ts
++  - apps/api-e2e/src/support/api-process.ts
++  - apps/api-e2e/src/auth/organization-billing.spec.ts
++
++packageReleases: []
++
++skipIf:
++  - The project has replaced SubscriptionProvider, the user subscription resolver and the e2e global setup with its own implementations.
++
++verification:
++  - pnpm exec nx run api-custom:test
++  - pnpm exec nx run web-components:test
++  - pnpm exec nx run-many -t typecheck
++  - pnpm exec nestled-doctor
++  - pnpm test:e2e src/auth/organization-billing.spec.ts
++
++agentHints:
++  - >
++    Apply after 2026-10-05-organization-context-and-billing-authorization. If the project already
++    added its own member-readable "is the subscription active" query (a status flag readable by
++    any member, guarded by organization membership and acting on the membership-checked
++    organization), record the API part as superseded and point the web provider at that query
++    instead of adding `currentSubscriptionActive`. If the project's own flag reads the raw
++    `user.activeOrganizationId`, or exposes more than the active/inactive answer to members
++    without billing permissions, adapt it to this note rather than superseding.
++  - >
++    API: add `currentSubscriptionActive` next to `currentSubscription` with
++    `@UseGuards(GqlOrganizationScopedGuard)`, `@Authenticated()` and `@CtxOrganizationId()`; do
++    not give it `RequireOrganizationPermission`, and do not loosen `currentSubscription`. Run
++    `pnpm db-update` so the schema and SDK pick it up (add the two SDK documents after the API
++    field exists, or the doctor reports the SDK operation as referencing a missing root field),
++    then `pnpm security:update-guard-baseline` and review that the only baseline change is the new
++    operation. Remove `currentPlan` from `.nestled-updates/sdk-contract-baseline.json`'s
++    `apiWithoutSdk` once the SDK has `CurrentPlan`.
++  - >
++    Web: keep the project's `canReadBilling` rule (or its own equivalent). Members without billing
++    permission must take `plan` from `CurrentPlan` and `hasActiveSubscription` from
++    `CurrentSubscriptionActive`, and must not request `CurrentSubscription`. Project code that
++    checks `subscription`, `isTrialing`, `isCanceled`, `isPastDue` or the dates to decide what a
++    Member may use should check `hasActiveSubscription` or `hasFeature()` instead: those fields
++    are null/false for members. `RequireSubscription allowTrial={false}` cannot tell a trial from
++    a paid subscription for a member and admits them while the subscription is ACTIVE or
++    TRIALING; if the project relies on denying trial members, keep that gate behind billing
++    permissions or add a trial flag of its own.
++  - >
++    Tests: `SubscriptionProvider` mocks of `@nestled-template/shared/sdk` need `CurrentPlan` and
++    `CurrentSubscriptionActive` as distinct documents, and `useQuery` mocks should answer per
++    document; `UserSubscriptionResolver` mocks need `subscription.findUnique` for the new query.
++  - >
++    E2E: replace the bare `prisma migrate deploy` step in `apps/api-e2e/src/support/global-setup.ts`
++    with the P3005-aware step. Keep (or tighten) the check that only a localhost database whose
++    name marks it as a test database is ever reset; if the project's test database name does not
++    contain `test`, rename it or adjust the check deliberately, never remove it. If the project's
++    migrations create schemas other than `public`, reset those too.
++  - >
++    Correction to 2026-10-05-auth-generation-claim (isActive trigger): the trigger that moves
++    `User.authGeneration` when an account is deactivated assumes a `User.isActive` column. A project
++    that gates accounts with a different flag (for example a `deleted` flag or a ban `status`
++    column) must write the trigger on that flag instead; a trigger on a column the project never
++    changes revokes nothing.
++  - >
++    Correction to 2026-10-05-auth-generation-claim (API token generation): `ApiToken.authGeneration`
++    defaults to 0, which only matches owners whose generation is 0. A project that mapped the auth
++    generation onto an existing per-user counter (for example a token-version column already above
++    0) must backfill each existing API token's generation from its owner in the same migration,
++    or every outstanding API token stops working on deploy.
++  - >
++    Correction to 2026-10-05-auth-generation-claim (session trigger): the session-revocation
++    trigger refuses an update that flips a session from invalid to valid or extends its expiry.
++    Flows that create a pending invalid session and validate it later (for example two-factor
++    challenge rows) or that slide expiry must mint a new session instead. A project whose e2e
++    builds the database with `db push` alone never gets the trigger and will not see these
++    failures in tests: apply migrations first (part 2 of this note does that for the template's
++    e2e setup).
+diff --git a/api-schema.graphql b/api-schema.graphql
+index 61a7cfd..c736704 100644
+--- a/api-schema.graphql
++++ b/api-schema.graphql
+@@ -2506,6 +2506,7 @@ type Query {
+   country(countryId: String!): Country
+   currentPlan: Plan
+   currentSubscription: Subscription
++  currentSubscriptionActive: Boolean!
+   currentUsage: String!
+   email(emailId: String!): Email
+   emails(input: ListEmailInput): [Email!]
+diff --git a/apps/api-e2e/run-tests.sh b/apps/api-e2e/run-tests.sh
+index 84c5072..7969eb2 100755
+--- a/apps/api-e2e/run-tests.sh
++++ b/apps/api-e2e/run-tests.sh
+@@ -55,10 +55,17 @@ fi
+ npx vitest run --config apps/api-e2e/vitest.config.mts "$@" 2>&1 | tee "$TMPFILE"
+ EXIT_CODE=${PIPESTATUS[0]}
+ 
+-# Read the captured output
+-OUTPUT=$(cat "$TMPFILE")
++# Read the captured output, without colour codes, so the summary lines can be matched reliably
++OUTPUT=$(sed -E 's/\x1b\[[0-9;]*m//g' "$TMPFILE")
+ rm -f "$TMPFILE"
+ 
++# Vitest's summary reads e.g. "Test Files  1 failed | 28 passed (29)". Any failed count there means
++# the run failed, whatever else was printed.
++SUMMARY_HAS_FAILURES=false
++if echo "$OUTPUT" | grep -qE '^[[:space:]]*(Test Files|Tests)[[:space:]].*[0-9]+ failed'; then
++  SUMMARY_HAS_FAILURES=true
++fi
++
+ # Check if tests actually passed by looking for success indicators
+ SEPARATOR="════════════════════════════════════════════════════════════"
+ 
+@@ -71,9 +78,10 @@ if [[ $EXIT_CODE -eq 0 ]]; then
+   echo "✅ E2E Tests PASSED"
+   echo "$SEPARATOR"
+   exit 0
+-elif echo "$OUTPUT" | grep -q "✅ Cleanup complete - all tests passed!" && \
+-   echo "$OUTPUT" | grep -q "Test Files.*passed" && \
+-   echo "$OUTPUT" | grep -q "Tests.*passed"; then
++elif [[ "$SUMMARY_HAS_FAILURES" == false ]] && \
++   echo "$OUTPUT" | grep -q "✅ Cleanup complete - all tests passed!" && \
++   echo "$OUTPUT" | grep -qE '^[[:space:]]*Test Files[[:space:]].*passed' && \
++   echo "$OUTPUT" | grep -qE '^[[:space:]]*Tests[[:space:]].*passed'; then
+   # Non-zero exit but the run completed with all tests passing: the intentional SIGKILL-to-prevent-
+   # hanging case. The marker fallback is retained only for this.
+   echo ""
+diff --git a/apps/api-e2e/src/auth/organization-billing.spec.ts b/apps/api-e2e/src/auth/organization-billing.spec.ts
+index d53c453..0b493a5 100644
+--- a/apps/api-e2e/src/auth/organization-billing.spec.ts
++++ b/apps/api-e2e/src/auth/organization-billing.spec.ts
+@@ -23,7 +23,8 @@ const gql = (user: TestUser, query: string, variables?: object, organizationId?:
+ 
+ const CURRENT_SUBSCRIPTION = `query { currentSubscription { id } }`
+ const CANCEL_SUBSCRIPTION = `mutation { cancelSubscription { id } }`
+-const CURRENT_PLAN = `query { currentPlan { id } }`
++const CURRENT_PLAN = `query { currentPlan { id features } }`
++const CURRENT_SUBSCRIPTION_ACTIVE = `query { currentSubscriptionActive }`
+ 
+ const forbidden = (response: { data: { errors?: { message: string }[] } }) =>
+   expect(response.data.errors?.[0]?.message).toMatch(/permission|organization context/i)
+@@ -55,8 +56,39 @@ describe('Authorization: organization billing', () => {
+     // Member: refused, whether the organization comes from the active field or the header.
+     forbidden(await gql(member, CURRENT_SUBSCRIPTION))
+     forbidden(await gql(member, CANCEL_SUBSCRIPTION, undefined, organizationId))
+-    // Any member may still read the plan.
++    // Any member may still read the plan, and whether the subscription is active.
+     expect((await gql(member, CURRENT_PLAN)).data.errors).toBeUndefined()
++    const inactive = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
++    expect(inactive.data.errors).toBeUndefined()
++    expect(inactive.data.data.currentSubscriptionActive).toBe(false)
++
++    // Once the organization subscribes, a Member sees the plan's features and an active
++    // subscription, and still cannot read the subscription's billing details.
++    const planName = `e2e-plan-${organizationId}`
++    sql(
++      `INSERT INTO "Plan" (id, "createdAt", "updatedAt", name, price, interval, features)
++       VALUES (gen_random_uuid(), NOW(), NOW(), :'planName', 10, 'month', '["reports"]'::jsonb);
++       INSERT INTO "Subscription" (id, "createdAt", "updatedAt", "organizationId", "planId", status)
++       SELECT gen_random_uuid(), NOW(), NOW(), :'orgId', p.id, 'TRIALING'
++       FROM "Plan" p WHERE p.name = :'planName';`,
++      { orgId: organizationId, planName },
++    )
++    const active = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
++    expect(active.data.errors).toBeUndefined()
++    expect(active.data.data.currentSubscriptionActive).toBe(true)
++    const memberPlan = await gql(member, CURRENT_PLAN)
++    expect(memberPlan.data.data.currentPlan.features).toEqual(['reports'])
++    forbidden(await gql(member, CURRENT_SUBSCRIPTION))
++
++    sql(`UPDATE "Subscription" SET status = 'PAST_DUE' WHERE "organizationId" = :'orgId';`, {
++      orgId: organizationId,
++    })
++    expect(
++      (await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)).data.data.currentSubscriptionActive,
++    ).toBe(false)
++    sql(`UPDATE "Subscription" SET status = 'ACTIVE' WHERE "organizationId" = :'orgId';`, {
++      orgId: organizationId,
++    })
+ 
+     // Removal clears the member's active organization in the same transaction.
+     const removed = await gql(
+@@ -78,6 +110,8 @@ describe('Authorization: organization billing', () => {
+     })
+     forbidden(await gql(member, CURRENT_SUBSCRIPTION))
+     forbidden(await gql(member, CANCEL_SUBSCRIPTION))
++    forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE))
++    forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE, undefined, organizationId))
+     const plan = await gql(member, CURRENT_PLAN)
+     expect(plan.data.errors).toBeUndefined()
+     expect(plan.data.data.currentPlan).toBeNull()
+diff --git a/apps/api-e2e/src/support/api-process.ts b/apps/api-e2e/src/support/api-process.ts
+new file mode 100644
+index 0000000..e307a15
+--- /dev/null
++++ b/apps/api-e2e/src/support/api-process.ts
+@@ -0,0 +1,26 @@
++import type { ChildProcess } from 'node:child_process'
++
++/**
++ * Stop the API the e2e setup started, with everything it spawned.
++ *
++ * The setup runs `pnpm nx serve api`, so the API is a grandchild of the process it holds. Killing
++ * only that process leaves `nx serve` and the API running, still listening on the e2e port, and the
++ * next run then refuses to start. The setup spawns it as the leader of its own process group, so
++ * the whole group is killed here.
++ */
++export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): void {
++  if (!apiProcess?.pid) return
++  if (process.platform !== 'win32') {
++    try {
++      process.kill(-apiProcess.pid, 'SIGKILL')
++      return
++    } catch {
++      // No such group (already gone, or not spawned detached): fall back to the process itself.
++    }
++  }
++  try {
++    apiProcess.kill('SIGKILL')
++  } catch {
++    // Process already dead
++  }
++}
+diff --git a/apps/api-e2e/src/support/global-setup.ts b/apps/api-e2e/src/support/global-setup.ts
+index 9aebab1..7142df7 100644
+--- a/apps/api-e2e/src/support/global-setup.ts
++++ b/apps/api-e2e/src/support/global-setup.ts
+@@ -1,6 +1,7 @@
+ import { waitForPortOpen } from '@nx/node/utils'
+-import { execSync, spawn, type ChildProcess } from 'node:child_process'
++import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+ import { createConnection } from 'node:net'
++import { killApiProcessTree } from './api-process'
+ 
+ type E2EGlobalState = typeof globalThis & {
+   __API_PROCESS__?: ChildProcess | null
+@@ -58,6 +59,93 @@ async function isPortInUse(port: number, host = 'localhost'): Promise<boolean> {
+   })
+ }
+ 
++const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
++
++/**
++ * Whether a URL names a database this suite may wipe: on this machine (the same rule
++ * prisma.config.ts applies to `migrate reset`), and named as a test database
++ * (`nestled_template_test` by default).
++ */
++function isDisposableTestDatabase(databaseUrl: string): boolean {
++  try {
++    const url = new URL(databaseUrl)
++    const database = decodeURIComponent(url.pathname.slice(1))
++    return LOCAL_DATABASE_HOSTS.has(url.hostname) && /(^|[_-])test([_-]|$)/i.test(database)
++  } catch {
++    return false
++  }
++}
++
++function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
++  const result = spawnSync('pnpm', ['prisma', 'migrate', 'deploy'], {
++    cwd: projectRoot,
++    env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
++    encoding: 'utf8',
++  })
++  process.stdout.write(result.stdout ?? '')
++  process.stderr.write(result.stderr ?? '')
++  return { ok: result.status === 0, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
++}
++
++/**
++ * Empty the test database's schema, so migrations can build it from scratch. Only for a local
++ * database named as a test database; anything else is refused before a connection is made.
++ */
++function resetTestDatabase(testDatabaseUrl: string) {
++  if (!isDisposableTestDatabase(testDatabaseUrl)) {
++    throw new Error(
++      `Refusing to reset ${testDatabaseUrl}: only a local database whose name marks it as a test ` +
++        'database (e.g. nestled_template_test) is reset by the e2e setup.',
++    )
++  }
++  const url = new URL(testDatabaseUrl)
++  const database = decodeURIComponent(url.pathname.slice(1))
++  execSync(
++    'psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE" -c "CREATE SCHEMA public"',
++    {
++      env: {
++        ...process.env,
++        PGHOST: url.hostname,
++        PGPORT: url.port || '5432',
++        PGUSER: decodeURIComponent(url.username) || 'postgres',
++        PGPASSWORD: decodeURIComponent(url.password),
++        PGDATABASE: database,
++      },
++      stdio: 'inherit',
++    },
++  )
++}
++
++/**
++ * Apply committed migrations to the test database.
++ *
++ * A test database built before the suite applied migrations (by `prisma db push` alone) has tables
++ * but no migration history, and `migrate deploy` refuses it with P3005 ("the database schema is not
++ * empty"). The test database is disposable: empty it and apply the migrations from scratch. A fresh
++ * database (CI) and one that already has migration history are migrated as they are.
++ */
++function applyMigrations(projectRoot: string, testDatabaseUrl: string) {
++  const first = runMigrateDeploy(projectRoot, testDatabaseUrl)
++  if (first.ok) return
++
++  if (!first.output.includes('P3005')) {
++    console.error('❌ Failed to apply migrations')
++    throw new Error('prisma migrate deploy failed against the test database')
++  }
++
++  console.log(
++    '♻️  The test database has tables but no migration history (it was built with `db push`).',
++  )
++  console.log('   Resetting the test database and applying migrations from scratch...')
++  resetTestDatabase(testDatabaseUrl)
++
++  const retry = runMigrateDeploy(projectRoot, testDatabaseUrl)
++  if (!retry.ok) {
++    console.error('❌ Failed to apply migrations after resetting the test database')
++    throw new Error('prisma migrate deploy failed against the reset test database')
++  }
++}
++
+ async function startApiServer(
+   projectRoot: string,
+   testDatabaseUrl: string,
+@@ -77,6 +165,8 @@ async function startApiServer(
+       NODE_ENV: 'test',
+     },
+     stdio: ['ignore', 'pipe', 'pipe'],
++    // Its own process group, so teardown can stop `nx serve` and the API it starts, not just pnpm.
++    detached: process.platform !== 'win32',
+   })
+ 
+   let startupOutput = ''
+@@ -111,6 +201,7 @@ async function startApiServer(
+     console.error('❌ API server did not start within timeout')
+     console.error('Last output from API server:')
+     console.error(startupOutput.slice(-1000))
++    killApiProcessTree(apiProcess)
+     throw portError
+   }
+ 
+@@ -179,6 +270,12 @@ module.exports = async function globalSetup() {
+   // Use the workspace root which should be the current working directory
+   const projectRoot = process.cwd()
+ 
++  // Apply migrations first: some of them carry database objects Prisma's schema can't describe
++  // (triggers), which `db push` alone never creates. `db push` then reconciles anything newer.
++  console.log('🔄 Applying migrations...')
++  applyMigrations(projectRoot, testDatabaseUrl)
++  console.log('✅ Migrations applied')
++
+   // Ensure database schema is up to date
+   console.log('🔄 Syncing database schema...')
+   try {
+@@ -256,11 +353,7 @@ module.exports = async function globalSetup() {
+       e2eGlobal.__SKIP_E2E_TESTS__ = false
+     } catch (error) {
+       console.error('❌ Failed to start API server')
+-      try {
+-        apiProcess?.kill('SIGKILL')
+-      } catch {
+-        // Process already dead
+-      }
++      killApiProcessTree(apiProcess)
+       throw error
+     }
+   }
+@@ -268,17 +361,8 @@ module.exports = async function globalSetup() {
+   // Hint: Use `globalThis` to pass variables to global teardown.
+   e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
+ 
+-  // Register cleanup on exit to kill API if globalTeardown doesn't run
+-  // This is a fallback - the API should be automatically killed when test process exits
+-  // since we're not using detached mode
++  // Fallback for when globalTeardown doesn't run: stop the API's process group on exit.
+   process.on('exit', () => {
+-    const apiProcess = e2eGlobal.__API_PROCESS__
+-    if (apiProcess?.pid && !apiProcess.killed) {
+-      try {
+-        apiProcess.kill('SIGKILL')
+-      } catch {
+-        // Process already dead
+-      }
+-    }
++    killApiProcessTree(e2eGlobal.__API_PROCESS__)
+   })
+ }
+diff --git a/apps/api-e2e/src/support/global-teardown.ts b/apps/api-e2e/src/support/global-teardown.ts
+index 06f4b55..b5802f1 100644
+--- a/apps/api-e2e/src/support/global-teardown.ts
++++ b/apps/api-e2e/src/support/global-teardown.ts
+@@ -1,4 +1,5 @@
+ import type { ChildProcess } from 'node:child_process'
++import { killApiProcessTree } from './api-process'
+ 
+ type E2EGlobalState = typeof globalThis & {
+   __API_PROCESS__?: ChildProcess | null
+@@ -41,13 +42,9 @@ module.exports = async function globalTeardown() {
+         // Ignore stream cleanup errors
+       }
+ 
+-      // Kill the API server process
+-      try {
+-        apiProcess.kill('SIGKILL')
+-        console.log(`   Killed API server process ${apiProcess.pid}`)
+-      } catch {
+-        console.log(`   Process ${apiProcess.pid} may already be dead`)
+-      }
++      // Kill the API server's process group (pnpm, nx serve and the API itself)
++      killApiProcessTree(apiProcess)
++      console.log(`   Killed API server process group ${apiProcess.pid}`)
+ 
+       // Brief wait for kill to complete
+       await new Promise(resolve => setTimeout(resolve, 100))
+diff --git a/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts b/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
+index e12e077..d5ebfc0 100644
+--- a/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
++++ b/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
+@@ -1,6 +1,10 @@
+ import { ExecutionContext, ForbiddenException, Logger } from '@nestjs/common'
+ import { Reflector } from '@nestjs/core'
+-import { AccessPolicyGuard, OrganizationContextService } from '@nestled-template/api/utils'
++import {
++  AccessPolicyGuard,
++  GqlOrganizationScopedGuard,
++  OrganizationContextService,
++} from '@nestled-template/api/utils'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+ import { Subscription, User } from '@nestled-template/api/core/models'
+ import { ConfigService } from '@nestled-template/api/config'
+@@ -301,3 +305,106 @@ describe('UserSubscriptionResolver billing authorization', () => {
+     },
+   )
+ })
++
++describe('UserSubscriptionResolver.currentSubscriptionActive', () => {
++  const roles = {
++    Owner: [{ subject: 'billing', action: 'manage' }],
++    Member: [{ subject: 'organization', action: 'read' }],
++  }
++
++  function membershipData(membership: keyof typeof roles | null) {
++    return {
++      organizationMember: {
++        findFirst: jest.fn().mockResolvedValue(
++          membership
++            ? {
++                roleId: `role-${membership}`,
++                role: { name: membership, permissions: roles[membership] },
++              }
++            : null,
++        ),
++      },
++    }
++  }
++
++  // The operation's own guards, with the JWT check stubbed and the real membership lookup.
++  function admit(membership: keyof typeof roles | null) {
++    jest
++      .spyOn(Object.getPrototypeOf(GqlOrganizationScopedGuard.prototype), 'canActivate')
++      .mockResolvedValue(true)
++    const data = membershipData(membership)
++    const guard = new GqlOrganizationScopedGuard(new OrganizationContextService(data as never))
++    const req: { headers: object; user: object; organizationContext?: { organizationId: string } } =
++      {
++        headers: {},
++        user: { id: 'user-1', activeOrganizationId: 'org-1', isSuperAdmin: false },
++      }
++    const context = {
++      getType: () => 'graphql',
++      getArgs: () => [{}, {}, { req }, {}],
++      getHandler: () => UserSubscriptionResolver.prototype.currentSubscriptionActive,
++      getClass: () => UserSubscriptionResolver,
++    } as unknown as ExecutionContext
++    return { result: guard.canActivate(context), req, data }
++  }
++
++  afterEach(() => jest.restoreAllMocks())
++
++  it('declares no billing permission, only organization membership', () => {
++    const handler = UserSubscriptionResolver.prototype.currentSubscriptionActive
++    // The key RequireOrganizationPermission / AccessPolicy store their policy under.
++    expect(Reflect.getMetadata('nestled:accessPolicy', handler)).toBeUndefined()
++    expect(Reflect.getMetadata('__guards__', handler)).toEqual([GqlOrganizationScopedGuard])
++  })
++
++  it('admits a Member of the organization, against the membership-checked organization', async () => {
++    const { result, req } = admit('Member')
++    await expect(result).resolves.toBe(true)
++    expect(req.organizationContext).toEqual(expect.objectContaining({ organizationId: 'org-1' }))
++  })
++
++  it('refuses a removed member whose active organization still names the organization', async () => {
++    const { result, data } = admit(null)
++    await expect(result).rejects.toBeInstanceOf(ForbiddenException)
++    expect(data.organizationMember.findFirst).toHaveBeenCalledWith(
++      expect.objectContaining({ where: { userId: 'user-1', organizationId: 'org-1' } }),
++    )
++  })
++
++  it.each([
++    ['ACTIVE', true],
++    ['TRIALING', true],
++    ['PAST_DUE', false],
++    ['CANCELED', false],
++    ['INCOMPLETE', false],
++    ['INCOMPLETE_EXPIRED', false],
++  ])('reports a %s subscription as active: %s', async (status, expected) => {
++    const data = createDataMock()
++    data.subscription.findUnique.mockResolvedValue({ status })
++    const resolver = new UserSubscriptionResolver(
++      data,
++      createStripeMock(),
++      createUsageMock(),
++      createConfigMock(),
++    )
++
++    await expect(resolver.currentSubscriptionActive('org-1')).resolves.toBe(expected)
++    expect(data.subscription.findUnique).toHaveBeenCalledWith({
++      where: { organizationId: 'org-1' },
++      select: { status: true },
++    })
++  })
++
++  it('reports an organization without a subscription as inactive', async () => {
++    const data = createDataMock()
++    data.subscription.findUnique.mockResolvedValue(null)
++    const resolver = new UserSubscriptionResolver(
++      data,
++      createStripeMock(),
++      createUsageMock(),
++      createConfigMock(),
++    )
++
++    await expect(resolver.currentSubscriptionActive('org-1')).resolves.toBe(false)
++  })
++})
+diff --git a/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts b/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+index 2bf3ccc..6575049 100644
+--- a/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
++++ b/libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+@@ -1,7 +1,10 @@
+ import { Resolver, Query, Mutation, Args } from '@nestjs/graphql'
++import { UseGuards } from '@nestjs/common'
+ import {
++  Authenticated,
+   CtxOrganizationId,
+   CtxUser,
++  GqlOrganizationScopedGuard,
+   RequireOrganizationPermission,
+ } from '@nestled-template/api/utils'
+ import { Subscription, User } from '@nestled-template/api/core/models'
+@@ -20,7 +23,7 @@ import { recordAuditLog } from '../../shared/audit-log'
+  * Every operation acts on the request's organization context: the organization the caller's
+  * membership was checked against (x-organization-id or their active organization), never the raw
+  * `user.activeOrganizationId`. Reads need `billing:read` (or `billing:manage`) there; changes need
+- * `billing:manage`.
++ * `billing:manage`. The one exception is `currentSubscriptionActive`, which any member may read.
+  */
+ @Resolver(() => Subscription)
+ export class UserSubscriptionResolver {
+@@ -45,6 +48,24 @@ export class UserSubscriptionResolver {
+     })
+   }
+ 
++  /**
++   * Whether the organization's subscription currently grants access (ACTIVE or TRIALING).
++   *
++   * Any member may ask, so that member-facing UI can gate on an active subscription without the
++   * billing details `currentSubscription` holds. It answers for the organization the caller's
++   * membership was checked against, and says nothing else about the subscription.
++   */
++  @Query(() => Boolean)
++  @UseGuards(GqlOrganizationScopedGuard)
++  @Authenticated()
++  async currentSubscriptionActive(@CtxOrganizationId() organizationId: string): Promise<boolean> {
++    const subscription = await this.prisma.subscription.findUnique({
++      where: { organizationId },
++      select: { status: true },
++    })
++    return subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
++  }
++
+   /**
+    * Create a Stripe Checkout session to subscribe to a plan
+    */
+diff --git a/libs/shared/sdk/src/generated/graphql.ts b/libs/shared/sdk/src/generated/graphql.ts
+index d10d003..29c901f 100644
+--- a/libs/shared/sdk/src/generated/graphql.ts
++++ b/libs/shared/sdk/src/generated/graphql.ts
+@@ -3100,6 +3100,7 @@ export type Query = {
+   country?: Maybe<Country>
+   currentPlan?: Maybe<Plan>
+   currentSubscription?: Maybe<Subscription>
++  currentSubscriptionActive: Scalars['Boolean']['output']
+   currentUsage: Scalars['String']['output']
+   email?: Maybe<Email>
+   emails?: Maybe<Array<Email>>
+@@ -11122,6 +11123,27 @@ export type AvailablePlansQuery = {
+   }>
+ }
+ 
++export type CurrentPlanQueryVariables = Exact<{ [key: string]: never }>
++
++export type CurrentPlanQuery = {
++  __typename?: 'Query'
++  currentPlan?: {
++    __typename?: 'Plan'
++    id: string
++    createdAt: any
++    name: string
++    description?: string | null
++    price: any
++    interval: string
++    features?: any | null
++    limits?: any | null
++    active: boolean
++    trialPeriodDays?: number | null
++    stripeProductId?: string | null
++    stripePriceId?: string | null
++  } | null
++}
++
+ export type MySecurityEventsQueryVariables = Exact<{
+   input?: InputMaybe<SecurityEventPagingInput>
+ }>
+@@ -11406,6 +11428,13 @@ export type CurrentSubscriptionQuery = {
+   } | null
+ }
+ 
++export type CurrentSubscriptionActiveQueryVariables = Exact<{ [key: string]: never }>
++
++export type CurrentSubscriptionActiveQuery = {
++  __typename?: 'Query'
++  currentSubscriptionActive: boolean
++}
++
+ export type CreateCheckoutSessionMutationVariables = Exact<{
+   priceId: Scalars['String']['input']
+ }>
+@@ -31427,6 +31456,51 @@ export const AvailablePlans = {
+     },
+   ],
+ } as unknown as DocumentNode<AvailablePlansQuery, AvailablePlansQueryVariables>
++export const CurrentPlan = {
++  kind: 'Document',
++  definitions: [
++    {
++      kind: 'OperationDefinition',
++      operation: 'query',
++      name: { kind: 'Name', value: 'CurrentPlan' },
++      selectionSet: {
++        kind: 'SelectionSet',
++        selections: [
++          {
++            kind: 'Field',
++            name: { kind: 'Name', value: 'currentPlan' },
++            selectionSet: {
++              kind: 'SelectionSet',
++              selections: [{ kind: 'FragmentSpread', name: { kind: 'Name', value: 'PlanList' } }],
++            },
++          },
++        ],
++      },
++    },
++    {
++      kind: 'FragmentDefinition',
++      name: { kind: 'Name', value: 'PlanList' },
++      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'Plan' } },
++      selectionSet: {
++        kind: 'SelectionSet',
++        selections: [
++          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'name' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'description' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'price' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'interval' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'features' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'limits' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'active' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'trialPeriodDays' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'stripeProductId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'stripePriceId' } },
++        ],
++      },
++    },
++  ],
++} as unknown as DocumentNode<CurrentPlanQuery, CurrentPlanQueryVariables>
+ export const MySecurityEvents = {
+   kind: 'Document',
+   definitions: [
+@@ -31994,6 +32068,23 @@ export const CurrentSubscription = {
+     },
+   ],
+ } as unknown as DocumentNode<CurrentSubscriptionQuery, CurrentSubscriptionQueryVariables>
++export const CurrentSubscriptionActive = {
++  kind: 'Document',
++  definitions: [
++    {
++      kind: 'OperationDefinition',
++      operation: 'query',
++      name: { kind: 'Name', value: 'CurrentSubscriptionActive' },
++      selectionSet: {
++        kind: 'SelectionSet',
++        selections: [{ kind: 'Field', name: { kind: 'Name', value: 'currentSubscriptionActive' } }],
++      },
++    },
++  ],
++} as unknown as DocumentNode<
++  CurrentSubscriptionActiveQuery,
++  CurrentSubscriptionActiveQueryVariables
++>
+ export const CreateCheckoutSession = {
+   kind: 'Document',
+   definitions: [
+diff --git a/libs/shared/sdk/src/graphql/plan/plan-queries.graphql b/libs/shared/sdk/src/graphql/plan/plan-queries.graphql
+index 23e2501..4bdb531 100644
+--- a/libs/shared/sdk/src/graphql/plan/plan-queries.graphql
++++ b/libs/shared/sdk/src/graphql/plan/plan-queries.graphql
+@@ -3,3 +3,9 @@ query AvailablePlans {
+     ...PlanList
+   }
+ }
++
++query CurrentPlan {
++  currentPlan {
++    ...PlanList
++  }
++}
+diff --git a/libs/shared/sdk/src/graphql/subscription/subscription-queries.graphql b/libs/shared/sdk/src/graphql/subscription/subscription-queries.graphql
+index 7cfb9d8..7937c59 100644
+--- a/libs/shared/sdk/src/graphql/subscription/subscription-queries.graphql
++++ b/libs/shared/sdk/src/graphql/subscription/subscription-queries.graphql
+@@ -3,3 +3,7 @@ query CurrentSubscription {
+     ...SubscriptionDetails
+   }
+ }
++
++query CurrentSubscriptionActive {
++  currentSubscriptionActive
++}
+diff --git a/libs/web/src/lib/contexts/subscription.context.spec.tsx b/libs/web/src/lib/contexts/subscription.context.spec.tsx
+index 1cae73c..886833b 100644
+--- a/libs/web/src/lib/contexts/subscription.context.spec.tsx
++++ b/libs/web/src/lib/contexts/subscription.context.spec.tsx
+@@ -1,5 +1,6 @@
+ import React from 'react'
+-import { renderHook } from '@testing-library/react'
++import { render, renderHook, screen } from '@testing-library/react'
++import { MemoryRouter } from 'react-router'
+ import { beforeEach, describe, expect, it, vi } from 'vitest'
+ import { GlobalContextProvider } from './global.context'
+ import { SubscriptionProvider, useSubscriptionContext } from './subscription.context'
+@@ -10,6 +11,9 @@ import {
+   useSubscription,
+ } from '../hooks/use-subscription'
+ import { useLimit, useLimits, usePlan } from '../hooks/use-plan'
++import { RequirePlan } from '../components/require-plan'
++import { RequireSubscription } from '../components/require-subscription'
++import { SubscriptionStatusBanner } from '../components/subscription-status-banner'
+ 
+ const useQuery = vi.fn()
+ 
+@@ -18,9 +22,29 @@ vi.mock('@apollo/client/react', () => ({
+ }))
+ 
+ vi.mock('@nestled-template/shared/sdk', () => ({
+-  CurrentSubscription: {},
++  CurrentSubscription: { document: 'CurrentSubscription' },
++  CurrentPlan: { document: 'CurrentPlan' },
++  CurrentSubscriptionActive: { document: 'CurrentSubscriptionActive' },
+ }))
+ 
++type QueryResult = { loading: boolean; error: Error | null; data: unknown }
++const idle: QueryResult = { loading: false, error: null, data: undefined }
++
++/** Answer each SDK document separately; documents without an answer return nothing. */
++function answerQueries(answers: Record<string, QueryResult>) {
++  useQuery.mockImplementation((document: { document: string }, options: { skip?: boolean }) =>
++    options?.skip ? idle : (answers[document.document] ?? idle),
++  )
++}
++
++/** The options the provider passed for one SDK document. */
++function optionsFor(document: string) {
++  const call = useQuery.mock.calls.find(
++    ([doc]) => (doc as { document: string }).document === document,
++  )
++  return call?.[1]
++}
++
+ const activeOrganization = { id: 'org-1', name: 'Example Org' }
+ const owner = {
+   role: {
+@@ -158,11 +182,11 @@ describe('SubscriptionProvider', () => {
+   })
+ 
+   it('does not request billing details for a member without billing permissions', () => {
+-    useQuery.mockReturnValue({ loading: false, error: null, data: undefined })
++    answerQueries({})
+ 
+     const { result } = renderHook(() => useSubscriptionContext(), { wrapper: wrapperFor(member) })
+ 
+-    expect(useQuery).toHaveBeenCalledWith(expect.anything(), {
++    expect(optionsFor('CurrentSubscription')).toEqual({
+       skip: true,
+       fetchPolicy: 'cache-and-network',
+     })
+@@ -170,6 +194,95 @@ describe('SubscriptionProvider', () => {
+     expect(result.current.hasActiveSubscription).toBe(false)
+   })
+ 
++  it("gives a Member their organization's plan features and active subscription", () => {
++    answerQueries({
++      CurrentPlan: {
++        loading: false,
++        error: null,
++        data: {
++          currentPlan: {
++            id: 'plan-growth',
++            name: 'Growth',
++            features: ['reports'],
++            limits: { projects: 10 },
++          },
++        },
++      },
++      CurrentSubscriptionActive: {
++        loading: false,
++        error: null,
++        data: { currentSubscriptionActive: true },
++      },
++    })
++
++    const { result } = renderHook(
++      () => ({
++        context: useSubscriptionContext(),
++        subscription: useSubscription(),
++        hasFeature: useHasFeature('reports'),
++        missingFeature: useHasFeature('api'),
++        plan: usePlan(),
++      }),
++      { wrapper: wrapperFor(member) },
++    )
++
++    expect(result.current.context.hasFeature('reports')).toBe(true)
++    expect(result.current.hasFeature).toBe(true)
++    expect(result.current.missingFeature).toBe(false)
++    expect(result.current.context.hasActiveSubscription).toBe(true)
++    expect(result.current.subscription.requireActiveSubscription()).toBe(true)
++    expect(result.current.plan.isPlan('growth')).toBe(true)
++    expect(result.current.context.checkLimit('projects')).toEqual({ limit: 10, hasLimit: true })
++
++    // Billing details stay with billing readers.
++    expect(result.current.context.subscription).toBeNull()
++    expect(result.current.context.isTrialing).toBe(false)
++    expect(result.current.context.isCanceled).toBe(false)
++    expect(result.current.context.isPastDue).toBe(false)
++    expect(result.current.context.trialEndsAt).toBeNull()
++    expect(result.current.context.periodEndsAt).toBeNull()
++
++    // No billing query is issued for a Member; the member-readable ones are.
++    expect(optionsFor('CurrentSubscription')?.skip).toBe(true)
++    expect(optionsFor('CurrentPlan')?.skip).toBe(false)
++    expect(optionsFor('CurrentSubscriptionActive')?.skip).toBe(false)
++  })
++
++  it("reports a Member's organization without an active subscription as inactive", () => {
++    answerQueries({
++      CurrentPlan: { loading: false, error: null, data: { currentPlan: null } },
++      CurrentSubscriptionActive: {
++        loading: false,
++        error: null,
++        data: { currentSubscriptionActive: false },
++      },
++    })
++
++    const { result } = renderHook(() => useSubscriptionContext(), { wrapper: wrapperFor(member) })
++
++    expect(result.current.hasActiveSubscription).toBe(false)
++    expect(result.current.plan).toBeNull()
++    expect(result.current.hasFeature('reports')).toBe(false)
++  })
++
++  it('reports loading while the member-readable queries are in flight', () => {
++    answerQueries({
++      CurrentSubscriptionActive: { loading: true, error: null, data: undefined },
++    })
++
++    const { result } = renderHook(() => useSubscriptionContext(), { wrapper: wrapperFor(member) })
++
++    expect(result.current.isLoading).toBe(true)
++  })
++
++  it('does not ask for member-readable status when billing details are readable', () => {
++    renderHook(() => useSubscriptionContext(), { wrapper })
++
++    expect(optionsFor('CurrentSubscription')?.skip).toBe(false)
++    expect(optionsFor('CurrentPlan')?.skip).toBe(true)
++    expect(optionsFor('CurrentSubscriptionActive')?.skip).toBe(true)
++  })
++
+   it('degrades to no subscription when the request is refused', () => {
+     useQuery.mockReturnValue({
+       loading: false,
+@@ -184,3 +297,69 @@ describe('SubscriptionProvider', () => {
+     expect(result.current.error?.message).toMatch(/permission/)
+   })
+ })
++
++describe('Member-facing gates under SubscriptionProvider', () => {
++  function memberOfOrganization(active: boolean) {
++    answerQueries({
++      CurrentPlan: {
++        loading: false,
++        error: null,
++        data: active
++          ? { currentPlan: { id: 'plan-growth', name: 'Growth', features: ['reports'] } }
++          : { currentPlan: null },
++      },
++      CurrentSubscriptionActive: {
++        loading: false,
++        error: null,
++        data: { currentSubscriptionActive: active },
++      },
++    })
++    const Wrapper = wrapperFor(member)
++    return (ui: React.ReactElement) =>
++      render(
++        <MemoryRouter>
++          <Wrapper>{ui}</Wrapper>
++        </MemoryRouter>,
++      )
++  }
++
++  beforeEach(() => vi.clearAllMocks())
++
++  it('lets a Member of a subscribed organization through plan and subscription gates', () => {
++    memberOfOrganization(true)(
++      <>
++        <SubscriptionStatusBanner showNoSubscriptionWarning />
++        <RequireSubscription>
++          <span>Subscribed area</span>
++        </RequireSubscription>
++        <RequirePlan feature="reports">
++          <span>Reports</span>
++        </RequirePlan>
++        <RequirePlan feature="api">
++          <span>API</span>
++        </RequirePlan>
++      </>,
++    )
++
++    expect(screen.getByText('Subscribed area')).toBeTruthy()
++    expect(screen.getByText('Reports')).toBeTruthy()
++    expect(screen.queryByText('API')).toBeNull()
++    expect(screen.queryByText(/Free Plan/)).toBeNull()
++    expect(screen.queryByText(/Payment Failed|Subscription Canceled|Trial Ending/)).toBeNull()
++  })
++
++  it('still gates a Member of an organization without an active subscription', () => {
++    memberOfOrganization(false)(
++      <>
++        <SubscriptionStatusBanner showNoSubscriptionWarning />
++        <RequireSubscription>
++          <span>Subscribed area</span>
++        </RequireSubscription>
++      </>,
++    )
++
++    expect(screen.queryByText('Subscribed area')).toBeNull()
++    expect(screen.getByText('Subscription Required')).toBeTruthy()
++    expect(screen.getByText(/Free Plan/)).toBeTruthy()
++  })
++})
+diff --git a/libs/web/src/lib/contexts/subscription.context.tsx b/libs/web/src/lib/contexts/subscription.context.tsx
+index 452d4d3..3ec803e 100644
+--- a/libs/web/src/lib/contexts/subscription.context.tsx
++++ b/libs/web/src/lib/contexts/subscription.context.tsx
+@@ -1,13 +1,22 @@
+ import React, { createContext, useContext, useMemo, ReactNode } from 'react'
+ import { useQuery } from '@apollo/client/react'
+-import { CurrentSubscription, type CurrentSubscriptionQuery } from '@nestled-template/shared/sdk'
++import {
++  CurrentPlan,
++  CurrentSubscription,
++  CurrentSubscriptionActive,
++  type CurrentPlanQuery,
++  type CurrentSubscriptionActiveQuery,
++  type CurrentSubscriptionQuery,
++} from '@nestled-template/shared/sdk'
+ import { useGlobalCtx } from './global.context'
+ 
+ type CurrentSubscriptionItem = NonNullable<CurrentSubscriptionQuery['currentSubscription']>
+ type CurrentSubscriptionPlan = NonNullable<CurrentSubscriptionItem['plan']>
+ 
+ export interface SubscriptionContextType {
+-  // Subscription state
++  // Subscription state. `subscription`, the trial/cancel/past-due flags and the dates need billing
++  // permissions: for other members they are null/false. `plan`, the feature/limit checks and
++  // `hasActiveSubscription` are available to every member.
+   subscription: CurrentSubscriptionItem | null
+   plan: CurrentSubscriptionPlan | null
+   isLoading: boolean
+@@ -39,7 +48,9 @@ type BillingPermission = { subject?: string | null; action?: string | null }
+ 
+ /**
+  * The API serves the organization's subscription only to members holding `billing:read` or
+- * `billing:manage` there. Members without them do not ask, and see no subscription details.
++ * `billing:manage` there. Members without them do not ask for it: they read the plan
++ * (`currentPlan`) and whether the subscription is active (`currentSubscriptionActive`), which any
++ * member may, and see no other subscription details.
+  */
+ function canReadBilling(
+   isSuperAdmin: boolean | null | undefined,
+@@ -60,18 +71,36 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
+     activeOrganizationMember?.role?.permissions,
+   )
+ 
+-  // Fetch current subscription for active organization
+-  const { data, loading, error } = useQuery<CurrentSubscriptionQuery>(CurrentSubscription, {
+-    skip: !activeOrganization?.id || !billingReadable,
++  const hasOrganization = Boolean(activeOrganization?.id)
++
++  // Billing readers get the full subscription for the active organization.
++  const detailed = useQuery<CurrentSubscriptionQuery>(CurrentSubscription, {
++    skip: !hasOrganization || !billingReadable,
++    fetchPolicy: 'cache-and-network',
++  })
++  // Everyone else gets what feature gating needs: the plan, and whether the subscription is active.
++  const memberPlan = useQuery<CurrentPlanQuery>(CurrentPlan, {
++    skip: !hasOrganization || billingReadable,
++    fetchPolicy: 'cache-and-network',
++  })
++  const memberStatus = useQuery<CurrentSubscriptionActiveQuery>(CurrentSubscriptionActive, {
++    skip: !hasOrganization || billingReadable,
+     fetchPolicy: 'cache-and-network',
+   })
+ 
+-  const subscription = data?.currentSubscription || null
+-  const plan = subscription?.plan || null
++  const loading = detailed.loading || memberPlan.loading || memberStatus.loading
++  const error = detailed.error || memberPlan.error || memberStatus.error
+ 
+-  // Status checks
+-  const hasActiveSubscription =
+-    subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
++  const subscription = billingReadable ? detailed.data?.currentSubscription || null : null
++  const plan: CurrentSubscriptionPlan | null = billingReadable
++    ? subscription?.plan || null
++    : memberPlan.data?.currentPlan || null
++
++  // Status checks. Trial, cancellation and payment state are billing details: members without
++  // billing permissions only learn whether the subscription is active (ACTIVE or TRIALING).
++  const hasActiveSubscription = billingReadable
++    ? subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
++    : memberStatus.data?.currentSubscriptionActive === true
+   const isTrialing = subscription?.status === 'TRIALING'
+   const isCanceled = subscription?.status === 'CANCELED' || subscription?.cancelAtPeriodEnd === true
+   const isPastDue = subscription?.status === 'PAST_DUE'
+@@ -150,7 +179,6 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
+       isWithinLimit,
+       trialEndsAt,
+       periodEndsAt,
+-      // eslint-disable-next-line react-hooks/exhaustive-deps
+     }),
+     [
+       subscription,
