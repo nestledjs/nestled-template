@@ -3100,6 +3100,7 @@ export type Query = {
   country?: Maybe<Country>
   currentPlan?: Maybe<Plan>
   currentSubscription?: Maybe<Subscription>
+  currentSubscriptionActive: Scalars['Boolean']['output']
   currentUsage: Scalars['String']['output']
   email?: Maybe<Email>
   emails?: Maybe<Array<Email>>
@@ -11122,6 +11123,27 @@ export type AvailablePlansQuery = {
   }>
 }
 
+export type CurrentPlanQueryVariables = Exact<{ [key: string]: never }>
+
+export type CurrentPlanQuery = {
+  __typename?: 'Query'
+  currentPlan?: {
+    __typename?: 'Plan'
+    id: string
+    createdAt: any
+    name: string
+    description?: string | null
+    price: any
+    interval: string
+    features?: any | null
+    limits?: any | null
+    active: boolean
+    trialPeriodDays?: number | null
+    stripeProductId?: string | null
+    stripePriceId?: string | null
+  } | null
+}
+
 export type MySecurityEventsQueryVariables = Exact<{
   input?: InputMaybe<SecurityEventPagingInput>
 }>
@@ -11404,6 +11426,13 @@ export type CurrentSubscriptionQuery = {
       trialPeriodDays?: number | null
     } | null
   } | null
+}
+
+export type CurrentSubscriptionActiveQueryVariables = Exact<{ [key: string]: never }>
+
+export type CurrentSubscriptionActiveQuery = {
+  __typename?: 'Query'
+  currentSubscriptionActive: boolean
 }
 
 export type CreateCheckoutSessionMutationVariables = Exact<{
@@ -31427,6 +31456,51 @@ export const AvailablePlans = {
     },
   ],
 } as unknown as DocumentNode<AvailablePlansQuery, AvailablePlansQueryVariables>
+export const CurrentPlan = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'CurrentPlan' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'currentPlan' },
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [{ kind: 'FragmentSpread', name: { kind: 'Name', value: 'PlanList' } }],
+            },
+          },
+        ],
+      },
+    },
+    {
+      kind: 'FragmentDefinition',
+      name: { kind: 'Name', value: 'PlanList' },
+      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'Plan' } },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'description' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'price' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'interval' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'features' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'limits' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'active' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'trialPeriodDays' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'stripeProductId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'stripePriceId' } },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<CurrentPlanQuery, CurrentPlanQueryVariables>
 export const MySecurityEvents = {
   kind: 'Document',
   definitions: [
@@ -31994,6 +32068,23 @@ export const CurrentSubscription = {
     },
   ],
 } as unknown as DocumentNode<CurrentSubscriptionQuery, CurrentSubscriptionQueryVariables>
+export const CurrentSubscriptionActive = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'CurrentSubscriptionActive' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [{ kind: 'Field', name: { kind: 'Name', value: 'currentSubscriptionActive' } }],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  CurrentSubscriptionActiveQuery,
+  CurrentSubscriptionActiveQueryVariables
+>
 export const CreateCheckoutSession = {
   kind: 'Document',
   definitions: [

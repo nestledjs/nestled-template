@@ -208,3 +208,18 @@ agentHints:
     The session trigger raises on any update that sets `isValid` back to true or extends `expiresAt`.
     If project code ever did either (for example "restore session"), replace it with a new sign-in;
     such an update now fails. Generated CRUD keeps reading and revoking sessions.
+  - >
+    The `isActive` trigger assumes a `User.isActive` column. A project that gates accounts with a
+    different flag (for example a `deleted` flag or a ban `status` column) must write the trigger on
+    that flag instead.
+  - >
+    `ApiToken.authGeneration` defaults to 0, which only matches owners whose generation is 0. A
+    project that maps the auth generation onto an existing per-user counter (for example a
+    token-version column already above 0) must backfill each existing API token's generation from
+    its owner in the same migration, or every outstanding API token stops working on deploy.
+  - >
+    Flows that create a pending invalid session and validate it later (for example two-factor
+    challenge rows), or that slide a session's expiry, must mint a new session instead: the
+    session trigger refuses both updates. Projects whose e2e builds the database with `db push`
+    must apply migrations first, or the trigger is missing in tests (see
+    2026-10-06-members-keep-plan-features).

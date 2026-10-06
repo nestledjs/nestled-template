@@ -1,13 +1,22 @@
 import React, { createContext, useContext, useMemo, ReactNode } from 'react'
 import { useQuery } from '@apollo/client/react'
-import { CurrentSubscription, type CurrentSubscriptionQuery } from '@nestled-template/shared/sdk'
+import {
+  CurrentPlan,
+  CurrentSubscription,
+  CurrentSubscriptionActive,
+  type CurrentPlanQuery,
+  type CurrentSubscriptionActiveQuery,
+  type CurrentSubscriptionQuery,
+} from '@nestled-template/shared/sdk'
 import { useGlobalCtx } from './global.context'
 
 type CurrentSubscriptionItem = NonNullable<CurrentSubscriptionQuery['currentSubscription']>
 type CurrentSubscriptionPlan = NonNullable<CurrentSubscriptionItem['plan']>
 
 export interface SubscriptionContextType {
-  // Subscription state
+  // Subscription state. `subscription`, the trial/cancel/past-due flags and the dates need billing
+  // permissions: for other members they are null/false. `plan`, the feature/limit checks and
+  // `hasActiveSubscription` are available to every member.
   subscription: CurrentSubscriptionItem | null
   plan: CurrentSubscriptionPlan | null
   isLoading: boolean
@@ -39,7 +48,9 @@ type BillingPermission = { subject?: string | null; action?: string | null }
 
 /**
  * The API serves the organization's subscription only to members holding `billing:read` or
- * `billing:manage` there. Members without them do not ask, and see no subscription details.
+ * `billing:manage` there. Members without them do not ask for it: they read the plan
+ * (`currentPlan`) and whether the subscription is active (`currentSubscriptionActive`), which any
+ * member may, and see no other subscription details.
  */
 function canReadBilling(
   isSuperAdmin: boolean | null | undefined,
@@ -60,18 +71,36 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     activeOrganizationMember?.role?.permissions,
   )
 
-  // Fetch current subscription for active organization
-  const { data, loading, error } = useQuery<CurrentSubscriptionQuery>(CurrentSubscription, {
-    skip: !activeOrganization?.id || !billingReadable,
+  const hasOrganization = Boolean(activeOrganization?.id)
+
+  // Billing readers get the full subscription for the active organization.
+  const detailed = useQuery<CurrentSubscriptionQuery>(CurrentSubscription, {
+    skip: !hasOrganization || !billingReadable,
+    fetchPolicy: 'cache-and-network',
+  })
+  // Everyone else gets what feature gating needs: the plan, and whether the subscription is active.
+  const memberPlan = useQuery<CurrentPlanQuery>(CurrentPlan, {
+    skip: !hasOrganization || billingReadable,
+    fetchPolicy: 'cache-and-network',
+  })
+  const memberStatus = useQuery<CurrentSubscriptionActiveQuery>(CurrentSubscriptionActive, {
+    skip: !hasOrganization || billingReadable,
     fetchPolicy: 'cache-and-network',
   })
 
-  const subscription = data?.currentSubscription || null
-  const plan = subscription?.plan || null
+  const loading = detailed.loading || memberPlan.loading || memberStatus.loading
+  const error = detailed.error || memberPlan.error || memberStatus.error
 
-  // Status checks
-  const hasActiveSubscription =
-    subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
+  const subscription = billingReadable ? detailed.data?.currentSubscription || null : null
+  const plan: CurrentSubscriptionPlan | null = billingReadable
+    ? subscription?.plan || null
+    : memberPlan.data?.currentPlan || null
+
+  // Status checks. Trial, cancellation and payment state are billing details: members without
+  // billing permissions only learn whether the subscription is active (ACTIVE or TRIALING).
+  const hasActiveSubscription = billingReadable
+    ? subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
+    : memberStatus.data?.currentSubscriptionActive === true
   const isTrialing = subscription?.status === 'TRIALING'
   const isCanceled = subscription?.status === 'CANCELED' || subscription?.cancelAtPeriodEnd === true
   const isPastDue = subscription?.status === 'PAST_DUE'
@@ -150,7 +179,6 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
       isWithinLimit,
       trialEndsAt,
       periodEndsAt,
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }),
     [
       subscription,

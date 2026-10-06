@@ -3,3 +3,9 @@ query AvailablePlans {
     ...PlanList
   }
 }
+
+query CurrentPlan {
+  currentPlan {
+    ...PlanList
+  }
+}
