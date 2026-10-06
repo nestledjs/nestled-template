@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-05
+generatedAt: 2026-10-06
 channels:
-  canary: 2026.10.4
+  canary: 2026.10.5
   stable: 2026.10.3
 releases:
   - id: 2026.08.0
@@ -263,3 +263,35 @@ releases:
           - pnpm exec nestled-doctor
           - "pnpm test:e2e src/auth/organization-billing.spec.ts"
         patch: patches/2026-10-05-organization-context-and-billing-authorization.diff
+  - id: 2026.10.5
+    date: 2026-10-06
+    title: Members keep plan features
+    templateCommit: da27492
+    notes:
+      - id: 2026-10-06-members-keep-plan-features
+        title: Members keep their organization's plan features; e2e setup handles a test database built by db push
+        delivery: code-patch
+        intent: "Fixes two regressions from 2026-10-05-organization-context-and-billing-authorization (release 2026.10.4). 1. Members keep plan features. Since 2026.10.4, `SubscriptionProvider` (`libs/web`) does not request `currentSubscription` for a member without `billing:read`/`billing:manage`, so for them `plan` was null, `hasFeature()`/`useHasFeature()` returned false and `hasActiveSubscription` was false. UI that gates on plan features or on an active subscription locked Members out of an organization that is paying. API: `UserSubscriptionResolver` gains `currentSubscriptionActive: Boolean!`, which any member of the organization may read. It answers only whether the organization's subscription is ACTIVE or TRIALING, selects nothing but the status, and acts on `@CtxOrganizationId()`, the organization the caller's membership was checked against. It is guarded by `@UseGuards(GqlOrganizationScopedGuard)` + `@Authenticated()`, so it needs a current membership and no billing permission: a non-member, or a removed member whose active organization still names the organization, is refused. `currentSubscription` and the other billing operations keep their `RequireOrganizationPermission` declarations. The guard baseline gains the operation. The SDK gains `CurrentPlan` (`plan-queries.graphql`) and `CurrentSubscriptionActive` (`subscription-queries.graphql`); `currentPlan` leaves the SDK contract baseline's API-without-SDK list. Web: for members without billing permissions `SubscriptionProvider` takes `plan` (and therefore `hasFeature`, `checkLimit`, `isWithinLimit`, `usePlan`, `RequirePlan`) from `currentPlan`, and `hasActiveSubscription` from `currentSubscriptionActive`; it never issues `currentSubscription` for them. Members with `billing:read`/`billing:manage` (or `all:manage`, or super admins) keep the detailed `currentSubscription` path unchanged. `subscription`, `isTrialing`, `isCanceled`, `isPastDue`, `trialEndsAt` and `periodEndsAt` stay billing-only (null/false for members), so `SubscriptionStatusBanner` shows a member no trial, payment or cancellation banner, and its optional \"no subscription\" banner only when the organization really has no active subscription. 2. E2E global setup and an existing test database. 2026.10.4 made `apps/api-e2e/src/support/global-setup.ts` run `prisma migrate deploy` before `db push`. A local test database built earlier by `db push` alone has tables but no `_prisma_migrations` history, and `migrate deploy` refuses it with P3005. The setup now detects P3005, empties the test database's `public` schema and applies the migrations from scratch, then continues with `db push` and the seed as before. It only does so for a database on localhost whose name marks it as a test database (`nestled_template_test` by default) and refuses anything else. A fresh database (CI) and one that already has migration history are migrated as before. The reset is done with psql rather than `prisma migrate reset`, which Prisma refuses to run unattended when it detects a coding agent; the e2e setup is routinely run by one. The e2e setup also starts the API (`pnpm nx serve api`) as the leader of its own process group, and teardown kills that group (`apps/api-e2e/src/support/api-process.ts`). Killing only the pnpm process left `nx serve` and the API running on the e2e port, so the next local run refused to start (\"Refusing to run e2e against an API this suite did not start\")."
+        area: billing
+        affectedPaths:
+          - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+          - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
+          - libs/shared/sdk/src/graphql/plan/plan-queries.graphql
+          - libs/shared/sdk/src/graphql/subscription/subscription-queries.graphql
+          - libs/shared/sdk/src/generated/graphql.ts
+          - api-schema.graphql
+          - .nestled-updates/security/guard-baseline.json
+          - .nestled-updates/sdk-contract-baseline.json
+          - libs/web/src/lib/contexts/subscription.context.tsx
+          - libs/web/src/lib/contexts/subscription.context.spec.tsx
+          - apps/api-e2e/src/support/global-setup.ts
+          - apps/api-e2e/src/support/global-teardown.ts
+          - apps/api-e2e/src/support/api-process.ts
+          - apps/api-e2e/src/auth/organization-billing.spec.ts
+        verification:
+          - "pnpm exec nx run api-custom:test"
+          - "pnpm exec nx run web-components:test"
+          - pnpm exec nx run-many -t typecheck
+          - pnpm exec nestled-doctor
+          - "pnpm test:e2e src/auth/organization-billing.spec.ts"
+        patch: patches/2026-10-06-members-keep-plan-features.diff
