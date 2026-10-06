@@ -161,39 +161,39 @@ describe('Authentication: a change of isActive retires earlier credentials', () 
 })
 
 describe('Authentication: a revoked session stays revoked', () => {
-  it('generated CRUD can revoke a session but not revive or extend it', async () => {
-    const admin = await TestHelpers.registerUser(UserFactory.create())
-    sql(`UPDATE "User" SET "isSuperAdmin" = true WHERE id = :'userId';`, { userId: admin.id })
+  it('the explicit session API revokes a session and the database forbids revival or extension', async () => {
     const user = await TestHelpers.registerUser(UserFactory.create())
     const sessionId = sql(
       `SELECT id FROM "UserSession" WHERE "userId" = :'userId' ORDER BY "createdAt" DESC LIMIT 1;`,
       { userId: user.id },
     )
-    const updateSession = (input: Record<string, unknown>) =>
-      TestHelpers.authenticatedGraphql(
-        `mutation UpdateUserSession($userSessionId: String!, $input: UpdateUserSessionInput!) {
-          updateUserSession(userSessionId: $userSessionId, input: $input) { id isValid expiresAt }
-        }`,
-        admin,
-        { userSessionId: sessionId, input },
-      )
     const sessionState = () =>
       sql(`SELECT "isValid" FROM "UserSession" WHERE id = :'sessionId';`, { sessionId })
 
     // Extending a live session's expiry is refused.
-    const extended = await updateSession({
-      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-    })
-    expect(extended.data.errors?.length).toBeGreaterThan(0)
+    expect(() =>
+      sql(
+        `UPDATE "UserSession" SET "expiresAt" = NOW() + INTERVAL '1 year' WHERE id = :'sessionId';`,
+        {
+          sessionId,
+        },
+      ),
+    ).toThrow(/expiry cannot be extended/i)
 
     // Revoking is allowed.
-    const revoked = await updateSession({ isValid: false })
+    const revoked = await TestHelpers.authenticatedGraphql(
+      `mutation($sessionId: String!) { invalidateSession(sessionId: $sessionId) }`,
+      user,
+      { sessionId },
+    )
     expect(revoked.data.errors).toBeUndefined()
+    expect(revoked.data.data.invalidateSession).toBe(true)
     expect(sessionState()).toBe('f')
 
     // Reviving is refused, and the token stays refused.
-    const revived = await updateSession({ isValid: true })
-    expect(revived.data.errors?.length).toBeGreaterThan(0)
+    expect(() =>
+      sql(`UPDATE "UserSession" SET "isValid" = true WHERE id = :'sessionId';`, { sessionId }),
+    ).toThrow(/revoked session cannot be made valid/i)
     expect(sessionState()).toBe('f')
     const after = await me(user)
     expect(after.data.errors?.[0]?.message).toMatch(/unauthorized|invalidated/i)

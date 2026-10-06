@@ -4,6 +4,7 @@ import graphqlFields from 'graphql-fields'
 import type { GraphQLResolveInfo } from 'graphql'
 import { DATABASE_MODELS_BY_NAME, DatabaseField, DatabaseModel } from './database-models'
 import * as dto from './dto'
+import { retryWrite } from './retry-write'
 
 type FieldTree = Record<string, unknown>
 type SelectTree = Record<string, true | { select: SelectTree }>
@@ -519,10 +520,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['address'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['address'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async addresses(info: GraphQLResolveInfo, input?: dto.ListAddressInput) {
@@ -595,17 +598,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['address'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['address'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteAddress(id: string) {
-    return this.data['address'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['address'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createApiToken(info: GraphQLResolveInfo, input: dto.CreateApiTokenInput) {
@@ -634,10 +641,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['apiToken'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['apiToken'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async apiTokens(info: GraphQLResolveInfo, input?: dto.ListApiTokenInput) {
@@ -709,17 +718,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['apiToken'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['apiToken'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteApiToken(id: string) {
-    return this.data['apiToken'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['apiToken'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createAuditLog(info: GraphQLResolveInfo, input: dto.CreateAuditLogInput) {
@@ -748,10 +761,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['auditLog'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['auditLog'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async auditLogs(info: GraphQLResolveInfo, input?: dto.ListAuditLogInput) {
@@ -823,17 +838,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['auditLog'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['auditLog'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteAuditLog(id: string) {
-    return this.data['auditLog'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['auditLog'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createCountry(info: GraphQLResolveInfo, input: dto.CreateCountryInput) {
@@ -861,10 +880,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['country'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['country'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async countries(info: GraphQLResolveInfo, input?: dto.ListCountryInput) {
@@ -935,17 +956,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['country'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['country'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteCountry(id: string) {
-    return this.data['country'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['country'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createEmail(info: GraphQLResolveInfo, input: dto.CreateEmailInput) {
@@ -974,10 +999,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['email'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['email'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async emails(info: GraphQLResolveInfo, input?: dto.ListEmailInput) {
@@ -1049,17 +1076,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['email'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['email'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteEmail(id: string) {
-    return this.data['email'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['email'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createInvite(info: GraphQLResolveInfo, input: dto.CreateInviteInput) {
@@ -1089,10 +1120,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['invite'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['invite'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async invites(info: GraphQLResolveInfo, input?: dto.ListInviteInput) {
@@ -1165,17 +1198,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['invite'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['invite'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteInvite(id: string) {
-    return this.data['invite'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['invite'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createLink(info: GraphQLResolveInfo, input: dto.CreateLinkInput) {
@@ -1204,10 +1241,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['link'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['link'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async links(info: GraphQLResolveInfo, input?: dto.ListLinkInput) {
@@ -1279,17 +1318,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['link'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['link'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteLink(id: string) {
-    return this.data['link'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['link'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createLoginAttempt(info: GraphQLResolveInfo, input: dto.CreateLoginAttemptInput) {
@@ -1317,10 +1360,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['loginAttempt'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['loginAttempt'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async loginAttempts(info: GraphQLResolveInfo, input?: dto.ListLoginAttemptInput) {
@@ -1395,17 +1440,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['loginAttempt'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['loginAttempt'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteLoginAttempt(id: string) {
-    return this.data['loginAttempt'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['loginAttempt'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createOAuthAccount(info: GraphQLResolveInfo, input: dto.CreateOAuthAccountInput) {
@@ -1433,10 +1482,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['oAuthAccount'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['oAuthAccount'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async oAuthAccounts(info: GraphQLResolveInfo, input?: dto.ListOAuthAccountInput) {
@@ -1511,17 +1562,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['oAuthAccount'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['oAuthAccount'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteOAuthAccount(id: string) {
-    return this.data['oAuthAccount'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['oAuthAccount'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createOrganization(info: GraphQLResolveInfo, input: dto.CreateOrganizationInput) {
@@ -1576,10 +1631,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['organization'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['organization'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async organizations(info: GraphQLResolveInfo, input?: dto.ListOrganizationInput) {
@@ -1681,17 +1738,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['organization'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['organization'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteOrganization(id: string) {
-    return this.data['organization'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['organization'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createOrganizationMember(
@@ -1724,10 +1785,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['organizationMember'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['organizationMember'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async organizationMembers(info: GraphQLResolveInfo, input?: dto.ListOrganizationMemberInput) {
@@ -1804,17 +1867,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['organizationMember'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['organizationMember'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteOrganizationMember(id: string) {
-    return this.data['organizationMember'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['organizationMember'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createPermission(info: GraphQLResolveInfo, input: dto.CreatePermissionInput) {
@@ -1842,10 +1909,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['permission'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['permission'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async permissions(info: GraphQLResolveInfo, input?: dto.ListPermissionInput) {
@@ -1916,17 +1985,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['permission'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['permission'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deletePermission(id: string) {
-    return this.data['permission'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['permission'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createPhoneNumber(info: GraphQLResolveInfo, input: dto.CreatePhoneNumberInput) {
@@ -1955,10 +2028,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['phoneNumber'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['phoneNumber'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async phoneNumbers(info: GraphQLResolveInfo, input?: dto.ListPhoneNumberInput) {
@@ -2030,17 +2105,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['phoneNumber'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['phoneNumber'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deletePhoneNumber(id: string) {
-    return this.data['phoneNumber'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['phoneNumber'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createPlan(info: GraphQLResolveInfo, input: dto.CreatePlanInput) {
@@ -2068,10 +2147,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['plan'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['plan'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async plans(info: GraphQLResolveInfo, input?: dto.ListPlanInput) {
@@ -2142,17 +2223,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['plan'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['plan'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deletePlan(id: string) {
-    return this.data['plan'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['plan'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createRole(info: GraphQLResolveInfo, input: dto.CreateRoleInput) {
@@ -2191,10 +2276,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['role'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['role'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async roles(info: GraphQLResolveInfo, input?: dto.ListRoleInput) {
@@ -2276,17 +2363,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['role'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['role'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteRole(id: string) {
-    return this.data['role'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['role'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createSecurityEvent(info: GraphQLResolveInfo, input: dto.CreateSecurityEventInput) {
@@ -2314,10 +2405,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['securityEvent'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['securityEvent'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async securityEvents(info: GraphQLResolveInfo, input?: dto.ListSecurityEventInput) {
@@ -2392,17 +2485,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['securityEvent'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['securityEvent'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteSecurityEvent(id: string) {
-    return this.data['securityEvent'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['securityEvent'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createSubscription(info: GraphQLResolveInfo, input: dto.CreateSubscriptionInput) {
@@ -2431,10 +2528,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['subscription'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['subscription'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async subscriptions(info: GraphQLResolveInfo, input?: dto.ListSubscriptionInput) {
@@ -2510,17 +2609,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['subscription'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['subscription'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteSubscription(id: string) {
-    return this.data['subscription'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['subscription'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createTeam(info: GraphQLResolveInfo, input: dto.CreateTeamInput) {
@@ -2549,10 +2652,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['team'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['team'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async teams(info: GraphQLResolveInfo, input?: dto.ListTeamInput) {
@@ -2624,17 +2729,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['team'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['team'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteTeam(id: string) {
-    return this.data['team'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['team'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createTeamMember(info: GraphQLResolveInfo, input: dto.CreateTeamMemberInput) {
@@ -2664,10 +2773,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['teamMember'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['teamMember'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async teamMembers(info: GraphQLResolveInfo, input?: dto.ListTeamMemberInput) {
@@ -2740,17 +2851,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['teamMember'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['teamMember'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteTeamMember(id: string) {
-    return this.data['teamMember'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['teamMember'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createStoredFile(info: GraphQLResolveInfo, input: dto.CreateStoredFileInput) {
@@ -2786,10 +2901,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['storedFile'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['storedFile'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async storedFiles(info: GraphQLResolveInfo, input?: dto.ListStoredFileInput) {
@@ -2868,17 +2985,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['storedFile'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['storedFile'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteStoredFile(id: string) {
-    return this.data['storedFile'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['storedFile'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createUser(info: GraphQLResolveInfo, input: dto.CreateUserInput) {
@@ -2937,10 +3058,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['user'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['user'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async users(info: GraphQLResolveInfo, input?: dto.ListUserInput) {
@@ -3042,17 +3165,21 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['user'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['user'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteUser(id: string) {
-    return this.data['user'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['user'].delete({
+        where: { id },
+      }),
+    )
   }
 
   async createUserPreference(info: GraphQLResolveInfo, input: dto.CreateUserPreferenceInput) {
@@ -3080,10 +3207,12 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['userPreference'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['userPreference'].create({
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async userPreferences(info: GraphQLResolveInfo, input?: dto.ListUserPreferenceInput) {
@@ -3158,16 +3287,20 @@ export class ApiCrudDataAccessService {
       }
     }
 
-    return this.data['userPreference'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
+    return retryWrite(() =>
+      this.data['userPreference'].update({
+        where: { id },
+        data,
+        select: buildAdminSelect(info),
+      }),
+    )
   }
 
   async deleteUserPreference(id: string) {
-    return this.data['userPreference'].delete({
-      where: { id },
-    })
+    return retryWrite(() =>
+      this.data['userPreference'].delete({
+        where: { id },
+      }),
+    )
   }
 }
