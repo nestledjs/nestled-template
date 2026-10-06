@@ -906,39 +906,6 @@ export class UserPreferenceFilterInput3 {
 }
 
 @InputType()
-export class UserSessionFilterInput3 {
-  @Field(() => StringFilterInput, { nullable: true })
-  id?: StringFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  createdAt?: DateTimeFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  updatedAt?: DateTimeFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  lastActiveAt?: DateTimeFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  userId?: StringFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  deviceInfo?: StringFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  ipAddress?: StringFilterInput
-
-  @Field(() => BooleanFilterInput, { nullable: true })
-  isValid?: BooleanFilterInput
-
-  @Field(() => BooleanFilterInput, { nullable: true })
-  twoFactorVerified?: BooleanFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  expiresAt?: DateTimeFilterInput
-}
-
-@InputType()
 export class AddressListRelationFilterInput2 {
   @Field(() => AddressFilterInput3, { nullable: true })
   some?: AddressFilterInput3
@@ -1152,18 +1119,6 @@ export class UserPreferenceListRelationFilterInput2 {
 
   @Field(() => UserPreferenceFilterInput3, { nullable: true })
   none?: UserPreferenceFilterInput3
-}
-
-@InputType()
-export class UserSessionListRelationFilterInput2 {
-  @Field(() => UserSessionFilterInput3, { nullable: true })
-  some?: UserSessionFilterInput3
-
-  @Field(() => UserSessionFilterInput3, { nullable: true })
-  every?: UserSessionFilterInput3
-
-  @Field(() => UserSessionFilterInput3, { nullable: true })
-  none?: UserSessionFilterInput3
 }
 
 @InputType()
@@ -2515,9 +2470,6 @@ export class UserFilterInput2 {
   @Field(() => TwoFactorMethodFilterInput, { nullable: true })
   twoFactorMethod?: TwoFactorMethodFilterInput
 
-  @Field(() => UserSessionListRelationFilterInput2, { nullable: true })
-  activeSessions?: UserSessionListRelationFilterInput2
-
   @Field(() => LoginAttemptListRelationFilterInput2, { nullable: true })
   loginAttempts?: LoginAttemptListRelationFilterInput2
 
@@ -2604,51 +2556,6 @@ export class UserPreferenceFilterInput2 {
 
   @Field(() => [UserPreferenceFilterInput3], { nullable: true })
   NOT?: UserPreferenceFilterInput3[]
-}
-
-@InputType()
-export class UserSessionFilterInput2 {
-  @Field(() => StringFilterInput, { nullable: true })
-  id?: StringFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  createdAt?: DateTimeFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  updatedAt?: DateTimeFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  lastActiveAt?: DateTimeFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  userId?: StringFilterInput
-
-  @Field(() => UserRelationFilterInput2, { nullable: true })
-  user?: UserRelationFilterInput2
-
-  @Field(() => StringFilterInput, { nullable: true })
-  deviceInfo?: StringFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  ipAddress?: StringFilterInput
-
-  @Field(() => BooleanFilterInput, { nullable: true })
-  isValid?: BooleanFilterInput
-
-  @Field(() => BooleanFilterInput, { nullable: true })
-  twoFactorVerified?: BooleanFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  expiresAt?: DateTimeFilterInput
-
-  @Field(() => [UserSessionFilterInput3], { nullable: true })
-  AND?: UserSessionFilterInput3[]
-
-  @Field(() => [UserSessionFilterInput3], { nullable: true })
-  OR?: UserSessionFilterInput3[]
-
-  @Field(() => [UserSessionFilterInput3], { nullable: true })
-  NOT?: UserSessionFilterInput3[]
 }
 
 @InputType()
@@ -2865,18 +2772,6 @@ export class UserPreferenceListRelationFilterInput {
 
   @Field(() => UserPreferenceFilterInput2, { nullable: true })
   none?: UserPreferenceFilterInput2
-}
-
-@InputType()
-export class UserSessionListRelationFilterInput {
-  @Field(() => UserSessionFilterInput2, { nullable: true })
-  some?: UserSessionFilterInput2
-
-  @Field(() => UserSessionFilterInput2, { nullable: true })
-  every?: UserSessionFilterInput2
-
-  @Field(() => UserSessionFilterInput2, { nullable: true })
-  none?: UserSessionFilterInput2
 }
 
 @InputType()
@@ -3375,9 +3270,6 @@ export class UserRelationFilterInput {
 
   @Field(() => TwoFactorMethodFilterInput, { nullable: true })
   twoFactorMethod?: TwoFactorMethodFilterInput
-
-  @Field(() => UserSessionListRelationFilterInput2, { nullable: true })
-  activeSessions?: UserSessionListRelationFilterInput2
 
   @Field(() => LoginAttemptListRelationFilterInput2, { nullable: true })
   loginAttempts?: LoginAttemptListRelationFilterInput2
@@ -4474,9 +4366,6 @@ export class UserFilterInput {
   @Field(() => TwoFactorMethodFilterInput, { nullable: true })
   twoFactorMethod?: TwoFactorMethodFilterInput
 
-  @Field(() => UserSessionListRelationFilterInput, { nullable: true })
-  activeSessions?: UserSessionListRelationFilterInput
-
   @Field(() => LoginAttemptListRelationFilterInput, { nullable: true })
   loginAttempts?: LoginAttemptListRelationFilterInput
 
@@ -4565,53 +4454,6 @@ export class UserPreferenceFilterInput {
 
   @Field(() => [UserPreferenceFilterInput2], { nullable: true })
   NOT?: UserPreferenceFilterInput2[]
-}
-
-@InputType()
-export class UserSessionFilterInput {
-  [key: string]: unknown
-
-  @Field(() => StringFilterInput, { nullable: true })
-  id?: StringFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  createdAt?: DateTimeFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  updatedAt?: DateTimeFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  lastActiveAt?: DateTimeFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  userId?: StringFilterInput
-
-  @Field(() => UserRelationFilterInput, { nullable: true })
-  user?: UserRelationFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  deviceInfo?: StringFilterInput
-
-  @Field(() => StringFilterInput, { nullable: true })
-  ipAddress?: StringFilterInput
-
-  @Field(() => BooleanFilterInput, { nullable: true })
-  isValid?: BooleanFilterInput
-
-  @Field(() => BooleanFilterInput, { nullable: true })
-  twoFactorVerified?: BooleanFilterInput
-
-  @Field(() => DateTimeFilterInput, { nullable: true })
-  expiresAt?: DateTimeFilterInput
-
-  @Field(() => [UserSessionFilterInput2], { nullable: true })
-  AND?: UserSessionFilterInput2[]
-
-  @Field(() => [UserSessionFilterInput2], { nullable: true })
-  OR?: UserSessionFilterInput2[]
-
-  @Field(() => [UserSessionFilterInput2], { nullable: true })
-  NOT?: UserSessionFilterInput2[]
 }
 
 @InputType()
@@ -5094,15 +4936,6 @@ export class CreateEmailInput {
   public?: boolean
 
   @Field({ nullable: true })
-  primary?: boolean
-
-  @Field({ nullable: true })
-  verified?: boolean
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  verifyExpires?: Date
-
-  @Field({ nullable: true })
   userId?: string
 
   @Field(() => EmailType, { nullable: true })
@@ -5128,15 +4961,6 @@ export class UpdateEmailInput {
 
   @Field({ nullable: true })
   public?: boolean
-
-  @Field({ nullable: true })
-  primary?: boolean
-
-  @Field({ nullable: true })
-  verified?: boolean
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  verifyExpires?: Date
 
   @Field({ nullable: true })
   userId?: string
@@ -6708,16 +6532,10 @@ export class CreateUserInput {
   lastName?: string
 
   @Field({ nullable: true })
-  isSuperAdmin?: boolean
-
-  @Field({ nullable: true })
   bio?: string
 
   @Field({ nullable: true })
   displayName?: string
-
-  @Field({ nullable: true })
-  emailValidated?: boolean
 
   @Field({ nullable: true })
   avatarId?: string
@@ -6775,9 +6593,6 @@ export class CreateUserInput {
 
   @Field(() => [String], { nullable: true })
   invitesSentIds?: string[]
-
-  @Field(() => [String], { nullable: true })
-  activeSessionsIds?: string[]
 
   @Field(() => [String], { nullable: true })
   loginAttemptsIds?: string[]
@@ -6819,16 +6634,10 @@ export class UpdateUserInput {
   lastName?: string
 
   @Field({ nullable: true })
-  isSuperAdmin?: boolean
-
-  @Field({ nullable: true })
   bio?: string
 
   @Field({ nullable: true })
   displayName?: string
-
-  @Field({ nullable: true })
-  emailValidated?: boolean
 
   @Field({ nullable: true })
   avatarId?: string
@@ -6886,9 +6695,6 @@ export class UpdateUserInput {
 
   @Field(() => [String], { nullable: true })
   invitesSentIds?: string[]
-
-  @Field(() => [String], { nullable: true })
-  activeSessionsIds?: string[]
 
   @Field(() => [String], { nullable: true })
   loginAttemptsIds?: string[]
@@ -7002,9 +6808,6 @@ export class ListUserInput extends CorePagingInput {
   invitesSentIds?: string[]
 
   @Field(() => [String], { nullable: true })
-  activeSessionsIds?: string[]
-
-  @Field(() => [String], { nullable: true })
   loginAttemptsIds?: string[]
 
   @Field(() => [String], { nullable: true })
@@ -7090,106 +6893,4 @@ export class ListUserPreferenceInput extends CorePagingInput {
 
   @Field({ nullable: true })
   value?: string
-}
-
-@InputType()
-export class CreateUserSessionInput {
-  @Field({ nullable: true })
-  id?: string
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  createdAt?: Date
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  updatedAt?: Date
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  lastActiveAt?: Date
-
-  @Field({ nullable: false })
-  userId!: string
-
-  @Field({ nullable: true })
-  deviceInfo?: string
-
-  @Field({ nullable: true })
-  ipAddress?: string
-
-  @Field({ nullable: true })
-  isValid?: boolean
-
-  @Field({ nullable: true })
-  twoFactorVerified?: boolean
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  expiresAt?: Date
-}
-
-@InputType()
-export class UpdateUserSessionInput {
-  @Field({ nullable: true })
-  id?: string
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  createdAt?: Date
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  updatedAt?: Date
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  lastActiveAt?: Date
-
-  @Field({ nullable: true })
-  userId?: string
-
-  @Field({ nullable: true })
-  deviceInfo?: string
-
-  @Field({ nullable: true })
-  ipAddress?: string
-
-  @Field({ nullable: true })
-  isValid?: boolean
-
-  @Field({ nullable: true })
-  twoFactorVerified?: boolean
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  expiresAt?: Date
-}
-
-@InputType()
-export class ListUserSessionInput extends CorePagingInput {
-  @Field(() => UserSessionFilterInput, { nullable: true })
-  filters?: UserSessionFilterInput = undefined
-
-  @Field({ nullable: true })
-  id?: string
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  createdAt?: Date
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  updatedAt?: Date
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  lastActiveAt?: Date
-
-  @Field({ nullable: true })
-  userId?: string
-
-  @Field({ nullable: true })
-  deviceInfo?: string
-
-  @Field({ nullable: true })
-  ipAddress?: string
-
-  @Field({ nullable: true })
-  isValid?: boolean
-
-  @Field({ nullable: true })
-  twoFactorVerified?: boolean
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  expiresAt?: Date
 }

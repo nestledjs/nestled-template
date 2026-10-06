@@ -254,6 +254,49 @@ export type AdminSecurityEventsResponse = {
   total: Scalars['Int']['output']
 }
 
+export type AdminUserDetails = {
+  __typename?: 'AdminUserDetails'
+  AuditLog?: Maybe<Array<AuditLog>>
+  SecurityEvent?: Maybe<Array<SecurityEvent>>
+  TeamMember?: Maybe<Array<TeamMember>>
+  UserPreference?: Maybe<Array<UserPreference>>
+  activeOrganizationId?: Maybe<Scalars['String']['output']>
+  activeSessions: Array<AdminUserSession>
+  addresses?: Maybe<Array<Address>>
+  apiTokens?: Maybe<Array<ApiToken>>
+  avatar?: Maybe<StoredFile>
+  avatarId?: Maybe<Scalars['String']['output']>
+  bio?: Maybe<Scalars['String']['output']>
+  createdAt: Scalars['DateTime']['output']
+  deactivatedAt?: Maybe<Scalars['DateTime']['output']>
+  displayName?: Maybe<Scalars['String']['output']>
+  emailValidated: Scalars['Boolean']['output']
+  emails?: Maybe<Array<Email>>
+  failedLoginCount: Scalars['Int']['output']
+  firstName?: Maybe<Scalars['String']['output']>
+  id: Scalars['String']['output']
+  images?: Maybe<Array<StoredFile>>
+  invitesSent?: Maybe<Array<Invite>>
+  isActive: Scalars['Boolean']['output']
+  isEmulating?: Maybe<Scalars['Boolean']['output']>
+  isSuperAdmin: Scalars['Boolean']['output']
+  lastFailedLogin?: Maybe<Scalars['DateTime']['output']>
+  lastName?: Maybe<Scalars['String']['output']>
+  lastSuccessfulLogin?: Maybe<Scalars['DateTime']['output']>
+  links?: Maybe<Array<Link>>
+  lockedUntil?: Maybe<Scalars['DateTime']['output']>
+  loginAttempts?: Maybe<Array<LoginAttempt>>
+  oAuthAccounts?: Maybe<Array<OAuthAccount>>
+  organizations?: Maybe<Array<OrganizationMember>>
+  originalAdminId?: Maybe<Scalars['String']['output']>
+  phoneNumbers?: Maybe<Array<PhoneNumber>>
+  privacyPolicyAcceptedAt?: Maybe<Scalars['DateTime']['output']>
+  termsAcceptedAt?: Maybe<Scalars['DateTime']['output']>
+  twoFactorEnabled: Scalars['Boolean']['output']
+  twoFactorMethod: TwoFactorMethod
+  updatedAt: Scalars['DateTime']['output']
+}
+
 export type AdminUserFiltersInput = {
   accountLocked?: InputMaybe<Scalars['Boolean']['input']>
   emailVerified?: InputMaybe<Scalars['Boolean']['input']>
@@ -269,6 +312,15 @@ export type AdminUserFiltersInput = {
   sortOrder?: InputMaybe<Scalars['String']['input']>
   take?: InputMaybe<Scalars['Float']['input']>
   twoFactorEnabled?: InputMaybe<Scalars['Boolean']['input']>
+}
+
+export type AdminUserSession = {
+  __typename?: 'AdminUserSession'
+  deviceInfo?: Maybe<Scalars['String']['output']>
+  id: Scalars['String']['output']
+  ipAddress?: Maybe<Scalars['String']['output']>
+  isValid: Scalars['Boolean']['output']
+  lastActiveAt: Scalars['DateTime']['output']
 }
 
 export type AdminUsersResponse = {
@@ -638,12 +690,9 @@ export type CreateEmailInput = {
   emailType?: InputMaybe<EmailType>
   id?: InputMaybe<Scalars['String']['input']>
   organizationId?: InputMaybe<Scalars['String']['input']>
-  primary?: InputMaybe<Scalars['Boolean']['input']>
   public?: InputMaybe<Scalars['Boolean']['input']>
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
   userId?: InputMaybe<Scalars['String']['input']>
-  verified?: InputMaybe<Scalars['Boolean']['input']>
-  verifyExpires?: InputMaybe<Scalars['DateTime']['input']>
 }
 
 export type CreateInvitationInput = {
@@ -863,7 +912,6 @@ export type CreateUserInput = {
   TeamMemberIds?: InputMaybe<Array<Scalars['String']['input']>>
   UserPreferenceIds?: InputMaybe<Array<Scalars['String']['input']>>
   activeOrganizationId?: InputMaybe<Scalars['String']['input']>
-  activeSessionsIds?: InputMaybe<Array<Scalars['String']['input']>>
   addressesIds?: InputMaybe<Array<Scalars['String']['input']>>
   apiTokensIds?: InputMaybe<Array<Scalars['String']['input']>>
   avatarId?: InputMaybe<Scalars['String']['input']>
@@ -871,7 +919,6 @@ export type CreateUserInput = {
   createdAt?: InputMaybe<Scalars['DateTime']['input']>
   deactivatedAt?: InputMaybe<Scalars['DateTime']['input']>
   displayName?: InputMaybe<Scalars['String']['input']>
-  emailValidated?: InputMaybe<Scalars['Boolean']['input']>
   emailsIds?: InputMaybe<Array<Scalars['String']['input']>>
   failedLoginCount?: InputMaybe<Scalars['Int']['input']>
   firstName?: InputMaybe<Scalars['String']['input']>
@@ -879,7 +926,6 @@ export type CreateUserInput = {
   imagesIds?: InputMaybe<Array<Scalars['String']['input']>>
   invitesSentIds?: InputMaybe<Array<Scalars['String']['input']>>
   isActive?: InputMaybe<Scalars['Boolean']['input']>
-  isSuperAdmin?: InputMaybe<Scalars['Boolean']['input']>
   lastFailedLogin?: InputMaybe<Scalars['DateTime']['input']>
   lastName?: InputMaybe<Scalars['String']['input']>
   lastSuccessfulLogin?: InputMaybe<Scalars['DateTime']['input']>
@@ -903,19 +949,6 @@ export type CreateUserPreferenceInput = {
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
   userId: Scalars['String']['input']
   value: Scalars['String']['input']
-}
-
-export type CreateUserSessionInput = {
-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
-  deviceInfo?: InputMaybe<Scalars['String']['input']>
-  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
-  id?: InputMaybe<Scalars['String']['input']>
-  ipAddress?: InputMaybe<Scalars['String']['input']>
-  isValid?: InputMaybe<Scalars['Boolean']['input']>
-  lastActiveAt?: InputMaybe<Scalars['DateTime']['input']>
-  twoFactorVerified?: InputMaybe<Scalars['Boolean']['input']>
-  updatedAt?: InputMaybe<Scalars['DateTime']['input']>
-  userId: Scalars['String']['input']
 }
 
 export type DateTimeFilterInput = {
@@ -1684,7 +1717,6 @@ export type ListUserInput = {
   TeamMemberIds?: InputMaybe<Array<Scalars['String']['input']>>
   UserPreferenceIds?: InputMaybe<Array<Scalars['String']['input']>>
   activeOrganizationId?: InputMaybe<Scalars['String']['input']>
-  activeSessionsIds?: InputMaybe<Array<Scalars['String']['input']>>
   addressesIds?: InputMaybe<Array<Scalars['String']['input']>>
   apiTokensIds?: InputMaybe<Array<Scalars['String']['input']>>
   avatarId?: InputMaybe<Scalars['String']['input']>
@@ -1738,26 +1770,6 @@ export type ListUserPreferenceInput = {
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
   userId?: InputMaybe<Scalars['String']['input']>
   value?: InputMaybe<Scalars['String']['input']>
-}
-
-export type ListUserSessionInput = {
-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
-  deviceInfo?: InputMaybe<Scalars['String']['input']>
-  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
-  filters?: InputMaybe<UserSessionFilterInput>
-  id?: InputMaybe<Scalars['String']['input']>
-  ipAddress?: InputMaybe<Scalars['String']['input']>
-  isValid?: InputMaybe<Scalars['Boolean']['input']>
-  lastActiveAt?: InputMaybe<Scalars['DateTime']['input']>
-  orderBy?: InputMaybe<Scalars['String']['input']>
-  orderDirection?: InputMaybe<Scalars['String']['input']>
-  search?: InputMaybe<Scalars['String']['input']>
-  searchFields?: InputMaybe<Array<Scalars['String']['input']>>
-  skip?: InputMaybe<Scalars['Float']['input']>
-  take?: InputMaybe<Scalars['Float']['input']>
-  twoFactorVerified?: InputMaybe<Scalars['Boolean']['input']>
-  updatedAt?: InputMaybe<Scalars['DateTime']['input']>
-  userId?: InputMaybe<Scalars['String']['input']>
 }
 
 export type LoginAttempt = {
@@ -1880,7 +1892,6 @@ export type Mutation = {
   createTeamMember?: Maybe<TeamMember>
   createUser?: Maybe<User>
   createUserPreference?: Maybe<UserPreference>
-  createUserSession?: Maybe<UserSession>
   deleteAddress?: Maybe<Address>
   deleteApiToken?: Maybe<ApiToken>
   deleteAuditLog?: Maybe<AuditLog>
@@ -1906,7 +1917,6 @@ export type Mutation = {
   deleteUser?: Maybe<User>
   deleteUserAccount: Scalars['Boolean']['output']
   deleteUserPreference?: Maybe<UserPreference>
-  deleteUserSession?: Maybe<UserSession>
   disable2FA: Scalars['Boolean']['output']
   emulateUser?: Maybe<UserToken>
   enable2FA: Enable2FaOutput
@@ -1968,7 +1978,6 @@ export type Mutation = {
   updateTeamMember?: Maybe<TeamMember>
   updateUser?: Maybe<User>
   updateUserPreference?: Maybe<UserPreference>
-  updateUserSession?: Maybe<UserSession>
   uploadFile: UploadedFile
   uploadOrganizationLogo: UploadedFile
   uploadUserAvatar: UploadedFile
@@ -2132,10 +2141,6 @@ export type MutationCreateUserPreferenceArgs = {
   input: CreateUserPreferenceInput
 }
 
-export type MutationCreateUserSessionArgs = {
-  input: CreateUserSessionInput
-}
-
 export type MutationDeleteAddressArgs = {
   addressId: Scalars['String']['input']
 }
@@ -2230,10 +2235,6 @@ export type MutationDeleteUserArgs = {
 
 export type MutationDeleteUserPreferenceArgs = {
   userPreferenceId: Scalars['String']['input']
-}
-
-export type MutationDeleteUserSessionArgs = {
-  userSessionId: Scalars['String']['input']
 }
 
 export type MutationDisable2FaArgs = {
@@ -2466,11 +2467,6 @@ export type MutationUpdateUserArgs = {
 export type MutationUpdateUserPreferenceArgs = {
   input: UpdateUserPreferenceInput
   userPreferenceId: Scalars['String']['input']
-}
-
-export type MutationUpdateUserSessionArgs = {
-  input: UpdateUserSessionInput
-  userSessionId: Scalars['String']['input']
 }
 
 export type MutationUploadFileArgs = {
@@ -3085,7 +3081,7 @@ export type Query = {
   adminDashboardStats: AdminDashboardStats
   adminOrganizations: AdminOrganizationsResponse
   adminSecurityEvents: AdminSecurityEventsResponse
-  adminUserDetails: User
+  adminUserDetails: AdminUserDetails
   adminUsers: AdminUsersResponse
   apiToken?: Maybe<ApiToken>
   apiTokens?: Maybe<Array<ApiToken>>
@@ -3176,9 +3172,6 @@ export type Query = {
   userPreferences?: Maybe<Array<UserPreference>>
   userPreferencesCount?: Maybe<CorePaging>
   userSecurityEvents: Array<SecurityEvent>
-  userSession?: Maybe<UserSession>
-  userSessions?: Maybe<Array<UserSession>>
-  userSessionsCount?: Maybe<CorePaging>
   users?: Maybe<Array<User>>
   usersCount?: Maybe<CorePaging>
 }
@@ -3516,18 +3509,6 @@ export type QueryUserPreferencesCountArgs = {
 
 export type QueryUserSecurityEventsArgs = {
   limit?: InputMaybe<Scalars['Float']['input']>
-}
-
-export type QueryUserSessionArgs = {
-  userSessionId: Scalars['String']['input']
-}
-
-export type QueryUserSessionsArgs = {
-  input?: InputMaybe<ListUserSessionInput>
-}
-
-export type QueryUserSessionsCountArgs = {
-  input?: InputMaybe<ListUserSessionInput>
 }
 
 export type QueryUsersArgs = {
@@ -4387,12 +4368,9 @@ export type UpdateEmailInput = {
   emailType?: InputMaybe<EmailType>
   id?: InputMaybe<Scalars['String']['input']>
   organizationId?: InputMaybe<Scalars['String']['input']>
-  primary?: InputMaybe<Scalars['Boolean']['input']>
   public?: InputMaybe<Scalars['Boolean']['input']>
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
   userId?: InputMaybe<Scalars['String']['input']>
-  verified?: InputMaybe<Scalars['Boolean']['input']>
-  verifyExpires?: InputMaybe<Scalars['DateTime']['input']>
 }
 
 export type UpdateInviteInput = {
@@ -4620,7 +4598,6 @@ export type UpdateUserInput = {
   TeamMemberIds?: InputMaybe<Array<Scalars['String']['input']>>
   UserPreferenceIds?: InputMaybe<Array<Scalars['String']['input']>>
   activeOrganizationId?: InputMaybe<Scalars['String']['input']>
-  activeSessionsIds?: InputMaybe<Array<Scalars['String']['input']>>
   addressesIds?: InputMaybe<Array<Scalars['String']['input']>>
   apiTokensIds?: InputMaybe<Array<Scalars['String']['input']>>
   avatarId?: InputMaybe<Scalars['String']['input']>
@@ -4628,7 +4605,6 @@ export type UpdateUserInput = {
   createdAt?: InputMaybe<Scalars['DateTime']['input']>
   deactivatedAt?: InputMaybe<Scalars['DateTime']['input']>
   displayName?: InputMaybe<Scalars['String']['input']>
-  emailValidated?: InputMaybe<Scalars['Boolean']['input']>
   emailsIds?: InputMaybe<Array<Scalars['String']['input']>>
   failedLoginCount?: InputMaybe<Scalars['Int']['input']>
   firstName?: InputMaybe<Scalars['String']['input']>
@@ -4636,7 +4612,6 @@ export type UpdateUserInput = {
   imagesIds?: InputMaybe<Array<Scalars['String']['input']>>
   invitesSentIds?: InputMaybe<Array<Scalars['String']['input']>>
   isActive?: InputMaybe<Scalars['Boolean']['input']>
-  isSuperAdmin?: InputMaybe<Scalars['Boolean']['input']>
   lastFailedLogin?: InputMaybe<Scalars['DateTime']['input']>
   lastName?: InputMaybe<Scalars['String']['input']>
   lastSuccessfulLogin?: InputMaybe<Scalars['DateTime']['input']>
@@ -4660,19 +4635,6 @@ export type UpdateUserPreferenceInput = {
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
   userId?: InputMaybe<Scalars['String']['input']>
   value?: InputMaybe<Scalars['String']['input']>
-}
-
-export type UpdateUserSessionInput = {
-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
-  deviceInfo?: InputMaybe<Scalars['String']['input']>
-  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
-  id?: InputMaybe<Scalars['String']['input']>
-  ipAddress?: InputMaybe<Scalars['String']['input']>
-  isValid?: InputMaybe<Scalars['Boolean']['input']>
-  lastActiveAt?: InputMaybe<Scalars['DateTime']['input']>
-  twoFactorVerified?: InputMaybe<Scalars['Boolean']['input']>
-  updatedAt?: InputMaybe<Scalars['DateTime']['input']>
-  userId?: InputMaybe<Scalars['String']['input']>
 }
 
 export type UploadedFile = {
@@ -4703,7 +4665,6 @@ export type User = {
   TeamMember?: Maybe<Array<TeamMember>>
   UserPreference?: Maybe<Array<UserPreference>>
   activeOrganizationId?: Maybe<Scalars['String']['output']>
-  activeSessions?: Maybe<Array<UserSession>>
   addresses?: Maybe<Array<Address>>
   apiTokens?: Maybe<Array<ApiToken>>
   avatar?: Maybe<StoredFile>
@@ -4752,7 +4713,6 @@ export type UserFilterInput = {
   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput>
   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput>
   activeOrganizationId?: InputMaybe<StringFilterInput>
-  activeSessions?: InputMaybe<UserSessionListRelationFilterInput>
   addresses?: InputMaybe<AddressListRelationFilterInput>
   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput>
   avatar?: InputMaybe<StoredFileRelationFilterInput>
@@ -4795,7 +4755,6 @@ export type UserFilterInput2 = {
   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput2>
   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput2>
   activeOrganizationId?: InputMaybe<StringFilterInput>
-  activeSessions?: InputMaybe<UserSessionListRelationFilterInput2>
   addresses?: InputMaybe<AddressListRelationFilterInput2>
   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
   avatar?: InputMaybe<StoredFileRelationFilterInput2>
@@ -4920,7 +4879,6 @@ export type UserRelationFilterInput = {
   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput2>
   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput2>
   activeOrganizationId?: InputMaybe<StringFilterInput>
-  activeSessions?: InputMaybe<UserSessionListRelationFilterInput2>
   addresses?: InputMaybe<AddressListRelationFilterInput2>
   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
   avatar?: InputMaybe<StoredFileRelationFilterInput2>
@@ -4980,80 +4938,6 @@ export type UserRelationFilterInput2 = {
   twoFactorEnabled?: InputMaybe<BooleanFilterInput>
   twoFactorMethod?: InputMaybe<TwoFactorMethodFilterInput>
   updatedAt?: InputMaybe<DateTimeFilterInput>
-}
-
-export type UserSession = {
-  __typename?: 'UserSession'
-  createdAt: Scalars['DateTime']['output']
-  deviceInfo?: Maybe<Scalars['String']['output']>
-  expiresAt?: Maybe<Scalars['DateTime']['output']>
-  id: Scalars['String']['output']
-  ipAddress?: Maybe<Scalars['String']['output']>
-  isValid: Scalars['Boolean']['output']
-  lastActiveAt: Scalars['DateTime']['output']
-  twoFactorVerified: Scalars['Boolean']['output']
-  updatedAt: Scalars['DateTime']['output']
-  user?: Maybe<User>
-  userId: Scalars['String']['output']
-}
-
-export type UserSessionFilterInput = {
-  AND?: InputMaybe<Array<UserSessionFilterInput2>>
-  NOT?: InputMaybe<Array<UserSessionFilterInput2>>
-  OR?: InputMaybe<Array<UserSessionFilterInput2>>
-  createdAt?: InputMaybe<DateTimeFilterInput>
-  deviceInfo?: InputMaybe<StringFilterInput>
-  expiresAt?: InputMaybe<DateTimeFilterInput>
-  id?: InputMaybe<StringFilterInput>
-  ipAddress?: InputMaybe<StringFilterInput>
-  isValid?: InputMaybe<BooleanFilterInput>
-  lastActiveAt?: InputMaybe<DateTimeFilterInput>
-  twoFactorVerified?: InputMaybe<BooleanFilterInput>
-  updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserRelationFilterInput>
-  userId?: InputMaybe<StringFilterInput>
-}
-
-export type UserSessionFilterInput2 = {
-  AND?: InputMaybe<Array<UserSessionFilterInput3>>
-  NOT?: InputMaybe<Array<UserSessionFilterInput3>>
-  OR?: InputMaybe<Array<UserSessionFilterInput3>>
-  createdAt?: InputMaybe<DateTimeFilterInput>
-  deviceInfo?: InputMaybe<StringFilterInput>
-  expiresAt?: InputMaybe<DateTimeFilterInput>
-  id?: InputMaybe<StringFilterInput>
-  ipAddress?: InputMaybe<StringFilterInput>
-  isValid?: InputMaybe<BooleanFilterInput>
-  lastActiveAt?: InputMaybe<DateTimeFilterInput>
-  twoFactorVerified?: InputMaybe<BooleanFilterInput>
-  updatedAt?: InputMaybe<DateTimeFilterInput>
-  user?: InputMaybe<UserRelationFilterInput2>
-  userId?: InputMaybe<StringFilterInput>
-}
-
-export type UserSessionFilterInput3 = {
-  createdAt?: InputMaybe<DateTimeFilterInput>
-  deviceInfo?: InputMaybe<StringFilterInput>
-  expiresAt?: InputMaybe<DateTimeFilterInput>
-  id?: InputMaybe<StringFilterInput>
-  ipAddress?: InputMaybe<StringFilterInput>
-  isValid?: InputMaybe<BooleanFilterInput>
-  lastActiveAt?: InputMaybe<DateTimeFilterInput>
-  twoFactorVerified?: InputMaybe<BooleanFilterInput>
-  updatedAt?: InputMaybe<DateTimeFilterInput>
-  userId?: InputMaybe<StringFilterInput>
-}
-
-export type UserSessionListRelationFilterInput = {
-  every?: InputMaybe<UserSessionFilterInput2>
-  none?: InputMaybe<UserSessionFilterInput2>
-  some?: InputMaybe<UserSessionFilterInput2>
-}
-
-export type UserSessionListRelationFilterInput2 = {
-  every?: InputMaybe<UserSessionFilterInput3>
-  none?: InputMaybe<UserSessionFilterInput3>
-  some?: InputMaybe<UserSessionFilterInput3>
 }
 
 export type UserSessionOutput = {
@@ -8409,166 +8293,6 @@ export type __AdminUserPreferencePaginationQuery = {
   } | null
 }
 
-export type __AdminUserSessionSummaryFragment = {
-  __typename?: 'UserSession'
-  id: string
-  createdAt: any
-  updatedAt: any
-  lastActiveAt: any
-  userId: string
-  deviceInfo?: string | null
-  ipAddress?: string | null
-  isValid: boolean
-  twoFactorVerified: boolean
-  expiresAt?: any | null
-  user?: { __typename?: 'User'; id: string } | null
-}
-
-export type __AdminUserSessionDetailsFragment = {
-  __typename?: 'UserSession'
-  id: string
-  createdAt: any
-  updatedAt: any
-  lastActiveAt: any
-  userId: string
-  deviceInfo?: string | null
-  ipAddress?: string | null
-  isValid: boolean
-  twoFactorVerified: boolean
-  expiresAt?: any | null
-  user?: { __typename?: 'User'; id: string } | null
-}
-
-export type __AdminCreateUserSessionMutationVariables = Exact<{
-  input: CreateUserSessionInput
-}>
-
-export type __AdminCreateUserSessionMutation = {
-  __typename?: 'Mutation'
-  createUserSession?: {
-    __typename?: 'UserSession'
-    id: string
-    createdAt: any
-    updatedAt: any
-    lastActiveAt: any
-    userId: string
-    deviceInfo?: string | null
-    ipAddress?: string | null
-    isValid: boolean
-    twoFactorVerified: boolean
-    expiresAt?: any | null
-    user?: { __typename?: 'User'; id: string } | null
-  } | null
-}
-
-export type __AdminDeleteUserSessionMutationVariables = Exact<{
-  userSessionId: Scalars['String']['input']
-}>
-
-export type __AdminDeleteUserSessionMutation = {
-  __typename?: 'Mutation'
-  deleteUserSession?: { __typename?: 'UserSession'; id: string } | null
-}
-
-export type __AdminUpdateUserSessionMutationVariables = Exact<{
-  userSessionId: Scalars['String']['input']
-  input: UpdateUserSessionInput
-}>
-
-export type __AdminUpdateUserSessionMutation = {
-  __typename?: 'Mutation'
-  updateUserSession?: {
-    __typename?: 'UserSession'
-    id: string
-    createdAt: any
-    updatedAt: any
-    lastActiveAt: any
-    userId: string
-    deviceInfo?: string | null
-    ipAddress?: string | null
-    isValid: boolean
-    twoFactorVerified: boolean
-    expiresAt?: any | null
-    user?: { __typename?: 'User'; id: string } | null
-  } | null
-}
-
-export type __AdminUserSessionQueryVariables = Exact<{
-  userSessionId: Scalars['String']['input']
-}>
-
-export type __AdminUserSessionQuery = {
-  __typename?: 'Query'
-  userSession?: {
-    __typename?: 'UserSession'
-    id: string
-    createdAt: any
-    updatedAt: any
-    lastActiveAt: any
-    userId: string
-    deviceInfo?: string | null
-    ipAddress?: string | null
-    isValid: boolean
-    twoFactorVerified: boolean
-    expiresAt?: any | null
-    user?: { __typename?: 'User'; id: string } | null
-  } | null
-}
-
-export type __AdminUserSessionsQueryVariables = Exact<{
-  input?: InputMaybe<ListUserSessionInput>
-}>
-
-export type __AdminUserSessionsQuery = {
-  __typename?: 'Query'
-  userSessions?: Array<{
-    __typename?: 'UserSession'
-    id: string
-    createdAt: any
-    updatedAt: any
-    lastActiveAt: any
-    userId: string
-    deviceInfo?: string | null
-    ipAddress?: string | null
-    isValid: boolean
-    twoFactorVerified: boolean
-    expiresAt?: any | null
-    user?: { __typename?: 'User'; id: string } | null
-  }> | null
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
-  } | null
-}
-
-export type __AdminUserSessionPaginationQueryVariables = Exact<{
-  input?: InputMaybe<ListUserSessionInput>
-}>
-
-export type __AdminUserSessionPaginationQuery = {
-  __typename?: 'Query'
-  counters?: {
-    __typename?: 'CorePaging'
-    count?: number | null
-    take?: number | null
-    page?: number | null
-    skip?: number | null
-    total?: number | null
-    filteredTotal?: number | null
-    pages?: number | null
-    hasNext?: boolean | null
-    hasPrev?: boolean | null
-  } | null
-}
-
 export type __AdminUserSummaryFragment = {
   __typename?: 'User'
   id: string
@@ -9187,7 +8911,7 @@ export type AdminUserManagementDetailsQueryVariables = Exact<{
 export type AdminUserManagementDetailsQuery = {
   __typename?: 'Query'
   adminUserDetails: {
-    __typename?: 'User'
+    __typename?: 'AdminUserDetails'
     id: string
     firstName?: string | null
     lastName?: string | null
@@ -9227,14 +8951,14 @@ export type AdminUserManagementDetailsQuery = {
       team?: { __typename?: 'Team'; id: string; name: string } | null
       role?: { __typename?: 'Role'; name: string } | null
     }> | null
-    activeSessions?: Array<{
-      __typename?: 'UserSession'
+    activeSessions: Array<{
+      __typename?: 'AdminUserSession'
       id: string
       ipAddress?: string | null
       deviceInfo?: string | null
       lastActiveAt: any
       isValid: boolean
-    }> | null
+    }>
     AuditLog?: Array<{
       __typename?: 'AuditLog'
       id: string
@@ -13460,83 +13184,6 @@ export const __AdminUserPreferenceDetailsFragmentDoc = {
     },
   ],
 } as unknown as DocumentNode<__AdminUserPreferenceDetailsFragment, unknown>
-export const __AdminUserSessionSummaryFragmentDoc = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminUserSessionSummaryFragment, unknown>
-export const __AdminUserSessionDetailsFragmentDoc = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminUserSessionDetailsFragment, unknown>
 export const __AdminUserSummaryFragmentDoc = {
   kind: 'Document',
   definitions: [
@@ -24959,489 +24606,6 @@ export const __AdminUserPreferencePagination = {
 } as unknown as DocumentNode<
   __AdminUserPreferencePaginationQuery,
   __AdminUserPreferencePaginationQueryVariables
->
-export const __AdminCreateUserSession = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: '__AdminCreateUserSession' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'CreateUserSessionInput' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'createUserSession' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminUserSessionDetails' },
-                },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminCreateUserSessionMutation,
-  __AdminCreateUserSessionMutationVariables
->
-export const __AdminDeleteUserSession = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: '__AdminDeleteUserSession' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'deleteUserSession' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'userSessionId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminDeleteUserSessionMutation,
-  __AdminDeleteUserSessionMutationVariables
->
-export const __AdminUpdateUserSession = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'mutation',
-      name: { kind: 'Name', value: '__AdminUpdateUserSession' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'UpdateUserSessionInput' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'updateUserSession' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'userSessionId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
-              },
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminUserSessionDetails' },
-                },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminUpdateUserSessionMutation,
-  __AdminUpdateUserSessionMutationVariables
->
-export const __AdminUserSession = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: '__AdminUserSession' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
-          type: {
-            kind: 'NonNullType',
-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
-          },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'userSession' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'userSessionId' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminUserSessionDetails' },
-                },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminUserSessionQuery, __AdminUserSessionQueryVariables>
-export const __AdminUserSessions = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: '__AdminUserSessions' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListUserSessionInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'userSessions' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                {
-                  kind: 'FragmentSpread',
-                  name: { kind: 'Name', value: '__AdminUserSessionSummary' },
-                },
-              ],
-            },
-          },
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'userSessionsCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
-          {
-            kind: 'Field',
-            name: { kind: 'Name', value: 'user' },
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<__AdminUserSessionsQuery, __AdminUserSessionsQueryVariables>
-export const __AdminUserSessionPagination = {
-  kind: 'Document',
-  definitions: [
-    {
-      kind: 'OperationDefinition',
-      operation: 'query',
-      name: { kind: 'Name', value: '__AdminUserSessionPagination' },
-      variableDefinitions: [
-        {
-          kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListUserSessionInput' } },
-        },
-      ],
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          {
-            kind: 'Field',
-            alias: { kind: 'Name', value: 'counters' },
-            name: { kind: 'Name', value: 'userSessionsCount' },
-            arguments: [
-              {
-                kind: 'Argument',
-                name: { kind: 'Name', value: 'input' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
-              },
-            ],
-            selectionSet: {
-              kind: 'SelectionSet',
-              selections: [
-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-    {
-      kind: 'FragmentDefinition',
-      name: { kind: 'Name', value: 'CorePagingDetails' },
-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
-      selectionSet: {
-        kind: 'SelectionSet',
-        selections: [
-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
-        ],
-      },
-    },
-  ],
-} as unknown as DocumentNode<
-  __AdminUserSessionPaginationQuery,
-  __AdminUserSessionPaginationQueryVariables
 >
 export const __AdminCreateUser = {
   kind: 'Document',

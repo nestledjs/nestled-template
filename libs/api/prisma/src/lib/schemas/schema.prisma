@@ -87,10 +87,13 @@ model Email {
   updatedAt      DateTime      @updatedAt
   email          String        @unique
   public         Boolean       @default(false)
+  /// @crudReadOnly
   primary        Boolean       @default(false)
+  /// @crudReadOnly
   verified       Boolean       @default(false)
   /// @graphqlOmit
   verifyToken    String?
+  /// @crudReadOnly
   verifyExpires  DateTime?
   userId         String?
   emailType      EmailType     @default(WORK)
@@ -403,6 +406,7 @@ model User {
   updatedAt                 DateTime                 @updatedAt
   firstName                 String?
   lastName                  String?
+  /// @crudReadOnly
   isSuperAdmin              Boolean                  @default(false)
   bio                       String?
   displayName               String?                  @unique
@@ -412,6 +416,7 @@ model User {
   passwordResetToken        String?
   /// @graphqlOmit
   passwordResetExpires      DateTime?
+  /// @crudReadOnly
   emailValidated            Boolean                  @default(false)
   /// @graphqlOmit
   validateEmailToken        String?                  @unique
@@ -471,6 +476,9 @@ model UserPreference {
   @@unique([userId, key])
 }
 
+/// @skipCrud
+/// Security-sensitive credential sessions are created by authentication and maintained through
+/// the explicit session APIs, which preserve ownership, revocation, and audit behavior.
 model UserSession {
   id                String   @id @default(uuid())
   createdAt         DateTime @default(now())

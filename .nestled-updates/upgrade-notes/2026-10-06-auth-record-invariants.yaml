@@ -1,0 +1,61 @@
+id: 2026-10-06-auth-record-invariants
+title: Keep authentication records consistent across administrative maintenance
+priority: high
+area: auth
+type: security
+delivery: hybrid
+intent: >
+  Keep protected account and email flags readable while assigning their writes to explicit
+  application workflows. Use the generator's @crudReadOnly annotation for User.isSuperAdmin,
+  User.emailValidated, Email.primary, Email.verified and Email.verifyExpires. Session records
+  use @skipCrud with a documented credential-maintenance exception; maintain sessions through
+  the existing explicit authentication/session APIs. Regenerate CRUD, models and the complete SDK.
+  Apply the auth-record-invariants migration to keep email validation and active organization
+  context consistent after administrative changes, including relation reassignment and deletion.
+why: >
+  Administrative maintenance and purpose-built workflows must preserve the same account-state
+  invariants. Generated read-only inputs and database constraints make that contract durable.
+affectedPaths:
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
+  - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+  - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
+  - libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
+  - libs/api/generated-crud
+  - libs/api/core/models
+  - libs/shared/sdk
+packageReleases:
+  - name: '@nestledjs/generators'
+    targetVersion: 3.4.0
+    dependencyType: dependencies
+verification:
+  - pnpm db-update
+  - pnpm run nestled-doctor
+  - pnpm nx run api:typecheck
+  - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts apps/api-e2e/src/auth/auth-crud-invariants.spec.ts apps/api-e2e/src/auth/auth-email-guards.spec.ts
+agentHints:
+  - >
+    Run the focused e2e command from the repository root with TEST_DATABASE_URL and REDIS_URL
+    pointing to isolated local test services and EMAIL_PROVIDER=mock. Require an actual test
+    summary; the legacy Nx e2e target can return success without executing tests.
+  - >
+    Install generators 3.4.0 before applying this note. Regenerate from the schema;
+    do not hand-edit generated files. Preserve project-specific auth and verification workflows.
+  - >
+    The migration resets verification when an email address or owner changes. It preserves a
+    freshly issued change-email token but removes a carried-over token; changing the owner also
+    clears primary status. Email inserts, updates and deletes synchronize the owning account's
+    emailValidated flag. A primary-address change invalidates outstanding account verification
+    tokens. Check local email-change and sign-up flows against these semantics.
+  - >
+    Membership removal or movement clears the former member's active organization only when no
+    membership for that user and organization remains. Keep membership checks on context readers.
+  - >
+    The migration repairs existing derived emailValidated and activeOrganizationId values.
+    Apply it through migrate deploy before the API deployment; db push does not install triggers.
+  - >
+    Remove stale generated UserSession resolver and admin SDK documents if the local generator
+    does not remove them. Retain the Prisma model, session data and explicit session APIs.
+    Keep session viewing in the permission-checked admin detail query with an explicit output
+    type (AdminUserDetails/AdminUserSession), rather than restoring sessions on the generic User
+    output. Existing SDK queries can keep their session selections under adminUserDetails.

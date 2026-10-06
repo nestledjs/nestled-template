@@ -353,10 +353,6 @@ const FILTER_RELATIONS = {
       targetModel: 'Invite',
       isList: true,
     },
-    activeSessions: {
-      targetModel: 'UserSession',
-      isList: true,
-    },
     loginAttempts: {
       targetModel: 'LoginAttempt',
       isList: true,
@@ -387,12 +383,6 @@ const FILTER_RELATIONS = {
     },
   },
   UserPreference: {
-    user: {
-      targetModel: 'User',
-      isList: false,
-    },
-  },
-  UserSession: {
     user: {
       targetModel: 'User',
       isList: false,
@@ -2900,7 +2890,6 @@ export class ApiCrudDataAccessService {
       organizationsIds,
       addressesIds,
       invitesSentIds,
-      activeSessionsIds,
       loginAttemptsIds,
       AuditLogIds,
       UserPreferenceIds,
@@ -2921,7 +2910,6 @@ export class ApiCrudDataAccessService {
       organizations: { ids: organizationsIds, isVirtual: true, isList: true, isRequired: false },
       addresses: { ids: addressesIds, isVirtual: true, isList: true, isRequired: false },
       invitesSent: { ids: invitesSentIds, isVirtual: true, isList: true, isRequired: false },
-      activeSessions: { ids: activeSessionsIds, isVirtual: true, isList: true, isRequired: false },
       loginAttempts: { ids: loginAttemptsIds, isVirtual: true, isList: true, isRequired: false },
       AuditLog: { ids: AuditLogIds, isVirtual: true, isList: true, isRequired: false },
       UserPreference: { ids: UserPreferenceIds, isVirtual: true, isList: true, isRequired: false },
@@ -3004,7 +2992,6 @@ export class ApiCrudDataAccessService {
       organizationsIds,
       addressesIds,
       invitesSentIds,
-      activeSessionsIds,
       loginAttemptsIds,
       AuditLogIds,
       UserPreferenceIds,
@@ -3025,7 +3012,6 @@ export class ApiCrudDataAccessService {
       organizations: { ids: organizationsIds, isVirtual: true, isList: true, isRequired: false },
       addresses: { ids: addressesIds, isVirtual: true, isList: true, isRequired: false },
       invitesSent: { ids: invitesSentIds, isVirtual: true, isList: true, isRequired: false },
-      activeSessions: { ids: activeSessionsIds, isVirtual: true, isList: true, isRequired: false },
       loginAttempts: { ids: loginAttemptsIds, isVirtual: true, isList: true, isRequired: false },
       AuditLog: { ids: AuditLogIds, isVirtual: true, isList: true, isRequired: false },
       UserPreference: { ids: UserPreferenceIds, isVirtual: true, isList: true, isRequired: false },
@@ -3181,118 +3167,6 @@ export class ApiCrudDataAccessService {
 
   async deleteUserPreference(id: string) {
     return this.data['userPreference'].delete({
-      where: { id },
-    })
-  }
-
-  async createUserSession(info: GraphQLResolveInfo, input: dto.CreateUserSessionInput) {
-    const { userId, ...regularFields } = input
-    const data: any = regularFields
-
-    const relationMappings = {
-      user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
-    }
-
-    for (const [relationName, config] of Object.entries(relationMappings)) {
-      if (config.ids !== undefined && config.ids !== null) {
-        const ids = Array.isArray(config.ids)
-          ? config.ids.map(id => ({ id }))
-          : [{ id: config.ids }]
-
-        if (config.isList) {
-          // List relationships: always use connect for creates
-          const relationOperation = 'connect'
-          data[relationName] = { [relationOperation]: ids }
-        } else {
-          // Single relationship - always use connect
-          data[relationName] = { connect: { id: config.ids } }
-        }
-      }
-    }
-
-    return this.data['userSession'].create({
-      data,
-      select: buildAdminSelect(info),
-    })
-  }
-
-  async userSessions(info: GraphQLResolveInfo, input?: dto.ListUserSessionInput) {
-    return this.data['userSession'].findMany({
-      ...this.data.filter(normalizeListInputFilters('UserSession', input)),
-      select: buildAdminSelect(info),
-    })
-  }
-
-  async userSessionsCount(input?: dto.ListUserSessionInput) {
-    const total = await this.data['userSession'].count()
-    const {
-      where,
-      take = 10,
-      skip = 0,
-    } = this.data.filter(normalizeListInputFilters('UserSession', input))
-    const filteredTotal = await this.data['userSession'].count({ where })
-    const page = Math.floor(skip / take)
-    const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
-    const hasNext = skip + take < filteredTotal
-    const hasPrev = skip > 0
-    const count = Math.max(0, Math.min(take, filteredTotal - skip))
-    return {
-      take,
-      skip,
-      page,
-      pages,
-      hasNext,
-      hasPrev,
-      count,
-      total,
-      filteredTotal,
-    }
-  }
-
-  async userSession(info: GraphQLResolveInfo, id: string) {
-    return this.data['userSession'].findUnique({
-      where: { id },
-      select: buildAdminSelect(info),
-    })
-  }
-
-  async updateUserSession(info: GraphQLResolveInfo, id: string, input: dto.UpdateUserSessionInput) {
-    const { userId, ...regularFields } = input
-    const data: any = regularFields
-
-    const relationMappings = {
-      user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
-    }
-
-    for (const [relationName, config] of Object.entries(relationMappings)) {
-      if (config.ids !== undefined && config.ids !== null) {
-        const ids = Array.isArray(config.ids)
-          ? config.ids.map(id => ({ id }))
-          : [{ id: config.ids }]
-
-        if (config.isList) {
-          // List relationships: use set for updates on virtual relations, connect for foreign key relations
-          const relationOperation = config.isVirtual ? 'set' : 'connect'
-          data[relationName] = { [relationOperation]: ids }
-        } else {
-          // Single relationship - connect when an id is provided; disconnect when null on update
-          data[relationName] = { connect: { id: config.ids } }
-        }
-      } else if (config.ids === null && !config.isList && !config.isRequired && !config.isVirtual) {
-        // Explicitly null - disconnect the optional single relationship (only when this model owns the FK)
-        data[relationName] = { disconnect: true }
-      }
-    }
-
-    return this.data['userSession'].update({
-      where: { id },
-      data,
-      select: buildAdminSelect(info),
-    })
-  }
-
-  async deleteUserSession(id: string) {
-    return this.data['userSession'].delete({
       where: { id },
     })
   }

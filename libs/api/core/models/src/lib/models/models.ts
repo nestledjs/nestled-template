@@ -848,9 +848,6 @@ export class User {
   @Field(() => TwoFactorMethod)
   twoFactorMethod!: TwoFactorMethod
 
-  @Field(() => [UserSession], { nullable: true })
-  activeSessions?: Partial<UserSession>[] | null
-
   @Field(() => [LoginAttempt], { nullable: true })
   loginAttempts?: Partial<LoginAttempt>[] | null
 
@@ -919,40 +916,4 @@ export class UserPreference {
 
   @Field(() => String)
   value!: string
-}
-
-@ObjectType({ description: undefined })
-export class UserSession {
-  @Field(() => String)
-  id!: string
-
-  @Field(() => GraphQLISODateTime)
-  createdAt!: Date
-
-  @Field(() => GraphQLISODateTime)
-  updatedAt!: Date
-
-  @Field(() => GraphQLISODateTime)
-  lastActiveAt!: Date
-
-  @Field(() => String)
-  userId!: string
-
-  @Field(() => User, { nullable: true })
-  user?: Partial<User> | null
-
-  @Field(() => String, { nullable: true })
-  deviceInfo?: string | null
-
-  @Field(() => String, { nullable: true })
-  ipAddress?: string | null
-
-  @Field(() => Boolean)
-  isValid!: boolean
-
-  @Field(() => Boolean)
-  twoFactorVerified!: boolean
-
-  @Field(() => GraphQLISODateTime, { nullable: true })
-  expiresAt?: Date | null
 }
