@@ -1,0 +1,148 @@
+id: 2026-10-06-members-keep-plan-features
+title: Members keep their organization's plan features; e2e setup handles a test database built by db push
+priority: high
+area: billing
+type: correctness
+delivery: code-patch
+
+intent: >
+  Fixes two regressions from 2026-10-05-organization-context-and-billing-authorization (release
+  2026.10.4).
+
+  1. Members keep plan features. Since 2026.10.4, `SubscriptionProvider` (`libs/web`) does not
+  request `currentSubscription` for a member without `billing:read`/`billing:manage`, so for them
+  `plan` was null, `hasFeature()`/`useHasFeature()` returned false and `hasActiveSubscription` was
+  false. UI that gates on plan features or on an active subscription locked Members out of an
+  organization that is paying.
+
+  API: `UserSubscriptionResolver` gains `currentSubscriptionActive: Boolean!`, which any member of
+  the organization may read. It answers only whether the organization's subscription is ACTIVE or
+  TRIALING, selects nothing but the status, and acts on `@CtxOrganizationId()`, the organization
+  the caller's membership was checked against. It is guarded by
+  `@UseGuards(GqlOrganizationScopedGuard)` + `@Authenticated()`, so it needs a current membership
+  and no billing permission: a non-member, or a removed member whose active organization still
+  names the organization, is refused. `currentSubscription` and the other billing operations keep
+  their `RequireOrganizationPermission` declarations. The guard baseline gains the operation. The
+  SDK gains `CurrentPlan` (`plan-queries.graphql`) and `CurrentSubscriptionActive`
+  (`subscription-queries.graphql`); `currentPlan` leaves the SDK contract baseline's
+  API-without-SDK list.
+
+  Web: for members without billing permissions `SubscriptionProvider` takes `plan` (and therefore
+  `hasFeature`, `checkLimit`, `isWithinLimit`, `usePlan`, `RequirePlan`) from `currentPlan`, and
+  `hasActiveSubscription` from `currentSubscriptionActive`; it never issues `currentSubscription`
+  for them. Members with `billing:read`/`billing:manage` (or `all:manage`, or super admins) keep
+  the detailed `currentSubscription` path unchanged. `subscription`, `isTrialing`, `isCanceled`,
+  `isPastDue`, `trialEndsAt` and `periodEndsAt` stay billing-only (null/false for members), so
+  `SubscriptionStatusBanner` shows a member no trial, payment or cancellation banner, and its
+  optional "no subscription" banner only when the organization really has no active subscription.
+
+  2. E2E global setup and an existing test database. 2026.10.4 made
+  `apps/api-e2e/src/support/global-setup.ts` run `prisma migrate deploy` before `db push`. A local
+  test database built earlier by `db push` alone has tables but no `_prisma_migrations` history,
+  and `migrate deploy` refuses it with P3005. The setup now detects P3005, empties the test
+  database's `public` schema and applies the migrations from scratch, then continues with
+  `db push` and the seed as before. It only does so for a database on localhost whose name marks
+  it as a test database (`nestled_template_test` by default) and refuses anything else. A fresh
+  database (CI) and one that already has migration history are migrated as before. The reset is
+  done with psql rather than `prisma migrate reset`, which Prisma refuses to run unattended when
+  it detects a coding agent; the e2e setup is routinely run by one.
+
+  The e2e setup also starts the API (`pnpm nx serve api`) as the leader of its own process group,
+  and teardown kills that group (`apps/api-e2e/src/support/api-process.ts`). Killing only the pnpm
+  process left `nx serve` and the API running on the e2e port, so the next local run refused to
+  start ("Refusing to run e2e against an API this suite did not start").
+
+why: >
+  Since 2026.10.4, clones that gate navigation, settings pages or routes on plan features or on an
+  active subscription locked out every Member, and clones that redirect to a subscribe page when
+  there is no active subscription sent Members of paying organizations there. Members need to know
+  what their organization's plan allows, not its billing details. Separately, the 2026.10.4 e2e
+  setup failed outright on any developer test database built before it, until it was reset by
+  hand.
+
+affectedPaths:
+  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts
+  - libs/api/custom/src/lib/default/subscription/user-subscription.resolver.spec.ts
+  - libs/shared/sdk/src/graphql/plan/plan-queries.graphql
+  - libs/shared/sdk/src/graphql/subscription/subscription-queries.graphql
+  - libs/shared/sdk/src/generated/graphql.ts
+  - api-schema.graphql
+  - .nestled-updates/security/guard-baseline.json
+  - .nestled-updates/sdk-contract-baseline.json
+  - libs/web/src/lib/contexts/subscription.context.tsx
+  - libs/web/src/lib/contexts/subscription.context.spec.tsx
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/global-teardown.ts
+  - apps/api-e2e/src/support/api-process.ts
+  - apps/api-e2e/src/auth/organization-billing.spec.ts
+
+packageReleases: []
+
+skipIf:
+  - The project has replaced SubscriptionProvider, the user subscription resolver and the e2e global setup with its own implementations.
+
+verification:
+  - pnpm exec nx run api-custom:test
+  - pnpm exec nx run web-components:test
+  - pnpm exec nx run-many -t typecheck
+  - pnpm exec nestled-doctor
+  - pnpm test:e2e src/auth/organization-billing.spec.ts
+
+agentHints:
+  - >
+    Apply after 2026-10-05-organization-context-and-billing-authorization. If the project already
+    added its own member-readable "is the subscription active" query (a status flag readable by
+    any member, guarded by organization membership and acting on the membership-checked
+    organization), record the API part as superseded and point the web provider at that query
+    instead of adding `currentSubscriptionActive`. If the project's own flag reads the raw
+    `user.activeOrganizationId`, or exposes more than the active/inactive answer to members
+    without billing permissions, adapt it to this note rather than superseding.
+  - >
+    API: add `currentSubscriptionActive` next to `currentSubscription` with
+    `@UseGuards(GqlOrganizationScopedGuard)`, `@Authenticated()` and `@CtxOrganizationId()`; do
+    not give it `RequireOrganizationPermission`, and do not loosen `currentSubscription`. Run
+    `pnpm db-update` so the schema and SDK pick it up (add the two SDK documents after the API
+    field exists, or the doctor reports the SDK operation as referencing a missing root field),
+    then `pnpm security:update-guard-baseline` and review that the only baseline change is the new
+    operation. Remove `currentPlan` from `.nestled-updates/sdk-contract-baseline.json`'s
+    `apiWithoutSdk` once the SDK has `CurrentPlan`.
+  - >
+    Web: keep the project's `canReadBilling` rule (or its own equivalent). Members without billing
+    permission must take `plan` from `CurrentPlan` and `hasActiveSubscription` from
+    `CurrentSubscriptionActive`, and must not request `CurrentSubscription`. Project code that
+    checks `subscription`, `isTrialing`, `isCanceled`, `isPastDue` or the dates to decide what a
+    Member may use should check `hasActiveSubscription` or `hasFeature()` instead: those fields
+    are null/false for members. `RequireSubscription allowTrial={false}` cannot tell a trial from
+    a paid subscription for a member and admits them while the subscription is ACTIVE or
+    TRIALING; if the project relies on denying trial members, keep that gate behind billing
+    permissions or add a trial flag of its own.
+  - >
+    Tests: `SubscriptionProvider` mocks of `@nestled-template/shared/sdk` need `CurrentPlan` and
+    `CurrentSubscriptionActive` as distinct documents, and `useQuery` mocks should answer per
+    document; `UserSubscriptionResolver` mocks need `subscription.findUnique` for the new query.
+  - >
+    E2E: replace the bare `prisma migrate deploy` step in `apps/api-e2e/src/support/global-setup.ts`
+    with the P3005-aware step. Keep (or tighten) the check that only a localhost database whose
+    name marks it as a test database is ever reset; if the project's test database name does not
+    contain `test`, rename it or adjust the check deliberately, never remove it. If the project's
+    migrations create schemas other than `public`, reset those too.
+  - >
+    Correction to 2026-10-05-auth-generation-claim (isActive trigger): the trigger that moves
+    `User.authGeneration` when an account is deactivated assumes a `User.isActive` column. A project
+    that gates accounts with a different flag (for example a `deleted` flag or a ban `status`
+    column) must write the trigger on that flag instead; a trigger on a column the project never
+    changes revokes nothing.
+  - >
+    Correction to 2026-10-05-auth-generation-claim (API token generation): `ApiToken.authGeneration`
+    defaults to 0, which only matches owners whose generation is 0. A project that mapped the auth
+    generation onto an existing per-user counter (for example a token-version column already above
+    0) must backfill each existing API token's generation from its owner in the same migration,
+    or every outstanding API token stops working on deploy.
+  - >
+    Correction to 2026-10-05-auth-generation-claim (session trigger): the session-revocation
+    trigger refuses an update that flips a session from invalid to valid or extends its expiry.
+    Flows that create a pending invalid session and validate it later (for example two-factor
+    challenge rows) or that slide expiry must mint a new session instead. A project whose e2e
+    builds the database with `db push` alone never gets the trigger and will not see these
+    failures in tests: apply migrations first (part 2 of this note does that for the template's
+    e2e setup).

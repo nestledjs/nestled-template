@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process'
+import { killApiProcessTree } from './api-process'
 
 type E2EGlobalState = typeof globalThis & {
   __API_PROCESS__?: ChildProcess | null
@@ -41,13 +42,9 @@ module.exports = async function globalTeardown() {
         // Ignore stream cleanup errors
       }
 
-      // Kill the API server process
-      try {
-        apiProcess.kill('SIGKILL')
-        console.log(`   Killed API server process ${apiProcess.pid}`)
-      } catch {
-        console.log(`   Process ${apiProcess.pid} may already be dead`)
-      }
+      // Kill the API server's process group (pnpm, nx serve and the API itself)
+      killApiProcessTree(apiProcess)
+      console.log(`   Killed API server process group ${apiProcess.pid}`)
 
       // Brief wait for kill to complete
       await new Promise(resolve => setTimeout(resolve, 100))

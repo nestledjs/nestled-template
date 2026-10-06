@@ -1,5 +1,6 @@
 import React from 'react'
-import { renderHook } from '@testing-library/react'
+import { render, renderHook, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GlobalContextProvider } from './global.context'
 import { SubscriptionProvider, useSubscriptionContext } from './subscription.context'
@@ -10,6 +11,9 @@ import {
   useSubscription,
 } from '../hooks/use-subscription'
 import { useLimit, useLimits, usePlan } from '../hooks/use-plan'
+import { RequirePlan } from '../components/require-plan'
+import { RequireSubscription } from '../components/require-subscription'
+import { SubscriptionStatusBanner } from '../components/subscription-status-banner'
 
 const useQuery = vi.fn()
 
@@ -18,8 +22,28 @@ vi.mock('@apollo/client/react', () => ({
 }))
 
 vi.mock('@nestled-template/shared/sdk', () => ({
-  CurrentSubscription: {},
+  CurrentSubscription: { document: 'CurrentSubscription' },
+  CurrentPlan: { document: 'CurrentPlan' },
+  CurrentSubscriptionActive: { document: 'CurrentSubscriptionActive' },
 }))
+
+type QueryResult = { loading: boolean; error: Error | null; data: unknown }
+const idle: QueryResult = { loading: false, error: null, data: undefined }
+
+/** Answer each SDK document separately; documents without an answer return nothing. */
+function answerQueries(answers: Record<string, QueryResult>) {
+  useQuery.mockImplementation((document: { document: string }, options: { skip?: boolean }) =>
+    options?.skip ? idle : (answers[document.document] ?? idle),
+  )
+}
+
+/** The options the provider passed for one SDK document. */
+function optionsFor(document: string) {
+  const call = useQuery.mock.calls.find(
+    ([doc]) => (doc as { document: string }).document === document,
+  )
+  return call?.[1]
+}
 
 const activeOrganization = { id: 'org-1', name: 'Example Org' }
 const owner = {
@@ -158,16 +182,105 @@ describe('SubscriptionProvider', () => {
   })
 
   it('does not request billing details for a member without billing permissions', () => {
-    useQuery.mockReturnValue({ loading: false, error: null, data: undefined })
+    answerQueries({})
 
     const { result } = renderHook(() => useSubscriptionContext(), { wrapper: wrapperFor(member) })
 
-    expect(useQuery).toHaveBeenCalledWith(expect.anything(), {
+    expect(optionsFor('CurrentSubscription')).toEqual({
       skip: true,
       fetchPolicy: 'cache-and-network',
     })
     expect(result.current.subscription).toBeNull()
     expect(result.current.hasActiveSubscription).toBe(false)
+  })
+
+  it("gives a Member their organization's plan features and active subscription", () => {
+    answerQueries({
+      CurrentPlan: {
+        loading: false,
+        error: null,
+        data: {
+          currentPlan: {
+            id: 'plan-growth',
+            name: 'Growth',
+            features: ['reports'],
+            limits: { projects: 10 },
+          },
+        },
+      },
+      CurrentSubscriptionActive: {
+        loading: false,
+        error: null,
+        data: { currentSubscriptionActive: true },
+      },
+    })
+
+    const { result } = renderHook(
+      () => ({
+        context: useSubscriptionContext(),
+        subscription: useSubscription(),
+        hasFeature: useHasFeature('reports'),
+        missingFeature: useHasFeature('api'),
+        plan: usePlan(),
+      }),
+      { wrapper: wrapperFor(member) },
+    )
+
+    expect(result.current.context.hasFeature('reports')).toBe(true)
+    expect(result.current.hasFeature).toBe(true)
+    expect(result.current.missingFeature).toBe(false)
+    expect(result.current.context.hasActiveSubscription).toBe(true)
+    expect(result.current.subscription.requireActiveSubscription()).toBe(true)
+    expect(result.current.plan.isPlan('growth')).toBe(true)
+    expect(result.current.context.checkLimit('projects')).toEqual({ limit: 10, hasLimit: true })
+
+    // Billing details stay with billing readers.
+    expect(result.current.context.subscription).toBeNull()
+    expect(result.current.context.isTrialing).toBe(false)
+    expect(result.current.context.isCanceled).toBe(false)
+    expect(result.current.context.isPastDue).toBe(false)
+    expect(result.current.context.trialEndsAt).toBeNull()
+    expect(result.current.context.periodEndsAt).toBeNull()
+
+    // No billing query is issued for a Member; the member-readable ones are.
+    expect(optionsFor('CurrentSubscription')?.skip).toBe(true)
+    expect(optionsFor('CurrentPlan')?.skip).toBe(false)
+    expect(optionsFor('CurrentSubscriptionActive')?.skip).toBe(false)
+  })
+
+  it("reports a Member's organization without an active subscription as inactive", () => {
+    answerQueries({
+      CurrentPlan: { loading: false, error: null, data: { currentPlan: null } },
+      CurrentSubscriptionActive: {
+        loading: false,
+        error: null,
+        data: { currentSubscriptionActive: false },
+      },
+    })
+
+    const { result } = renderHook(() => useSubscriptionContext(), { wrapper: wrapperFor(member) })
+
+    expect(result.current.hasActiveSubscription).toBe(false)
+    expect(result.current.plan).toBeNull()
+    expect(result.current.hasFeature('reports')).toBe(false)
+  })
+
+  it('reports loading while the member-readable queries are in flight', () => {
+    answerQueries({
+      CurrentSubscriptionActive: { loading: true, error: null, data: undefined },
+    })
+
+    const { result } = renderHook(() => useSubscriptionContext(), { wrapper: wrapperFor(member) })
+
+    expect(result.current.isLoading).toBe(true)
+  })
+
+  it('does not ask for member-readable status when billing details are readable', () => {
+    renderHook(() => useSubscriptionContext(), { wrapper })
+
+    expect(optionsFor('CurrentSubscription')?.skip).toBe(false)
+    expect(optionsFor('CurrentPlan')?.skip).toBe(true)
+    expect(optionsFor('CurrentSubscriptionActive')?.skip).toBe(true)
   })
 
   it('degrades to no subscription when the request is refused', () => {
@@ -182,5 +295,71 @@ describe('SubscriptionProvider', () => {
     expect(result.current.subscription).toBeNull()
     expect(result.current.plan).toBeNull()
     expect(result.current.error?.message).toMatch(/permission/)
+  })
+})
+
+describe('Member-facing gates under SubscriptionProvider', () => {
+  function memberOfOrganization(active: boolean) {
+    answerQueries({
+      CurrentPlan: {
+        loading: false,
+        error: null,
+        data: active
+          ? { currentPlan: { id: 'plan-growth', name: 'Growth', features: ['reports'] } }
+          : { currentPlan: null },
+      },
+      CurrentSubscriptionActive: {
+        loading: false,
+        error: null,
+        data: { currentSubscriptionActive: active },
+      },
+    })
+    const Wrapper = wrapperFor(member)
+    return (ui: React.ReactElement) =>
+      render(
+        <MemoryRouter>
+          <Wrapper>{ui}</Wrapper>
+        </MemoryRouter>,
+      )
+  }
+
+  beforeEach(() => vi.clearAllMocks())
+
+  it('lets a Member of a subscribed organization through plan and subscription gates', () => {
+    memberOfOrganization(true)(
+      <>
+        <SubscriptionStatusBanner showNoSubscriptionWarning />
+        <RequireSubscription>
+          <span>Subscribed area</span>
+        </RequireSubscription>
+        <RequirePlan feature="reports">
+          <span>Reports</span>
+        </RequirePlan>
+        <RequirePlan feature="api">
+          <span>API</span>
+        </RequirePlan>
+      </>,
+    )
+
+    expect(screen.getByText('Subscribed area')).toBeTruthy()
+    expect(screen.getByText('Reports')).toBeTruthy()
+    expect(screen.queryByText('API')).toBeNull()
+    expect(screen.queryByText(/Free Plan/)).toBeNull()
+    expect(screen.queryByText(/Payment Failed|Subscription Canceled|Trial Ending/)).toBeNull()
+  })
+
+  it('still gates a Member of an organization without an active subscription', () => {
+    memberOfOrganization(false)(
+      <>
+        <SubscriptionStatusBanner showNoSubscriptionWarning />
+        <RequireSubscription>
+          <span>Subscribed area</span>
+        </RequireSubscription>
+      </>,
+    )
+
+    expect(screen.queryByText('Subscribed area')).toBeNull()
+    expect(screen.getByText('Subscription Required')).toBeTruthy()
+    expect(screen.getByText(/Free Plan/)).toBeTruthy()
   })
 })

@@ -39,6 +39,7 @@
   },
   "libs/api/custom/src/lib/default/subscription/user-subscription.resolver.ts": {
     "currentSubscription": ["AccessPolicyGuard", "GqlAuthGuard"],
+    "currentSubscriptionActive": ["GqlOrganizationScopedGuard"],
     "createCheckoutSession": ["AccessPolicyGuard", "GqlAuthGuard"],
     "createPortalSession": ["AccessPolicyGuard", "GqlAuthGuard"],
     "cancelSubscription": ["AccessPolicyGuard", "GqlAuthGuard"],

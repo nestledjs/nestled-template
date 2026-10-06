@@ -23,7 +23,8 @@ const gql = (user: TestUser, query: string, variables?: object, organizationId?:
 
 const CURRENT_SUBSCRIPTION = `query { currentSubscription { id } }`
 const CANCEL_SUBSCRIPTION = `mutation { cancelSubscription { id } }`
-const CURRENT_PLAN = `query { currentPlan { id } }`
+const CURRENT_PLAN = `query { currentPlan { id features } }`
+const CURRENT_SUBSCRIPTION_ACTIVE = `query { currentSubscriptionActive }`
 
 const forbidden = (response: { data: { errors?: { message: string }[] } }) =>
   expect(response.data.errors?.[0]?.message).toMatch(/permission|organization context/i)
@@ -55,8 +56,39 @@ describe('Authorization: organization billing', () => {
     // Member: refused, whether the organization comes from the active field or the header.
     forbidden(await gql(member, CURRENT_SUBSCRIPTION))
     forbidden(await gql(member, CANCEL_SUBSCRIPTION, undefined, organizationId))
-    // Any member may still read the plan.
+    // Any member may still read the plan, and whether the subscription is active.
     expect((await gql(member, CURRENT_PLAN)).data.errors).toBeUndefined()
+    const inactive = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
+    expect(inactive.data.errors).toBeUndefined()
+    expect(inactive.data.data.currentSubscriptionActive).toBe(false)
+
+    // Once the organization subscribes, a Member sees the plan's features and an active
+    // subscription, and still cannot read the subscription's billing details.
+    const planName = `e2e-plan-${organizationId}`
+    sql(
+      `INSERT INTO "Plan" (id, "createdAt", "updatedAt", name, price, interval, features)
+       VALUES (gen_random_uuid(), NOW(), NOW(), :'planName', 10, 'month', '["reports"]'::jsonb);
+       INSERT INTO "Subscription" (id, "createdAt", "updatedAt", "organizationId", "planId", status)
+       SELECT gen_random_uuid(), NOW(), NOW(), :'orgId', p.id, 'TRIALING'
+       FROM "Plan" p WHERE p.name = :'planName';`,
+      { orgId: organizationId, planName },
+    )
+    const active = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
+    expect(active.data.errors).toBeUndefined()
+    expect(active.data.data.currentSubscriptionActive).toBe(true)
+    const memberPlan = await gql(member, CURRENT_PLAN)
+    expect(memberPlan.data.data.currentPlan.features).toEqual(['reports'])
+    forbidden(await gql(member, CURRENT_SUBSCRIPTION))
+
+    sql(`UPDATE "Subscription" SET status = 'PAST_DUE' WHERE "organizationId" = :'orgId';`, {
+      orgId: organizationId,
+    })
+    expect(
+      (await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)).data.data.currentSubscriptionActive,
+    ).toBe(false)
+    sql(`UPDATE "Subscription" SET status = 'ACTIVE' WHERE "organizationId" = :'orgId';`, {
+      orgId: organizationId,
+    })
 
     // Removal clears the member's active organization in the same transaction.
     const removed = await gql(
@@ -78,6 +110,8 @@ describe('Authorization: organization billing', () => {
     })
     forbidden(await gql(member, CURRENT_SUBSCRIPTION))
     forbidden(await gql(member, CANCEL_SUBSCRIPTION))
+    forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE))
+    forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE, undefined, organizationId))
     const plan = await gql(member, CURRENT_PLAN)
     expect(plan.data.errors).toBeUndefined()
     expect(plan.data.data.currentPlan).toBeNull()

@@ -2506,6 +2506,7 @@ type Query {
   country(countryId: String!): Country
   currentPlan: Plan
   currentSubscription: Subscription
+  currentSubscriptionActive: Boolean!
   currentUsage: String!
   email(emailId: String!): Email
   emails(input: ListEmailInput): [Email!]

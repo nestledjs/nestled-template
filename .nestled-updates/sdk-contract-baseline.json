@@ -1,6 +1,5 @@
 {
   "apiWithoutSdk": [
-    "currentPlan",
     "currentUsage",
     "securityEventsByType",
     "securitySummary",

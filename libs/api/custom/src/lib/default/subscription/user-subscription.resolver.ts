@@ -1,7 +1,10 @@
 import { Resolver, Query, Mutation, Args } from '@nestjs/graphql'
+import { UseGuards } from '@nestjs/common'
 import {
+  Authenticated,
   CtxOrganizationId,
   CtxUser,
+  GqlOrganizationScopedGuard,
   RequireOrganizationPermission,
 } from '@nestled-template/api/utils'
 import { Subscription, User } from '@nestled-template/api/core/models'
@@ -20,7 +23,7 @@ import { recordAuditLog } from '../../shared/audit-log'
  * Every operation acts on the request's organization context: the organization the caller's
  * membership was checked against (x-organization-id or their active organization), never the raw
  * `user.activeOrganizationId`. Reads need `billing:read` (or `billing:manage`) there; changes need
- * `billing:manage`.
+ * `billing:manage`. The one exception is `currentSubscriptionActive`, which any member may read.
  */
 @Resolver(() => Subscription)
 export class UserSubscriptionResolver {
@@ -43,6 +46,24 @@ export class UserSubscriptionResolver {
       where: { organizationId },
       include: { plan: true },
     })
+  }
+
+  /**
+   * Whether the organization's subscription currently grants access (ACTIVE or TRIALING).
+   *
+   * Any member may ask, so that member-facing UI can gate on an active subscription without the
+   * billing details `currentSubscription` holds. It answers for the organization the caller's
+   * membership was checked against, and says nothing else about the subscription.
+   */
+  @Query(() => Boolean)
+  @UseGuards(GqlOrganizationScopedGuard)
+  @Authenticated()
+  async currentSubscriptionActive(@CtxOrganizationId() organizationId: string): Promise<boolean> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { organizationId },
+      select: { status: true },
+    })
+    return subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING'
   }
 
   /**

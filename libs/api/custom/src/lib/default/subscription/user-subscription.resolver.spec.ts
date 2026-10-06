@@ -1,6 +1,10 @@
 import { ExecutionContext, ForbiddenException, Logger } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { AccessPolicyGuard, OrganizationContextService } from '@nestled-template/api/utils'
+import {
+  AccessPolicyGuard,
+  GqlOrganizationScopedGuard,
+  OrganizationContextService,
+} from '@nestled-template/api/utils'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { Subscription, User } from '@nestled-template/api/core/models'
 import { ConfigService } from '@nestled-template/api/config'
@@ -300,4 +304,107 @@ describe('UserSubscriptionResolver billing authorization', () => {
       )
     },
   )
+})
+
+describe('UserSubscriptionResolver.currentSubscriptionActive', () => {
+  const roles = {
+    Owner: [{ subject: 'billing', action: 'manage' }],
+    Member: [{ subject: 'organization', action: 'read' }],
+  }
+
+  function membershipData(membership: keyof typeof roles | null) {
+    return {
+      organizationMember: {
+        findFirst: jest.fn().mockResolvedValue(
+          membership
+            ? {
+                roleId: `role-${membership}`,
+                role: { name: membership, permissions: roles[membership] },
+              }
+            : null,
+        ),
+      },
+    }
+  }
+
+  // The operation's own guards, with the JWT check stubbed and the real membership lookup.
+  function admit(membership: keyof typeof roles | null) {
+    jest
+      .spyOn(Object.getPrototypeOf(GqlOrganizationScopedGuard.prototype), 'canActivate')
+      .mockResolvedValue(true)
+    const data = membershipData(membership)
+    const guard = new GqlOrganizationScopedGuard(new OrganizationContextService(data as never))
+    const req: { headers: object; user: object; organizationContext?: { organizationId: string } } =
+      {
+        headers: {},
+        user: { id: 'user-1', activeOrganizationId: 'org-1', isSuperAdmin: false },
+      }
+    const context = {
+      getType: () => 'graphql',
+      getArgs: () => [{}, {}, { req }, {}],
+      getHandler: () => UserSubscriptionResolver.prototype.currentSubscriptionActive,
+      getClass: () => UserSubscriptionResolver,
+    } as unknown as ExecutionContext
+    return { result: guard.canActivate(context), req, data }
+  }
+
+  afterEach(() => jest.restoreAllMocks())
+
+  it('declares no billing permission, only organization membership', () => {
+    const handler = UserSubscriptionResolver.prototype.currentSubscriptionActive
+    // The key RequireOrganizationPermission / AccessPolicy store their policy under.
+    expect(Reflect.getMetadata('nestled:accessPolicy', handler)).toBeUndefined()
+    expect(Reflect.getMetadata('__guards__', handler)).toEqual([GqlOrganizationScopedGuard])
+  })
+
+  it('admits a Member of the organization, against the membership-checked organization', async () => {
+    const { result, req } = admit('Member')
+    await expect(result).resolves.toBe(true)
+    expect(req.organizationContext).toEqual(expect.objectContaining({ organizationId: 'org-1' }))
+  })
+
+  it('refuses a removed member whose active organization still names the organization', async () => {
+    const { result, data } = admit(null)
+    await expect(result).rejects.toBeInstanceOf(ForbiddenException)
+    expect(data.organizationMember.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-1', organizationId: 'org-1' } }),
+    )
+  })
+
+  it.each([
+    ['ACTIVE', true],
+    ['TRIALING', true],
+    ['PAST_DUE', false],
+    ['CANCELED', false],
+    ['INCOMPLETE', false],
+    ['INCOMPLETE_EXPIRED', false],
+  ])('reports a %s subscription as active: %s', async (status, expected) => {
+    const data = createDataMock()
+    data.subscription.findUnique.mockResolvedValue({ status })
+    const resolver = new UserSubscriptionResolver(
+      data,
+      createStripeMock(),
+      createUsageMock(),
+      createConfigMock(),
+    )
+
+    await expect(resolver.currentSubscriptionActive('org-1')).resolves.toBe(expected)
+    expect(data.subscription.findUnique).toHaveBeenCalledWith({
+      where: { organizationId: 'org-1' },
+      select: { status: true },
+    })
+  })
+
+  it('reports an organization without a subscription as inactive', async () => {
+    const data = createDataMock()
+    data.subscription.findUnique.mockResolvedValue(null)
+    const resolver = new UserSubscriptionResolver(
+      data,
+      createStripeMock(),
+      createUsageMock(),
+      createConfigMock(),
+    )
+
+    await expect(resolver.currentSubscriptionActive('org-1')).resolves.toBe(false)
+  })
 })

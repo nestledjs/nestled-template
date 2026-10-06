@@ -1,6 +1,7 @@
 import { waitForPortOpen } from '@nx/node/utils'
-import { execSync, spawn, type ChildProcess } from 'node:child_process'
+import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createConnection } from 'node:net'
+import { killApiProcessTree } from './api-process'
 
 type E2EGlobalState = typeof globalThis & {
   __API_PROCESS__?: ChildProcess | null
@@ -58,6 +59,93 @@ async function isPortInUse(port: number, host = 'localhost'): Promise<boolean> {
   })
 }
 
+const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
+
+/**
+ * Whether a URL names a database this suite may wipe: on this machine (the same rule
+ * prisma.config.ts applies to `migrate reset`), and named as a test database
+ * (`nestled_template_test` by default).
+ */
+function isDisposableTestDatabase(databaseUrl: string): boolean {
+  try {
+    const url = new URL(databaseUrl)
+    const database = decodeURIComponent(url.pathname.slice(1))
+    return LOCAL_DATABASE_HOSTS.has(url.hostname) && /(^|[_-])test([_-]|$)/i.test(database)
+  } catch {
+    return false
+  }
+}
+
+function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
+  const result = spawnSync('pnpm', ['prisma', 'migrate', 'deploy'], {
+    cwd: projectRoot,
+    env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
+    encoding: 'utf8',
+  })
+  process.stdout.write(result.stdout ?? '')
+  process.stderr.write(result.stderr ?? '')
+  return { ok: result.status === 0, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+}
+
+/**
+ * Empty the test database's schema, so migrations can build it from scratch. Only for a local
+ * database named as a test database; anything else is refused before a connection is made.
+ */
+function resetTestDatabase(testDatabaseUrl: string) {
+  if (!isDisposableTestDatabase(testDatabaseUrl)) {
+    throw new Error(
+      `Refusing to reset ${testDatabaseUrl}: only a local database whose name marks it as a test ` +
+        'database (e.g. nestled_template_test) is reset by the e2e setup.',
+    )
+  }
+  const url = new URL(testDatabaseUrl)
+  const database = decodeURIComponent(url.pathname.slice(1))
+  execSync(
+    'psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE" -c "CREATE SCHEMA public"',
+    {
+      env: {
+        ...process.env,
+        PGHOST: url.hostname,
+        PGPORT: url.port || '5432',
+        PGUSER: decodeURIComponent(url.username) || 'postgres',
+        PGPASSWORD: decodeURIComponent(url.password),
+        PGDATABASE: database,
+      },
+      stdio: 'inherit',
+    },
+  )
+}
+
+/**
+ * Apply committed migrations to the test database.
+ *
+ * A test database built before the suite applied migrations (by `prisma db push` alone) has tables
+ * but no migration history, and `migrate deploy` refuses it with P3005 ("the database schema is not
+ * empty"). The test database is disposable: empty it and apply the migrations from scratch. A fresh
+ * database (CI) and one that already has migration history are migrated as they are.
+ */
+function applyMigrations(projectRoot: string, testDatabaseUrl: string) {
+  const first = runMigrateDeploy(projectRoot, testDatabaseUrl)
+  if (first.ok) return
+
+  if (!first.output.includes('P3005')) {
+    console.error('❌ Failed to apply migrations')
+    throw new Error('prisma migrate deploy failed against the test database')
+  }
+
+  console.log(
+    '♻️  The test database has tables but no migration history (it was built with `db push`).',
+  )
+  console.log('   Resetting the test database and applying migrations from scratch...')
+  resetTestDatabase(testDatabaseUrl)
+
+  const retry = runMigrateDeploy(projectRoot, testDatabaseUrl)
+  if (!retry.ok) {
+    console.error('❌ Failed to apply migrations after resetting the test database')
+    throw new Error('prisma migrate deploy failed against the reset test database')
+  }
+}
+
 async function startApiServer(
   projectRoot: string,
   testDatabaseUrl: string,
@@ -77,6 +165,8 @@ async function startApiServer(
       NODE_ENV: 'test',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Its own process group, so teardown can stop `nx serve` and the API it starts, not just pnpm.
+    detached: process.platform !== 'win32',
   })
 
   let startupOutput = ''
@@ -111,6 +201,7 @@ async function startApiServer(
     console.error('❌ API server did not start within timeout')
     console.error('Last output from API server:')
     console.error(startupOutput.slice(-1000))
+    killApiProcessTree(apiProcess)
     throw portError
   }
 
@@ -182,17 +273,8 @@ module.exports = async function globalSetup() {
   // Apply migrations first: some of them carry database objects Prisma's schema can't describe
   // (triggers), which `db push` alone never creates. `db push` then reconciles anything newer.
   console.log('🔄 Applying migrations...')
-  try {
-    execSync('pnpm prisma migrate deploy', {
-      cwd: projectRoot,
-      env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
-      stdio: 'inherit',
-    })
-    console.log('✅ Migrations applied')
-  } catch (error) {
-    console.error('❌ Failed to apply migrations')
-    throw error
-  }
+  applyMigrations(projectRoot, testDatabaseUrl)
+  console.log('✅ Migrations applied')
 
   // Ensure database schema is up to date
   console.log('🔄 Syncing database schema...')
@@ -271,11 +353,7 @@ module.exports = async function globalSetup() {
       e2eGlobal.__SKIP_E2E_TESTS__ = false
     } catch (error) {
       console.error('❌ Failed to start API server')
-      try {
-        apiProcess?.kill('SIGKILL')
-      } catch {
-        // Process already dead
-      }
+      killApiProcessTree(apiProcess)
       throw error
     }
   }
@@ -283,17 +361,8 @@ module.exports = async function globalSetup() {
   // Hint: Use `globalThis` to pass variables to global teardown.
   e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
 
-  // Register cleanup on exit to kill API if globalTeardown doesn't run
-  // This is a fallback - the API should be automatically killed when test process exits
-  // since we're not using detached mode
+  // Fallback for when globalTeardown doesn't run: stop the API's process group on exit.
   process.on('exit', () => {
-    const apiProcess = e2eGlobal.__API_PROCESS__
-    if (apiProcess?.pid && !apiProcess.killed) {
-      try {
-        apiProcess.kill('SIGKILL')
-      } catch {
-        // Process already dead
-      }
-    }
+    killApiProcessTree(e2eGlobal.__API_PROCESS__)
   })
 }

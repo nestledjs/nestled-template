@@ -3,3 +3,7 @@ query CurrentSubscription {
     ...SubscriptionDetails
   }
 }
+
+query CurrentSubscriptionActive {
+  currentSubscriptionActive
+}
