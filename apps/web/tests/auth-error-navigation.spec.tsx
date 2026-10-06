@@ -37,10 +37,6 @@ describe('authentication and authorization error navigation', () => {
     ).toBeInTheDocument()
   })
 
-  // 20s test budget against the 5s findByRole wait below. These have to differ: vitest's default
-  // testTimeout is 5000ms, so an inner wait of the same length can consume the entire budget and
-  // the test dies by timeout at ~5005ms before the retry window it was given can ever elapse. That
-  // is what "generous timeout costs nothing" missed — it cost the whole test.
   it('replaces a protected query page with access denied after a forbidden event', async () => {
     const router = createMemoryRouter(
       [
@@ -53,23 +49,20 @@ describe('authentication and authorization error navigation', () => {
       ],
       { initialEntries: ['/'] },
     )
-    render(<RouterProvider router={router} />)
-    expect(await screen.findByText('Protected page')).toBeInTheDocument()
+    // Router initialization resolves the loader asynchronously. Finish the initial mount and
+    // App's effects before dispatching: visible outlet content alone does not prove that the
+    // global event listener is installed or that the navigation-reset effect has completed.
+    await act(async () => {
+      render(<RouterProvider router={router} />)
+    })
+    expect(screen.getByText('Protected page')).toBeInTheDocument()
 
     await act(async () => {
       globalThis.dispatchEvent(new CustomEvent(APOLLO_ACCESS_FORBIDDEN_EVENT))
     })
 
-    // The event round-trips through a window listener, a state update and a re-render before the
-    // heading exists. findBy's default 1s expires under CI load with coverage instrumentation --
-    // this test has failed at 1044ms on a green suite once already, and was patched for an async
-    // race once before that. The generous timeout costs nothing when the render is fast.
     expect(
-      await screen.findByRole(
-        'heading',
-        { name: 'You don’t have permission to view this page' },
-        { timeout: 5000 },
-      ),
+      screen.getByRole('heading', { name: 'You don’t have permission to view this page' }),
     ).toBeInTheDocument()
-  }, 20000)
+  })
 })
