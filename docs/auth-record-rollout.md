@@ -1,6 +1,6 @@
 # Authentication-record migration rollout
 
-This release contains a pair of historical invariant migrations and an additive index preparation.
+This release contains a pair of historical invariant migrations and two additive index preparations.
 Preserve the historical migration files and their checksums on installations that have applied them.
 
 If either invariant migration is pending, use a write-maintenance window. A normal rolling API
@@ -15,6 +15,7 @@ new generated-write retries and explicit membership lock ordering.
    insufficient. Use the installation's established maintenance mechanism.
 3. Run `pnpm prisma:deploy` against the intended database. Apply the complete pending migration set,
    including `20261006170000_auth_record_backfill_indexes`,
+   `20261006170100_auth_record_membership_index`,
    `20261006180000_auth_record_invariants`, and `20261006230000_auth_record_lock_contention`.
 4. Require successful migration status and verify the final owner-lock implementation:
 
@@ -31,9 +32,14 @@ new generated-write retries and explicit membership lock ordering.
 If migration or startup fails, keep the maintenance window in place while resolving the failure.
 Do not mark an unapplied migration as applied or change an existing migration's contents to bypass it.
 
-The index preparation sorts before the invariant backfill for installations receiving the whole
-release. Its Email index supports the per-user primary-address lookup in `createdAt, id` order;
+The index preparations sort before the invariant backfill for installations receiving the whole
+release. The Email index supports the per-user primary-address lookup in `createdAt, id` order;
 the membership index supports context validation and organization membership lookup. Both are
 declared in the Prisma schema so `db push` does not remove them. Installations that have already
-applied both invariant migrations only need this additive preparation migration; the two historical
-migrations are not rerun.
+applied both invariant migrations only need these additive preparation migrations; the two historical
+migrations are not rerun. Each preparation file contains a single `CREATE INDEX CONCURRENTLY`
+statement, tested with the pinned Prisma 7.9.1 migration runner. Keep them separate and do not wrap
+them in a transaction. Concurrent builds permit application writes during index-only deployments;
+see [PostgreSQL's index documentation](https://www.postgresql.org/docs/15/sql-createindex.html).
+If a concurrent build is interrupted, inspect index validity and follow migration recovery before
+retrying; do not hide an invalid index with `IF NOT EXISTS` or mark the migration applied.

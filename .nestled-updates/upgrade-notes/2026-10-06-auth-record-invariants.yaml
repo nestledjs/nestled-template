@@ -27,6 +27,7 @@ review: >
 affectedPaths:
   - libs/api/prisma/src/lib/schemas/schema.prisma
   - libs/api/prisma/src/lib/migrations/20261006170000_auth_record_backfill_indexes/migration.sql
+  - libs/api/prisma/src/lib/migrations/20261006170100_auth_record_membership_index/migration.sql
   - libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
   - libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql
   - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
@@ -54,7 +55,8 @@ agentHints:
   - >
     The index preparation is deliberately ordered before the historical invariant backfill for
     new installations. Existing installations with both invariant migrations already applied
-    receive only the new additive indexes. Preserve the schema-backed Email owner/primary/order
+    receive only the new additive indexes. Each preparation migration contains a single concurrent
+    index statement so index-only deployments do not block application writes. Preserve the schema-backed Email owner/primary/order
     index and OrganizationMember organization/user index when adapting the backfill locally.
   - >
     Explicit member removal must lock the target User before deleting OrganizationMember, even
