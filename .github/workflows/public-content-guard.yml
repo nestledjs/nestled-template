@@ -62,10 +62,20 @@ jobs:
             [ "$commits" -eq "$(jq -r .commits <<<"$pr")" ] || unchecked "more commits than the API returns"
             gh api "repos/$REPO/pulls/$NUMBER/commits" --paginate --jq '.[].commit.message' >> "$file"
             files=$(mktemp)
-            gh api "repos/$REPO/pulls/$NUMBER/files" --paginate --jq '.[] | {filename, status, additions, patch}' > "$files"
+            gh api "repos/$REPO/pulls/$NUMBER/files" --paginate --jq '.[] | {filename, sha, status, additions, patch}' > "$files"
             [ "$(jq -s length "$files")" -eq "$(jq -r .changed_files <<<"$pr")" ] || unchecked "more files than the API returns"
-            # A file with added lines but no patch is a diff too large for the API to include.
-            [ "$(jq -s '[.[] | select(.additions > 0 and .patch == null)] | length' "$files")" -eq 0 ] || unchecked "a diff too large to read"
+            # GitHub omits large diffs. Read the complete blob at the API-provided object id instead;
+            # never check out or execute PR code in this workflow's privileged context. Scanning the
+            # whole file is deliberately conservative: it includes unchanged lines too.
+            while IFS= read -r blob_sha; do
+              [[ "$blob_sha" =~ ^[0-9a-f]{40}$ ]] || unchecked "a missing blob id"
+              blob=$(mktemp)
+              gh api "repos/$REPO/git/blobs/$blob_sha" -H 'Accept: application/vnd.github.raw+json' > "$blob" || unchecked "an unreadable blob"
+              [ "$(git hash-object "$blob")" = "$blob_sha" ] || unchecked "an incomplete blob"
+              cat "$blob" >> "$file"
+              printf '\n' >> "$file"
+              rm -f "$blob"
+            done < <(jq -r 'select(.additions > 0 and .patch == null) | .sha' "$files")
             # Paths of added, changed and renamed files (a name alone can identify).
             jq -r 'select(.status != "removed") | .filename' "$files" >> "$file"
             # Added lines only. Per-file patches hold hunks, not file headers, so every line starting with
@@ -76,7 +86,7 @@ jobs:
           # on a match, 1 on none, and 2 on an error such as an invalid expression; an error must fail the
           # check, never pass it.
           status=0
-          grep -qiE -f "$patterns" "$file" || status=$?
+          grep -aqiE -f "$patterns" "$file" || status=$?
           if [ "$status" -gt 1 ]; then
             echo "::error::The term list could not be evaluated, so this couldn't be checked. A maintainer needs to fix the list."
             exit 1
