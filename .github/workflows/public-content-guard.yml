@@ -74,6 +74,7 @@ jobs:
               [ "$(git hash-object "$blob")" = "$blob_sha" ] || unchecked "an incomplete blob"
               cat "$blob" >> "$file"
               printf '\n' >> "$file"
+              rm -f "$blob"
             done < <(jq -r 'select(.additions > 0 and .patch == null) | .sha' "$files")
             # Paths of added, changed and renamed files (a name alone can identify).
             jq -r 'select(.status != "removed") | .filename' "$files" >> "$file"
