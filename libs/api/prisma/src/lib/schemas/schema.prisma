@@ -100,6 +100,8 @@ model Email {
   organizationId String?
   user           User?         @relation("Email_belongsTo_User", fields: [userId], references: [id])
   organization   Organization? @relation("Email_belongsTo_Organization", fields: [organizationId], references: [id])
+
+  @@index([userId, primary, createdAt, id])
 }
 
 model Invite {
@@ -187,6 +189,8 @@ model OrganizationMember {
   user           User         @relation("OrganizationMember_belongsTo_User", fields: [userId], references: [id])
   organizationId String
   organization   Organization @relation("OrganizationMember_belongsTo_Organization", fields: [organizationId], references: [id])
+
+  @@index([organizationId, userId])
 }
 
 model Permission {
