@@ -150,10 +150,10 @@ index 801dbc8..ef69b19 100644
              exit 1
 diff --git a/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml b/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml
 new file mode 100644
-index 0000000..62d3e86
+index 0000000..012e763
 --- /dev/null
 +++ b/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,100 @@
 +id: 2026-10-06-auth-record-invariants
 +title: Keep authentication records consistent across administrative maintenance
 +priority: high
@@ -166,15 +166,24 @@ index 0000000..62d3e86
 +  User.emailValidated, Email.primary, Email.verified and Email.verifyExpires. Session records
 +  use @skipCrud with a documented credential-maintenance exception; maintain sessions through
 +  the existing explicit authentication/session APIs. Regenerate CRUD, models and the complete SDK.
-+  Apply the auth-record-invariants and auth-record-lock-contention migrations to keep email validation and active organization
++  Apply the backfill-index preparation, auth-record-invariants and auth-record-lock-contention migrations to keep email validation and active organization
 +  context consistent after administrative changes, including relation reassignment and deletion.
 +  Generated standalone writes retry rolled-back conflicts; owner synchronization uses sorted,
 +  nonblocking locks so concurrent application workflows can complete.
 +why: >
 +  Administrative maintenance and purpose-built workflows must preserve the same account-state
 +  invariants. Generated read-only inputs and database constraints make that contract durable.
++review: >
++  For an installation that has not applied both invariant migrations, arrange a write-maintenance
++  window before deployment: pause API and background writers, apply all migrations including the
++  index preparation, verify the final nonblocking owner-lock function, deploy the matching API,
++  and then resume writers. The first historical migration installs blocking triggers until the
++  follow-up migration replaces them; do not serve writes between those steps. Follow
++  docs/auth-record-rollout.md and preserve checksums of migrations already applied.
 +affectedPaths:
 +  - libs/api/prisma/src/lib/schemas/schema.prisma
++  - libs/api/prisma/src/lib/migrations/20261006170000_auth_record_backfill_indexes/migration.sql
++  - libs/api/prisma/src/lib/migrations/20261006170100_auth_record_membership_index/migration.sql
 +  - libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
 +  - libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql
 +  - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
@@ -188,6 +197,7 @@ index 0000000..62d3e86
 +  - libs/api/generated-crud
 +  - libs/api/core/models
 +  - libs/shared/sdk
++  - docs/auth-record-rollout.md
 +packageReleases:
 +  - name: '@nestledjs/generators'
 +    targetVersion: 3.4.1
@@ -198,6 +208,12 @@ index 0000000..62d3e86
 +  - pnpm nx run api:typecheck
 +  - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
 +agentHints:
++  - >
++    The index preparation is deliberately ordered before the historical invariant backfill for
++    new installations. Existing installations with both invariant migrations already applied
++    receive only the new additive indexes. Each preparation migration contains a single concurrent
++    index statement so index-only deployments do not block application writes. Preserve the schema-backed Email owner/primary/order
++    index and OrganizationMember organization/user index when adapting the backfill locally.
 +  - >
 +    Explicit member removal must lock the target User before deleting OrganizationMember, even
 +    when that user has a different active organization. Organization deletion must lock all
@@ -612,10 +628,10 @@ index c736704..c68b92d 100644
    deviceInfo: String
 diff --git a/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
 new file mode 100644
-index 0000000..0376ae2
+index 0000000..53f947d
 --- /dev/null
 +++ b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,339 @@
 +import { beforeAll, describe, expect, it } from 'vitest'
 +import { randomUUID } from 'node:crypto'
 +import { setTimeout as delay } from 'node:timers/promises'
@@ -629,7 +645,7 @@ index 0000000..0376ae2
 +const primaryId = (user: TestUser) =>
 +  sql(`SELECT id FROM "Email" WHERE "userId" = :'userId' AND "primary";`, { userId: user.id })
 +
-+async function waitForAccountLock(owner: pg.Client, writing: Promise<unknown>) {
++async function waitForWriteProgress(writing: Promise<unknown>, observed: () => Promise<boolean>) {
 +  let settled = false
 +  void writing.then(
 +    () => {
@@ -641,17 +657,52 @@ index 0000000..0376ae2
 +  )
 +  const deadline = Date.now() + 5000
 +  while (Date.now() < deadline) {
++    if (await observed()) return
++    if (settled) throw new Error('The API request finished before the expected database contention')
++    await delay(10)
++  }
++  throw new Error('The API request did not reach the expected database contention')
++}
++
++async function waitForAccountLock(owner: pg.Client, writing: Promise<unknown>) {
++  return waitForWriteProgress(writing, async () => {
 +    const result = await owner.query<{ waiting: boolean }>(`
 +      SELECT EXISTS (
 +        SELECT 1 FROM pg_stat_activity
 +        WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))
 +      ) AS waiting
 +    `)
-+    if (result.rows[0].waiting) return
-+    if (settled) throw new Error('The API request finished before waiting for the account lock')
-+    await delay(10)
++    return result.rows[0].waiting
++  })
++}
++
++async function withWriteAttemptProbe<T>(
++  table: 'Email' | 'OrganizationMember',
++  event: 'UPDATE' | 'DELETE',
++  id: string,
++  run: (attempts: () => number) => Promise<T>,
++): Promise<T> {
++  // AFTER triggers run in name order. Count before the invariant trigger can roll back the write;
++  // sequences are not transactional, so a second attempt proves the first failed and was retried.
++  const probe = `000_auth_attempt_${randomUUID().replaceAll('-', '')}`
++  try {
++    sql(
++      `CREATE SEQUENCE "${probe}";
++       CREATE FUNCTION "${probe}"() RETURNS trigger AS $$
++       BEGIN PERFORM nextval('"${probe}"'); RETURN NULL; END;
++       $$ LANGUAGE plpgsql;
++       CREATE TRIGGER "${probe}" AFTER ${event} ON "${table}"
++       FOR EACH ROW WHEN (OLD.id = :'id') EXECUTE FUNCTION "${probe}"();`,
++      { id },
++    )
++    return await run(() =>
++      Number(sql(`SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM "${probe}";`)),
++    )
++  } finally {
++    sql(`DROP TRIGGER IF EXISTS "${probe}" ON "${table}";
++         DROP FUNCTION IF EXISTS "${probe}"();
++         DROP SEQUENCE IF EXISTS "${probe}";`)
 +  }
-+  throw new Error('The API request did not reach the account lock')
 +}
 +
 +describe('Concurrent administrative authentication maintenance', () => {
@@ -699,29 +750,31 @@ index 0000000..0376ae2
 +      const replacement = await TestHelpers.registerUser()
 +      const emailId = primaryId(user)
 +      const newEmail = `concurrent-${randomUUID()}@example.com`
-+      const response = await holdingOwner(user.id, async owner => {
-+        const writing =
-+          operation === 'address'
-+            ? TestHelpers.authenticatedGraphql(
-+                `mutation($id: String!, $input: UpdateEmailInput!) {
++      const response = await withWriteAttemptProbe('Email', 'UPDATE', emailId, attempts =>
++        holdingOwner(user.id, async owner => {
++          const writing =
++            operation === 'address'
++              ? TestHelpers.authenticatedGraphql(
++                  `mutation($id: String!, $input: UpdateEmailInput!) {
 +              updateEmail(emailId: $id, input: $input) { id }
 +            }`,
-+                admin,
-+                { id: emailId, input: { email: newEmail } },
-+              )
-+            : TestHelpers.authenticatedGraphql(
-+                `mutation($id: String!, $input: UpdateUserInput!) {
++                  admin,
++                  { id: emailId, input: { email: newEmail } },
++                )
++              : TestHelpers.authenticatedGraphql(
++                  `mutation($id: String!, $input: UpdateUserInput!) {
 +              updateUser(userId: $id, input: $input) { id }
 +            }`,
-+                admin,
-+                { id: replacement.id, input: { emailsIds: [primaryId(replacement), emailId] } },
-+              )
-+        // Let the admin write reach the locked owner, then exercise the opposite lock order.
-+        await delay(150)
-+        await owner.query(`UPDATE "Email" SET verified = true WHERE id = $1`, [emailId])
-+        await owner.query('COMMIT')
-+        return writing
-+      })
++                  admin,
++                  { id: replacement.id, input: { emailsIds: [primaryId(replacement), emailId] } },
++                )
++          // Observe a complete retry before exercising the opposite lock order.
++          await waitForWriteProgress(writing, async () => attempts() >= 2)
++          await owner.query(`UPDATE "Email" SET verified = true WHERE id = $1`, [emailId])
++          await owner.query('COMMIT')
++          return writing
++        }),
++      )
 +      expect(response.data.errors).toBeUndefined()
 +      expect(sql(`SELECT "emailValidated" FROM "User" WHERE id = :'id';`, { id: user.id })).toBe(
 +        'f',
@@ -779,19 +832,25 @@ index 0000000..0376ae2
 +    ) WHERE id = :'userId';`,
 +      { membershipId, userId: user.id },
 +    )
-+    const response = await holdingOwner(user.id, async owner => {
-+      const writing = TestHelpers.authenticatedGraphql(
-+        `mutation($id: String!) { deleteOrganizationMember(organizationMemberId: $id) { id } }`,
-+        admin,
-+        { id: membershipId },
-+      )
-+      await delay(150)
-+      await owner.query(`SELECT id FROM "OrganizationMember" WHERE id = $1 FOR UPDATE`, [
-+        membershipId,
-+      ])
-+      await owner.query('COMMIT')
-+      return writing
-+    })
++    const response = await withWriteAttemptProbe(
++      'OrganizationMember',
++      'DELETE',
++      membershipId,
++      attempts =>
++        holdingOwner(user.id, async owner => {
++          const writing = TestHelpers.authenticatedGraphql(
++            `mutation($id: String!) { deleteOrganizationMember(organizationMemberId: $id) { id } }`,
++            admin,
++            { id: membershipId },
++          )
++          await waitForWriteProgress(writing, async () => attempts() >= 2)
++          await owner.query(`SELECT id FROM "OrganizationMember" WHERE id = $1 FOR UPDATE`, [
++            membershipId,
++          ])
++          await owner.query('COMMIT')
++          return writing
++        }),
++    )
 +    expect(response.data.errors).toBeUndefined()
 +    expect(
 +      sql(`SELECT "activeOrganizationId" IS NULL FROM "User" WHERE id = :'id';`, { id: user.id }),
@@ -1343,6 +1402,57 @@ index f20f346..5a14401 100644
 -  }, 20000)
 +  })
  })
+diff --git a/docs/auth-record-rollout.md b/docs/auth-record-rollout.md
+new file mode 100644
+index 0000000..44e675c
+--- /dev/null
++++ b/docs/auth-record-rollout.md
+@@ -0,0 +1,45 @@
++# Authentication-record migration rollout
++
++This release contains a pair of historical invariant migrations and two additive index preparations.
++Preserve the historical migration files and their checksums on installations that have applied them.
++
++If either invariant migration is pending, use a write-maintenance window. A normal rolling API
++deployment leaves the old API serving traffic during pre-deploy migrations. The first migration
++installs blocking owner locks, and the second replaces them with sorted, nonblocking locks. Concurrent
++account-first and email-first writes can deadlock between those steps. The old API also lacks the
++new generated-write retries and explicit membership lock ordering.
++
++1. Build and verify the release before the maintenance window.
++2. Pause all API and background writers to the authentication tables and drain their in-flight work.
++   Keep writers paused through migration and API replacement; pausing only the deploy process is
++   insufficient. Use the installation's established maintenance mechanism.
++3. Run `pnpm prisma:deploy` against the intended database. Apply the complete pending migration set,
++   including `20261006170000_auth_record_backfill_indexes`,
++   `20261006170100_auth_record_membership_index`,
++   `20261006180000_auth_record_invariants`, and `20261006230000_auth_record_lock_contention`.
++4. Require successful migration status and verify the final owner-lock implementation:
++
++   ```sql
++   SELECT pg_get_functiondef('lock_auth_record_owners(text[])'::regprocedure);
++   ```
++
++   It must lock accounts in ID order using `FOR NO KEY UPDATE NOWAIT` and convert lock contention
++   into SQLSTATE `40001`. Do not resume writes with only the first invariant migration applied.
++
++5. Start the matching API with generators 3.4.1, full-transaction conflict retries, and the explicit
++   membership lock correction. Verify its health check, then resume writers.
++
++If migration or startup fails, keep the maintenance window in place while resolving the failure.
++Do not mark an unapplied migration as applied or change an existing migration's contents to bypass it.
++
++The index preparations sort before the invariant backfill for installations receiving the whole
++release. The Email index supports the per-user primary-address lookup in `createdAt, id` order;
++the membership index supports context validation and organization membership lookup. Both are
++declared in the Prisma schema so `db push` does not remove them. Installations that have already
++applied both invariant migrations only need these additive preparation migrations; the two historical
++migrations are not rerun. Each preparation file contains a single `CREATE INDEX CONCURRENTLY`
++statement, tested with the pinned Prisma 7.9.1 migration runner. Keep them separate and do not wrap
++them in a transaction. Concurrent builds permit application writes during index-only deployments;
++see [PostgreSQL's index documentation](https://www.postgresql.org/docs/15/sql-createindex.html).
++If a concurrent build is interrupted, inspect index validity and follow migration recovery before
++retrying; do not hide an invalid index with `IF NOT EXISTS` or mark the migration applied.
 diff --git a/libs/api/core/models/src/lib/models/models.ts b/libs/api/core/models/src/lib/models/models.ts
 index b95863f..3b0cad1 100644
 --- a/libs/api/core/models/src/lib/models/models.ts
@@ -3697,6 +3807,26 @@ index 25b94b8..0000000
 -    return this.generatedService.deleteUserSession(userSessionId)
 -  }
 -}
+diff --git a/libs/api/prisma/src/lib/migrations/20261006170000_auth_record_backfill_indexes/migration.sql b/libs/api/prisma/src/lib/migrations/20261006170000_auth_record_backfill_indexes/migration.sql
+new file mode 100644
+index 0000000..4260e97
+--- /dev/null
++++ b/libs/api/prisma/src/lib/migrations/20261006170000_auth_record_backfill_indexes/migration.sql
+@@ -0,0 +1,5 @@
++-- Ordered before the invariant backfill for installations receiving the whole release.
++-- Existing installations apply this additive migration without rewriting migration history.
++-- Keep this as the only statement: CONCURRENTLY cannot run inside a transaction block.
++CREATE INDEX CONCURRENTLY "Email_userId_primary_createdAt_id_idx"
++ON "Email" ("userId", "primary", "createdAt", id);
+diff --git a/libs/api/prisma/src/lib/migrations/20261006170100_auth_record_membership_index/migration.sql b/libs/api/prisma/src/lib/migrations/20261006170100_auth_record_membership_index/migration.sql
+new file mode 100644
+index 0000000..02ed8b5
+--- /dev/null
++++ b/libs/api/prisma/src/lib/migrations/20261006170100_auth_record_membership_index/migration.sql
+@@ -0,0 +1,3 @@
++-- Keep this as the only statement so Prisma migrate deploy can build it concurrently.
++CREATE INDEX CONCURRENTLY "OrganizationMember_organizationId_userId_idx"
++ON "OrganizationMember" ("organizationId", "userId");
 diff --git a/libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql b/libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
 new file mode 100644
 index 0000000..40d09cd
@@ -3892,10 +4022,10 @@ index 0000000..82d5c92
 +END;
 +$$ LANGUAGE plpgsql;
 diff --git a/libs/api/prisma/src/lib/schemas/schema.prisma b/libs/api/prisma/src/lib/schemas/schema.prisma
-index c2126fd..e63b758 100644
+index c2126fd..7fb254d 100644
 --- a/libs/api/prisma/src/lib/schemas/schema.prisma
 +++ b/libs/api/prisma/src/lib/schemas/schema.prisma
-@@ -87,10 +87,13 @@ model Email {
+@@ -87,16 +87,21 @@ model Email {
    updatedAt      DateTime      @updatedAt
    email          String        @unique
    public         Boolean       @default(false)
@@ -3909,7 +4039,24 @@ index c2126fd..e63b758 100644
    verifyExpires  DateTime?
    userId         String?
    emailType      EmailType     @default(WORK)
-@@ -403,6 +406,7 @@ model User {
+   organizationId String?
+   user           User?         @relation("Email_belongsTo_User", fields: [userId], references: [id])
+   organization   Organization? @relation("Email_belongsTo_Organization", fields: [organizationId], references: [id])
++
++  @@index([userId, primary, createdAt, id])
+ }
+ 
+ model Invite {
+@@ -184,6 +189,8 @@ model OrganizationMember {
+   user           User         @relation("OrganizationMember_belongsTo_User", fields: [userId], references: [id])
+   organizationId String
+   organization   Organization @relation("OrganizationMember_belongsTo_Organization", fields: [organizationId], references: [id])
++
++  @@index([organizationId, userId])
+ }
+ 
+ model Permission {
+@@ -403,6 +410,7 @@ model User {
    updatedAt                 DateTime                 @updatedAt
    firstName                 String?
    lastName                  String?
@@ -3917,7 +4064,7 @@ index c2126fd..e63b758 100644
    isSuperAdmin              Boolean                  @default(false)
    bio                       String?
    displayName               String?                  @unique
-@@ -412,6 +416,7 @@ model User {
+@@ -412,6 +420,7 @@ model User {
    passwordResetToken        String?
    /// @graphqlOmit
    passwordResetExpires      DateTime?
@@ -3925,7 +4072,7 @@ index c2126fd..e63b758 100644
    emailValidated            Boolean                  @default(false)
    /// @graphqlOmit
    validateEmailToken        String?                  @unique
-@@ -471,6 +476,9 @@ model UserPreference {
+@@ -471,6 +480,9 @@ model UserPreference {
    @@unique([userId, key])
  }
  

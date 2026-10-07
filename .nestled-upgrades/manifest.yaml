@@ -298,15 +298,17 @@ releases:
   - id: 2026.10.6
     date: 2026-10-07
     title: Authentication record maintenance invariants
-    templateCommit: 06b27af
+    templateCommit: 4429822
     notes:
       - id: 2026-10-06-auth-record-invariants
         title: Keep authentication records consistent across administrative maintenance
         delivery: hybrid
-        intent: Keep protected account and email flags readable while assigning their writes to explicit application workflows. Use the generator's @crudReadOnly annotation for User.isSuperAdmin, User.emailValidated, Email.primary, Email.verified and Email.verifyExpires. Session records use @skipCrud with a documented credential-maintenance exception; maintain sessions through the existing explicit authentication/session APIs. Regenerate CRUD, models and the complete SDK. Apply the auth-record-invariants and auth-record-lock-contention migrations to keep email validation and active organization context consistent after administrative changes, including relation reassignment and deletion. Generated standalone writes retry rolled-back conflicts; owner synchronization uses sorted, nonblocking locks so concurrent application workflows can complete.
+        intent: Keep protected account and email flags readable while assigning their writes to explicit application workflows. Use the generator's @crudReadOnly annotation for User.isSuperAdmin, User.emailValidated, Email.primary, Email.verified and Email.verifyExpires. Session records use @skipCrud with a documented credential-maintenance exception; maintain sessions through the existing explicit authentication/session APIs. Regenerate CRUD, models and the complete SDK. Apply the backfill-index preparation, auth-record-invariants and auth-record-lock-contention migrations to keep email validation and active organization context consistent after administrative changes, including relation reassignment and deletion. Generated standalone writes retry rolled-back conflicts; owner synchronization uses sorted, nonblocking locks so concurrent application workflows can complete.
         area: auth
         affectedPaths:
           - libs/api/prisma/src/lib/schemas/schema.prisma
+          - libs/api/prisma/src/lib/migrations/20261006170000_auth_record_backfill_indexes/migration.sql
+          - libs/api/prisma/src/lib/migrations/20261006170100_auth_record_membership_index/migration.sql
           - libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
           - libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql
           - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
@@ -320,6 +322,8 @@ releases:
           - libs/api/generated-crud
           - libs/api/core/models
           - libs/shared/sdk
+          - docs/auth-record-rollout.md
+        review: "For an installation that has not applied both invariant migrations, arrange a write-maintenance window before deployment: pause API and background writers, apply all migrations including the index preparation, verify the final nonblocking owner-lock function, deploy the matching API, and then resume writers. The first historical migration installs blocking triggers until the follow-up migration replaces them; do not serve writes between those steps. Follow docs/auth-record-rollout.md and preserve checksums of migrations already applied."
         verification:
           - pnpm db-update
           - pnpm run nestled-doctor
