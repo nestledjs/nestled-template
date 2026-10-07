@@ -25,6 +25,8 @@ affectedPaths:
   - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
   - apps/api-e2e/src/auth/auth-generation.spec.ts
   - apps/api-e2e/src/zzz-cleanup.spec.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
   - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
   - libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
   - libs/api/generated-crud
@@ -40,6 +42,13 @@ verification:
   - pnpm nx run api:typecheck
   - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
 agentHints:
+  - >
+    Explicit member removal must lock the target User before deleting OrganizationMember, even
+    when that user has a different active organization. Organization deletion must lock all
+    affected User rows in sorted order before deleting memberships. Carry this lock order into
+    local handwritten transactions; generated-write retries do not cover application services.
+    Retry the complete organization-deletion transaction on P2034 to refresh its owner snapshot
+    when a membership is inserted or moved concurrently; keep external side effects outside retries.
   - >
     Run the e2e command from the repository root with TEST_DATABASE_URL and REDIS_URL
     pointing to isolated local test services and EMAIL_PROVIDER=mock. Require an actual test
