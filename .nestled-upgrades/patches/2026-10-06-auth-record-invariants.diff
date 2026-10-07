@@ -1,0 +1,5265 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml b/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml
+new file mode 100644
+index 0000000..f30a8f1
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml
+@@ -0,0 +1,75 @@
++id: 2026-10-06-auth-record-invariants
++title: Keep authentication records consistent across administrative maintenance
++priority: high
++area: auth
++type: security
++delivery: hybrid
++intent: >
++  Keep protected account and email flags readable while assigning their writes to explicit
++  application workflows. Use the generator's @crudReadOnly annotation for User.isSuperAdmin,
++  User.emailValidated, Email.primary, Email.verified and Email.verifyExpires. Session records
++  use @skipCrud with a documented credential-maintenance exception; maintain sessions through
++  the existing explicit authentication/session APIs. Regenerate CRUD, models and the complete SDK.
++  Apply the auth-record-invariants and auth-record-lock-contention migrations to keep email validation and active organization
++  context consistent after administrative changes, including relation reassignment and deletion.
++  Generated standalone writes retry rolled-back conflicts; owner synchronization uses sorted,
++  nonblocking locks so concurrent application workflows can complete.
++why: >
++  Administrative maintenance and purpose-built workflows must preserve the same account-state
++  invariants. Generated read-only inputs and database constraints make that contract durable.
++affectedPaths:
++  - libs/api/prisma/src/lib/schemas/schema.prisma
++  - libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
++  - libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql
++  - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
++  - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
++  - apps/api-e2e/src/auth/auth-generation.spec.ts
++  - apps/api-e2e/src/zzz-cleanup.spec.ts
++  - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
++  - libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
++  - libs/api/generated-crud
++  - libs/api/core/models
++  - libs/shared/sdk
++packageReleases:
++  - name: '@nestledjs/generators'
++    targetVersion: 3.4.1
++    dependencyType: dependencies
++verification:
++  - pnpm db-update
++  - pnpm run nestled-doctor
++  - pnpm nx run api:typecheck
++  - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
++agentHints:
++  - >
++    Run the e2e command from the repository root with TEST_DATABASE_URL and REDIS_URL
++    pointing to isolated local test services and EMAIL_PROVIDER=mock. Require an actual test
++    summary; the legacy Nx e2e target can return success without executing tests.
++    Remove the obsolete zzz-cleanup.spec.ts worker-kill hook so every suite can finish;
++    the existing global teardown owns API process cleanup.
++  - >
++    Install generators 3.4.1 before applying this note. Regenerate from the schema;
++    do not hand-edit generated files. Preserve project-specific auth and verification workflows.
++  - >
++    The migration resets verification when an email address or owner changes. It preserves a
++    freshly issued change-email token but removes a carried-over token; changing the owner also
++    clears primary status. Email inserts, updates and deletes synchronize the owning account's
++    emailValidated flag. A primary-address change invalidates outstanding account verification
++    tokens. Check local email-change and sign-up flows against these semantics.
++  - >
++    The follow-up migration never waits for a contended account lock while holding an email or
++    membership lock. It raises SQLSTATE 40001 instead, rolling back the complete transaction.
++    Generated standalone writes retry Prisma P2034 with bounded backoff. Handwritten transactions
++    should lock affected users in sorted order before email/membership writes, or retry the entire
++    transaction on serialization failure. Never retry just a statement in an aborted transaction.
++  - >
++    Membership removal or movement clears the former member's active organization only when no
++    membership for that user and organization remains. Keep membership checks on context readers.
++  - >
++    The migration repairs existing derived emailValidated and activeOrganizationId values.
++    Apply it through migrate deploy before the API deployment; db push does not install triggers.
++  - >
++    Remove stale generated UserSession resolver and admin SDK documents if the local generator
++    does not remove them. Retain the Prisma model, session data and explicit session APIs.
++    Keep session viewing in the permission-checked admin detail query with an explicit output
++    type (AdminUserDetails/AdminUserSession), rather than restoring sessions on the generic User
++    output. Existing SDK queries can keep their session selections under adminUserDetails.
+diff --git a/api-schema.graphql b/api-schema.graphql
+index c736704..c68b92d 100644
+--- a/api-schema.graphql
++++ b/api-schema.graphql
+@@ -218,6 +218,48 @@ type AdminSecurityEventsResponse {
+   total: Int!
+ }
+ 
++type AdminUserDetails {
++  AuditLog: [AuditLog!]
++  SecurityEvent: [SecurityEvent!]
++  TeamMember: [TeamMember!]
++  UserPreference: [UserPreference!]
++  activeOrganizationId: String
++  activeSessions: [AdminUserSession!]!
++  addresses: [Address!]
++  apiTokens: [ApiToken!]
++  avatar: StoredFile
++  avatarId: String
++  bio: String
++  createdAt: DateTime!
++  deactivatedAt: DateTime
++  displayName: String
++  emailValidated: Boolean!
++  emails: [Email!]
++  failedLoginCount: Int!
++  firstName: String
++  id: String!
++  images: [StoredFile!]
++  invitesSent: [Invite!]
++  isActive: Boolean!
++  isEmulating: Boolean
++  isSuperAdmin: Boolean!
++  lastFailedLogin: DateTime
++  lastName: String
++  lastSuccessfulLogin: DateTime
++  links: [Link!]
++  lockedUntil: DateTime
++  loginAttempts: [LoginAttempt!]
++  oAuthAccounts: [OAuthAccount!]
++  organizations: [OrganizationMember!]
++  originalAdminId: String
++  phoneNumbers: [PhoneNumber!]
++  privacyPolicyAcceptedAt: DateTime
++  termsAcceptedAt: DateTime
++  twoFactorEnabled: Boolean!
++  twoFactorMethod: TwoFactorMethod!
++  updatedAt: DateTime!
++}
++
+ input AdminUserFiltersInput {
+   accountLocked: Boolean
+   emailVerified: Boolean
+@@ -235,6 +277,14 @@ input AdminUserFiltersInput {
+   twoFactorEnabled: Boolean
+ }
+ 
++type AdminUserSession {
++  deviceInfo: String
++  id: String!
++  ipAddress: String
++  isValid: Boolean!
++  lastActiveAt: DateTime!
++}
++
+ type AdminUsersResponse {
+   skip: Int!
+   take: Int!
+@@ -597,12 +647,9 @@ input CreateEmailInput {
+   emailType: EmailType
+   id: String
+   organizationId: String
+-  primary: Boolean
+   public: Boolean
+   updatedAt: DateTime
+   userId: String
+-  verified: Boolean
+-  verifyExpires: DateTime
+ }
+ 
+ input CreateInvitationInput {
+@@ -822,7 +869,6 @@ input CreateUserInput {
+   TeamMemberIds: [String!]
+   UserPreferenceIds: [String!]
+   activeOrganizationId: String
+-  activeSessionsIds: [String!]
+   addressesIds: [String!]
+   apiTokensIds: [String!]
+   avatarId: String
+@@ -830,7 +876,6 @@ input CreateUserInput {
+   createdAt: DateTime
+   deactivatedAt: DateTime
+   displayName: String
+-  emailValidated: Boolean
+   emailsIds: [String!]
+   failedLoginCount: Int
+   firstName: String
+@@ -838,7 +883,6 @@ input CreateUserInput {
+   imagesIds: [String!]
+   invitesSentIds: [String!]
+   isActive: Boolean
+-  isSuperAdmin: Boolean
+   lastFailedLogin: DateTime
+   lastName: String
+   lastSuccessfulLogin: DateTime
+@@ -864,19 +908,6 @@ input CreateUserPreferenceInput {
+   value: String!
+ }
+ 
+-input CreateUserSessionInput {
+-  createdAt: DateTime
+-  deviceInfo: String
+-  expiresAt: DateTime
+-  id: String
+-  ipAddress: String
+-  isValid: Boolean
+-  lastActiveAt: DateTime
+-  twoFactorVerified: Boolean
+-  updatedAt: DateTime
+-  userId: String!
+-}
+-
+ """
+ A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+ """
+@@ -1655,7 +1686,6 @@ input ListUserInput {
+   TeamMemberIds: [String!]
+   UserPreferenceIds: [String!]
+   activeOrganizationId: String
+-  activeSessionsIds: [String!]
+   addressesIds: [String!]
+   apiTokensIds: [String!]
+   avatarId: String
+@@ -1711,26 +1741,6 @@ input ListUserPreferenceInput {
+   value: String
+ }
+ 
+-input ListUserSessionInput {
+-  createdAt: DateTime
+-  deviceInfo: String
+-  expiresAt: DateTime
+-  filters: UserSessionFilterInput
+-  id: String
+-  ipAddress: String
+-  isValid: Boolean
+-  lastActiveAt: DateTime
+-  orderBy: String
+-  orderDirection: String
+-  search: String
+-  searchFields: [String!]
+-  skip: Float = 0
+-  take: Float = 20
+-  twoFactorVerified: Boolean
+-  updatedAt: DateTime
+-  userId: String
+-}
+-
+ type LoginAttempt {
+   createdAt: DateTime!
+   email: String!
+@@ -1849,7 +1859,6 @@ type Mutation {
+   createTeamMember(input: CreateTeamMemberInput!): TeamMember
+   createUser(input: CreateUserInput!): User
+   createUserPreference(input: CreateUserPreferenceInput!): UserPreference
+-  createUserSession(input: CreateUserSessionInput!): UserSession
+   deleteAddress(addressId: String!): Address
+   deleteApiToken(apiTokenId: String!): ApiToken
+   deleteAuditLog(auditLogId: String!): AuditLog
+@@ -1875,7 +1884,6 @@ type Mutation {
+   deleteUser(userId: String!): User
+   deleteUserAccount: Boolean!
+   deleteUserPreference(userPreferenceId: String!): UserPreference
+-  deleteUserSession(userSessionId: String!): UserSession
+   disable2FA(input: Disable2FAInput!): Boolean!
+   emulateUser(input: EmulateUserInput!): UserToken
+   enable2FA(input: Verify2FAInput!): Enable2FAOutput!
+@@ -1937,7 +1945,6 @@ type Mutation {
+   updateTeamMember(input: UpdateTeamMemberInput!, teamMemberId: String!): TeamMember
+   updateUser(input: UpdateUserInput!, userId: String!): User
+   updateUserPreference(input: UpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
+-  updateUserSession(input: UpdateUserSessionInput!, userSessionId: String!): UserSession
+   uploadFile(file: Upload!, folder: String): UploadedFile!
+   uploadOrganizationLogo(file: Upload!): UploadedFile!
+   uploadUserAvatar(file: Upload!): UploadedFile!
+@@ -2491,7 +2498,7 @@ type Query {
+   adminDashboardStats: AdminDashboardStats!
+   adminOrganizations(filters: AdminOrganizationFiltersInput): AdminOrganizationsResponse!
+   adminSecurityEvents(filters: AdminSecurityEventFiltersInput): AdminSecurityEventsResponse!
+-  adminUserDetails(userId: String!): User!
++  adminUserDetails(userId: String!): AdminUserDetails!
+   adminUsers(filters: AdminUserFiltersInput): AdminUsersResponse!
+   apiToken(apiTokenId: String!): ApiToken
+   apiTokens(input: ListApiTokenInput): [ApiToken!]
+@@ -2582,9 +2589,6 @@ type Query {
+   userPreferences(input: ListUserPreferenceInput): [UserPreference!]
+   userPreferencesCount(input: ListUserPreferenceInput): CorePaging
+   userSecurityEvents(limit: Float): [SecurityEvent!]!
+-  userSession(userSessionId: String!): UserSession
+-  userSessions(input: ListUserSessionInput): [UserSession!]
+-  userSessionsCount(input: ListUserSessionInput): CorePaging
+   users(input: ListUserInput): [User!]
+   usersCount(input: ListUserInput): CorePaging
+ }
+@@ -3430,12 +3434,9 @@ input UpdateEmailInput {
+   emailType: EmailType
+   id: String
+   organizationId: String
+-  primary: Boolean
+   public: Boolean
+   updatedAt: DateTime
+   userId: String
+-  verified: Boolean
+-  verifyExpires: DateTime
+ }
+ 
+ input UpdateInviteInput {
+@@ -3663,7 +3664,6 @@ input UpdateUserInput {
+   TeamMemberIds: [String!]
+   UserPreferenceIds: [String!]
+   activeOrganizationId: String
+-  activeSessionsIds: [String!]
+   addressesIds: [String!]
+   apiTokensIds: [String!]
+   avatarId: String
+@@ -3671,7 +3671,6 @@ input UpdateUserInput {
+   createdAt: DateTime
+   deactivatedAt: DateTime
+   displayName: String
+-  emailValidated: Boolean
+   emailsIds: [String!]
+   failedLoginCount: Int
+   firstName: String
+@@ -3679,7 +3678,6 @@ input UpdateUserInput {
+   imagesIds: [String!]
+   invitesSentIds: [String!]
+   isActive: Boolean
+-  isSuperAdmin: Boolean
+   lastFailedLogin: DateTime
+   lastName: String
+   lastSuccessfulLogin: DateTime
+@@ -3705,19 +3703,6 @@ input UpdateUserPreferenceInput {
+   value: String
+ }
+ 
+-input UpdateUserSessionInput {
+-  createdAt: DateTime
+-  deviceInfo: String
+-  expiresAt: DateTime
+-  id: String
+-  ipAddress: String
+-  isValid: Boolean
+-  lastActiveAt: DateTime
+-  twoFactorVerified: Boolean
+-  updatedAt: DateTime
+-  userId: String
+-}
+-
+ """The `Upload` scalar type represents a file upload."""
+ scalar Upload
+ 
+@@ -3747,7 +3732,6 @@ type User {
+   TeamMember: [TeamMember!]
+   UserPreference: [UserPreference!]
+   activeOrganizationId: String
+-  activeSessions: [UserSession!]
+   addresses: [Address!]
+   apiTokens: [ApiToken!]
+   avatar: StoredFile
+@@ -3796,7 +3780,6 @@ input UserFilterInput {
+   TeamMember: TeamMemberListRelationFilterInput
+   UserPreference: UserPreferenceListRelationFilterInput
+   activeOrganizationId: StringFilterInput
+-  activeSessions: UserSessionListRelationFilterInput
+   addresses: AddressListRelationFilterInput
+   apiTokens: ApiTokenListRelationFilterInput
+   avatar: StoredFileRelationFilterInput
+@@ -3839,7 +3822,6 @@ input UserFilterInput2 {
+   TeamMember: TeamMemberListRelationFilterInput2
+   UserPreference: UserPreferenceListRelationFilterInput2
+   activeOrganizationId: StringFilterInput
+-  activeSessions: UserSessionListRelationFilterInput2
+   addresses: AddressListRelationFilterInput2
+   apiTokens: ApiTokenListRelationFilterInput2
+   avatar: StoredFileRelationFilterInput2
+@@ -3963,7 +3945,6 @@ input UserRelationFilterInput {
+   TeamMember: TeamMemberListRelationFilterInput2
+   UserPreference: UserPreferenceListRelationFilterInput2
+   activeOrganizationId: StringFilterInput
+-  activeSessions: UserSessionListRelationFilterInput2
+   addresses: AddressListRelationFilterInput2
+   apiTokens: ApiTokenListRelationFilterInput2
+   avatar: StoredFileRelationFilterInput2
+@@ -4025,79 +4006,6 @@ input UserRelationFilterInput2 {
+   updatedAt: DateTimeFilterInput
+ }
+ 
+-type UserSession {
+-  createdAt: DateTime!
+-  deviceInfo: String
+-  expiresAt: DateTime
+-  id: String!
+-  ipAddress: String
+-  isValid: Boolean!
+-  lastActiveAt: DateTime!
+-  twoFactorVerified: Boolean!
+-  updatedAt: DateTime!
+-  user: User
+-  userId: String!
+-}
+-
+-input UserSessionFilterInput {
+-  AND: [UserSessionFilterInput2!]
+-  NOT: [UserSessionFilterInput2!]
+-  OR: [UserSessionFilterInput2!]
+-  createdAt: DateTimeFilterInput
+-  deviceInfo: StringFilterInput
+-  expiresAt: DateTimeFilterInput
+-  id: StringFilterInput
+-  ipAddress: StringFilterInput
+-  isValid: BooleanFilterInput
+-  lastActiveAt: DateTimeFilterInput
+-  twoFactorVerified: BooleanFilterInput
+-  updatedAt: DateTimeFilterInput
+-  user: UserRelationFilterInput
+-  userId: StringFilterInput
+-}
+-
+-input UserSessionFilterInput2 {
+-  AND: [UserSessionFilterInput3!]
+-  NOT: [UserSessionFilterInput3!]
+-  OR: [UserSessionFilterInput3!]
+-  createdAt: DateTimeFilterInput
+-  deviceInfo: StringFilterInput
+-  expiresAt: DateTimeFilterInput
+-  id: StringFilterInput
+-  ipAddress: StringFilterInput
+-  isValid: BooleanFilterInput
+-  lastActiveAt: DateTimeFilterInput
+-  twoFactorVerified: BooleanFilterInput
+-  updatedAt: DateTimeFilterInput
+-  user: UserRelationFilterInput2
+-  userId: StringFilterInput
+-}
+-
+-input UserSessionFilterInput3 {
+-  createdAt: DateTimeFilterInput
+-  deviceInfo: StringFilterInput
+-  expiresAt: DateTimeFilterInput
+-  id: StringFilterInput
+-  ipAddress: StringFilterInput
+-  isValid: BooleanFilterInput
+-  lastActiveAt: DateTimeFilterInput
+-  twoFactorVerified: BooleanFilterInput
+-  updatedAt: DateTimeFilterInput
+-  userId: StringFilterInput
+-}
+-
+-input UserSessionListRelationFilterInput {
+-  every: UserSessionFilterInput2
+-  none: UserSessionFilterInput2
+-  some: UserSessionFilterInput2
+-}
+-
+-input UserSessionListRelationFilterInput2 {
+-  every: UserSessionFilterInput3
+-  none: UserSessionFilterInput3
+-  some: UserSessionFilterInput3
+-}
+-
+ type UserSessionOutput {
+   createdAt: DateTime!
+   deviceInfo: String
+diff --git a/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+new file mode 100644
+index 0000000..78f0073
+--- /dev/null
++++ b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+@@ -0,0 +1,157 @@
++import { beforeAll, describe, expect, it } from 'vitest'
++import { randomUUID } from 'node:crypto'
++import { setTimeout as delay } from 'node:timers/promises'
++import pg from 'pg'
++import { TestHelpers, type TestUser } from '../support/test-helpers'
++import { sql } from '../support/test-db'
++
++const connectionString =
++  process.env.TEST_DATABASE_URL ||
++  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
++const primaryId = (user: TestUser) =>
++  sql(`SELECT id FROM "Email" WHERE "userId" = :'userId' AND "primary";`, { userId: user.id })
++
++describe('Concurrent administrative authentication maintenance', () => {
++  let admin: TestUser
++  beforeAll(async () => {
++    admin = await TestHelpers.registerUser()
++    sql(`UPDATE "User" SET "isSuperAdmin" = true WHERE id = :'userId';`, { userId: admin.id })
++  })
++
++  async function holdingOwner<T>(userId: string, run: (owner: pg.Client) => Promise<T>) {
++    const owner = new pg.Client({ connectionString })
++    await owner.connect()
++    try {
++      await owner.query('BEGIN')
++      await owner.query(`SELECT id FROM "User" WHERE id = $1 FOR NO KEY UPDATE`, [userId])
++      return await run(owner)
++    } finally {
++      await owner.query('ROLLBACK')
++      await owner.end()
++    }
++  }
++
++  it('rolls back immediately with a retryable conflict instead of waiting for an owner', async () => {
++    const user = await TestHelpers.registerUser()
++    const emailId = primaryId(user)
++    const writer = new pg.Client({ connectionString })
++    await writer.connect()
++    try {
++      await writer.query(`SET lock_timeout = '200ms'`)
++      await holdingOwner(user.id, async () => {
++        await expect(
++          writer.query(`UPDATE "Email" SET verified = true WHERE id = $1`, [emailId]),
++        ).rejects.toMatchObject({ code: '40001' })
++      })
++      expect(sql(`SELECT verified FROM "Email" WHERE id = :'emailId';`, { emailId })).toBe('f')
++    } finally {
++      await writer.end()
++    }
++  })
++
++  it.each(['address', 'inverse relation'])(
++    'retries a complete generated %s write while a User-first workflow completes',
++    async operation => {
++      const user = await TestHelpers.registerUser()
++      const replacement = await TestHelpers.registerUser()
++      const emailId = primaryId(user)
++      const newEmail = `concurrent-${randomUUID()}@example.com`
++      const response = await holdingOwner(user.id, async owner => {
++        const writing =
++          operation === 'address'
++            ? TestHelpers.authenticatedGraphql(
++                `mutation($id: String!, $input: UpdateEmailInput!) {
++              updateEmail(emailId: $id, input: $input) { id }
++            }`,
++                admin,
++                { id: emailId, input: { email: newEmail } },
++              )
++            : TestHelpers.authenticatedGraphql(
++                `mutation($id: String!, $input: UpdateUserInput!) {
++              updateUser(userId: $id, input: $input) { id }
++            }`,
++                admin,
++                { id: replacement.id, input: { emailsIds: [primaryId(replacement), emailId] } },
++              )
++        // Let the admin write reach the locked owner, then exercise the opposite lock order.
++        await delay(150)
++        await owner.query(`UPDATE "Email" SET verified = true WHERE id = $1`, [emailId])
++        await owner.query('COMMIT')
++        return writing
++      })
++      expect(response.data.errors).toBeUndefined()
++      expect(sql(`SELECT "emailValidated" FROM "User" WHERE id = :'id';`, { id: user.id })).toBe(
++        'f',
++      )
++      expect(sql(`SELECT verified FROM "Email" WHERE id = :'emailId';`, { emailId })).toBe('f')
++      expect(sql(`SELECT email, "userId" FROM "Email" WHERE id = :'emailId';`, { emailId })).toBe(
++        operation === 'address' ? `${newEmail}|${user.id}` : `${user.email}|${replacement.id}`,
++      )
++    },
++  )
++
++  it('completes concurrent inverse owner moves without retaining verification', async () => {
++    const users = await Promise.all([TestHelpers.registerUser(), TestHelpers.registerUser()])
++    const emails = users.map(primaryId)
++    for (const emailId of emails) {
++      sql(`UPDATE "Email" SET verified = true WHERE id = :'emailId';`, { emailId })
++    }
++    const responses = await Promise.all(
++      emails.map((id, index) =>
++        TestHelpers.authenticatedGraphql(
++          `mutation($id: String!, $input: UpdateEmailInput!) {
++        updateEmail(emailId: $id, input: $input) { id }
++      }`,
++          admin,
++          { id, input: { userId: users[1 - index].id } },
++        ),
++      ),
++    )
++    for (const response of responses) expect(response.data.errors).toBeUndefined()
++    for (const [index, emailId] of emails.entries()) {
++      expect(
++        sql(
++          `SELECT "userId" = :'ownerId' AND NOT verified AND NOT "primary"
++        FROM "Email" WHERE id = :'emailId';`,
++          { emailId, ownerId: users[1 - index].id },
++        ),
++      ).toBe('t')
++      expect(
++        sql(`SELECT "emailValidated" FROM "User" WHERE id = :'id';`, { id: users[index].id }),
++      ).toBe('f')
++    }
++  })
++
++  it('retries membership deletion while a User-first workflow holds the former owner', async () => {
++    const user = await TestHelpers.registerUser()
++    const membershipId = sql(
++      `SELECT id FROM "OrganizationMember" WHERE "userId" = :'userId' LIMIT 1;`,
++      {
++        userId: user.id,
++      },
++    )
++    sql(
++      `UPDATE "User" SET "activeOrganizationId" = (
++      SELECT "organizationId" FROM "OrganizationMember" WHERE id = :'membershipId'
++    ) WHERE id = :'userId';`,
++      { membershipId, userId: user.id },
++    )
++    const response = await holdingOwner(user.id, async owner => {
++      const writing = TestHelpers.authenticatedGraphql(
++        `mutation($id: String!) { deleteOrganizationMember(organizationMemberId: $id) { id } }`,
++        admin,
++        { id: membershipId },
++      )
++      await delay(150)
++      await owner.query(`SELECT id FROM "OrganizationMember" WHERE id = $1 FOR UPDATE`, [
++        membershipId,
++      ])
++      await owner.query('COMMIT')
++      return writing
++    })
++    expect(response.data.errors).toBeUndefined()
++    expect(
++      sql(`SELECT "activeOrganizationId" IS NULL FROM "User" WHERE id = :'id';`, { id: user.id }),
++    ).toBe('t')
++  })
++})
+diff --git a/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts b/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+new file mode 100644
+index 0000000..71aedaa
+--- /dev/null
++++ b/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+@@ -0,0 +1,217 @@
++import { beforeAll, describe, expect, it } from 'vitest'
++import { randomUUID } from 'node:crypto'
++import { TestHelpers, type TestUser } from '../support/test-helpers'
++import { sql } from '../support/test-db'
++
++const primaryId = (user: TestUser) =>
++  sql(`SELECT id FROM "Email" WHERE "userId" = :'userId' AND "primary";`, { userId: user.id })
++const validated = (user: TestUser) =>
++  sql(`SELECT "emailValidated" FROM "User" WHERE id = :'userId';`, { userId: user.id })
++
++describe('Administrative authentication records', () => {
++  let admin: TestUser
++  beforeAll(async () => {
++    admin = await TestHelpers.registerUser()
++    sql(`UPDATE "User" SET "isSuperAdmin" = true WHERE id = :'userId';`, { userId: admin.id })
++  })
++
++  it('keeps explicit session viewing available to the owner and permitted administrators', async () => {
++    const user = await TestHelpers.registerUser()
++    const own = await TestHelpers.authenticatedGraphql(`query { getUserSessions { id } }`, user)
++    expect(own.data.errors).toBeUndefined()
++    expect(own.data.data.getUserSessions.length).toBeGreaterThan(0)
++    const query = `query($userId: String!) {
++      adminUserDetails(userId: $userId) { id activeSessions { id isValid lastActiveAt } }
++    }`
++    const allowed = await TestHelpers.authenticatedGraphql(query, admin, { userId: user.id })
++    expect(allowed.data.errors).toBeUndefined()
++    expect(allowed.data.data.adminUserDetails.activeSessions.length).toBeGreaterThan(0)
++    const denied = await TestHelpers.authenticatedGraphql(query, user, { userId: admin.id })
++    expect(denied.data.errors?.length).toBeGreaterThan(0)
++  })
++
++  it('creates ordinary email records with unverified, non-primary defaults', async () => {
++    const user = await TestHelpers.registerUser()
++    const response = await TestHelpers.authenticatedGraphql(
++      `mutation($input: CreateEmailInput!) {
++      createEmail(input: $input) { id email verified primary }
++    }`,
++      admin,
++      { input: { email: `new-${randomUUID()}@example.com`, userId: user.id } },
++    )
++    expect(response.data.errors).toBeUndefined()
++    expect(response.data.data.createEmail).toMatchObject({ verified: false, primary: false })
++  })
++
++  it('keeps account and email flags readable but removes them from both write inputs', async () => {
++    const response = await TestHelpers.authenticatedGraphql(
++      `query {
++      createEmail: __type(name: "CreateEmailInput") { inputFields { name } }
++      updateEmail: __type(name: "UpdateEmailInput") { inputFields { name } }
++      createUser: __type(name: "CreateUserInput") { inputFields { name } }
++      updateUser: __type(name: "UpdateUserInput") { inputFields { name } }
++      email: __type(name: "Email") { fields { name } }
++      user: __type(name: "User") { fields { name } }
++      mutation: __type(name: "Mutation") { fields { name } }
++    }`,
++      admin,
++    )
++    expect(response.data.errors).toBeUndefined()
++    const data = response.data.data
++    for (const operation of ['createEmail', 'updateEmail']) {
++      const names = data[operation].inputFields.map((field: { name: string }) => field.name)
++      expect(names).not.toEqual(expect.arrayContaining(['verified']))
++      expect(names).not.toEqual(expect.arrayContaining(['primary']))
++      expect(names).not.toContain('verifyExpires')
++      expect(names).toContain('email')
++    }
++    for (const operation of ['createUser', 'updateUser']) {
++      const names = data[operation].inputFields.map((field: { name: string }) => field.name)
++      expect(names).not.toContain('emailValidated')
++      expect(names).not.toContain('isSuperAdmin')
++      expect(names).not.toContain('activeSessionsIds')
++    }
++    expect(data.email.fields.map((field: { name: string }) => field.name)).toEqual(
++      expect.arrayContaining(['verified', 'primary']),
++    )
++    expect(data.user.fields.map((field: { name: string }) => field.name)).toEqual(
++      expect.arrayContaining(['emailValidated', 'isSuperAdmin']),
++    )
++    const mutations = data.mutation.fields.map((field: { name: string }) => field.name)
++    for (const operation of ['createUserSession', 'updateUserSession', 'deleteUserSession']) {
++      expect(mutations).not.toContain(operation)
++    }
++    expect(mutations).toContain('invalidateSession')
++  })
++
++  it('resets verification and account state when generic CRUD changes an address', async () => {
++    const user = await TestHelpers.registerUser()
++    const emailId = primaryId(user)
++    sql(`UPDATE "Email" SET verified = true, "verifyToken" = 'old-token' WHERE id = :'emailId';`, {
++      emailId,
++    })
++    sql(`UPDATE "User" SET "validateEmailToken" = 'account-' || id WHERE id = :'userId';`, {
++      userId: user.id,
++    })
++    expect(validated(user)).toBe('t')
++    const response = await TestHelpers.authenticatedGraphql(
++      `mutation($id: String!, $input: UpdateEmailInput!) {
++      updateEmail(emailId: $id, input: $input) { id email verified primary }
++    }`,
++      admin,
++      { id: emailId, input: { email: `changed-${randomUUID()}@example.com` } },
++    )
++    expect(response.data.errors).toBeUndefined()
++    expect(response.data.data.updateEmail.verified).toBe(false)
++    expect(validated(user)).toBe('f')
++    expect(
++      sql(`SELECT "verifyToken" IS NULL FROM "Email" WHERE id = :'emailId';`, { emailId }),
++    ).toBe('t')
++    expect(
++      sql(`SELECT "validateEmailToken" IS NULL FROM "User" WHERE id = :'userId';`, {
++        userId: user.id,
++      }),
++    ).toBe('t')
++  })
++
++  it('clears verification and primary status when an inverse relation moves an address', async () => {
++    const oldOwner = await TestHelpers.registerUser()
++    const newOwner = await TestHelpers.registerUser()
++    const emailId = primaryId(oldOwner)
++    sql(`UPDATE "Email" SET verified = true WHERE id = :'emailId';`, { emailId })
++    const response = await TestHelpers.authenticatedGraphql(
++      `mutation($id: String!, $input: UpdateUserInput!) {
++      updateUser(userId: $id, input: $input) { id }
++    }`,
++      admin,
++      { id: newOwner.id, input: { emailsIds: [primaryId(newOwner), emailId] } },
++    )
++    expect(response.data.errors).toBeUndefined()
++    expect(
++      sql(
++        `SELECT "userId" = :'userId' AND NOT verified AND NOT "primary" FROM "Email" WHERE id = :'emailId';`,
++        { userId: newOwner.id, emailId },
++      ),
++    ).toBe('t')
++    expect(validated(oldOwner)).toBe('f')
++    expect(validated(newOwner)).toBe('f')
++  })
++
++  it('recomputes the account flag after generic primary-email deletion', async () => {
++    const user = await TestHelpers.registerUser()
++    const emailId = primaryId(user)
++    sql(`UPDATE "Email" SET verified = true WHERE id = :'emailId';`, { emailId })
++    const response = await TestHelpers.authenticatedGraphql(
++      `mutation($id: String!) {
++      deleteEmail(emailId: $id) { id }
++    }`,
++      admin,
++      { id: emailId },
++    )
++    expect(response.data.errors).toBeUndefined()
++    expect(validated(user)).toBe('f')
++  })
++
++  it('preserves a freshly issued change-email token and allows its redemption', async () => {
++    const user = await TestHelpers.registerUser()
++    const response = await TestHelpers.authenticatedGraphql(
++      `mutation($input: ChangeEmailInput!) {
++      changeEmail(input: $input)
++    }`,
++      user,
++      { input: { newEmail: `fresh-${randomUUID()}@example.com` } },
++    )
++    expect(response.data.errors).toBeUndefined()
++    const token = sql(
++      `SELECT "verifyToken" FROM "Email" WHERE "userId" = :'userId' AND "primary";`,
++      { userId: user.id },
++    )
++    expect(token).not.toBe('')
++    const verified = await TestHelpers.graphql(
++      `mutation($token: String!) {
++      verifyEmailChange(token: $token) { id emailValidated }
++    }`,
++      { token },
++    )
++    expect(verified.data.errors).toBeUndefined()
++    expect(validated(user)).toBe('t')
++  })
++
++  it.each(['delete', 'move'])(
++    'clears obsolete active context after membership %s',
++    async operation => {
++      const user = await TestHelpers.registerUser()
++      const replacement = await TestHelpers.registerUser()
++      const membershipId = sql(
++        `SELECT id FROM "OrganizationMember" WHERE "userId" = :'userId' LIMIT 1;`,
++        { userId: user.id },
++      )
++      sql(
++        `UPDATE "User" SET "activeOrganizationId" = (SELECT "organizationId" FROM "OrganizationMember" WHERE id = :'membershipId') WHERE id = :'userId';`,
++        { membershipId, userId: user.id },
++      )
++      const response =
++        operation === 'delete'
++          ? await TestHelpers.authenticatedGraphql(
++              `mutation($id: String!) {
++          deleteOrganizationMember(organizationMemberId: $id) { id }
++        }`,
++              admin,
++              { id: membershipId },
++            )
++          : await TestHelpers.authenticatedGraphql(
++              `mutation($id: String!, $input: UpdateOrganizationMemberInput!) {
++          updateOrganizationMember(organizationMemberId: $id, input: $input) { id }
++        }`,
++              admin,
++              { id: membershipId, input: { userId: replacement.id } },
++            )
++      expect(response.data.errors).toBeUndefined()
++      expect(
++        sql(`SELECT "activeOrganizationId" IS NULL FROM "User" WHERE id = :'userId';`, {
++          userId: user.id,
++        }),
++      ).toBe('t')
++    },
++  )
++})
+diff --git a/apps/api-e2e/src/auth/auth-generation.spec.ts b/apps/api-e2e/src/auth/auth-generation.spec.ts
+index 0ea9c92..ec684ab 100644
+--- a/apps/api-e2e/src/auth/auth-generation.spec.ts
++++ b/apps/api-e2e/src/auth/auth-generation.spec.ts
+@@ -161,39 +161,39 @@ describe('Authentication: a change of isActive retires earlier credentials', ()
+ })
+ 
+ describe('Authentication: a revoked session stays revoked', () => {
+-  it('generated CRUD can revoke a session but not revive or extend it', async () => {
+-    const admin = await TestHelpers.registerUser(UserFactory.create())
+-    sql(`UPDATE "User" SET "isSuperAdmin" = true WHERE id = :'userId';`, { userId: admin.id })
++  it('the explicit session API revokes a session and the database forbids revival or extension', async () => {
+     const user = await TestHelpers.registerUser(UserFactory.create())
+     const sessionId = sql(
+       `SELECT id FROM "UserSession" WHERE "userId" = :'userId' ORDER BY "createdAt" DESC LIMIT 1;`,
+       { userId: user.id },
+     )
+-    const updateSession = (input: Record<string, unknown>) =>
+-      TestHelpers.authenticatedGraphql(
+-        `mutation UpdateUserSession($userSessionId: String!, $input: UpdateUserSessionInput!) {
+-          updateUserSession(userSessionId: $userSessionId, input: $input) { id isValid expiresAt }
+-        }`,
+-        admin,
+-        { userSessionId: sessionId, input },
+-      )
+     const sessionState = () =>
+       sql(`SELECT "isValid" FROM "UserSession" WHERE id = :'sessionId';`, { sessionId })
+ 
+     // Extending a live session's expiry is refused.
+-    const extended = await updateSession({
+-      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+-    })
+-    expect(extended.data.errors?.length).toBeGreaterThan(0)
++    expect(() =>
++      sql(
++        `UPDATE "UserSession" SET "expiresAt" = NOW() + INTERVAL '1 year' WHERE id = :'sessionId';`,
++        {
++          sessionId,
++        },
++      ),
++    ).toThrow(/expiry cannot be extended/i)
+ 
+     // Revoking is allowed.
+-    const revoked = await updateSession({ isValid: false })
++    const revoked = await TestHelpers.authenticatedGraphql(
++      `mutation($sessionId: String!) { invalidateSession(sessionId: $sessionId) }`,
++      user,
++      { sessionId },
++    )
+     expect(revoked.data.errors).toBeUndefined()
++    expect(revoked.data.data.invalidateSession).toBe(true)
+     expect(sessionState()).toBe('f')
+ 
+     // Reviving is refused, and the token stays refused.
+-    const revived = await updateSession({ isValid: true })
+-    expect(revived.data.errors?.length).toBeGreaterThan(0)
++    expect(() =>
++      sql(`UPDATE "UserSession" SET "isValid" = true WHERE id = :'sessionId';`, { sessionId }),
++    ).toThrow(/revoked session cannot be made valid/i)
+     expect(sessionState()).toBe('f')
+     const after = await me(user)
+     expect(after.data.errors?.[0]?.message).toMatch(/unauthorized|invalidated/i)
+diff --git a/apps/api-e2e/src/zzz-cleanup.spec.ts b/apps/api-e2e/src/zzz-cleanup.spec.ts
+deleted file mode 100644
+index 3ce4d99..0000000
+--- a/apps/api-e2e/src/zzz-cleanup.spec.ts
++++ /dev/null
+@@ -1,92 +0,0 @@
+-import { describe, it, afterAll, expect } from 'vitest'
+-import { spawn, type ChildProcess } from 'node:child_process'
+-import axios from 'axios'
+-/**
+- * This file runs LAST (alphabetically) to ensure cleanup happens
+- * We use afterAll to forcibly kill the API server since Vitest's globalTeardown
+- * doesn't always execute reliably.
+- */
+-describe('ZZZ Cleanup (runs last)', () => {
+-  it('should verify API is still running before teardown', async () => {
+-    console.log('\n✨ Final test - verifying API health before teardown...')
+-    const weStartedApi = (globalThis as any).__WE_STARTED_API__
+-    const apiProcess = (globalThis as any).__API_PROCESS__ as ChildProcess | null
+-    if (weStartedApi && apiProcess?.pid) {
+-      console.log(`✓ API server is running (PID: ${apiProcess.pid})`)
+-      console.log('  → Will be cleaned up by afterAll hook')
+-    } else if (!weStartedApi) {
+-      console.log('✓ Using pre-existing API server')
+-    }
+-    console.log('✅ All tests complete - cleanup will happen in afterAll')
+-    expect([true, false, undefined]).toContain(weStartedApi)
+-  })
+-  afterAll(async () => {
+-    console.log('\n🧹 Running cleanup from afterAll hook...')
+-    const weStartedApi = (globalThis as any).__WE_STARTED_API__
+-    const apiProcess = (globalThis as any).__API_PROCESS__ as ChildProcess | null
+-    if (weStartedApi && apiProcess?.pid) {
+-      console.log(`🛑 Killing API server (PID: ${apiProcess.pid})...`)
+-      try {
+-        // Unref everything first so they don't keep event loop alive
+-        apiProcess.stdout?.unref()
+-        apiProcess.stderr?.unref()
+-        apiProcess.stdin?.unref()
+-        apiProcess.unref()
+-        // Then clean up stdio streams to release file descriptors
+-        apiProcess.stdout?.removeAllListeners()
+-        apiProcess.stderr?.removeAllListeners()
+-        apiProcess.stdin?.removeAllListeners()
+-        apiProcess.stdout?.destroy()
+-        apiProcess.stderr?.destroy()
+-        apiProcess.stdin?.destroy()
+-      } catch {
+-        // Ignore cleanup errors
+-      }
+-      try {
+-        apiProcess.kill('SIGKILL')
+-        console.log(`✓ API server killed`)
+-        // Wait for process to fully terminate and release all resources
+-        await new Promise(resolve => setTimeout(resolve, 1000))
+-        // Verify it's dead
+-        try {
+-          process.kill(apiProcess.pid, 0) // Check if process exists
+-          console.log('⚠️  API server still running, waiting longer...')
+-          await new Promise(resolve => setTimeout(resolve, 2000))
+-        } catch {
+-          // Process is dead (kill with signal 0 throws if process doesn't exist)
+-          console.log('✓ API server process terminated')
+-        }
+-      } catch (err) {
+-        console.log(`⚠️  Could not kill API server: ${err}`)
+-      }
+-    }
+-    // Explicitly destroy axios agents to release any HTTP connections
+-    try {
+-      const httpAgent = axios.defaults.httpAgent as any
+-      const httpsAgent = axios.defaults.httpsAgent as any
+-      if (httpAgent?.destroy) {
+-        httpAgent.destroy()
+-        console.log('✓ HTTP agent destroyed')
+-      }
+-      if (httpsAgent?.destroy) {
+-        httpsAgent.destroy()
+-        console.log('✓ HTTPS agent destroyed')
+-      }
+-    } catch (err) {
+-      console.log(`⚠️  Could not destroy axios agents: ${err}`)
+-    }
+-    console.log('✅ Cleanup complete - all tests passed!')
+-    console.log('⚡ Waiting for worker pools to clean up IPC channels...')
+-    // Give worker pools time to clean up their IPC channels gracefully
+-    // This is especially important in CI environments where SIGKILL can cause
+-    // "ERR_IPC_CHANNEL_CLOSED" errors if we kill too quickly
+-    // If the process doesn't exit naturally after 2 seconds, force kill it
+-    setTimeout(() => {
+-      console.log('⚡ Force killing process to prevent hanging...')
+-      spawn('kill', ['-9', process.pid.toString()], {
+-        detached: true,
+-        stdio: 'ignore',
+-      }).unref()
+-    }, 2000)
+-  })
+-})
+diff --git a/apps/web/tests/auth-error-navigation.spec.tsx b/apps/web/tests/auth-error-navigation.spec.tsx
+index f20f346..5a14401 100644
+--- a/apps/web/tests/auth-error-navigation.spec.tsx
++++ b/apps/web/tests/auth-error-navigation.spec.tsx
+@@ -37,10 +37,6 @@ describe('authentication and authorization error navigation', () => {
+     ).toBeInTheDocument()
+   })
+ 
+-  // 20s test budget against the 5s findByRole wait below. These have to differ: vitest's default
+-  // testTimeout is 5000ms, so an inner wait of the same length can consume the entire budget and
+-  // the test dies by timeout at ~5005ms before the retry window it was given can ever elapse. That
+-  // is what "generous timeout costs nothing" missed — it cost the whole test.
+   it('replaces a protected query page with access denied after a forbidden event', async () => {
+     const router = createMemoryRouter(
+       [
+@@ -53,23 +49,20 @@ describe('authentication and authorization error navigation', () => {
+       ],
+       { initialEntries: ['/'] },
+     )
+-    render(<RouterProvider router={router} />)
+-    expect(await screen.findByText('Protected page')).toBeInTheDocument()
++    // Router initialization resolves the loader asynchronously. Finish the initial mount and
++    // App's effects before dispatching: visible outlet content alone does not prove that the
++    // global event listener is installed or that the navigation-reset effect has completed.
++    await act(async () => {
++      render(<RouterProvider router={router} />)
++    })
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
+ 
+     await act(async () => {
+       globalThis.dispatchEvent(new CustomEvent(APOLLO_ACCESS_FORBIDDEN_EVENT))
+     })
+ 
+-    // The event round-trips through a window listener, a state update and a re-render before the
+-    // heading exists. findBy's default 1s expires under CI load with coverage instrumentation --
+-    // this test has failed at 1044ms on a green suite once already, and was patched for an async
+-    // race once before that. The generous timeout costs nothing when the render is fast.
+     expect(
+-      await screen.findByRole(
+-        'heading',
+-        { name: 'You don’t have permission to view this page' },
+-        { timeout: 5000 },
+-      ),
++      screen.getByRole('heading', { name: 'You don’t have permission to view this page' }),
+     ).toBeInTheDocument()
+-  }, 20000)
++  })
+ })
+diff --git a/libs/api/core/models/src/lib/models/models.ts b/libs/api/core/models/src/lib/models/models.ts
+index b95863f..3b0cad1 100644
+--- a/libs/api/core/models/src/lib/models/models.ts
++++ b/libs/api/core/models/src/lib/models/models.ts
+@@ -848,9 +848,6 @@ export class User {
+   @Field(() => TwoFactorMethod)
+   twoFactorMethod!: TwoFactorMethod
+ 
+-  @Field(() => [UserSession], { nullable: true })
+-  activeSessions?: Partial<UserSession>[] | null
+-
+   @Field(() => [LoginAttempt], { nullable: true })
+   loginAttempts?: Partial<LoginAttempt>[] | null
+ 
+@@ -920,39 +917,3 @@ export class UserPreference {
+   @Field(() => String)
+   value!: string
+ }
+-
+-@ObjectType({ description: undefined })
+-export class UserSession {
+-  @Field(() => String)
+-  id!: string
+-
+-  @Field(() => GraphQLISODateTime)
+-  createdAt!: Date
+-
+-  @Field(() => GraphQLISODateTime)
+-  updatedAt!: Date
+-
+-  @Field(() => GraphQLISODateTime)
+-  lastActiveAt!: Date
+-
+-  @Field(() => String)
+-  userId!: string
+-
+-  @Field(() => User, { nullable: true })
+-  user?: Partial<User> | null
+-
+-  @Field(() => String, { nullable: true })
+-  deviceInfo?: string | null
+-
+-  @Field(() => String, { nullable: true })
+-  ipAddress?: string | null
+-
+-  @Field(() => Boolean)
+-  isValid!: boolean
+-
+-  @Field(() => Boolean)
+-  twoFactorVerified!: boolean
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  expiresAt?: Date | null
+-}
+diff --git a/libs/api/custom/src/lib/plugins/admin/admin.resolver.ts b/libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
+index 93c8576..7a12515 100644
+--- a/libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
++++ b/libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
+@@ -8,7 +8,7 @@ import {
+   SecurityEventType,
+ } from '@nestled-template/api/core/models'
+ import { AdminService } from './admin.service'
+-import { AdminUserFiltersInput, AdminUsersResponse } from './dto'
++import { AdminUserDetails, AdminUserFiltersInput, AdminUsersResponse } from './dto'
+ 
+ @InputType()
+ export class AdminSecurityEventFiltersInput {
+@@ -241,9 +241,9 @@ export class AdminResolver {
+    * Get detailed information about a specific user
+    * Requires platform.users.read.
+    */
+-  @Query(() => User)
++  @Query(() => AdminUserDetails)
+   @RequirePlatformPermission('platform.users.read')
+-  async adminUserDetails(@Args('userId', { type: () => String }) userId: string): Promise<any> {
++  async adminUserDetails(@Args('userId', { type: () => String }) userId: string) {
+     return this.service.getUserDetails(userId)
+   }
+ 
+diff --git a/libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts b/libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
+new file mode 100644
+index 0000000..1e20d20
+--- /dev/null
++++ b/libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
+@@ -0,0 +1,27 @@
++import { Field, ObjectType } from '@nestjs/graphql'
++import { User } from '@nestled-template/api/core/models'
++
++@ObjectType()
++export class AdminUserSession {
++  @Field()
++  id!: string
++
++  @Field({ nullable: true })
++  ipAddress?: string | null
++
++  @Field({ nullable: true })
++  deviceInfo?: string | null
++
++  @Field()
++  lastActiveAt!: Date
++
++  @Field()
++  isValid!: boolean
++}
++
++/** Session details belong to the permission-checked admin query, not the generic User type. */
++@ObjectType()
++export class AdminUserDetails extends User {
++  @Field(() => [AdminUserSession])
++  activeSessions!: AdminUserSession[]
++}
+diff --git a/libs/api/custom/src/lib/plugins/admin/dto/index.ts b/libs/api/custom/src/lib/plugins/admin/dto/index.ts
+index d9df087..7634cc1 100644
+--- a/libs/api/custom/src/lib/plugins/admin/dto/index.ts
++++ b/libs/api/custom/src/lib/plugins/admin/dto/index.ts
+@@ -1,2 +1,3 @@
+ export * from './admin-user-filters.input'
+ export * from './admin-users-response.output'
++export * from './admin-user-details.output'
+diff --git a/libs/api/generated-crud/data-access/src/lib/api-crud-data-access.service.ts b/libs/api/generated-crud/data-access/src/lib/api-crud-data-access.service.ts
+index 5fa0cf4..10aeda8 100644
+--- a/libs/api/generated-crud/data-access/src/lib/api-crud-data-access.service.ts
++++ b/libs/api/generated-crud/data-access/src/lib/api-crud-data-access.service.ts
+@@ -4,6 +4,7 @@ import graphqlFields from 'graphql-fields'
+ import type { GraphQLResolveInfo } from 'graphql'
+ import { DATABASE_MODELS_BY_NAME, DatabaseField, DatabaseModel } from './database-models'
+ import * as dto from './dto'
++import { retryWrite } from './retry-write'
+ 
+ type FieldTree = Record<string, unknown>
+ type SelectTree = Record<string, true | { select: SelectTree }>
+@@ -353,10 +354,6 @@ const FILTER_RELATIONS = {
+       targetModel: 'Invite',
+       isList: true,
+     },
+-    activeSessions: {
+-      targetModel: 'UserSession',
+-      isList: true,
+-    },
+     loginAttempts: {
+       targetModel: 'LoginAttempt',
+       isList: true,
+@@ -392,12 +389,6 @@ const FILTER_RELATIONS = {
+       isList: false,
+     },
+   },
+-  UserSession: {
+-    user: {
+-      targetModel: 'User',
+-      isList: false,
+-    },
+-  },
+ } as Record<string, Record<string, FilterRelation>>
+ 
+ const LOGICAL_FILTER_OPERATORS = ['AND', 'OR', 'NOT'] as const
+@@ -529,10 +520,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['address'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['address'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async addresses(info: GraphQLResolveInfo, input?: dto.ListAddressInput) {
+@@ -605,17 +598,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['address'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['address'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteAddress(id: string) {
+-    return this.data['address'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['address'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createApiToken(info: GraphQLResolveInfo, input: dto.CreateApiTokenInput) {
+@@ -644,10 +641,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['apiToken'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['apiToken'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async apiTokens(info: GraphQLResolveInfo, input?: dto.ListApiTokenInput) {
+@@ -719,17 +718,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['apiToken'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['apiToken'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteApiToken(id: string) {
+-    return this.data['apiToken'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['apiToken'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createAuditLog(info: GraphQLResolveInfo, input: dto.CreateAuditLogInput) {
+@@ -758,10 +761,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['auditLog'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['auditLog'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async auditLogs(info: GraphQLResolveInfo, input?: dto.ListAuditLogInput) {
+@@ -833,17 +838,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['auditLog'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['auditLog'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteAuditLog(id: string) {
+-    return this.data['auditLog'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['auditLog'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createCountry(info: GraphQLResolveInfo, input: dto.CreateCountryInput) {
+@@ -871,10 +880,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['country'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['country'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async countries(info: GraphQLResolveInfo, input?: dto.ListCountryInput) {
+@@ -945,17 +956,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['country'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['country'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteCountry(id: string) {
+-    return this.data['country'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['country'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createEmail(info: GraphQLResolveInfo, input: dto.CreateEmailInput) {
+@@ -984,10 +999,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['email'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['email'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async emails(info: GraphQLResolveInfo, input?: dto.ListEmailInput) {
+@@ -1059,17 +1076,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['email'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['email'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteEmail(id: string) {
+-    return this.data['email'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['email'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createInvite(info: GraphQLResolveInfo, input: dto.CreateInviteInput) {
+@@ -1099,10 +1120,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['invite'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['invite'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async invites(info: GraphQLResolveInfo, input?: dto.ListInviteInput) {
+@@ -1175,17 +1198,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['invite'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['invite'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteInvite(id: string) {
+-    return this.data['invite'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['invite'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createLink(info: GraphQLResolveInfo, input: dto.CreateLinkInput) {
+@@ -1214,10 +1241,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['link'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['link'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async links(info: GraphQLResolveInfo, input?: dto.ListLinkInput) {
+@@ -1289,17 +1318,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['link'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['link'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteLink(id: string) {
+-    return this.data['link'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['link'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createLoginAttempt(info: GraphQLResolveInfo, input: dto.CreateLoginAttemptInput) {
+@@ -1327,10 +1360,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['loginAttempt'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['loginAttempt'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async loginAttempts(info: GraphQLResolveInfo, input?: dto.ListLoginAttemptInput) {
+@@ -1405,17 +1440,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['loginAttempt'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['loginAttempt'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteLoginAttempt(id: string) {
+-    return this.data['loginAttempt'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['loginAttempt'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createOAuthAccount(info: GraphQLResolveInfo, input: dto.CreateOAuthAccountInput) {
+@@ -1443,10 +1482,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['oAuthAccount'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['oAuthAccount'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async oAuthAccounts(info: GraphQLResolveInfo, input?: dto.ListOAuthAccountInput) {
+@@ -1521,17 +1562,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['oAuthAccount'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['oAuthAccount'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteOAuthAccount(id: string) {
+-    return this.data['oAuthAccount'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['oAuthAccount'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createOrganization(info: GraphQLResolveInfo, input: dto.CreateOrganizationInput) {
+@@ -1586,10 +1631,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['organization'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['organization'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async organizations(info: GraphQLResolveInfo, input?: dto.ListOrganizationInput) {
+@@ -1691,17 +1738,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['organization'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['organization'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteOrganization(id: string) {
+-    return this.data['organization'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['organization'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createOrganizationMember(
+@@ -1734,10 +1785,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['organizationMember'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['organizationMember'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async organizationMembers(info: GraphQLResolveInfo, input?: dto.ListOrganizationMemberInput) {
+@@ -1814,17 +1867,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['organizationMember'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['organizationMember'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteOrganizationMember(id: string) {
+-    return this.data['organizationMember'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['organizationMember'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createPermission(info: GraphQLResolveInfo, input: dto.CreatePermissionInput) {
+@@ -1852,10 +1909,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['permission'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['permission'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async permissions(info: GraphQLResolveInfo, input?: dto.ListPermissionInput) {
+@@ -1926,17 +1985,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['permission'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['permission'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deletePermission(id: string) {
+-    return this.data['permission'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['permission'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createPhoneNumber(info: GraphQLResolveInfo, input: dto.CreatePhoneNumberInput) {
+@@ -1965,10 +2028,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['phoneNumber'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['phoneNumber'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async phoneNumbers(info: GraphQLResolveInfo, input?: dto.ListPhoneNumberInput) {
+@@ -2040,17 +2105,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['phoneNumber'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['phoneNumber'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deletePhoneNumber(id: string) {
+-    return this.data['phoneNumber'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['phoneNumber'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createPlan(info: GraphQLResolveInfo, input: dto.CreatePlanInput) {
+@@ -2078,10 +2147,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['plan'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['plan'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async plans(info: GraphQLResolveInfo, input?: dto.ListPlanInput) {
+@@ -2152,17 +2223,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['plan'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['plan'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deletePlan(id: string) {
+-    return this.data['plan'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['plan'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createRole(info: GraphQLResolveInfo, input: dto.CreateRoleInput) {
+@@ -2201,10 +2276,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['role'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['role'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async roles(info: GraphQLResolveInfo, input?: dto.ListRoleInput) {
+@@ -2286,17 +2363,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['role'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['role'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteRole(id: string) {
+-    return this.data['role'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['role'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createSecurityEvent(info: GraphQLResolveInfo, input: dto.CreateSecurityEventInput) {
+@@ -2324,10 +2405,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['securityEvent'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['securityEvent'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async securityEvents(info: GraphQLResolveInfo, input?: dto.ListSecurityEventInput) {
+@@ -2402,17 +2485,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['securityEvent'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['securityEvent'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteSecurityEvent(id: string) {
+-    return this.data['securityEvent'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['securityEvent'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createSubscription(info: GraphQLResolveInfo, input: dto.CreateSubscriptionInput) {
+@@ -2441,10 +2528,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['subscription'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['subscription'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async subscriptions(info: GraphQLResolveInfo, input?: dto.ListSubscriptionInput) {
+@@ -2520,17 +2609,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['subscription'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['subscription'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteSubscription(id: string) {
+-    return this.data['subscription'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['subscription'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createTeam(info: GraphQLResolveInfo, input: dto.CreateTeamInput) {
+@@ -2559,10 +2652,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['team'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['team'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async teams(info: GraphQLResolveInfo, input?: dto.ListTeamInput) {
+@@ -2634,17 +2729,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['team'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['team'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteTeam(id: string) {
+-    return this.data['team'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['team'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createTeamMember(info: GraphQLResolveInfo, input: dto.CreateTeamMemberInput) {
+@@ -2674,10 +2773,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['teamMember'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['teamMember'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async teamMembers(info: GraphQLResolveInfo, input?: dto.ListTeamMemberInput) {
+@@ -2750,17 +2851,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['teamMember'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['teamMember'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteTeamMember(id: string) {
+-    return this.data['teamMember'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['teamMember'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createStoredFile(info: GraphQLResolveInfo, input: dto.CreateStoredFileInput) {
+@@ -2796,10 +2901,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['storedFile'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['storedFile'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async storedFiles(info: GraphQLResolveInfo, input?: dto.ListStoredFileInput) {
+@@ -2878,17 +2985,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['storedFile'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['storedFile'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteStoredFile(id: string) {
+-    return this.data['storedFile'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['storedFile'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createUser(info: GraphQLResolveInfo, input: dto.CreateUserInput) {
+@@ -2900,7 +3011,6 @@ export class ApiCrudDataAccessService {
+       organizationsIds,
+       addressesIds,
+       invitesSentIds,
+-      activeSessionsIds,
+       loginAttemptsIds,
+       AuditLogIds,
+       UserPreferenceIds,
+@@ -2921,7 +3031,6 @@ export class ApiCrudDataAccessService {
+       organizations: { ids: organizationsIds, isVirtual: true, isList: true, isRequired: false },
+       addresses: { ids: addressesIds, isVirtual: true, isList: true, isRequired: false },
+       invitesSent: { ids: invitesSentIds, isVirtual: true, isList: true, isRequired: false },
+-      activeSessions: { ids: activeSessionsIds, isVirtual: true, isList: true, isRequired: false },
+       loginAttempts: { ids: loginAttemptsIds, isVirtual: true, isList: true, isRequired: false },
+       AuditLog: { ids: AuditLogIds, isVirtual: true, isList: true, isRequired: false },
+       UserPreference: { ids: UserPreferenceIds, isVirtual: true, isList: true, isRequired: false },
+@@ -2949,10 +3058,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['user'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['user'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async users(info: GraphQLResolveInfo, input?: dto.ListUserInput) {
+@@ -3004,7 +3115,6 @@ export class ApiCrudDataAccessService {
+       organizationsIds,
+       addressesIds,
+       invitesSentIds,
+-      activeSessionsIds,
+       loginAttemptsIds,
+       AuditLogIds,
+       UserPreferenceIds,
+@@ -3025,7 +3135,6 @@ export class ApiCrudDataAccessService {
+       organizations: { ids: organizationsIds, isVirtual: true, isList: true, isRequired: false },
+       addresses: { ids: addressesIds, isVirtual: true, isList: true, isRequired: false },
+       invitesSent: { ids: invitesSentIds, isVirtual: true, isList: true, isRequired: false },
+-      activeSessions: { ids: activeSessionsIds, isVirtual: true, isList: true, isRequired: false },
+       loginAttempts: { ids: loginAttemptsIds, isVirtual: true, isList: true, isRequired: false },
+       AuditLog: { ids: AuditLogIds, isVirtual: true, isList: true, isRequired: false },
+       UserPreference: { ids: UserPreferenceIds, isVirtual: true, isList: true, isRequired: false },
+@@ -3056,17 +3165,21 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['user'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['user'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteUser(id: string) {
+-    return this.data['user'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['user'].delete({
++        where: { id },
++      }),
++    )
+   }
+ 
+   async createUserPreference(info: GraphQLResolveInfo, input: dto.CreateUserPreferenceInput) {
+@@ -3094,10 +3207,12 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['userPreference'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['userPreference'].create({
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async userPreferences(info: GraphQLResolveInfo, input?: dto.ListUserPreferenceInput) {
+@@ -3172,128 +3287,20 @@ export class ApiCrudDataAccessService {
+       }
+     }
+ 
+-    return this.data['userPreference'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
++    return retryWrite(() =>
++      this.data['userPreference'].update({
++        where: { id },
++        data,
++        select: buildAdminSelect(info),
++      }),
++    )
+   }
+ 
+   async deleteUserPreference(id: string) {
+-    return this.data['userPreference'].delete({
+-      where: { id },
+-    })
+-  }
+-
+-  async createUserSession(info: GraphQLResolveInfo, input: dto.CreateUserSessionInput) {
+-    const { userId, ...regularFields } = input
+-    const data: any = regularFields
+-
+-    const relationMappings = {
+-      user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
+-    }
+-
+-    for (const [relationName, config] of Object.entries(relationMappings)) {
+-      if (config.ids !== undefined && config.ids !== null) {
+-        const ids = Array.isArray(config.ids)
+-          ? config.ids.map(id => ({ id }))
+-          : [{ id: config.ids }]
+-
+-        if (config.isList) {
+-          // List relationships: always use connect for creates
+-          const relationOperation = 'connect'
+-          data[relationName] = { [relationOperation]: ids }
+-        } else {
+-          // Single relationship - always use connect
+-          data[relationName] = { connect: { id: config.ids } }
+-        }
+-      }
+-    }
+-
+-    return this.data['userSession'].create({
+-      data,
+-      select: buildAdminSelect(info),
+-    })
+-  }
+-
+-  async userSessions(info: GraphQLResolveInfo, input?: dto.ListUserSessionInput) {
+-    return this.data['userSession'].findMany({
+-      ...this.data.filter(normalizeListInputFilters('UserSession', input)),
+-      select: buildAdminSelect(info),
+-    })
+-  }
+-
+-  async userSessionsCount(input?: dto.ListUserSessionInput) {
+-    const total = await this.data['userSession'].count()
+-    const {
+-      where,
+-      take = 10,
+-      skip = 0,
+-    } = this.data.filter(normalizeListInputFilters('UserSession', input))
+-    const filteredTotal = await this.data['userSession'].count({ where })
+-    const page = Math.floor(skip / take)
+-    const pages = take > 0 ? Math.ceil(filteredTotal / take) : 0
+-    const hasNext = skip + take < filteredTotal
+-    const hasPrev = skip > 0
+-    const count = Math.max(0, Math.min(take, filteredTotal - skip))
+-    return {
+-      take,
+-      skip,
+-      page,
+-      pages,
+-      hasNext,
+-      hasPrev,
+-      count,
+-      total,
+-      filteredTotal,
+-    }
+-  }
+-
+-  async userSession(info: GraphQLResolveInfo, id: string) {
+-    return this.data['userSession'].findUnique({
+-      where: { id },
+-      select: buildAdminSelect(info),
+-    })
+-  }
+-
+-  async updateUserSession(info: GraphQLResolveInfo, id: string, input: dto.UpdateUserSessionInput) {
+-    const { userId, ...regularFields } = input
+-    const data: any = regularFields
+-
+-    const relationMappings = {
+-      user: { ids: userId, isVirtual: false, isList: false, isRequired: true },
+-    }
+-
+-    for (const [relationName, config] of Object.entries(relationMappings)) {
+-      if (config.ids !== undefined && config.ids !== null) {
+-        const ids = Array.isArray(config.ids)
+-          ? config.ids.map(id => ({ id }))
+-          : [{ id: config.ids }]
+-
+-        if (config.isList) {
+-          // List relationships: use set for updates on virtual relations, connect for foreign key relations
+-          const relationOperation = config.isVirtual ? 'set' : 'connect'
+-          data[relationName] = { [relationOperation]: ids }
+-        } else {
+-          // Single relationship - connect when an id is provided; disconnect when null on update
+-          data[relationName] = { connect: { id: config.ids } }
+-        }
+-      } else if (config.ids === null && !config.isList && !config.isRequired && !config.isVirtual) {
+-        // Explicitly null - disconnect the optional single relationship (only when this model owns the FK)
+-        data[relationName] = { disconnect: true }
+-      }
+-    }
+-
+-    return this.data['userSession'].update({
+-      where: { id },
+-      data,
+-      select: buildAdminSelect(info),
+-    })
+-  }
+-
+-  async deleteUserSession(id: string) {
+-    return this.data['userSession'].delete({
+-      where: { id },
+-    })
++    return retryWrite(() =>
++      this.data['userPreference'].delete({
++        where: { id },
++      }),
++    )
+   }
+ }
+diff --git a/libs/api/generated-crud/data-access/src/lib/database-models.ts b/libs/api/generated-crud/data-access/src/lib/database-models.ts
+index 7c9499e..23bb611 100644
+--- a/libs/api/generated-crud/data-access/src/lib/database-models.ts
++++ b/libs/api/generated-crud/data-access/src/lib/database-models.ts
+@@ -10,6 +10,7 @@ export interface DatabaseField {
+   isUnique?: boolean
+   isList?: boolean
+   isReadOnly?: boolean
++  isCrudReadOnly?: boolean
+   hasDefaultValue?: boolean
+   default?: unknown
+   relationName?: string
+@@ -919,11 +920,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'verified',
+@@ -933,11 +936,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'verifyExpires',
+@@ -947,10 +952,12 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'userId',
+@@ -3760,11 +3767,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'bio',
+@@ -3800,11 +3809,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'emails',
+@@ -3989,22 +4000,6 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isGenerated: false,
+         isUpdatedAt: false,
+       },
+-      {
+-        name: 'activeSessions',
+-        kind: 'object',
+-        type: 'UserSession',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: true,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        relationName: 'UserToUserSession',
+-        relationFromFields: [],
+-        relationToFields: [],
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+       {
+         name: 'loginAttempts',
+         kind: 'object',
+@@ -4345,178 +4340,6 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+     pluralModelPropertyName: 'userPreferences',
+     idFieldType: 'String',
+   },
+-  {
+-    name: 'UserSession',
+-    pluralName: 'UserSessions',
+-    fields: [
+-      {
+-        name: 'id',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: false,
+-        isId: true,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: {
+-          name: 'uuid',
+-          args: [4],
+-        },
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'createdAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: {
+-          name: 'now',
+-          args: [],
+-        },
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'updatedAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: true,
+-      },
+-      {
+-        name: 'lastActiveAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: {
+-          name: 'now',
+-          args: [],
+-        },
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'userId',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: true,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'user',
+-        kind: 'object',
+-        type: 'User',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        relationName: 'UserToUserSession',
+-        relationFromFields: ['userId'],
+-        relationToFields: ['id'],
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'deviceInfo',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: true,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'ipAddress',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: true,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'isValid',
+-        kind: 'scalar',
+-        type: 'Boolean',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: true,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'twoFactorVerified',
+-        kind: 'scalar',
+-        type: 'Boolean',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'expiresAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: true,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-    ],
+-    primaryField: 'userId',
+-    modelName: 'UserSession',
+-    modelPropertyName: 'userSession',
+-    pluralModelName: 'UserSessions',
+-    pluralModelPropertyName: 'userSessions',
+-    idFieldType: 'String',
+-  },
+ ]
+ 
+ export const DATABASE_MODELS_BY_NAME: Record<string, DatabaseModel> = DATABASE_MODELS.reduce(
+@@ -4550,7 +4373,6 @@ export const DATABASE_MODEL_NAMES = [
+   'StoredFile',
+   'User',
+   'UserPreference',
+-  'UserSession',
+ ] as const
+ 
+ export type DatabaseModelName = (typeof DATABASE_MODEL_NAMES)[number]
+diff --git a/libs/api/generated-crud/data-access/src/lib/dto/index.ts b/libs/api/generated-crud/data-access/src/lib/dto/index.ts
+index 100e7c4..971cdad 100644
+--- a/libs/api/generated-crud/data-access/src/lib/dto/index.ts
++++ b/libs/api/generated-crud/data-access/src/lib/dto/index.ts
+@@ -905,39 +905,6 @@ export class UserPreferenceFilterInput3 {
+   value?: StringFilterInput
+ }
+ 
+-@InputType()
+-export class UserSessionFilterInput3 {
+-  @Field(() => StringFilterInput, { nullable: true })
+-  id?: StringFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  createdAt?: DateTimeFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  updatedAt?: DateTimeFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  lastActiveAt?: DateTimeFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  userId?: StringFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  deviceInfo?: StringFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  ipAddress?: StringFilterInput
+-
+-  @Field(() => BooleanFilterInput, { nullable: true })
+-  isValid?: BooleanFilterInput
+-
+-  @Field(() => BooleanFilterInput, { nullable: true })
+-  twoFactorVerified?: BooleanFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  expiresAt?: DateTimeFilterInput
+-}
+-
+ @InputType()
+ export class AddressListRelationFilterInput2 {
+   @Field(() => AddressFilterInput3, { nullable: true })
+@@ -1154,18 +1121,6 @@ export class UserPreferenceListRelationFilterInput2 {
+   none?: UserPreferenceFilterInput3
+ }
+ 
+-@InputType()
+-export class UserSessionListRelationFilterInput2 {
+-  @Field(() => UserSessionFilterInput3, { nullable: true })
+-  some?: UserSessionFilterInput3
+-
+-  @Field(() => UserSessionFilterInput3, { nullable: true })
+-  every?: UserSessionFilterInput3
+-
+-  @Field(() => UserSessionFilterInput3, { nullable: true })
+-  none?: UserSessionFilterInput3
+-}
+-
+ @InputType()
+ export class CountryRelationFilterInput2 {
+   @Field(() => CountryFilterInput3, { nullable: true })
+@@ -2515,9 +2470,6 @@ export class UserFilterInput2 {
+   @Field(() => TwoFactorMethodFilterInput, { nullable: true })
+   twoFactorMethod?: TwoFactorMethodFilterInput
+ 
+-  @Field(() => UserSessionListRelationFilterInput2, { nullable: true })
+-  activeSessions?: UserSessionListRelationFilterInput2
+-
+   @Field(() => LoginAttemptListRelationFilterInput2, { nullable: true })
+   loginAttempts?: LoginAttemptListRelationFilterInput2
+ 
+@@ -2606,51 +2558,6 @@ export class UserPreferenceFilterInput2 {
+   NOT?: UserPreferenceFilterInput3[]
+ }
+ 
+-@InputType()
+-export class UserSessionFilterInput2 {
+-  @Field(() => StringFilterInput, { nullable: true })
+-  id?: StringFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  createdAt?: DateTimeFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  updatedAt?: DateTimeFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  lastActiveAt?: DateTimeFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  userId?: StringFilterInput
+-
+-  @Field(() => UserRelationFilterInput2, { nullable: true })
+-  user?: UserRelationFilterInput2
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  deviceInfo?: StringFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  ipAddress?: StringFilterInput
+-
+-  @Field(() => BooleanFilterInput, { nullable: true })
+-  isValid?: BooleanFilterInput
+-
+-  @Field(() => BooleanFilterInput, { nullable: true })
+-  twoFactorVerified?: BooleanFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  expiresAt?: DateTimeFilterInput
+-
+-  @Field(() => [UserSessionFilterInput3], { nullable: true })
+-  AND?: UserSessionFilterInput3[]
+-
+-  @Field(() => [UserSessionFilterInput3], { nullable: true })
+-  OR?: UserSessionFilterInput3[]
+-
+-  @Field(() => [UserSessionFilterInput3], { nullable: true })
+-  NOT?: UserSessionFilterInput3[]
+-}
+-
+ @InputType()
+ export class AddressListRelationFilterInput {
+   @Field(() => AddressFilterInput2, { nullable: true })
+@@ -2867,18 +2774,6 @@ export class UserPreferenceListRelationFilterInput {
+   none?: UserPreferenceFilterInput2
+ }
+ 
+-@InputType()
+-export class UserSessionListRelationFilterInput {
+-  @Field(() => UserSessionFilterInput2, { nullable: true })
+-  some?: UserSessionFilterInput2
+-
+-  @Field(() => UserSessionFilterInput2, { nullable: true })
+-  every?: UserSessionFilterInput2
+-
+-  @Field(() => UserSessionFilterInput2, { nullable: true })
+-  none?: UserSessionFilterInput2
+-}
+-
+ @InputType()
+ export class CountryRelationFilterInput {
+   @Field(() => CountryFilterInput2, { nullable: true })
+@@ -3376,9 +3271,6 @@ export class UserRelationFilterInput {
+   @Field(() => TwoFactorMethodFilterInput, { nullable: true })
+   twoFactorMethod?: TwoFactorMethodFilterInput
+ 
+-  @Field(() => UserSessionListRelationFilterInput2, { nullable: true })
+-  activeSessions?: UserSessionListRelationFilterInput2
+-
+   @Field(() => LoginAttemptListRelationFilterInput2, { nullable: true })
+   loginAttempts?: LoginAttemptListRelationFilterInput2
+ 
+@@ -4474,9 +4366,6 @@ export class UserFilterInput {
+   @Field(() => TwoFactorMethodFilterInput, { nullable: true })
+   twoFactorMethod?: TwoFactorMethodFilterInput
+ 
+-  @Field(() => UserSessionListRelationFilterInput, { nullable: true })
+-  activeSessions?: UserSessionListRelationFilterInput
+-
+   @Field(() => LoginAttemptListRelationFilterInput, { nullable: true })
+   loginAttempts?: LoginAttemptListRelationFilterInput
+ 
+@@ -4567,53 +4456,6 @@ export class UserPreferenceFilterInput {
+   NOT?: UserPreferenceFilterInput2[]
+ }
+ 
+-@InputType()
+-export class UserSessionFilterInput {
+-  [key: string]: unknown
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  id?: StringFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  createdAt?: DateTimeFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  updatedAt?: DateTimeFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  lastActiveAt?: DateTimeFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  userId?: StringFilterInput
+-
+-  @Field(() => UserRelationFilterInput, { nullable: true })
+-  user?: UserRelationFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  deviceInfo?: StringFilterInput
+-
+-  @Field(() => StringFilterInput, { nullable: true })
+-  ipAddress?: StringFilterInput
+-
+-  @Field(() => BooleanFilterInput, { nullable: true })
+-  isValid?: BooleanFilterInput
+-
+-  @Field(() => BooleanFilterInput, { nullable: true })
+-  twoFactorVerified?: BooleanFilterInput
+-
+-  @Field(() => DateTimeFilterInput, { nullable: true })
+-  expiresAt?: DateTimeFilterInput
+-
+-  @Field(() => [UserSessionFilterInput2], { nullable: true })
+-  AND?: UserSessionFilterInput2[]
+-
+-  @Field(() => [UserSessionFilterInput2], { nullable: true })
+-  OR?: UserSessionFilterInput2[]
+-
+-  @Field(() => [UserSessionFilterInput2], { nullable: true })
+-  NOT?: UserSessionFilterInput2[]
+-}
+-
+ @InputType()
+ export class CreateAddressInput {
+   @Field({ nullable: true })
+@@ -5093,15 +4935,6 @@ export class CreateEmailInput {
+   @Field({ nullable: true })
+   public?: boolean
+ 
+-  @Field({ nullable: true })
+-  primary?: boolean
+-
+-  @Field({ nullable: true })
+-  verified?: boolean
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  verifyExpires?: Date
+-
+   @Field({ nullable: true })
+   userId?: string
+ 
+@@ -5129,15 +4962,6 @@ export class UpdateEmailInput {
+   @Field({ nullable: true })
+   public?: boolean
+ 
+-  @Field({ nullable: true })
+-  primary?: boolean
+-
+-  @Field({ nullable: true })
+-  verified?: boolean
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  verifyExpires?: Date
+-
+   @Field({ nullable: true })
+   userId?: string
+ 
+@@ -6707,18 +6531,12 @@ export class CreateUserInput {
+   @Field({ nullable: true })
+   lastName?: string
+ 
+-  @Field({ nullable: true })
+-  isSuperAdmin?: boolean
+-
+   @Field({ nullable: true })
+   bio?: string
+ 
+   @Field({ nullable: true })
+   displayName?: string
+ 
+-  @Field({ nullable: true })
+-  emailValidated?: boolean
+-
+   @Field({ nullable: true })
+   avatarId?: string
+ 
+@@ -6776,9 +6594,6 @@ export class CreateUserInput {
+   @Field(() => [String], { nullable: true })
+   invitesSentIds?: string[]
+ 
+-  @Field(() => [String], { nullable: true })
+-  activeSessionsIds?: string[]
+-
+   @Field(() => [String], { nullable: true })
+   loginAttemptsIds?: string[]
+ 
+@@ -6818,18 +6633,12 @@ export class UpdateUserInput {
+   @Field({ nullable: true })
+   lastName?: string
+ 
+-  @Field({ nullable: true })
+-  isSuperAdmin?: boolean
+-
+   @Field({ nullable: true })
+   bio?: string
+ 
+   @Field({ nullable: true })
+   displayName?: string
+ 
+-  @Field({ nullable: true })
+-  emailValidated?: boolean
+-
+   @Field({ nullable: true })
+   avatarId?: string
+ 
+@@ -6887,9 +6696,6 @@ export class UpdateUserInput {
+   @Field(() => [String], { nullable: true })
+   invitesSentIds?: string[]
+ 
+-  @Field(() => [String], { nullable: true })
+-  activeSessionsIds?: string[]
+-
+   @Field(() => [String], { nullable: true })
+   loginAttemptsIds?: string[]
+ 
+@@ -7001,9 +6807,6 @@ export class ListUserInput extends CorePagingInput {
+   @Field(() => [String], { nullable: true })
+   invitesSentIds?: string[]
+ 
+-  @Field(() => [String], { nullable: true })
+-  activeSessionsIds?: string[]
+-
+   @Field(() => [String], { nullable: true })
+   loginAttemptsIds?: string[]
+ 
+@@ -7091,105 +6894,3 @@ export class ListUserPreferenceInput extends CorePagingInput {
+   @Field({ nullable: true })
+   value?: string
+ }
+-
+-@InputType()
+-export class CreateUserSessionInput {
+-  @Field({ nullable: true })
+-  id?: string
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  createdAt?: Date
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  updatedAt?: Date
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  lastActiveAt?: Date
+-
+-  @Field({ nullable: false })
+-  userId!: string
+-
+-  @Field({ nullable: true })
+-  deviceInfo?: string
+-
+-  @Field({ nullable: true })
+-  ipAddress?: string
+-
+-  @Field({ nullable: true })
+-  isValid?: boolean
+-
+-  @Field({ nullable: true })
+-  twoFactorVerified?: boolean
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  expiresAt?: Date
+-}
+-
+-@InputType()
+-export class UpdateUserSessionInput {
+-  @Field({ nullable: true })
+-  id?: string
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  createdAt?: Date
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  updatedAt?: Date
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  lastActiveAt?: Date
+-
+-  @Field({ nullable: true })
+-  userId?: string
+-
+-  @Field({ nullable: true })
+-  deviceInfo?: string
+-
+-  @Field({ nullable: true })
+-  ipAddress?: string
+-
+-  @Field({ nullable: true })
+-  isValid?: boolean
+-
+-  @Field({ nullable: true })
+-  twoFactorVerified?: boolean
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  expiresAt?: Date
+-}
+-
+-@InputType()
+-export class ListUserSessionInput extends CorePagingInput {
+-  @Field(() => UserSessionFilterInput, { nullable: true })
+-  filters?: UserSessionFilterInput = undefined
+-
+-  @Field({ nullable: true })
+-  id?: string
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  createdAt?: Date
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  updatedAt?: Date
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  lastActiveAt?: Date
+-
+-  @Field({ nullable: true })
+-  userId?: string
+-
+-  @Field({ nullable: true })
+-  deviceInfo?: string
+-
+-  @Field({ nullable: true })
+-  ipAddress?: string
+-
+-  @Field({ nullable: true })
+-  isValid?: boolean
+-
+-  @Field({ nullable: true })
+-  twoFactorVerified?: boolean
+-
+-  @Field(() => GraphQLISODateTime, { nullable: true })
+-  expiresAt?: Date
+-}
+diff --git a/libs/api/generated-crud/data-access/src/lib/retry-write.ts b/libs/api/generated-crud/data-access/src/lib/retry-write.ts
+new file mode 100644
+index 0000000..66e500f
+--- /dev/null
++++ b/libs/api/generated-crud/data-access/src/lib/retry-write.ts
+@@ -0,0 +1,20 @@
++/** Retry a complete, standalone Prisma write only when its transaction was rolled back. */
++export async function retryWrite<T>(write: () => Promise<T>): Promise<T> {
++  for (let attempt = 0; ; attempt++) {
++    try {
++      return await write()
++    } catch (error) {
++      if (
++        attempt >= 5 ||
++        typeof error !== 'object' ||
++        error === null ||
++        !('code' in error) ||
++        error.code !== 'P2034'
++      ) {
++        throw error
++      }
++      // Back off with jitter so conflicting writers do not repeatedly retry together.
++      await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt + Math.random() * 50))
++    }
++  }
++}
+diff --git a/libs/api/generated-crud/feature/src/index.ts b/libs/api/generated-crud/feature/src/index.ts
+index 5a90a6d..5dd2520 100644
+--- a/libs/api/generated-crud/feature/src/index.ts
++++ b/libs/api/generated-crud/feature/src/index.ts
+@@ -21,4 +21,3 @@ export * from './lib/team-member.resolver'
+ export * from './lib/stored-file.resolver'
+ export * from './lib/user.resolver'
+ export * from './lib/user-preference.resolver'
+-export * from './lib/user-session.resolver'
+diff --git a/libs/api/generated-crud/feature/src/lib/api-generated-crud-feature.module.ts b/libs/api/generated-crud/feature/src/lib/api-generated-crud-feature.module.ts
+index 24e147d..a3d2982 100644
+--- a/libs/api/generated-crud/feature/src/lib/api-generated-crud-feature.module.ts
++++ b/libs/api/generated-crud/feature/src/lib/api-generated-crud-feature.module.ts
+@@ -22,7 +22,6 @@ import { GeneratedTeamMemberResolver } from './team-member.resolver'
+ import { GeneratedStoredFileResolver } from './stored-file.resolver'
+ import { GeneratedUserResolver } from './user.resolver'
+ import { GeneratedUserPreferenceResolver } from './user-preference.resolver'
+-import { GeneratedUserSessionResolver } from './user-session.resolver'
+ 
+ @Module({
+   imports: [ApiCrudDataAccessModule],
+@@ -49,7 +48,6 @@ import { GeneratedUserSessionResolver } from './user-session.resolver'
+     GeneratedStoredFileResolver,
+     GeneratedUserResolver,
+     GeneratedUserPreferenceResolver,
+-    GeneratedUserSessionResolver,
+   ],
+ })
+ export class ApiGeneratedCrudFeatureModule {}
+diff --git a/libs/api/generated-crud/feature/src/lib/user-session.resolver.ts b/libs/api/generated-crud/feature/src/lib/user-session.resolver.ts
+deleted file mode 100644
+index 25b94b8..0000000
+--- a/libs/api/generated-crud/feature/src/lib/user-session.resolver.ts
++++ /dev/null
+@@ -1,73 +0,0 @@
+-import { UseGuards } from '@nestjs/common'
+-import { Args, Mutation, Query, Resolver, Info } from '@nestjs/graphql'
+-import type { GraphQLResolveInfo } from 'graphql'
+-import { CorePaging } from '@nestled-template/api/core/data-access'
+-import { UserSession } from '@nestled-template/api/core/models'
+-import {
+-  ApiCrudDataAccessService,
+-  CreateUserSessionInput,
+-  ListUserSessionInput,
+-  UpdateUserSessionInput,
+-} from '@nestled-template/api/generated-crud/data-access'
+-import {
+-  AdminOnly,
+-  GqlAuthAdminGuard,
+-  RequirePlatformPermissionUnderClassGuard,
+-} from '@nestled-template/api/utils'
+-
+-@Resolver(() => UserSession)
+-@UseGuards(GqlAuthAdminGuard)
+-@AdminOnly()
+-export class GeneratedUserSessionResolver {
+-  constructor(private readonly generatedService: ApiCrudDataAccessService) {}
+-
+-  @Query(() => [UserSession], { nullable: true })
+-  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
+-  userSessions(
+-    @Info() info: GraphQLResolveInfo,
+-    @Args({ name: 'input', type: () => ListUserSessionInput, nullable: true })
+-    input?: ListUserSessionInput,
+-  ) {
+-    return this.generatedService.userSessions(info, input)
+-  }
+-
+-  @Query(() => CorePaging, { nullable: true })
+-  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
+-  userSessionsCount(
+-    @Args({ name: 'input', type: () => ListUserSessionInput, nullable: true })
+-    input?: ListUserSessionInput,
+-  ) {
+-    return this.generatedService.userSessionsCount(input)
+-  }
+-
+-  @Query(() => UserSession, { nullable: true })
+-  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.read')
+-  userSession(@Info() info: GraphQLResolveInfo, @Args('userSessionId') userSessionId: string) {
+-    return this.generatedService.userSession(info, userSessionId)
+-  }
+-
+-  @Mutation(() => UserSession, { nullable: true })
+-  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
+-  createUserSession(
+-    @Info() info: GraphQLResolveInfo,
+-    @Args('input') input: CreateUserSessionInput,
+-  ) {
+-    return this.generatedService.createUserSession(info, input)
+-  }
+-
+-  @Mutation(() => UserSession, { nullable: true })
+-  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
+-  updateUserSession(
+-    @Info() info: GraphQLResolveInfo,
+-    @Args('userSessionId') userSessionId: string,
+-    @Args('input') input: UpdateUserSessionInput,
+-  ) {
+-    return this.generatedService.updateUserSession(info, userSessionId, input)
+-  }
+-
+-  @Mutation(() => UserSession, { nullable: true })
+-  @RequirePlatformPermissionUnderClassGuard('platform.data-browser.manage')
+-  deleteUserSession(@Args('userSessionId') userSessionId: string) {
+-    return this.generatedService.deleteUserSession(userSessionId)
+-  }
+-}
+diff --git a/libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql b/libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
+new file mode 100644
+index 0000000..40d09cd
+--- /dev/null
++++ b/libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
+@@ -0,0 +1,108 @@
++-- Email identity changes require fresh verification. Preserve a freshly issued change-email
++-- token, but never carry an existing token or verification state to another address or owner.
++CREATE OR REPLACE FUNCTION "email_identity_requires_verification"() RETURNS trigger AS $$
++BEGIN
++  IF NEW.email IS DISTINCT FROM OLD.email
++     OR NEW."userId" IS DISTINCT FROM OLD."userId"
++     OR NEW."organizationId" IS DISTINCT FROM OLD."organizationId" THEN
++    NEW.verified := false;
++    IF NEW."userId" IS DISTINCT FROM OLD."userId"
++       OR NEW."organizationId" IS DISTINCT FROM OLD."organizationId" THEN
++      NEW."primary" := false;
++      NEW."verifyToken" := NULL;
++      NEW."verifyExpires" := NULL;
++    ELSIF NEW."verifyToken" IS NOT DISTINCT FROM OLD."verifyToken" THEN
++      NEW."verifyToken" := NULL;
++      NEW."verifyExpires" := NULL;
++    END IF;
++  END IF;
++  RETURN NEW;
++END;
++$$ LANGUAGE plpgsql;
++
++DROP TRIGGER IF EXISTS "Email_identity_requires_verification" ON "Email";
++CREATE TRIGGER "Email_identity_requires_verification"
++BEFORE UPDATE ON "Email"
++FOR EACH ROW EXECUTE FUNCTION "email_identity_requires_verification"();
++
++CREATE OR REPLACE FUNCTION "sync_email_owner_validation"(owner_id text, invalidate_token boolean)
++RETURNS void AS $$
++BEGIN
++  IF owner_id IS NULL THEN RETURN; END IF;
++  -- Serialize recomputation before reading the remaining addresses. The separate statement
++  -- observes prior committed email changes after waiting for a concurrent owner's lock.
++  PERFORM id FROM "User" WHERE id = owner_id FOR UPDATE;
++  UPDATE "User" SET
++    "emailValidated" = COALESCE((
++      SELECT verified FROM "Email" WHERE "userId" = owner_id AND "primary"
++      ORDER BY "createdAt", id LIMIT 1
++    ), false),
++    "validateEmailToken" = CASE WHEN invalidate_token THEN NULL ELSE "validateEmailToken" END,
++    "validateEmailTokenExpires" = CASE WHEN invalidate_token THEN NULL ELSE "validateEmailTokenExpires" END
++  WHERE id = owner_id;
++END;
++$$ LANGUAGE plpgsql;
++
++CREATE OR REPLACE FUNCTION "email_owner_validation_follows_primary"() RETURNS trigger AS $$
++DECLARE
++  old_owner text;
++  new_owner text;
++  primary_changed boolean := false;
++BEGIN
++  IF TG_OP <> 'INSERT' THEN old_owner := OLD."userId"; END IF;
++  IF TG_OP <> 'DELETE' THEN new_owner := NEW."userId"; END IF;
++  IF TG_OP = 'INSERT' THEN
++    primary_changed := NEW."primary";
++  ELSIF TG_OP = 'DELETE' THEN
++    primary_changed := OLD."primary";
++  ELSIF TG_OP = 'UPDATE' THEN
++    primary_changed := (OLD."primary" OR NEW."primary") AND (
++      NEW.email IS DISTINCT FROM OLD.email OR NEW."userId" IS DISTINCT FROM OLD."userId"
++      OR NEW."primary" IS DISTINCT FROM OLD."primary"
++    );
++  END IF;
++  PERFORM "sync_email_owner_validation"(old_owner, primary_changed);
++  IF new_owner IS DISTINCT FROM old_owner THEN
++    PERFORM "sync_email_owner_validation"(new_owner, primary_changed);
++  END IF;
++  RETURN NULL;
++END;
++$$ LANGUAGE plpgsql;
++
++DROP TRIGGER IF EXISTS "Email_owner_validation_follows_primary" ON "Email";
++CREATE TRIGGER "Email_owner_validation_follows_primary"
++AFTER INSERT OR UPDATE OR DELETE ON "Email"
++FOR EACH ROW EXECUTE FUNCTION "email_owner_validation_follows_primary"();
++
++-- Clear a removed membership's context regardless of whether the write comes from the
++-- membership API, generic admin CRUD, a relation reassignment, or a database maintenance job.
++CREATE OR REPLACE FUNCTION "membership_removal_clears_active_organization"() RETURNS trigger AS $$
++BEGIN
++  IF TG_OP = 'DELETE' OR NEW."userId" IS DISTINCT FROM OLD."userId"
++     OR NEW."organizationId" IS DISTINCT FROM OLD."organizationId" THEN
++    UPDATE "User" SET "activeOrganizationId" = NULL
++    WHERE id = OLD."userId" AND "activeOrganizationId" = OLD."organizationId"
++      AND NOT EXISTS (
++        SELECT 1 FROM "OrganizationMember"
++        WHERE "userId" = OLD."userId" AND "organizationId" = OLD."organizationId"
++      );
++  END IF;
++  RETURN NULL;
++END;
++$$ LANGUAGE plpgsql;
++
++DROP TRIGGER IF EXISTS "OrganizationMember_clear_active_context" ON "OrganizationMember";
++CREATE TRIGGER "OrganizationMember_clear_active_context"
++AFTER UPDATE OR DELETE ON "OrganizationMember"
++FOR EACH ROW EXECUTE FUNCTION "membership_removal_clears_active_organization"();
++
++-- Repair derived state left by earlier generic writes; do not alter verification evidence.
++UPDATE "User" u SET "emailValidated" = COALESCE((
++  SELECT e.verified FROM "Email" e WHERE e."userId" = u.id AND e."primary"
++  ORDER BY e."createdAt", e.id LIMIT 1
++), false);
++UPDATE "User" u SET "activeOrganizationId" = NULL
++WHERE u."activeOrganizationId" IS NOT NULL AND NOT EXISTS (
++  SELECT 1 FROM "OrganizationMember" m
++  WHERE m."userId" = u.id AND m."organizationId" = u."activeOrganizationId"
++);
+diff --git a/libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql b/libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql
+new file mode 100644
+index 0000000..82d5c92
+--- /dev/null
++++ b/libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql
+@@ -0,0 +1,74 @@
++-- Email and membership statements already own their row locks when AFTER triggers run.
++-- Never wait for a User lock here: explicit application workflows acquire User first.
++-- Abort on contention so the complete write can retry without retaining any row locks.
++CREATE OR REPLACE FUNCTION "lock_auth_record_owners"(owner_ids text[])
++RETURNS void AS $$
++BEGIN
++  PERFORM id FROM "User" WHERE id = ANY(owner_ids) ORDER BY id FOR NO KEY UPDATE NOWAIT;
++EXCEPTION WHEN lock_not_available THEN
++  RAISE EXCEPTION 'Concurrent account maintenance; retry the complete transaction'
++    USING ERRCODE = 'serialization_failure';
++END;
++$$ LANGUAGE plpgsql;
++
++CREATE OR REPLACE FUNCTION "sync_email_owner_validation"(owner_id text, invalidate_token boolean)
++RETURNS void AS $$
++BEGIN
++  IF owner_id IS NULL THEN RETURN; END IF;
++  PERFORM "lock_auth_record_owners"(ARRAY[owner_id]);
++  UPDATE "User" SET
++    "emailValidated" = COALESCE((
++      SELECT verified FROM "Email" WHERE "userId" = owner_id AND "primary"
++      ORDER BY "createdAt", id LIMIT 1
++    ), false),
++    "validateEmailToken" = CASE WHEN invalidate_token THEN NULL ELSE "validateEmailToken" END,
++    "validateEmailTokenExpires" = CASE WHEN invalidate_token THEN NULL ELSE "validateEmailTokenExpires" END
++  WHERE id = owner_id;
++END;
++$$ LANGUAGE plpgsql;
++
++CREATE OR REPLACE FUNCTION "email_owner_validation_follows_primary"() RETURNS trigger AS $$
++DECLARE
++  old_owner text;
++  new_owner text;
++  owner_id text;
++  primary_changed boolean := false;
++BEGIN
++  IF TG_OP <> 'INSERT' THEN old_owner := OLD."userId"; END IF;
++  IF TG_OP <> 'DELETE' THEN new_owner := NEW."userId"; END IF;
++  IF TG_OP = 'INSERT' THEN
++    primary_changed := NEW."primary";
++  ELSIF TG_OP = 'DELETE' THEN
++    primary_changed := OLD."primary";
++  ELSIF TG_OP = 'UPDATE' THEN
++    primary_changed := (OLD."primary" OR NEW."primary") AND (
++      NEW.email IS DISTINCT FROM OLD.email OR NEW."userId" IS DISTINCT FROM OLD."userId"
++      OR NEW."primary" IS DISTINCT FROM OLD."primary"
++    );
++  END IF;
++  -- Lock both owners in one deterministic order before recomputing either. Bulk/nested
++  -- writes may already own other locks; NOWAIT also prevents cycles across those statements.
++  PERFORM "lock_auth_record_owners"(ARRAY[old_owner, new_owner]);
++  FOR owner_id IN SELECT DISTINCT id FROM unnest(ARRAY[old_owner, new_owner]) AS owners(id)
++                  WHERE id IS NOT NULL ORDER BY id LOOP
++    PERFORM "sync_email_owner_validation"(owner_id, primary_changed);
++  END LOOP;
++  RETURN NULL;
++END;
++$$ LANGUAGE plpgsql;
++
++CREATE OR REPLACE FUNCTION "membership_removal_clears_active_organization"() RETURNS trigger AS $$
++BEGIN
++  IF TG_OP = 'DELETE' OR NEW."userId" IS DISTINCT FROM OLD."userId"
++     OR NEW."organizationId" IS DISTINCT FROM OLD."organizationId" THEN
++    PERFORM "lock_auth_record_owners"(ARRAY[OLD."userId"]);
++    UPDATE "User" SET "activeOrganizationId" = NULL
++    WHERE id = OLD."userId" AND "activeOrganizationId" = OLD."organizationId"
++      AND NOT EXISTS (
++        SELECT 1 FROM "OrganizationMember"
++        WHERE "userId" = OLD."userId" AND "organizationId" = OLD."organizationId"
++      );
++  END IF;
++  RETURN NULL;
++END;
++$$ LANGUAGE plpgsql;
+diff --git a/libs/api/prisma/src/lib/schemas/schema.prisma b/libs/api/prisma/src/lib/schemas/schema.prisma
+index c2126fd..e63b758 100644
+--- a/libs/api/prisma/src/lib/schemas/schema.prisma
++++ b/libs/api/prisma/src/lib/schemas/schema.prisma
+@@ -87,10 +87,13 @@ model Email {
+   updatedAt      DateTime      @updatedAt
+   email          String        @unique
+   public         Boolean       @default(false)
++  /// @crudReadOnly
+   primary        Boolean       @default(false)
++  /// @crudReadOnly
+   verified       Boolean       @default(false)
+   /// @graphqlOmit
+   verifyToken    String?
++  /// @crudReadOnly
+   verifyExpires  DateTime?
+   userId         String?
+   emailType      EmailType     @default(WORK)
+@@ -403,6 +406,7 @@ model User {
+   updatedAt                 DateTime                 @updatedAt
+   firstName                 String?
+   lastName                  String?
++  /// @crudReadOnly
+   isSuperAdmin              Boolean                  @default(false)
+   bio                       String?
+   displayName               String?                  @unique
+@@ -412,6 +416,7 @@ model User {
+   passwordResetToken        String?
+   /// @graphqlOmit
+   passwordResetExpires      DateTime?
++  /// @crudReadOnly
+   emailValidated            Boolean                  @default(false)
+   /// @graphqlOmit
+   validateEmailToken        String?                  @unique
+@@ -471,6 +476,9 @@ model UserPreference {
+   @@unique([userId, key])
+ }
+ 
++/// @skipCrud
++/// Security-sensitive credential sessions are created by authentication and maintained through
++/// the explicit session APIs, which preserve ownership, revocation, and audit behavior.
+ model UserSession {
+   id                String   @id @default(uuid())
+   createdAt         DateTime @default(now())
+diff --git a/libs/shared/sdk/src/__admin/user-session/user-session-fragments.graphql b/libs/shared/sdk/src/__admin/user-session/user-session-fragments.graphql
+deleted file mode 100644
+index ce6a227..0000000
+--- a/libs/shared/sdk/src/__admin/user-session/user-session-fragments.graphql
++++ /dev/null
+@@ -1,19 +0,0 @@
+-fragment __AdminUserSessionSummary on UserSession {
+-  id
+-  createdAt
+-  updatedAt
+-  lastActiveAt
+-  userId
+-  deviceInfo
+-  ipAddress
+-  isValid
+-  twoFactorVerified
+-  expiresAt
+-  user {
+-    id
+-  }
+-}
+-
+-fragment __AdminUserSessionDetails on UserSession {
+-  ...__AdminUserSessionSummary
+-}
+diff --git a/libs/shared/sdk/src/__admin/user-session/user-session-mutations.graphql b/libs/shared/sdk/src/__admin/user-session/user-session-mutations.graphql
+deleted file mode 100644
+index 25a425c..0000000
+--- a/libs/shared/sdk/src/__admin/user-session/user-session-mutations.graphql
++++ /dev/null
+@@ -1,17 +0,0 @@
+-mutation __AdminCreateUserSession($input: CreateUserSessionInput!) {
+-  createUserSession(input: $input) {
+-    ...__AdminUserSessionDetails
+-  }
+-}
+-
+-mutation __AdminDeleteUserSession($userSessionId: String!) {
+-  deleteUserSession(userSessionId: $userSessionId) {
+-    id
+-  }
+-}
+-
+-mutation __AdminUpdateUserSession($userSessionId: String!, $input: UpdateUserSessionInput!) {
+-  updateUserSession(userSessionId: $userSessionId, input: $input) {
+-    ...__AdminUserSessionDetails
+-  }
+-}
+diff --git a/libs/shared/sdk/src/__admin/user-session/user-session-queries.graphql b/libs/shared/sdk/src/__admin/user-session/user-session-queries.graphql
+deleted file mode 100644
+index 8bf5a55..0000000
+--- a/libs/shared/sdk/src/__admin/user-session/user-session-queries.graphql
++++ /dev/null
+@@ -1,20 +0,0 @@
+-query __AdminUserSession($userSessionId: String!) {
+-  userSession(userSessionId: $userSessionId) {
+-    ...__AdminUserSessionDetails
+-  }
+-}
+-
+-query __AdminUserSessions($input: ListUserSessionInput) {
+-  userSessions(input: $input) {
+-    ...__AdminUserSessionSummary
+-  }
+-  counters: userSessionsCount(input: $input) {
+-    ...CorePagingDetails
+-  }
+-}
+-
+-query __AdminUserSessionPagination($input: ListUserSessionInput) {
+-  counters: userSessionsCount(input: $input) {
+-    ...CorePagingDetails
+-  }
+-}
+diff --git a/libs/shared/sdk/src/generated/graphql.ts b/libs/shared/sdk/src/generated/graphql.ts
+index 29c901f..301d4c4 100644
+--- a/libs/shared/sdk/src/generated/graphql.ts
++++ b/libs/shared/sdk/src/generated/graphql.ts
+@@ -254,6 +254,49 @@ export type AdminSecurityEventsResponse = {
+   total: Scalars['Int']['output']
+ }
+ 
++export type AdminUserDetails = {
++  __typename?: 'AdminUserDetails'
++  AuditLog?: Maybe<Array<AuditLog>>
++  SecurityEvent?: Maybe<Array<SecurityEvent>>
++  TeamMember?: Maybe<Array<TeamMember>>
++  UserPreference?: Maybe<Array<UserPreference>>
++  activeOrganizationId?: Maybe<Scalars['String']['output']>
++  activeSessions: Array<AdminUserSession>
++  addresses?: Maybe<Array<Address>>
++  apiTokens?: Maybe<Array<ApiToken>>
++  avatar?: Maybe<StoredFile>
++  avatarId?: Maybe<Scalars['String']['output']>
++  bio?: Maybe<Scalars['String']['output']>
++  createdAt: Scalars['DateTime']['output']
++  deactivatedAt?: Maybe<Scalars['DateTime']['output']>
++  displayName?: Maybe<Scalars['String']['output']>
++  emailValidated: Scalars['Boolean']['output']
++  emails?: Maybe<Array<Email>>
++  failedLoginCount: Scalars['Int']['output']
++  firstName?: Maybe<Scalars['String']['output']>
++  id: Scalars['String']['output']
++  images?: Maybe<Array<StoredFile>>
++  invitesSent?: Maybe<Array<Invite>>
++  isActive: Scalars['Boolean']['output']
++  isEmulating?: Maybe<Scalars['Boolean']['output']>
++  isSuperAdmin: Scalars['Boolean']['output']
++  lastFailedLogin?: Maybe<Scalars['DateTime']['output']>
++  lastName?: Maybe<Scalars['String']['output']>
++  lastSuccessfulLogin?: Maybe<Scalars['DateTime']['output']>
++  links?: Maybe<Array<Link>>
++  lockedUntil?: Maybe<Scalars['DateTime']['output']>
++  loginAttempts?: Maybe<Array<LoginAttempt>>
++  oAuthAccounts?: Maybe<Array<OAuthAccount>>
++  organizations?: Maybe<Array<OrganizationMember>>
++  originalAdminId?: Maybe<Scalars['String']['output']>
++  phoneNumbers?: Maybe<Array<PhoneNumber>>
++  privacyPolicyAcceptedAt?: Maybe<Scalars['DateTime']['output']>
++  termsAcceptedAt?: Maybe<Scalars['DateTime']['output']>
++  twoFactorEnabled: Scalars['Boolean']['output']
++  twoFactorMethod: TwoFactorMethod
++  updatedAt: Scalars['DateTime']['output']
++}
++
+ export type AdminUserFiltersInput = {
+   accountLocked?: InputMaybe<Scalars['Boolean']['input']>
+   emailVerified?: InputMaybe<Scalars['Boolean']['input']>
+@@ -271,6 +314,15 @@ export type AdminUserFiltersInput = {
+   twoFactorEnabled?: InputMaybe<Scalars['Boolean']['input']>
+ }
+ 
++export type AdminUserSession = {
++  __typename?: 'AdminUserSession'
++  deviceInfo?: Maybe<Scalars['String']['output']>
++  id: Scalars['String']['output']
++  ipAddress?: Maybe<Scalars['String']['output']>
++  isValid: Scalars['Boolean']['output']
++  lastActiveAt: Scalars['DateTime']['output']
++}
++
+ export type AdminUsersResponse = {
+   __typename?: 'AdminUsersResponse'
+   skip: Scalars['Int']['output']
+@@ -638,12 +690,9 @@ export type CreateEmailInput = {
+   emailType?: InputMaybe<EmailType>
+   id?: InputMaybe<Scalars['String']['input']>
+   organizationId?: InputMaybe<Scalars['String']['input']>
+-  primary?: InputMaybe<Scalars['Boolean']['input']>
+   public?: InputMaybe<Scalars['Boolean']['input']>
+   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
+   userId?: InputMaybe<Scalars['String']['input']>
+-  verified?: InputMaybe<Scalars['Boolean']['input']>
+-  verifyExpires?: InputMaybe<Scalars['DateTime']['input']>
+ }
+ 
+ export type CreateInvitationInput = {
+@@ -863,7 +912,6 @@ export type CreateUserInput = {
+   TeamMemberIds?: InputMaybe<Array<Scalars['String']['input']>>
+   UserPreferenceIds?: InputMaybe<Array<Scalars['String']['input']>>
+   activeOrganizationId?: InputMaybe<Scalars['String']['input']>
+-  activeSessionsIds?: InputMaybe<Array<Scalars['String']['input']>>
+   addressesIds?: InputMaybe<Array<Scalars['String']['input']>>
+   apiTokensIds?: InputMaybe<Array<Scalars['String']['input']>>
+   avatarId?: InputMaybe<Scalars['String']['input']>
+@@ -871,7 +919,6 @@ export type CreateUserInput = {
+   createdAt?: InputMaybe<Scalars['DateTime']['input']>
+   deactivatedAt?: InputMaybe<Scalars['DateTime']['input']>
+   displayName?: InputMaybe<Scalars['String']['input']>
+-  emailValidated?: InputMaybe<Scalars['Boolean']['input']>
+   emailsIds?: InputMaybe<Array<Scalars['String']['input']>>
+   failedLoginCount?: InputMaybe<Scalars['Int']['input']>
+   firstName?: InputMaybe<Scalars['String']['input']>
+@@ -879,7 +926,6 @@ export type CreateUserInput = {
+   imagesIds?: InputMaybe<Array<Scalars['String']['input']>>
+   invitesSentIds?: InputMaybe<Array<Scalars['String']['input']>>
+   isActive?: InputMaybe<Scalars['Boolean']['input']>
+-  isSuperAdmin?: InputMaybe<Scalars['Boolean']['input']>
+   lastFailedLogin?: InputMaybe<Scalars['DateTime']['input']>
+   lastName?: InputMaybe<Scalars['String']['input']>
+   lastSuccessfulLogin?: InputMaybe<Scalars['DateTime']['input']>
+@@ -905,19 +951,6 @@ export type CreateUserPreferenceInput = {
+   value: Scalars['String']['input']
+ }
+ 
+-export type CreateUserSessionInput = {
+-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
+-  deviceInfo?: InputMaybe<Scalars['String']['input']>
+-  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
+-  id?: InputMaybe<Scalars['String']['input']>
+-  ipAddress?: InputMaybe<Scalars['String']['input']>
+-  isValid?: InputMaybe<Scalars['Boolean']['input']>
+-  lastActiveAt?: InputMaybe<Scalars['DateTime']['input']>
+-  twoFactorVerified?: InputMaybe<Scalars['Boolean']['input']>
+-  updatedAt?: InputMaybe<Scalars['DateTime']['input']>
+-  userId: Scalars['String']['input']
+-}
+-
+ export type DateTimeFilterInput = {
+   equals?: InputMaybe<Scalars['DateTime']['input']>
+   gt?: InputMaybe<Scalars['DateTime']['input']>
+@@ -1684,7 +1717,6 @@ export type ListUserInput = {
+   TeamMemberIds?: InputMaybe<Array<Scalars['String']['input']>>
+   UserPreferenceIds?: InputMaybe<Array<Scalars['String']['input']>>
+   activeOrganizationId?: InputMaybe<Scalars['String']['input']>
+-  activeSessionsIds?: InputMaybe<Array<Scalars['String']['input']>>
+   addressesIds?: InputMaybe<Array<Scalars['String']['input']>>
+   apiTokensIds?: InputMaybe<Array<Scalars['String']['input']>>
+   avatarId?: InputMaybe<Scalars['String']['input']>
+@@ -1740,26 +1772,6 @@ export type ListUserPreferenceInput = {
+   value?: InputMaybe<Scalars['String']['input']>
+ }
+ 
+-export type ListUserSessionInput = {
+-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
+-  deviceInfo?: InputMaybe<Scalars['String']['input']>
+-  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
+-  filters?: InputMaybe<UserSessionFilterInput>
+-  id?: InputMaybe<Scalars['String']['input']>
+-  ipAddress?: InputMaybe<Scalars['String']['input']>
+-  isValid?: InputMaybe<Scalars['Boolean']['input']>
+-  lastActiveAt?: InputMaybe<Scalars['DateTime']['input']>
+-  orderBy?: InputMaybe<Scalars['String']['input']>
+-  orderDirection?: InputMaybe<Scalars['String']['input']>
+-  search?: InputMaybe<Scalars['String']['input']>
+-  searchFields?: InputMaybe<Array<Scalars['String']['input']>>
+-  skip?: InputMaybe<Scalars['Float']['input']>
+-  take?: InputMaybe<Scalars['Float']['input']>
+-  twoFactorVerified?: InputMaybe<Scalars['Boolean']['input']>
+-  updatedAt?: InputMaybe<Scalars['DateTime']['input']>
+-  userId?: InputMaybe<Scalars['String']['input']>
+-}
+-
+ export type LoginAttempt = {
+   __typename?: 'LoginAttempt'
+   createdAt: Scalars['DateTime']['output']
+@@ -1880,7 +1892,6 @@ export type Mutation = {
+   createTeamMember?: Maybe<TeamMember>
+   createUser?: Maybe<User>
+   createUserPreference?: Maybe<UserPreference>
+-  createUserSession?: Maybe<UserSession>
+   deleteAddress?: Maybe<Address>
+   deleteApiToken?: Maybe<ApiToken>
+   deleteAuditLog?: Maybe<AuditLog>
+@@ -1906,7 +1917,6 @@ export type Mutation = {
+   deleteUser?: Maybe<User>
+   deleteUserAccount: Scalars['Boolean']['output']
+   deleteUserPreference?: Maybe<UserPreference>
+-  deleteUserSession?: Maybe<UserSession>
+   disable2FA: Scalars['Boolean']['output']
+   emulateUser?: Maybe<UserToken>
+   enable2FA: Enable2FaOutput
+@@ -1968,7 +1978,6 @@ export type Mutation = {
+   updateTeamMember?: Maybe<TeamMember>
+   updateUser?: Maybe<User>
+   updateUserPreference?: Maybe<UserPreference>
+-  updateUserSession?: Maybe<UserSession>
+   uploadFile: UploadedFile
+   uploadOrganizationLogo: UploadedFile
+   uploadUserAvatar: UploadedFile
+@@ -2132,10 +2141,6 @@ export type MutationCreateUserPreferenceArgs = {
+   input: CreateUserPreferenceInput
+ }
+ 
+-export type MutationCreateUserSessionArgs = {
+-  input: CreateUserSessionInput
+-}
+-
+ export type MutationDeleteAddressArgs = {
+   addressId: Scalars['String']['input']
+ }
+@@ -2232,10 +2237,6 @@ export type MutationDeleteUserPreferenceArgs = {
+   userPreferenceId: Scalars['String']['input']
+ }
+ 
+-export type MutationDeleteUserSessionArgs = {
+-  userSessionId: Scalars['String']['input']
+-}
+-
+ export type MutationDisable2FaArgs = {
+   input: Disable2FaInput
+ }
+@@ -2468,11 +2469,6 @@ export type MutationUpdateUserPreferenceArgs = {
+   userPreferenceId: Scalars['String']['input']
+ }
+ 
+-export type MutationUpdateUserSessionArgs = {
+-  input: UpdateUserSessionInput
+-  userSessionId: Scalars['String']['input']
+-}
+-
+ export type MutationUploadFileArgs = {
+   file: Scalars['Upload']['input']
+   folder?: InputMaybe<Scalars['String']['input']>
+@@ -3085,7 +3081,7 @@ export type Query = {
+   adminDashboardStats: AdminDashboardStats
+   adminOrganizations: AdminOrganizationsResponse
+   adminSecurityEvents: AdminSecurityEventsResponse
+-  adminUserDetails: User
++  adminUserDetails: AdminUserDetails
+   adminUsers: AdminUsersResponse
+   apiToken?: Maybe<ApiToken>
+   apiTokens?: Maybe<Array<ApiToken>>
+@@ -3176,9 +3172,6 @@ export type Query = {
+   userPreferences?: Maybe<Array<UserPreference>>
+   userPreferencesCount?: Maybe<CorePaging>
+   userSecurityEvents: Array<SecurityEvent>
+-  userSession?: Maybe<UserSession>
+-  userSessions?: Maybe<Array<UserSession>>
+-  userSessionsCount?: Maybe<CorePaging>
+   users?: Maybe<Array<User>>
+   usersCount?: Maybe<CorePaging>
+ }
+@@ -3518,18 +3511,6 @@ export type QueryUserSecurityEventsArgs = {
+   limit?: InputMaybe<Scalars['Float']['input']>
+ }
+ 
+-export type QueryUserSessionArgs = {
+-  userSessionId: Scalars['String']['input']
+-}
+-
+-export type QueryUserSessionsArgs = {
+-  input?: InputMaybe<ListUserSessionInput>
+-}
+-
+-export type QueryUserSessionsCountArgs = {
+-  input?: InputMaybe<ListUserSessionInput>
+-}
+-
+ export type QueryUsersArgs = {
+   input?: InputMaybe<ListUserInput>
+ }
+@@ -4387,12 +4368,9 @@ export type UpdateEmailInput = {
+   emailType?: InputMaybe<EmailType>
+   id?: InputMaybe<Scalars['String']['input']>
+   organizationId?: InputMaybe<Scalars['String']['input']>
+-  primary?: InputMaybe<Scalars['Boolean']['input']>
+   public?: InputMaybe<Scalars['Boolean']['input']>
+   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
+   userId?: InputMaybe<Scalars['String']['input']>
+-  verified?: InputMaybe<Scalars['Boolean']['input']>
+-  verifyExpires?: InputMaybe<Scalars['DateTime']['input']>
+ }
+ 
+ export type UpdateInviteInput = {
+@@ -4620,7 +4598,6 @@ export type UpdateUserInput = {
+   TeamMemberIds?: InputMaybe<Array<Scalars['String']['input']>>
+   UserPreferenceIds?: InputMaybe<Array<Scalars['String']['input']>>
+   activeOrganizationId?: InputMaybe<Scalars['String']['input']>
+-  activeSessionsIds?: InputMaybe<Array<Scalars['String']['input']>>
+   addressesIds?: InputMaybe<Array<Scalars['String']['input']>>
+   apiTokensIds?: InputMaybe<Array<Scalars['String']['input']>>
+   avatarId?: InputMaybe<Scalars['String']['input']>
+@@ -4628,7 +4605,6 @@ export type UpdateUserInput = {
+   createdAt?: InputMaybe<Scalars['DateTime']['input']>
+   deactivatedAt?: InputMaybe<Scalars['DateTime']['input']>
+   displayName?: InputMaybe<Scalars['String']['input']>
+-  emailValidated?: InputMaybe<Scalars['Boolean']['input']>
+   emailsIds?: InputMaybe<Array<Scalars['String']['input']>>
+   failedLoginCount?: InputMaybe<Scalars['Int']['input']>
+   firstName?: InputMaybe<Scalars['String']['input']>
+@@ -4636,7 +4612,6 @@ export type UpdateUserInput = {
+   imagesIds?: InputMaybe<Array<Scalars['String']['input']>>
+   invitesSentIds?: InputMaybe<Array<Scalars['String']['input']>>
+   isActive?: InputMaybe<Scalars['Boolean']['input']>
+-  isSuperAdmin?: InputMaybe<Scalars['Boolean']['input']>
+   lastFailedLogin?: InputMaybe<Scalars['DateTime']['input']>
+   lastName?: InputMaybe<Scalars['String']['input']>
+   lastSuccessfulLogin?: InputMaybe<Scalars['DateTime']['input']>
+@@ -4662,19 +4637,6 @@ export type UpdateUserPreferenceInput = {
+   value?: InputMaybe<Scalars['String']['input']>
+ }
+ 
+-export type UpdateUserSessionInput = {
+-  createdAt?: InputMaybe<Scalars['DateTime']['input']>
+-  deviceInfo?: InputMaybe<Scalars['String']['input']>
+-  expiresAt?: InputMaybe<Scalars['DateTime']['input']>
+-  id?: InputMaybe<Scalars['String']['input']>
+-  ipAddress?: InputMaybe<Scalars['String']['input']>
+-  isValid?: InputMaybe<Scalars['Boolean']['input']>
+-  lastActiveAt?: InputMaybe<Scalars['DateTime']['input']>
+-  twoFactorVerified?: InputMaybe<Scalars['Boolean']['input']>
+-  updatedAt?: InputMaybe<Scalars['DateTime']['input']>
+-  userId?: InputMaybe<Scalars['String']['input']>
+-}
+-
+ export type UploadedFile = {
+   __typename?: 'UploadedFile'
+   createdAt: Scalars['DateTime']['output']
+@@ -4703,7 +4665,6 @@ export type User = {
+   TeamMember?: Maybe<Array<TeamMember>>
+   UserPreference?: Maybe<Array<UserPreference>>
+   activeOrganizationId?: Maybe<Scalars['String']['output']>
+-  activeSessions?: Maybe<Array<UserSession>>
+   addresses?: Maybe<Array<Address>>
+   apiTokens?: Maybe<Array<ApiToken>>
+   avatar?: Maybe<StoredFile>
+@@ -4752,7 +4713,6 @@ export type UserFilterInput = {
+   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput>
+   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput>
+   activeOrganizationId?: InputMaybe<StringFilterInput>
+-  activeSessions?: InputMaybe<UserSessionListRelationFilterInput>
+   addresses?: InputMaybe<AddressListRelationFilterInput>
+   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput>
+   avatar?: InputMaybe<StoredFileRelationFilterInput>
+@@ -4795,7 +4755,6 @@ export type UserFilterInput2 = {
+   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput2>
+   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput2>
+   activeOrganizationId?: InputMaybe<StringFilterInput>
+-  activeSessions?: InputMaybe<UserSessionListRelationFilterInput2>
+   addresses?: InputMaybe<AddressListRelationFilterInput2>
+   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
+   avatar?: InputMaybe<StoredFileRelationFilterInput2>
+@@ -4920,7 +4879,6 @@ export type UserRelationFilterInput = {
+   TeamMember?: InputMaybe<TeamMemberListRelationFilterInput2>
+   UserPreference?: InputMaybe<UserPreferenceListRelationFilterInput2>
+   activeOrganizationId?: InputMaybe<StringFilterInput>
+-  activeSessions?: InputMaybe<UserSessionListRelationFilterInput2>
+   addresses?: InputMaybe<AddressListRelationFilterInput2>
+   apiTokens?: InputMaybe<ApiTokenListRelationFilterInput2>
+   avatar?: InputMaybe<StoredFileRelationFilterInput2>
+@@ -4982,80 +4940,6 @@ export type UserRelationFilterInput2 = {
+   updatedAt?: InputMaybe<DateTimeFilterInput>
+ }
+ 
+-export type UserSession = {
+-  __typename?: 'UserSession'
+-  createdAt: Scalars['DateTime']['output']
+-  deviceInfo?: Maybe<Scalars['String']['output']>
+-  expiresAt?: Maybe<Scalars['DateTime']['output']>
+-  id: Scalars['String']['output']
+-  ipAddress?: Maybe<Scalars['String']['output']>
+-  isValid: Scalars['Boolean']['output']
+-  lastActiveAt: Scalars['DateTime']['output']
+-  twoFactorVerified: Scalars['Boolean']['output']
+-  updatedAt: Scalars['DateTime']['output']
+-  user?: Maybe<User>
+-  userId: Scalars['String']['output']
+-}
+-
+-export type UserSessionFilterInput = {
+-  AND?: InputMaybe<Array<UserSessionFilterInput2>>
+-  NOT?: InputMaybe<Array<UserSessionFilterInput2>>
+-  OR?: InputMaybe<Array<UserSessionFilterInput2>>
+-  createdAt?: InputMaybe<DateTimeFilterInput>
+-  deviceInfo?: InputMaybe<StringFilterInput>
+-  expiresAt?: InputMaybe<DateTimeFilterInput>
+-  id?: InputMaybe<StringFilterInput>
+-  ipAddress?: InputMaybe<StringFilterInput>
+-  isValid?: InputMaybe<BooleanFilterInput>
+-  lastActiveAt?: InputMaybe<DateTimeFilterInput>
+-  twoFactorVerified?: InputMaybe<BooleanFilterInput>
+-  updatedAt?: InputMaybe<DateTimeFilterInput>
+-  user?: InputMaybe<UserRelationFilterInput>
+-  userId?: InputMaybe<StringFilterInput>
+-}
+-
+-export type UserSessionFilterInput2 = {
+-  AND?: InputMaybe<Array<UserSessionFilterInput3>>
+-  NOT?: InputMaybe<Array<UserSessionFilterInput3>>
+-  OR?: InputMaybe<Array<UserSessionFilterInput3>>
+-  createdAt?: InputMaybe<DateTimeFilterInput>
+-  deviceInfo?: InputMaybe<StringFilterInput>
+-  expiresAt?: InputMaybe<DateTimeFilterInput>
+-  id?: InputMaybe<StringFilterInput>
+-  ipAddress?: InputMaybe<StringFilterInput>
+-  isValid?: InputMaybe<BooleanFilterInput>
+-  lastActiveAt?: InputMaybe<DateTimeFilterInput>
+-  twoFactorVerified?: InputMaybe<BooleanFilterInput>
+-  updatedAt?: InputMaybe<DateTimeFilterInput>
+-  user?: InputMaybe<UserRelationFilterInput2>
+-  userId?: InputMaybe<StringFilterInput>
+-}
+-
+-export type UserSessionFilterInput3 = {
+-  createdAt?: InputMaybe<DateTimeFilterInput>
+-  deviceInfo?: InputMaybe<StringFilterInput>
+-  expiresAt?: InputMaybe<DateTimeFilterInput>
+-  id?: InputMaybe<StringFilterInput>
+-  ipAddress?: InputMaybe<StringFilterInput>
+-  isValid?: InputMaybe<BooleanFilterInput>
+-  lastActiveAt?: InputMaybe<DateTimeFilterInput>
+-  twoFactorVerified?: InputMaybe<BooleanFilterInput>
+-  updatedAt?: InputMaybe<DateTimeFilterInput>
+-  userId?: InputMaybe<StringFilterInput>
+-}
+-
+-export type UserSessionListRelationFilterInput = {
+-  every?: InputMaybe<UserSessionFilterInput2>
+-  none?: InputMaybe<UserSessionFilterInput2>
+-  some?: InputMaybe<UserSessionFilterInput2>
+-}
+-
+-export type UserSessionListRelationFilterInput2 = {
+-  every?: InputMaybe<UserSessionFilterInput3>
+-  none?: InputMaybe<UserSessionFilterInput3>
+-  some?: InputMaybe<UserSessionFilterInput3>
+-}
+-
+ export type UserSessionOutput = {
+   __typename?: 'UserSessionOutput'
+   createdAt: Scalars['DateTime']['output']
+@@ -8409,269 +8293,109 @@ export type __AdminUserPreferencePaginationQuery = {
+   } | null
+ }
+ 
+-export type __AdminUserSessionSummaryFragment = {
+-  __typename?: 'UserSession'
++export type __AdminUserSummaryFragment = {
++  __typename?: 'User'
+   id: string
+   createdAt: any
+   updatedAt: any
+-  lastActiveAt: any
+-  userId: string
+-  deviceInfo?: string | null
+-  ipAddress?: string | null
+-  isValid: boolean
+-  twoFactorVerified: boolean
+-  expiresAt?: any | null
+-  user?: { __typename?: 'User'; id: string } | null
++  firstName?: string | null
++  lastName?: string | null
++  isSuperAdmin: boolean
++  bio?: string | null
++  displayName?: string | null
++  emailValidated: boolean
++  avatarId?: string | null
++  activeOrganizationId?: string | null
++  twoFactorEnabled: boolean
++  twoFactorMethod: TwoFactorMethod
++  lastSuccessfulLogin?: any | null
++  lastFailedLogin?: any | null
++  failedLoginCount: number
++  lockedUntil?: any | null
++  isActive: boolean
++  deactivatedAt?: any | null
++  termsAcceptedAt?: any | null
++  privacyPolicyAcceptedAt?: any | null
++  avatar?: { __typename?: 'StoredFile'; id: string } | null
+ }
+ 
+-export type __AdminUserSessionDetailsFragment = {
+-  __typename?: 'UserSession'
++export type __AdminUserDetailsFragment = {
++  __typename?: 'User'
+   id: string
+   createdAt: any
+   updatedAt: any
+-  lastActiveAt: any
+-  userId: string
+-  deviceInfo?: string | null
+-  ipAddress?: string | null
+-  isValid: boolean
+-  twoFactorVerified: boolean
+-  expiresAt?: any | null
+-  user?: { __typename?: 'User'; id: string } | null
++  firstName?: string | null
++  lastName?: string | null
++  isSuperAdmin: boolean
++  bio?: string | null
++  displayName?: string | null
++  emailValidated: boolean
++  avatarId?: string | null
++  activeOrganizationId?: string | null
++  twoFactorEnabled: boolean
++  twoFactorMethod: TwoFactorMethod
++  lastSuccessfulLogin?: any | null
++  lastFailedLogin?: any | null
++  failedLoginCount: number
++  lockedUntil?: any | null
++  isActive: boolean
++  deactivatedAt?: any | null
++  termsAcceptedAt?: any | null
++  privacyPolicyAcceptedAt?: any | null
++  avatar?: { __typename?: 'StoredFile'; id: string } | null
+ }
+ 
+-export type __AdminCreateUserSessionMutationVariables = Exact<{
+-  input: CreateUserSessionInput
++export type __AdminCreateUserMutationVariables = Exact<{
++  input: CreateUserInput
+ }>
+ 
+-export type __AdminCreateUserSessionMutation = {
++export type __AdminCreateUserMutation = {
+   __typename?: 'Mutation'
+-  createUserSession?: {
+-    __typename?: 'UserSession'
++  createUser?: {
++    __typename?: 'User'
+     id: string
+     createdAt: any
+     updatedAt: any
+-    lastActiveAt: any
+-    userId: string
+-    deviceInfo?: string | null
+-    ipAddress?: string | null
+-    isValid: boolean
+-    twoFactorVerified: boolean
+-    expiresAt?: any | null
+-    user?: { __typename?: 'User'; id: string } | null
++    firstName?: string | null
++    lastName?: string | null
++    isSuperAdmin: boolean
++    bio?: string | null
++    displayName?: string | null
++    emailValidated: boolean
++    avatarId?: string | null
++    activeOrganizationId?: string | null
++    twoFactorEnabled: boolean
++    twoFactorMethod: TwoFactorMethod
++    lastSuccessfulLogin?: any | null
++    lastFailedLogin?: any | null
++    failedLoginCount: number
++    lockedUntil?: any | null
++    isActive: boolean
++    deactivatedAt?: any | null
++    termsAcceptedAt?: any | null
++    privacyPolicyAcceptedAt?: any | null
++    avatar?: { __typename?: 'StoredFile'; id: string } | null
+   } | null
+ }
+ 
+-export type __AdminDeleteUserSessionMutationVariables = Exact<{
+-  userSessionId: Scalars['String']['input']
++export type __AdminDeleteUserMutationVariables = Exact<{
++  userId: Scalars['String']['input']
+ }>
+ 
+-export type __AdminDeleteUserSessionMutation = {
++export type __AdminDeleteUserMutation = {
+   __typename?: 'Mutation'
+-  deleteUserSession?: { __typename?: 'UserSession'; id: string } | null
++  deleteUser?: { __typename?: 'User'; id: string } | null
+ }
+ 
+-export type __AdminUpdateUserSessionMutationVariables = Exact<{
+-  userSessionId: Scalars['String']['input']
+-  input: UpdateUserSessionInput
++export type __AdminUpdateUserMutationVariables = Exact<{
++  userId: Scalars['String']['input']
++  input: UpdateUserInput
+ }>
+ 
+-export type __AdminUpdateUserSessionMutation = {
++export type __AdminUpdateUserMutation = {
+   __typename?: 'Mutation'
+-  updateUserSession?: {
+-    __typename?: 'UserSession'
+-    id: string
+-    createdAt: any
+-    updatedAt: any
+-    lastActiveAt: any
+-    userId: string
+-    deviceInfo?: string | null
+-    ipAddress?: string | null
+-    isValid: boolean
+-    twoFactorVerified: boolean
+-    expiresAt?: any | null
+-    user?: { __typename?: 'User'; id: string } | null
+-  } | null
+-}
+-
+-export type __AdminUserSessionQueryVariables = Exact<{
+-  userSessionId: Scalars['String']['input']
+-}>
+-
+-export type __AdminUserSessionQuery = {
+-  __typename?: 'Query'
+-  userSession?: {
+-    __typename?: 'UserSession'
+-    id: string
+-    createdAt: any
+-    updatedAt: any
+-    lastActiveAt: any
+-    userId: string
+-    deviceInfo?: string | null
+-    ipAddress?: string | null
+-    isValid: boolean
+-    twoFactorVerified: boolean
+-    expiresAt?: any | null
+-    user?: { __typename?: 'User'; id: string } | null
+-  } | null
+-}
+-
+-export type __AdminUserSessionsQueryVariables = Exact<{
+-  input?: InputMaybe<ListUserSessionInput>
+-}>
+-
+-export type __AdminUserSessionsQuery = {
+-  __typename?: 'Query'
+-  userSessions?: Array<{
+-    __typename?: 'UserSession'
+-    id: string
+-    createdAt: any
+-    updatedAt: any
+-    lastActiveAt: any
+-    userId: string
+-    deviceInfo?: string | null
+-    ipAddress?: string | null
+-    isValid: boolean
+-    twoFactorVerified: boolean
+-    expiresAt?: any | null
+-    user?: { __typename?: 'User'; id: string } | null
+-  }> | null
+-  counters?: {
+-    __typename?: 'CorePaging'
+-    count?: number | null
+-    take?: number | null
+-    page?: number | null
+-    skip?: number | null
+-    total?: number | null
+-    filteredTotal?: number | null
+-    pages?: number | null
+-    hasNext?: boolean | null
+-    hasPrev?: boolean | null
+-  } | null
+-}
+-
+-export type __AdminUserSessionPaginationQueryVariables = Exact<{
+-  input?: InputMaybe<ListUserSessionInput>
+-}>
+-
+-export type __AdminUserSessionPaginationQuery = {
+-  __typename?: 'Query'
+-  counters?: {
+-    __typename?: 'CorePaging'
+-    count?: number | null
+-    take?: number | null
+-    page?: number | null
+-    skip?: number | null
+-    total?: number | null
+-    filteredTotal?: number | null
+-    pages?: number | null
+-    hasNext?: boolean | null
+-    hasPrev?: boolean | null
+-  } | null
+-}
+-
+-export type __AdminUserSummaryFragment = {
+-  __typename?: 'User'
+-  id: string
+-  createdAt: any
+-  updatedAt: any
+-  firstName?: string | null
+-  lastName?: string | null
+-  isSuperAdmin: boolean
+-  bio?: string | null
+-  displayName?: string | null
+-  emailValidated: boolean
+-  avatarId?: string | null
+-  activeOrganizationId?: string | null
+-  twoFactorEnabled: boolean
+-  twoFactorMethod: TwoFactorMethod
+-  lastSuccessfulLogin?: any | null
+-  lastFailedLogin?: any | null
+-  failedLoginCount: number
+-  lockedUntil?: any | null
+-  isActive: boolean
+-  deactivatedAt?: any | null
+-  termsAcceptedAt?: any | null
+-  privacyPolicyAcceptedAt?: any | null
+-  avatar?: { __typename?: 'StoredFile'; id: string } | null
+-}
+-
+-export type __AdminUserDetailsFragment = {
+-  __typename?: 'User'
+-  id: string
+-  createdAt: any
+-  updatedAt: any
+-  firstName?: string | null
+-  lastName?: string | null
+-  isSuperAdmin: boolean
+-  bio?: string | null
+-  displayName?: string | null
+-  emailValidated: boolean
+-  avatarId?: string | null
+-  activeOrganizationId?: string | null
+-  twoFactorEnabled: boolean
+-  twoFactorMethod: TwoFactorMethod
+-  lastSuccessfulLogin?: any | null
+-  lastFailedLogin?: any | null
+-  failedLoginCount: number
+-  lockedUntil?: any | null
+-  isActive: boolean
+-  deactivatedAt?: any | null
+-  termsAcceptedAt?: any | null
+-  privacyPolicyAcceptedAt?: any | null
+-  avatar?: { __typename?: 'StoredFile'; id: string } | null
+-}
+-
+-export type __AdminCreateUserMutationVariables = Exact<{
+-  input: CreateUserInput
+-}>
+-
+-export type __AdminCreateUserMutation = {
+-  __typename?: 'Mutation'
+-  createUser?: {
+-    __typename?: 'User'
+-    id: string
+-    createdAt: any
+-    updatedAt: any
+-    firstName?: string | null
+-    lastName?: string | null
+-    isSuperAdmin: boolean
+-    bio?: string | null
+-    displayName?: string | null
+-    emailValidated: boolean
+-    avatarId?: string | null
+-    activeOrganizationId?: string | null
+-    twoFactorEnabled: boolean
+-    twoFactorMethod: TwoFactorMethod
+-    lastSuccessfulLogin?: any | null
+-    lastFailedLogin?: any | null
+-    failedLoginCount: number
+-    lockedUntil?: any | null
+-    isActive: boolean
+-    deactivatedAt?: any | null
+-    termsAcceptedAt?: any | null
+-    privacyPolicyAcceptedAt?: any | null
+-    avatar?: { __typename?: 'StoredFile'; id: string } | null
+-  } | null
+-}
+-
+-export type __AdminDeleteUserMutationVariables = Exact<{
+-  userId: Scalars['String']['input']
+-}>
+-
+-export type __AdminDeleteUserMutation = {
+-  __typename?: 'Mutation'
+-  deleteUser?: { __typename?: 'User'; id: string } | null
+-}
+-
+-export type __AdminUpdateUserMutationVariables = Exact<{
+-  userId: Scalars['String']['input']
+-  input: UpdateUserInput
+-}>
+-
+-export type __AdminUpdateUserMutation = {
+-  __typename?: 'Mutation'
+-  updateUser?: {
+-    __typename?: 'User'
++  updateUser?: {
++    __typename?: 'User'
+     id: string
+     createdAt: any
+     updatedAt: any
+@@ -9187,7 +8911,7 @@ export type AdminUserManagementDetailsQueryVariables = Exact<{
+ export type AdminUserManagementDetailsQuery = {
+   __typename?: 'Query'
+   adminUserDetails: {
+-    __typename?: 'User'
++    __typename?: 'AdminUserDetails'
+     id: string
+     firstName?: string | null
+     lastName?: string | null
+@@ -9227,14 +8951,14 @@ export type AdminUserManagementDetailsQuery = {
+       team?: { __typename?: 'Team'; id: string; name: string } | null
+       role?: { __typename?: 'Role'; name: string } | null
+     }> | null
+-    activeSessions?: Array<{
+-      __typename?: 'UserSession'
++    activeSessions: Array<{
++      __typename?: 'AdminUserSession'
+       id: string
+       ipAddress?: string | null
+       deviceInfo?: string | null
+       lastActiveAt: any
+       isValid: boolean
+-    }> | null
++    }>
+     AuditLog?: Array<{
+       __typename?: 'AuditLog'
+       id: string
+@@ -13460,83 +13184,6 @@ export const __AdminUserPreferenceDetailsFragmentDoc = {
+     },
+   ],
+ } as unknown as DocumentNode<__AdminUserPreferenceDetailsFragment, unknown>
+-export const __AdminUserSessionSummaryFragmentDoc = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'user' },
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<__AdminUserSessionSummaryFragment, unknown>
+-export const __AdminUserSessionDetailsFragmentDoc = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'user' },
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<__AdminUserSessionDetailsFragment, unknown>
+ export const __AdminUserSummaryFragmentDoc = {
+   kind: 'Document',
+   definitions: [
+@@ -24960,489 +24607,6 @@ export const __AdminUserPreferencePagination = {
+   __AdminUserPreferencePaginationQuery,
+   __AdminUserPreferencePaginationQueryVariables
+ >
+-export const __AdminCreateUserSession = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'OperationDefinition',
+-      operation: 'mutation',
+-      name: { kind: 'Name', value: '__AdminCreateUserSession' },
+-      variableDefinitions: [
+-        {
+-          kind: 'VariableDefinition',
+-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-          type: {
+-            kind: 'NonNullType',
+-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'CreateUserSessionInput' } },
+-          },
+-        },
+-      ],
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'createUserSession' },
+-            arguments: [
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'input' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-              },
+-            ],
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [
+-                {
+-                  kind: 'FragmentSpread',
+-                  name: { kind: 'Name', value: '__AdminUserSessionDetails' },
+-                },
+-              ],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'user' },
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<
+-  __AdminCreateUserSessionMutation,
+-  __AdminCreateUserSessionMutationVariables
+->
+-export const __AdminDeleteUserSession = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'OperationDefinition',
+-      operation: 'mutation',
+-      name: { kind: 'Name', value: '__AdminDeleteUserSession' },
+-      variableDefinitions: [
+-        {
+-          kind: 'VariableDefinition',
+-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
+-          type: {
+-            kind: 'NonNullType',
+-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
+-          },
+-        },
+-      ],
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'deleteUserSession' },
+-            arguments: [
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'userSessionId' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
+-              },
+-            ],
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<
+-  __AdminDeleteUserSessionMutation,
+-  __AdminDeleteUserSessionMutationVariables
+->
+-export const __AdminUpdateUserSession = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'OperationDefinition',
+-      operation: 'mutation',
+-      name: { kind: 'Name', value: '__AdminUpdateUserSession' },
+-      variableDefinitions: [
+-        {
+-          kind: 'VariableDefinition',
+-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
+-          type: {
+-            kind: 'NonNullType',
+-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
+-          },
+-        },
+-        {
+-          kind: 'VariableDefinition',
+-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-          type: {
+-            kind: 'NonNullType',
+-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'UpdateUserSessionInput' } },
+-          },
+-        },
+-      ],
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'updateUserSession' },
+-            arguments: [
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'userSessionId' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
+-              },
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'input' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-              },
+-            ],
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [
+-                {
+-                  kind: 'FragmentSpread',
+-                  name: { kind: 'Name', value: '__AdminUserSessionDetails' },
+-                },
+-              ],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'user' },
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<
+-  __AdminUpdateUserSessionMutation,
+-  __AdminUpdateUserSessionMutationVariables
+->
+-export const __AdminUserSession = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'OperationDefinition',
+-      operation: 'query',
+-      name: { kind: 'Name', value: '__AdminUserSession' },
+-      variableDefinitions: [
+-        {
+-          kind: 'VariableDefinition',
+-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
+-          type: {
+-            kind: 'NonNullType',
+-            type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
+-          },
+-        },
+-      ],
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'userSession' },
+-            arguments: [
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'userSessionId' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'userSessionId' } },
+-              },
+-            ],
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [
+-                {
+-                  kind: 'FragmentSpread',
+-                  name: { kind: 'Name', value: '__AdminUserSessionDetails' },
+-                },
+-              ],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'user' },
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionDetails' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'FragmentSpread', name: { kind: 'Name', value: '__AdminUserSessionSummary' } },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<__AdminUserSessionQuery, __AdminUserSessionQueryVariables>
+-export const __AdminUserSessions = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'OperationDefinition',
+-      operation: 'query',
+-      name: { kind: 'Name', value: '__AdminUserSessions' },
+-      variableDefinitions: [
+-        {
+-          kind: 'VariableDefinition',
+-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListUserSessionInput' } },
+-        },
+-      ],
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'userSessions' },
+-            arguments: [
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'input' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-              },
+-            ],
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [
+-                {
+-                  kind: 'FragmentSpread',
+-                  name: { kind: 'Name', value: '__AdminUserSessionSummary' },
+-                },
+-              ],
+-            },
+-          },
+-          {
+-            kind: 'Field',
+-            alias: { kind: 'Name', value: 'counters' },
+-            name: { kind: 'Name', value: 'userSessionsCount' },
+-            arguments: [
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'input' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-              },
+-            ],
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [
+-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
+-              ],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: '__AdminUserSessionSummary' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'UserSession' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'createdAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'lastActiveAt' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'userId' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'deviceInfo' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'ipAddress' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'isValid' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'twoFactorVerified' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'expiresAt' } },
+-          {
+-            kind: 'Field',
+-            name: { kind: 'Name', value: 'user' },
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [{ kind: 'Field', name: { kind: 'Name', value: 'id' } }],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: 'CorePagingDetails' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<__AdminUserSessionsQuery, __AdminUserSessionsQueryVariables>
+-export const __AdminUserSessionPagination = {
+-  kind: 'Document',
+-  definitions: [
+-    {
+-      kind: 'OperationDefinition',
+-      operation: 'query',
+-      name: { kind: 'Name', value: '__AdminUserSessionPagination' },
+-      variableDefinitions: [
+-        {
+-          kind: 'VariableDefinition',
+-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ListUserSessionInput' } },
+-        },
+-      ],
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          {
+-            kind: 'Field',
+-            alias: { kind: 'Name', value: 'counters' },
+-            name: { kind: 'Name', value: 'userSessionsCount' },
+-            arguments: [
+-              {
+-                kind: 'Argument',
+-                name: { kind: 'Name', value: 'input' },
+-                value: { kind: 'Variable', name: { kind: 'Name', value: 'input' } },
+-              },
+-            ],
+-            selectionSet: {
+-              kind: 'SelectionSet',
+-              selections: [
+-                { kind: 'FragmentSpread', name: { kind: 'Name', value: 'CorePagingDetails' } },
+-              ],
+-            },
+-          },
+-        ],
+-      },
+-    },
+-    {
+-      kind: 'FragmentDefinition',
+-      name: { kind: 'Name', value: 'CorePagingDetails' },
+-      typeCondition: { kind: 'NamedType', name: { kind: 'Name', value: 'CorePaging' } },
+-      selectionSet: {
+-        kind: 'SelectionSet',
+-        selections: [
+-          { kind: 'Field', name: { kind: 'Name', value: 'count' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'take' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'page' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'skip' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'total' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'filteredTotal' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'pages' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'hasNext' } },
+-          { kind: 'Field', name: { kind: 'Name', value: 'hasPrev' } },
+-        ],
+-      },
+-    },
+-  ],
+-} as unknown as DocumentNode<
+-  __AdminUserSessionPaginationQuery,
+-  __AdminUserSessionPaginationQueryVariables
+->
+ export const __AdminCreateUser = {
+   kind: 'Document',
+   definitions: [
+diff --git a/libs/shared/sdk/src/lib/database-models.ts b/libs/shared/sdk/src/lib/database-models.ts
+index 7c9499e..23bb611 100644
+--- a/libs/shared/sdk/src/lib/database-models.ts
++++ b/libs/shared/sdk/src/lib/database-models.ts
+@@ -10,6 +10,7 @@ export interface DatabaseField {
+   isUnique?: boolean
+   isList?: boolean
+   isReadOnly?: boolean
++  isCrudReadOnly?: boolean
+   hasDefaultValue?: boolean
+   default?: unknown
+   relationName?: string
+@@ -919,11 +920,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'verified',
+@@ -933,11 +936,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'verifyExpires',
+@@ -947,10 +952,12 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'userId',
+@@ -3760,11 +3767,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'bio',
+@@ -3800,11 +3809,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'emails',
+@@ -3989,22 +4000,6 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isGenerated: false,
+         isUpdatedAt: false,
+       },
+-      {
+-        name: 'activeSessions',
+-        kind: 'object',
+-        type: 'UserSession',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: true,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        relationName: 'UserToUserSession',
+-        relationFromFields: [],
+-        relationToFields: [],
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+       {
+         name: 'loginAttempts',
+         kind: 'object',
+@@ -4345,178 +4340,6 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+     pluralModelPropertyName: 'userPreferences',
+     idFieldType: 'String',
+   },
+-  {
+-    name: 'UserSession',
+-    pluralName: 'UserSessions',
+-    fields: [
+-      {
+-        name: 'id',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: false,
+-        isId: true,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: {
+-          name: 'uuid',
+-          args: [4],
+-        },
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'createdAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: {
+-          name: 'now',
+-          args: [],
+-        },
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'updatedAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: true,
+-      },
+-      {
+-        name: 'lastActiveAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: {
+-          name: 'now',
+-          args: [],
+-        },
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'userId',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: true,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'user',
+-        kind: 'object',
+-        type: 'User',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        relationName: 'UserToUserSession',
+-        relationFromFields: ['userId'],
+-        relationToFields: ['id'],
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'deviceInfo',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: true,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'ipAddress',
+-        kind: 'scalar',
+-        type: 'String',
+-        isOptional: true,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'isValid',
+-        kind: 'scalar',
+-        type: 'Boolean',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: true,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'twoFactorVerified',
+-        kind: 'scalar',
+-        type: 'Boolean',
+-        isOptional: false,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: true,
+-        default: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-      {
+-        name: 'expiresAt',
+-        kind: 'scalar',
+-        type: 'DateTime',
+-        isOptional: true,
+-        isId: false,
+-        isUnique: false,
+-        isList: false,
+-        isReadOnly: false,
+-        hasDefaultValue: false,
+-        isGenerated: false,
+-        isUpdatedAt: false,
+-      },
+-    ],
+-    primaryField: 'userId',
+-    modelName: 'UserSession',
+-    modelPropertyName: 'userSession',
+-    pluralModelName: 'UserSessions',
+-    pluralModelPropertyName: 'userSessions',
+-    idFieldType: 'String',
+-  },
+ ]
+ 
+ export const DATABASE_MODELS_BY_NAME: Record<string, DatabaseModel> = DATABASE_MODELS.reduce(
+@@ -4550,7 +4373,6 @@ export const DATABASE_MODEL_NAMES = [
+   'StoredFile',
+   'User',
+   'UserPreference',
+-  'UserSession',
+ ] as const
+ 
+ export type DatabaseModelName = (typeof DATABASE_MODEL_NAMES)[number]
+diff --git a/package.json b/package.json
+index 05d3016..463c0be 100644
+--- a/package.json
++++ b/package.json
+@@ -111,7 +111,7 @@
+     "@nestledjs/data-browser": "^1.0.23",
+     "@nestledjs/forms": "0.9.0",
+     "@nestledjs/forms-core": "0.9.0",
+-    "@nestledjs/generators": "3.3.0",
++    "@nestledjs/generators": "3.4.1",
+     "@nestledjs/shared-components": "^1.0.17",
+     "@nx/devkit": "22.7.8",
+     "@octokit/oauth-app": "^8.0.4",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 5a51224..3e196cf 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -121,8 +121,8 @@ importers:
+         specifier: 0.9.0
+         version: 0.9.0(@apollo/client@4.1.8(graphql-ws@6.2.1(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.14.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(dayjs@1.11.21)(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
+       '@nestledjs/generators':
+-        specifier: 3.3.0
+-        version: 3.3.0(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))
++        specifier: 3.4.1
++        version: 3.4.1(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))
+       '@nestledjs/shared-components':
+         specifier: ^1.0.17
+         version: 1.0.17(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
+@@ -4008,8 +4008,8 @@ packages:
+       '@mdxeditor/editor':
+         optional: true
+ 
+-  '@nestledjs/generators@3.3.0':
+-    resolution: {integrity: sha512-/x04Z3zVws/ejaOdH31G9+msaW/bEsjHPr6u/gwxBqiIffttvJDGLQlCDwKObNCO0eqL59qhQ9oo60D0kX2KoA==}
++  '@nestledjs/generators@3.4.1':
++    resolution: {integrity: sha512-ryzbVQr+3dWfvYNcSyiNyrkns9GqsbBNXDLK7K1rUZeMoUjLh1vcdgyS+msHJuo9ndSOi3XB5rA5HGJPYIFRZg==}
+ 
+   '@nestledjs/shared-components@1.0.17':
+     resolution: {integrity: sha512-b1fA/XhZmE1eEn7vRG1vZMSTPuhViwWkile4j3qVh/U4kNQkBajyNzP2g8JZXmZLxmkx7fI4rDykHTDX1F6OIQ==}
+@@ -19168,7 +19168,7 @@ snapshots:
+     transitivePeerDependencies:
+       - dayjs
+ 
+-  '@nestledjs/generators@3.3.0(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))':
++  '@nestledjs/generators@3.4.1(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))':
+     dependencies:
+       '@nx/devkit': 22.0.2(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))
+       '@nx/js': 22.0.2(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))

@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-06
+generatedAt: 2026-10-07
 channels:
-  canary: 2026.10.5
+  canary: 2026.10.6
   stable: 2026.10.5
 releases:
   - id: 2026.08.0
@@ -295,3 +295,36 @@ releases:
           - pnpm exec nestled-doctor
           - "pnpm test:e2e src/auth/organization-billing.spec.ts"
         patch: patches/2026-10-06-members-keep-plan-features.diff
+  - id: 2026.10.6
+    date: 2026-10-07
+    title: Authentication record maintenance
+    templateCommit: 8dd9701
+    notes:
+      - id: 2026-10-06-auth-record-invariants
+        title: Keep authentication records consistent across administrative maintenance
+        delivery: hybrid
+        intent: Keep protected account and email flags readable while assigning their writes to explicit application workflows. Use the generator's @crudReadOnly annotation for User.isSuperAdmin, User.emailValidated, Email.primary, Email.verified and Email.verifyExpires. Session records use @skipCrud with a documented credential-maintenance exception; maintain sessions through the existing explicit authentication/session APIs. Regenerate CRUD, models and the complete SDK. Apply the auth-record-invariants and auth-record-lock-contention migrations to keep email validation and active organization context consistent after administrative changes, including relation reassignment and deletion. Generated standalone writes retry rolled-back conflicts; owner synchronization uses sorted, nonblocking locks so concurrent application workflows can complete.
+        area: auth
+        affectedPaths:
+          - libs/api/prisma/src/lib/schemas/schema.prisma
+          - libs/api/prisma/src/lib/migrations/20261006180000_auth_record_invariants/migration.sql
+          - libs/api/prisma/src/lib/migrations/20261006230000_auth_record_lock_contention/migration.sql
+          - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+          - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+          - apps/api-e2e/src/auth/auth-generation.spec.ts
+          - apps/api-e2e/src/zzz-cleanup.spec.ts
+          - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
+          - libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
+          - libs/api/generated-crud
+          - libs/api/core/models
+          - libs/shared/sdk
+        verification:
+          - pnpm db-update
+          - pnpm run nestled-doctor
+          - "pnpm nx run api:typecheck"
+          - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
+        patch: patches/2026-10-06-auth-record-invariants.diff
+        packageReleases:
+          - name: "@nestledjs/generators"
+            targetVersion: 3.4.1
+            dependencyType: dependencies
