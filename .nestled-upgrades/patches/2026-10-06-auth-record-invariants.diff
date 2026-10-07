@@ -1,9 +1,159 @@
+diff --git a/.github/tests/test_public_content_guard.py b/.github/tests/test_public_content_guard.py
+new file mode 100644
+index 0000000..7c7347f
+--- /dev/null
++++ b/.github/tests/test_public_content_guard.py
+@@ -0,0 +1,93 @@
++"""Exercise the privileged workflow with a fake API and synthetic public text."""
++
++import hashlib
++import json
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import textwrap
++import unittest
++
++
++WORKFLOW = Path(__file__).parents[1] / "workflows/public-content-guard.yml"
++SCRIPT = textwrap.dedent(WORKFLOW.read_text().split("        run: |\n", 1)[1])
++FAKE_GH = """#!/usr/bin/env python3
++import json, os, sys
++from pathlib import Path
++data = json.loads(Path(os.environ['FIXTURE']).read_text())
++endpoint = sys.argv[2] if sys.argv[1] == 'api' else ''
++if endpoint.endswith('/commits'):
++    print('a' * 40 if sys.argv[-1] == '.[].sha' else 'Update release feed')
++elif endpoint.endswith('/files'):
++    for entry in data['files']:
++        print(json.dumps(entry))
++elif '/git/blobs/' in endpoint:
++    if data.get('unreadable'):
++        sys.exit(1)
++    sys.stdout.buffer.write(bytes.fromhex(data['blob']))
++elif endpoint.endswith('/pulls/1'):
++    print(json.dumps({'commits': 1, 'changed_files': len(data['files'])}))
++"""
++
++
++class PublicContentGuardTest(unittest.TestCase):
++    def run_guard(self, *, content=b"Safe release content\n", patch=None,
++                  title="Release update", terms="restricted-example",
++                  corrupt=False, unreadable=False, sha=None):
++        digest = hashlib.sha1(
++            b"blob " + str(len(content)).encode() + b"\0" + content
++        ).hexdigest()
++        fixture = {
++            "files": [{"filename": "release.diff", "sha": sha or digest,
++                       "status": "added", "additions": 1, "patch": patch}],
++            "blob": (b"truncated" if corrupt else content).hex(),
++            "unreadable": unreadable,
++        }
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            (root / "gh").write_text(FAKE_GH)
++            (root / "gh").chmod(0o755)
++            (root / "fixture.json").write_text(json.dumps(fixture))
++            env = {**os.environ, "PATH": directory + os.pathsep + os.environ["PATH"],
++                   "FIXTURE": str(root / "fixture.json"), "TERMS": terms,
++                   "EVENT": "pull_request_target", "REPO": "example/template",
++                   "NUMBER": "1", "TITLE": title, "BODY": "Release notes"}
++            result = subprocess.run(["bash", "-c", SCRIPT], cwd=root, env=env,
++                                    capture_output=True, text=True, timeout=10)
++            self.assertFalse((root / "executed").exists())
++            self.assertNotIn("restricted-example", result.stdout + result.stderr)
++            return result
++
++    def test_large_blob_is_scanned_without_executing_it(self):
++        result = self.run_guard(content=b"$(touch executed)\n" + b"safe\n" * 40000)
++        self.assertEqual(result.returncode, 0, result.stderr)
++
++    def test_large_blob_match_fails_without_printing_content(self):
++        self.assertNotEqual(self.run_guard(content=b"restricted-example\n").returncode, 0)
++
++    def test_blob_with_nul_still_scans_later_text(self):
++        self.assertNotEqual(self.run_guard(content=b"safe\0\nrestricted-example\n").returncode, 0)
++
++    def test_incomplete_blob_fails_closed(self):
++        self.assertNotEqual(self.run_guard(corrupt=True).returncode, 0)
++
++    def test_unreadable_blob_fails_closed(self):
++        self.assertNotEqual(self.run_guard(unreadable=True).returncode, 0)
++
++    def test_invalid_object_id_fails_closed(self):
++        self.assertNotEqual(self.run_guard(sha="$(touch executed)").returncode, 0)
++
++    def test_small_patch_still_scans_added_lines(self):
++        self.assertNotEqual(self.run_guard(patch="@@ -0,0 +1 @@\n+restricted-example").returncode, 0)
++        self.assertEqual(self.run_guard(patch="@@ -1 +1 @@\n-restricted-example\n+safe").returncode, 0)
++
++    def test_title_is_scanned(self):
++        self.assertNotEqual(self.run_guard(title="restricted-example").returncode, 0)
++
++    def test_invalid_pattern_fails_closed(self):
++        self.assertNotEqual(self.run_guard(terms="[").returncode, 0)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 27c069c..53fd56c 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -42,6 +42,9 @@ jobs:
+         with:
+           fetch-depth: 0
+ 
++      - name: Test public content guard
++        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
++
+       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+         name: Install pnpm
+         with:
+diff --git a/.github/workflows/public-content-guard.yml b/.github/workflows/public-content-guard.yml
+index 801dbc8..ef69b19 100644
+--- a/.github/workflows/public-content-guard.yml
++++ b/.github/workflows/public-content-guard.yml
+@@ -62,10 +62,20 @@ jobs:
+             [ "$commits" -eq "$(jq -r .commits <<<"$pr")" ] || unchecked "more commits than the API returns"
+             gh api "repos/$REPO/pulls/$NUMBER/commits" --paginate --jq '.[].commit.message' >> "$file"
+             files=$(mktemp)
+-            gh api "repos/$REPO/pulls/$NUMBER/files" --paginate --jq '.[] | {filename, status, additions, patch}' > "$files"
++            gh api "repos/$REPO/pulls/$NUMBER/files" --paginate --jq '.[] | {filename, sha, status, additions, patch}' > "$files"
+             [ "$(jq -s length "$files")" -eq "$(jq -r .changed_files <<<"$pr")" ] || unchecked "more files than the API returns"
+-            # A file with added lines but no patch is a diff too large for the API to include.
+-            [ "$(jq -s '[.[] | select(.additions > 0 and .patch == null)] | length' "$files")" -eq 0 ] || unchecked "a diff too large to read"
++            # GitHub omits large diffs. Read the complete blob at the API-provided object id instead;
++            # never check out or execute PR code in this workflow's privileged context. Scanning the
++            # whole file is deliberately conservative: it includes unchanged lines too.
++            while IFS= read -r blob_sha; do
++              [[ "$blob_sha" =~ ^[0-9a-f]{40}$ ]] || unchecked "a missing blob id"
++              blob=$(mktemp)
++              gh api "repos/$REPO/git/blobs/$blob_sha" -H 'Accept: application/vnd.github.raw+json' > "$blob" || unchecked "an unreadable blob"
++              [ "$(git hash-object "$blob")" = "$blob_sha" ] || unchecked "an incomplete blob"
++              cat "$blob" >> "$file"
++              printf '\n' >> "$file"
++              rm -f "$blob"
++            done < <(jq -r 'select(.additions > 0 and .patch == null) | .sha' "$files")
+             # Paths of added, changed and renamed files (a name alone can identify).
+             jq -r 'select(.status != "removed") | .filename' "$files" >> "$file"
+             # Added lines only. Per-file patches hold hunks, not file headers, so every line starting with
+@@ -76,7 +86,7 @@ jobs:
+           # on a match, 1 on none, and 2 on an error such as an invalid expression; an error must fail the
+           # check, never pass it.
+           status=0
+-          grep -qiE -f "$patterns" "$file" || status=$?
++          grep -aqiE -f "$patterns" "$file" || status=$?
+           if [ "$status" -gt 1 ]; then
+             echo "::error::The term list could not be evaluated, so this couldn't be checked. A maintainer needs to fix the list."
+             exit 1
 diff --git a/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml b/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml
 new file mode 100644
-index 0000000..f30a8f1
+index 0000000..62d3e86
 --- /dev/null
 +++ b/.nestled-updates/upgrade-notes/2026-10-06-auth-record-invariants.yaml
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,84 @@
 +id: 2026-10-06-auth-record-invariants
 +title: Keep authentication records consistent across administrative maintenance
 +priority: high
@@ -31,6 +181,8 @@ index 0000000..f30a8f1
 +  - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
 +  - apps/api-e2e/src/auth/auth-generation.spec.ts
 +  - apps/api-e2e/src/zzz-cleanup.spec.ts
++  - libs/api/custom/src/lib/default/organization/organization.service.ts
++  - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
 +  - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
 +  - libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
 +  - libs/api/generated-crud
@@ -46,6 +198,13 @@ index 0000000..f30a8f1
 +  - pnpm nx run api:typecheck
 +  - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
 +agentHints:
++  - >
++    Explicit member removal must lock the target User before deleting OrganizationMember, even
++    when that user has a different active organization. Organization deletion must lock all
++    affected User rows in sorted order before deleting memberships. Carry this lock order into
++    local handwritten transactions; generated-write retries do not cover application services.
++    Retry the complete organization-deletion transaction on P2034 to refresh its owner snapshot
++    when a membership is inserted or moved concurrently; keep external side effects outside retries.
 +  - >
 +    Run the e2e command from the repository root with TEST_DATABASE_URL and REDIS_URL
 +    pointing to isolated local test services and EMAIL_PROVIDER=mock. Require an actual test
@@ -453,10 +612,10 @@ index c736704..c68b92d 100644
    deviceInfo: String
 diff --git a/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
 new file mode 100644
-index 0000000..78f0073
+index 0000000..0376ae2
 --- /dev/null
 +++ b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,296 @@
 +import { beforeAll, describe, expect, it } from 'vitest'
 +import { randomUUID } from 'node:crypto'
 +import { setTimeout as delay } from 'node:timers/promises'
@@ -469,6 +628,31 @@ index 0000000..78f0073
 +  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
 +const primaryId = (user: TestUser) =>
 +  sql(`SELECT id FROM "Email" WHERE "userId" = :'userId' AND "primary";`, { userId: user.id })
++
++async function waitForAccountLock(owner: pg.Client, writing: Promise<unknown>) {
++  let settled = false
++  void writing.then(
++    () => {
++      settled = true
++    },
++    () => {
++      settled = true
++    },
++  )
++  const deadline = Date.now() + 5000
++  while (Date.now() < deadline) {
++    const result = await owner.query<{ waiting: boolean }>(`
++      SELECT EXISTS (
++        SELECT 1 FROM pg_stat_activity
++        WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))
++      ) AS waiting
++    `)
++    if (result.rows[0].waiting) return
++    if (settled) throw new Error('The API request finished before waiting for the account lock')
++    await delay(10)
++  }
++  throw new Error('The API request did not reach the account lock')
++}
 +
 +describe('Concurrent administrative authentication maintenance', () => {
 +  let admin: TestUser
@@ -612,6 +796,120 @@ index 0000000..78f0073
 +    expect(
 +      sql(`SELECT "activeOrganizationId" IS NULL FROM "User" WHERE id = :'id';`, { id: user.id }),
 +    ).toBe('t')
++  })
++
++  describe.each(['remove member', 'delete organization'])(
++    '%s through the explicit API',
++    operation => {
++      it.each([true, false])(
++        'waits for the account before taking membership locks (removed organization active: %s)',
++        async active => {
++          const actor = await TestHelpers.registerUser()
++          const member = await TestHelpers.registerUser()
++          const organizationId = sql(
++            `SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`,
++            { id: actor.id },
++          )
++          const originalOrganizationId = sql(
++            `SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`,
++            { id: member.id },
++          )
++          const roleId = sql(
++            `SELECT id FROM "Role" WHERE "organizationId" = :'id' AND name = 'Member';`,
++            { id: organizationId },
++          )
++          const added = await TestHelpers.authenticatedGraphql(
++            `mutation($input: AddOrganizationMemberInput!) { addOrganizationMember(input: $input) }`,
++            actor,
++            { input: { organizationId, userId: member.id, roleId } },
++          )
++          expect(added.data.errors).toBeUndefined()
++          const membershipId = sql(
++            `SELECT id FROM "OrganizationMember" WHERE "userId" = :'userId' AND "organizationId" = :'organizationId';`,
++            { userId: member.id, organizationId },
++          )
++          if (active) {
++            sql(`UPDATE "User" SET "activeOrganizationId" = :'organizationId' WHERE id = :'id';`, {
++              organizationId,
++              id: member.id,
++            })
++          }
++          const response = await holdingOwner(member.id, async owner => {
++            const writing =
++              operation === 'remove member'
++                ? TestHelpers.authenticatedGraphql(
++                    `mutation($input: RemoveOrganizationMemberInput!) { removeOrganizationMember(input: $input) }`,
++                    actor,
++                    { input: { organizationId, userId: member.id } },
++                  )
++                : TestHelpers.authenticatedGraphql(
++                    `mutation($organizationId: String!) { userDeleteOrganization(organizationId: $organizationId) }`,
++                    actor,
++                    { organizationId },
++                  )
++            await waitForAccountLock(owner, writing)
++            await owner.query(`SELECT id FROM "OrganizationMember" WHERE id = $1 FOR UPDATE`, [
++              membershipId,
++            ])
++            await owner.query('COMMIT')
++            return writing
++          })
++          expect(response.data.errors).toBeUndefined()
++          expect(
++            sql(`SELECT COUNT(*) FROM "OrganizationMember" WHERE id = :'id';`, {
++              id: membershipId,
++            }),
++          ).toBe('0')
++          expect(
++            sql(`SELECT COALESCE("activeOrganizationId", '') FROM "User" WHERE id = :'id';`, {
++              id: member.id,
++            }),
++          ).toBe(active ? '' : originalOrganizationId)
++        },
++      )
++    },
++  )
++
++  it('retries organization deletion when a membership arrives after the owner snapshot', async () => {
++    const actor = await TestHelpers.registerUser()
++    const member = await TestHelpers.registerUser()
++    const organizationId = sql(`SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`, {
++      id: actor.id,
++    })
++    const roleId = sql(
++      `SELECT id FROM "Role" WHERE "organizationId" = :'id' AND name = 'Member';`,
++      { id: organizationId },
++    )
++    const response = await holdingOwner(actor.id, async actorOwner => {
++      const writing = TestHelpers.authenticatedGraphql(
++        `mutation($organizationId: String!) { userDeleteOrganization(organizationId: $organizationId) }`,
++        actor,
++        { organizationId },
++      )
++      // The owner's blocked SELECT has already taken its membership snapshot.
++      await waitForAccountLock(actorOwner, writing)
++      sql(
++        `INSERT INTO "OrganizationMember" (id, "createdAt", "updatedAt", "userId", "organizationId", "roleId")
++         VALUES (:'id', NOW(), NOW(), :'userId', :'organizationId', :'roleId');`,
++        { id: randomUUID(), userId: member.id, organizationId, roleId },
++      )
++      return holdingOwner(member.id, async memberOwner => {
++        await actorOwner.query('COMMIT')
++        // The first attempt rolls back; its retry sees and waits for the new member's account.
++        await waitForAccountLock(memberOwner, writing)
++        await memberOwner.query('COMMIT')
++        return writing
++      })
++    })
++    expect(response.data.errors).toBeUndefined()
++    expect(
++      sql(`SELECT COUNT(*) FROM "Organization" WHERE id = :'id';`, { id: organizationId }),
++    ).toBe('0')
++    expect(
++      sql(`SELECT COUNT(*) FROM "OrganizationMember" WHERE "organizationId" = :'id';`, {
++        id: organizationId,
++      }),
++    ).toBe('0')
 +  })
 +})
 diff --git a/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts b/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
@@ -1099,6 +1397,173 @@ index b95863f..3b0cad1 100644
 -  @Field(() => GraphQLISODateTime, { nullable: true })
 -  expiresAt?: Date | null
 -}
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+index fa56790..98ef4d1 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config'
+ import { OrganizationService } from './organization.service'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+ import { EmailService } from '@nestled-template/api/integrations'
++import { Prisma } from '@nestled-template/api/prisma'
+ describe('OrganizationService', () => {
+   let service: OrganizationService
+   let data: any // Use any to avoid Prisma type conflicts with Jest mocks
+@@ -56,6 +57,7 @@ describe('OrganizationService', () => {
+       auditLog: {
+         create: jest.fn(),
+       },
++      $queryRaw: jest.fn().mockResolvedValue([]),
+       $transaction: jest.fn((arg: any) => {
+         // Handle both callback and array forms
+         if (typeof arg === 'function') {
+@@ -221,7 +223,41 @@ describe('OrganizationService', () => {
+     })
+   })
+   describe('userDeleteOrganization', () => {
++    it('retries the complete transaction on a rolled-back membership conflict', async () => {
++      data.organizationMember.findFirst.mockResolvedValue({ role: { name: 'Owner' } })
++      data.organizationMember.deleteMany.mockRejectedValueOnce(
++        new Prisma.PrismaClientKnownRequestError('conflict', {
++          code: 'P2034',
++          clientVersion: 'test',
++        }),
++      )
++
++      await expect(service.userDeleteOrganization('owner', 'org')).resolves.toBe(true)
++      expect(data.$transaction).toHaveBeenCalledTimes(2)
++      expect(data.$queryRaw).toHaveBeenCalledTimes(2)
++      expect(data.invite.deleteMany).toHaveBeenCalledTimes(2)
++      expect(data.auditLog.create).toHaveBeenCalledTimes(1)
++    })
++
++    it.each(['P2034', 'P2003'])(
++      'bounds conflict retries and does not retry other failures (%s)',
++      async code => {
++        data.organizationMember.findFirst.mockResolvedValue({ role: { name: 'Owner' } })
++        const failure = new Prisma.PrismaClientKnownRequestError('failed', {
++          code,
++          clientVersion: 'test',
++        })
++        data.organizationMember.deleteMany.mockRejectedValue(failure)
++
++        await expect(service.userDeleteOrganization('owner', 'org')).rejects.toBe(failure)
++        expect(data.$transaction).toHaveBeenCalledTimes(code === 'P2034' ? 6 : 1)
++        expect(data.auditLog.create).not.toHaveBeenCalled()
++      },
++    )
++
+     it('should delete organization when user is owner', async () => {
++      const order: string[] = []
++      data.$queryRaw.mockImplementation(async () => order.push('lock-owners'))
+       const userId = 'user-123'
+       const organizationId = 'org-123'
+       // Mock owner check
+@@ -230,7 +266,10 @@ describe('OrganizationService', () => {
+         role: { name: 'Owner' },
+       } as any)
+       data.invite.deleteMany.mockResolvedValue({ count: 2 } as any)
+-      data.organizationMember.deleteMany.mockResolvedValue({ count: 5 } as any)
++      data.organizationMember.deleteMany.mockImplementation(async () => {
++        order.push('delete-members')
++        return { count: 5 }
++      })
+       data.role.deleteMany.mockResolvedValue({ count: 3 } as any)
+       data.organization.delete.mockResolvedValue({} as any)
+       data.user.findUnique.mockResolvedValue({
+@@ -240,6 +279,7 @@ describe('OrganizationService', () => {
+       data.user.update.mockResolvedValue({} as any)
+       const result = await service.userDeleteOrganization(userId, organizationId)
+       expect(result).toBe(true)
++      expect(order).toEqual(['lock-owners', 'delete-members'])
+       expect(data.invite.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
+       expect(data.organizationMember.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
+       expect(data.role.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
+@@ -323,6 +363,7 @@ describe('OrganizationService', () => {
+   describe('removeOrganizationMember', () => {
+     it("clears the removed member's active organization in the same transaction", async () => {
+       const order: string[] = []
++      data.$queryRaw.mockImplementation(async () => order.push('lock-owner'))
+       data.organizationMember.findFirst
+         .mockResolvedValueOnce({
+           role: { permissions: [{ subject: 'member', action: 'remove' }] },
+@@ -350,7 +391,7 @@ describe('OrganizationService', () => {
+         where: { id: 'target-user-456', activeOrganizationId: 'org-123' },
+         data: { activeOrganizationId: null },
+       })
+-      expect(order).toEqual(['begin', 'delete', 'clear', 'commit'])
++      expect(order).toEqual(['begin', 'lock-owner', 'delete', 'clear', 'commit'])
+     })
+     it('should remove member when user has permission', async () => {
+       const userId = 'user-123'
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.ts b/libs/api/custom/src/lib/default/organization/organization.service.ts
+index c4dd5da..2df824a 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.ts
+@@ -8,7 +8,7 @@ import {
+ } from '@nestjs/common'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+ import { Organization, User } from '@nestled-template/api/core/models'
+-import { defaultRoles, type InputJsonValue } from '@nestled-template/api/prisma'
++import { defaultRoles, Prisma, type InputJsonValue } from '@nestled-template/api/prisma'
+ import {
+   AddOrganizationMemberInput,
+   RemoveOrganizationMemberInput,
+@@ -40,6 +40,27 @@ export class OrganizationService {
+     @Optional() private readonly authCache?: AuthCacheService,
+   ) {}
+ 
++  private async retryMembershipTransaction<T>(
++    work: (tx: Prisma.TransactionClient) => Promise<T>,
++  ): Promise<T> {
++    for (let attempt = 0; ; attempt++) {
++      try {
++        return await this.data.$transaction(work)
++      } catch (error) {
++        if (
++          attempt >= 5 ||
++          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
++          error.code !== 'P2034'
++        ) {
++          throw error
++        }
++        // Memberships can change after the owner snapshot. Start a fresh transaction so its
++        // owner set is refreshed, and repeat every write only after Prisma rolled it all back.
++        await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt + Math.random() * 50))
++      }
++    }
++  }
++
+   private async recordAuditLog(input: {
+     actorUserId: string
+     organizationId?: string
+@@ -299,7 +320,15 @@ export class OrganizationService {
+     // Manually cascade delete related records before deleting organization
+     // This is necessary because the database schema doesn't have cascade deletes configured.
+     // One transaction, so a failure part-way leaves no organization with half its records gone.
+-    await this.data.$transaction(async tx => {
++    await this.retryMembershipTransaction(async tx => {
++      // Take account locks before any membership locks, in the same order as the triggers.
++      // Include members with a different active organization and stale active-context owners.
++      await tx.$queryRaw`
++        SELECT id FROM "User"
++        WHERE id IN (SELECT "userId" FROM "OrganizationMember" WHERE "organizationId" = ${organizationId})
++           OR "activeOrganizationId" = ${organizationId}
++        ORDER BY id FOR NO KEY UPDATE
++      `
+       // Delete all pending invitations
+       await tx.invite.deleteMany({
+         where: { organizationId },
+@@ -439,6 +468,9 @@ export class OrganizationService {
+ 
+     // The membership and the removed user's active organization (when it is this one) go together.
+     await this.data.$transaction(async tx => {
++      // Lock even when another organization is active: the membership trigger locks its owner
++      // unconditionally. Waiting here holds no membership lock and cannot invert that order.
++      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR NO KEY UPDATE`
+       await tx.organizationMember.delete({
+         where: { id: member.id },
+       })
 diff --git a/libs/api/custom/src/lib/plugins/admin/admin.resolver.ts b/libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
 index 93c8576..7a12515 100644
 --- a/libs/api/custom/src/lib/plugins/admin/admin.resolver.ts

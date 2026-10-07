@@ -297,8 +297,8 @@ releases:
         patch: patches/2026-10-06-members-keep-plan-features.diff
   - id: 2026.10.6
     date: 2026-10-07
-    title: Authentication record maintenance
-    templateCommit: 8dd9701
+    title: Authentication record maintenance invariants
+    templateCommit: 06b27af
     notes:
       - id: 2026-10-06-auth-record-invariants
         title: Keep authentication records consistent across administrative maintenance
@@ -313,6 +313,8 @@ releases:
           - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
           - apps/api-e2e/src/auth/auth-generation.spec.ts
           - apps/api-e2e/src/zzz-cleanup.spec.ts
+          - libs/api/custom/src/lib/default/organization/organization.service.ts
+          - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
           - libs/api/custom/src/lib/plugins/admin/admin.resolver.ts
           - libs/api/custom/src/lib/plugins/admin/dto/admin-user-details.output.ts
           - libs/api/generated-crud
