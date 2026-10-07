@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config'
 import { OrganizationService } from './organization.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { EmailService } from '@nestled-template/api/integrations'
+import { Prisma } from '@nestled-template/api/prisma'
 describe('OrganizationService', () => {
   let service: OrganizationService
   let data: any // Use any to avoid Prisma type conflicts with Jest mocks
@@ -56,6 +57,7 @@ describe('OrganizationService', () => {
       auditLog: {
         create: jest.fn(),
       },
+      $queryRaw: jest.fn().mockResolvedValue([]),
       $transaction: jest.fn((arg: any) => {
         // Handle both callback and array forms
         if (typeof arg === 'function') {
@@ -221,7 +223,41 @@ describe('OrganizationService', () => {
     })
   })
   describe('userDeleteOrganization', () => {
+    it('retries the complete transaction on a rolled-back membership conflict', async () => {
+      data.organizationMember.findFirst.mockResolvedValue({ role: { name: 'Owner' } })
+      data.organizationMember.deleteMany.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('conflict', {
+          code: 'P2034',
+          clientVersion: 'test',
+        }),
+      )
+
+      await expect(service.userDeleteOrganization('owner', 'org')).resolves.toBe(true)
+      expect(data.$transaction).toHaveBeenCalledTimes(2)
+      expect(data.$queryRaw).toHaveBeenCalledTimes(2)
+      expect(data.invite.deleteMany).toHaveBeenCalledTimes(2)
+      expect(data.auditLog.create).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['P2034', 'P2003'])(
+      'bounds conflict retries and does not retry other failures (%s)',
+      async code => {
+        data.organizationMember.findFirst.mockResolvedValue({ role: { name: 'Owner' } })
+        const failure = new Prisma.PrismaClientKnownRequestError('failed', {
+          code,
+          clientVersion: 'test',
+        })
+        data.organizationMember.deleteMany.mockRejectedValue(failure)
+
+        await expect(service.userDeleteOrganization('owner', 'org')).rejects.toBe(failure)
+        expect(data.$transaction).toHaveBeenCalledTimes(code === 'P2034' ? 6 : 1)
+        expect(data.auditLog.create).not.toHaveBeenCalled()
+      },
+    )
+
     it('should delete organization when user is owner', async () => {
+      const order: string[] = []
+      data.$queryRaw.mockImplementation(async () => order.push('lock-owners'))
       const userId = 'user-123'
       const organizationId = 'org-123'
       // Mock owner check
@@ -230,7 +266,10 @@ describe('OrganizationService', () => {
         role: { name: 'Owner' },
       } as any)
       data.invite.deleteMany.mockResolvedValue({ count: 2 } as any)
-      data.organizationMember.deleteMany.mockResolvedValue({ count: 5 } as any)
+      data.organizationMember.deleteMany.mockImplementation(async () => {
+        order.push('delete-members')
+        return { count: 5 }
+      })
       data.role.deleteMany.mockResolvedValue({ count: 3 } as any)
       data.organization.delete.mockResolvedValue({} as any)
       data.user.findUnique.mockResolvedValue({
@@ -240,6 +279,7 @@ describe('OrganizationService', () => {
       data.user.update.mockResolvedValue({} as any)
       const result = await service.userDeleteOrganization(userId, organizationId)
       expect(result).toBe(true)
+      expect(order).toEqual(['lock-owners', 'delete-members'])
       expect(data.invite.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
       expect(data.organizationMember.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
       expect(data.role.deleteMany).toHaveBeenCalledWith({ where: { organizationId } })
@@ -323,6 +363,7 @@ describe('OrganizationService', () => {
   describe('removeOrganizationMember', () => {
     it("clears the removed member's active organization in the same transaction", async () => {
       const order: string[] = []
+      data.$queryRaw.mockImplementation(async () => order.push('lock-owner'))
       data.organizationMember.findFirst
         .mockResolvedValueOnce({
           role: { permissions: [{ subject: 'member', action: 'remove' }] },
@@ -350,7 +391,7 @@ describe('OrganizationService', () => {
         where: { id: 'target-user-456', activeOrganizationId: 'org-123' },
         data: { activeOrganizationId: null },
       })
-      expect(order).toEqual(['begin', 'delete', 'clear', 'commit'])
+      expect(order).toEqual(['begin', 'lock-owner', 'delete', 'clear', 'commit'])
     })
     it('should remove member when user has permission', async () => {
       const userId = 'user-123'
