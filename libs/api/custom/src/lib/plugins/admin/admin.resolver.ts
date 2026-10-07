@@ -8,7 +8,7 @@ import {
   SecurityEventType,
 } from '@nestled-template/api/core/models'
 import { AdminService } from './admin.service'
-import { AdminUserFiltersInput, AdminUsersResponse } from './dto'
+import { AdminUserDetails, AdminUserFiltersInput, AdminUsersResponse } from './dto'
 
 @InputType()
 export class AdminSecurityEventFiltersInput {
@@ -241,9 +241,9 @@ export class AdminResolver {
    * Get detailed information about a specific user
    * Requires platform.users.read.
    */
-  @Query(() => User)
+  @Query(() => AdminUserDetails)
   @RequirePlatformPermission('platform.users.read')
-  async adminUserDetails(@Args('userId', { type: () => String }) userId: string): Promise<any> {
+  async adminUserDetails(@Args('userId', { type: () => String }) userId: string) {
     return this.service.getUserDetails(userId)
   }
 

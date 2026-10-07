@@ -218,6 +218,48 @@ type AdminSecurityEventsResponse {
   total: Int!
 }
 
+type AdminUserDetails {
+  AuditLog: [AuditLog!]
+  SecurityEvent: [SecurityEvent!]
+  TeamMember: [TeamMember!]
+  UserPreference: [UserPreference!]
+  activeOrganizationId: String
+  activeSessions: [AdminUserSession!]!
+  addresses: [Address!]
+  apiTokens: [ApiToken!]
+  avatar: StoredFile
+  avatarId: String
+  bio: String
+  createdAt: DateTime!
+  deactivatedAt: DateTime
+  displayName: String
+  emailValidated: Boolean!
+  emails: [Email!]
+  failedLoginCount: Int!
+  firstName: String
+  id: String!
+  images: [StoredFile!]
+  invitesSent: [Invite!]
+  isActive: Boolean!
+  isEmulating: Boolean
+  isSuperAdmin: Boolean!
+  lastFailedLogin: DateTime
+  lastName: String
+  lastSuccessfulLogin: DateTime
+  links: [Link!]
+  lockedUntil: DateTime
+  loginAttempts: [LoginAttempt!]
+  oAuthAccounts: [OAuthAccount!]
+  organizations: [OrganizationMember!]
+  originalAdminId: String
+  phoneNumbers: [PhoneNumber!]
+  privacyPolicyAcceptedAt: DateTime
+  termsAcceptedAt: DateTime
+  twoFactorEnabled: Boolean!
+  twoFactorMethod: TwoFactorMethod!
+  updatedAt: DateTime!
+}
+
 input AdminUserFiltersInput {
   accountLocked: Boolean
   emailVerified: Boolean
@@ -233,6 +275,14 @@ input AdminUserFiltersInput {
   sortOrder: String = "desc"
   take: Float = 50
   twoFactorEnabled: Boolean
+}
+
+type AdminUserSession {
+  deviceInfo: String
+  id: String!
+  ipAddress: String
+  isValid: Boolean!
+  lastActiveAt: DateTime!
 }
 
 type AdminUsersResponse {
@@ -597,12 +647,9 @@ input CreateEmailInput {
   emailType: EmailType
   id: String
   organizationId: String
-  primary: Boolean
   public: Boolean
   updatedAt: DateTime
   userId: String
-  verified: Boolean
-  verifyExpires: DateTime
 }
 
 input CreateInvitationInput {
@@ -822,7 +869,6 @@ input CreateUserInput {
   TeamMemberIds: [String!]
   UserPreferenceIds: [String!]
   activeOrganizationId: String
-  activeSessionsIds: [String!]
   addressesIds: [String!]
   apiTokensIds: [String!]
   avatarId: String
@@ -830,7 +876,6 @@ input CreateUserInput {
   createdAt: DateTime
   deactivatedAt: DateTime
   displayName: String
-  emailValidated: Boolean
   emailsIds: [String!]
   failedLoginCount: Int
   firstName: String
@@ -838,7 +883,6 @@ input CreateUserInput {
   imagesIds: [String!]
   invitesSentIds: [String!]
   isActive: Boolean
-  isSuperAdmin: Boolean
   lastFailedLogin: DateTime
   lastName: String
   lastSuccessfulLogin: DateTime
@@ -862,19 +906,6 @@ input CreateUserPreferenceInput {
   updatedAt: DateTime
   userId: String!
   value: String!
-}
-
-input CreateUserSessionInput {
-  createdAt: DateTime
-  deviceInfo: String
-  expiresAt: DateTime
-  id: String
-  ipAddress: String
-  isValid: Boolean
-  lastActiveAt: DateTime
-  twoFactorVerified: Boolean
-  updatedAt: DateTime
-  userId: String!
 }
 
 """
@@ -1655,7 +1686,6 @@ input ListUserInput {
   TeamMemberIds: [String!]
   UserPreferenceIds: [String!]
   activeOrganizationId: String
-  activeSessionsIds: [String!]
   addressesIds: [String!]
   apiTokensIds: [String!]
   avatarId: String
@@ -1709,26 +1739,6 @@ input ListUserPreferenceInput {
   updatedAt: DateTime
   userId: String
   value: String
-}
-
-input ListUserSessionInput {
-  createdAt: DateTime
-  deviceInfo: String
-  expiresAt: DateTime
-  filters: UserSessionFilterInput
-  id: String
-  ipAddress: String
-  isValid: Boolean
-  lastActiveAt: DateTime
-  orderBy: String
-  orderDirection: String
-  search: String
-  searchFields: [String!]
-  skip: Float = 0
-  take: Float = 20
-  twoFactorVerified: Boolean
-  updatedAt: DateTime
-  userId: String
 }
 
 type LoginAttempt {
@@ -1849,7 +1859,6 @@ type Mutation {
   createTeamMember(input: CreateTeamMemberInput!): TeamMember
   createUser(input: CreateUserInput!): User
   createUserPreference(input: CreateUserPreferenceInput!): UserPreference
-  createUserSession(input: CreateUserSessionInput!): UserSession
   deleteAddress(addressId: String!): Address
   deleteApiToken(apiTokenId: String!): ApiToken
   deleteAuditLog(auditLogId: String!): AuditLog
@@ -1875,7 +1884,6 @@ type Mutation {
   deleteUser(userId: String!): User
   deleteUserAccount: Boolean!
   deleteUserPreference(userPreferenceId: String!): UserPreference
-  deleteUserSession(userSessionId: String!): UserSession
   disable2FA(input: Disable2FAInput!): Boolean!
   emulateUser(input: EmulateUserInput!): UserToken
   enable2FA(input: Verify2FAInput!): Enable2FAOutput!
@@ -1937,7 +1945,6 @@ type Mutation {
   updateTeamMember(input: UpdateTeamMemberInput!, teamMemberId: String!): TeamMember
   updateUser(input: UpdateUserInput!, userId: String!): User
   updateUserPreference(input: UpdateUserPreferenceInput!, userPreferenceId: String!): UserPreference
-  updateUserSession(input: UpdateUserSessionInput!, userSessionId: String!): UserSession
   uploadFile(file: Upload!, folder: String): UploadedFile!
   uploadOrganizationLogo(file: Upload!): UploadedFile!
   uploadUserAvatar(file: Upload!): UploadedFile!
@@ -2491,7 +2498,7 @@ type Query {
   adminDashboardStats: AdminDashboardStats!
   adminOrganizations(filters: AdminOrganizationFiltersInput): AdminOrganizationsResponse!
   adminSecurityEvents(filters: AdminSecurityEventFiltersInput): AdminSecurityEventsResponse!
-  adminUserDetails(userId: String!): User!
+  adminUserDetails(userId: String!): AdminUserDetails!
   adminUsers(filters: AdminUserFiltersInput): AdminUsersResponse!
   apiToken(apiTokenId: String!): ApiToken
   apiTokens(input: ListApiTokenInput): [ApiToken!]
@@ -2582,9 +2589,6 @@ type Query {
   userPreferences(input: ListUserPreferenceInput): [UserPreference!]
   userPreferencesCount(input: ListUserPreferenceInput): CorePaging
   userSecurityEvents(limit: Float): [SecurityEvent!]!
-  userSession(userSessionId: String!): UserSession
-  userSessions(input: ListUserSessionInput): [UserSession!]
-  userSessionsCount(input: ListUserSessionInput): CorePaging
   users(input: ListUserInput): [User!]
   usersCount(input: ListUserInput): CorePaging
 }
@@ -3430,12 +3434,9 @@ input UpdateEmailInput {
   emailType: EmailType
   id: String
   organizationId: String
-  primary: Boolean
   public: Boolean
   updatedAt: DateTime
   userId: String
-  verified: Boolean
-  verifyExpires: DateTime
 }
 
 input UpdateInviteInput {
@@ -3663,7 +3664,6 @@ input UpdateUserInput {
   TeamMemberIds: [String!]
   UserPreferenceIds: [String!]
   activeOrganizationId: String
-  activeSessionsIds: [String!]
   addressesIds: [String!]
   apiTokensIds: [String!]
   avatarId: String
@@ -3671,7 +3671,6 @@ input UpdateUserInput {
   createdAt: DateTime
   deactivatedAt: DateTime
   displayName: String
-  emailValidated: Boolean
   emailsIds: [String!]
   failedLoginCount: Int
   firstName: String
@@ -3679,7 +3678,6 @@ input UpdateUserInput {
   imagesIds: [String!]
   invitesSentIds: [String!]
   isActive: Boolean
-  isSuperAdmin: Boolean
   lastFailedLogin: DateTime
   lastName: String
   lastSuccessfulLogin: DateTime
@@ -3703,19 +3701,6 @@ input UpdateUserPreferenceInput {
   updatedAt: DateTime
   userId: String
   value: String
-}
-
-input UpdateUserSessionInput {
-  createdAt: DateTime
-  deviceInfo: String
-  expiresAt: DateTime
-  id: String
-  ipAddress: String
-  isValid: Boolean
-  lastActiveAt: DateTime
-  twoFactorVerified: Boolean
-  updatedAt: DateTime
-  userId: String
 }
 
 """The `Upload` scalar type represents a file upload."""
@@ -3747,7 +3732,6 @@ type User {
   TeamMember: [TeamMember!]
   UserPreference: [UserPreference!]
   activeOrganizationId: String
-  activeSessions: [UserSession!]
   addresses: [Address!]
   apiTokens: [ApiToken!]
   avatar: StoredFile
@@ -3796,7 +3780,6 @@ input UserFilterInput {
   TeamMember: TeamMemberListRelationFilterInput
   UserPreference: UserPreferenceListRelationFilterInput
   activeOrganizationId: StringFilterInput
-  activeSessions: UserSessionListRelationFilterInput
   addresses: AddressListRelationFilterInput
   apiTokens: ApiTokenListRelationFilterInput
   avatar: StoredFileRelationFilterInput
@@ -3839,7 +3822,6 @@ input UserFilterInput2 {
   TeamMember: TeamMemberListRelationFilterInput2
   UserPreference: UserPreferenceListRelationFilterInput2
   activeOrganizationId: StringFilterInput
-  activeSessions: UserSessionListRelationFilterInput2
   addresses: AddressListRelationFilterInput2
   apiTokens: ApiTokenListRelationFilterInput2
   avatar: StoredFileRelationFilterInput2
@@ -3963,7 +3945,6 @@ input UserRelationFilterInput {
   TeamMember: TeamMemberListRelationFilterInput2
   UserPreference: UserPreferenceListRelationFilterInput2
   activeOrganizationId: StringFilterInput
-  activeSessions: UserSessionListRelationFilterInput2
   addresses: AddressListRelationFilterInput2
   apiTokens: ApiTokenListRelationFilterInput2
   avatar: StoredFileRelationFilterInput2
@@ -4023,79 +4004,6 @@ input UserRelationFilterInput2 {
   twoFactorEnabled: BooleanFilterInput
   twoFactorMethod: TwoFactorMethodFilterInput
   updatedAt: DateTimeFilterInput
-}
-
-type UserSession {
-  createdAt: DateTime!
-  deviceInfo: String
-  expiresAt: DateTime
-  id: String!
-  ipAddress: String
-  isValid: Boolean!
-  lastActiveAt: DateTime!
-  twoFactorVerified: Boolean!
-  updatedAt: DateTime!
-  user: User
-  userId: String!
-}
-
-input UserSessionFilterInput {
-  AND: [UserSessionFilterInput2!]
-  NOT: [UserSessionFilterInput2!]
-  OR: [UserSessionFilterInput2!]
-  createdAt: DateTimeFilterInput
-  deviceInfo: StringFilterInput
-  expiresAt: DateTimeFilterInput
-  id: StringFilterInput
-  ipAddress: StringFilterInput
-  isValid: BooleanFilterInput
-  lastActiveAt: DateTimeFilterInput
-  twoFactorVerified: BooleanFilterInput
-  updatedAt: DateTimeFilterInput
-  user: UserRelationFilterInput
-  userId: StringFilterInput
-}
-
-input UserSessionFilterInput2 {
-  AND: [UserSessionFilterInput3!]
-  NOT: [UserSessionFilterInput3!]
-  OR: [UserSessionFilterInput3!]
-  createdAt: DateTimeFilterInput
-  deviceInfo: StringFilterInput
-  expiresAt: DateTimeFilterInput
-  id: StringFilterInput
-  ipAddress: StringFilterInput
-  isValid: BooleanFilterInput
-  lastActiveAt: DateTimeFilterInput
-  twoFactorVerified: BooleanFilterInput
-  updatedAt: DateTimeFilterInput
-  user: UserRelationFilterInput2
-  userId: StringFilterInput
-}
-
-input UserSessionFilterInput3 {
-  createdAt: DateTimeFilterInput
-  deviceInfo: StringFilterInput
-  expiresAt: DateTimeFilterInput
-  id: StringFilterInput
-  ipAddress: StringFilterInput
-  isValid: BooleanFilterInput
-  lastActiveAt: DateTimeFilterInput
-  twoFactorVerified: BooleanFilterInput
-  updatedAt: DateTimeFilterInput
-  userId: StringFilterInput
-}
-
-input UserSessionListRelationFilterInput {
-  every: UserSessionFilterInput2
-  none: UserSessionFilterInput2
-  some: UserSessionFilterInput2
-}
-
-input UserSessionListRelationFilterInput2 {
-  every: UserSessionFilterInput3
-  none: UserSessionFilterInput3
-  some: UserSessionFilterInput3
 }
 
 type UserSessionOutput {
