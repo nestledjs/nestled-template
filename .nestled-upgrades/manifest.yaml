@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-07
+generatedAt: 2026-10-08
 channels:
-  canary: 2026.10.6
+  canary: 2026.10.7
   stable: 2026.10.5
 releases:
   - id: 2026.08.0
@@ -334,3 +334,28 @@ releases:
           - name: "@nestledjs/generators"
             targetVersion: 3.4.1
             dependencyType: dependencies
+  - id: 2026.10.7
+    date: 2026-10-08
+    title: Organization context refresh
+    templateCommit: 2158492
+    notes:
+      - id: 2026-10-07-organization-context-refresh
+        title: Resolve organization permissions from current membership on each request
+        delivery: code-patch
+        intent: OrganizationContextService and AuthLoaderService load the current membership, role and permissions from the database for each request. Keep request-scoped reuse and batching, but do not authorize from a cross-request membership cache. Cached active organization IDs are only selection hints; the selected organization still requires a current membership. Preserve project-specific context resolution and API-token scope rules. CI exercises API authorization with Redis enabled. Membership transaction retries remain sequential and bounded to six attempts, with randomInt jitter between attempts. Correct the existing Sonar migration-history exclusion to libs/api/prisma/src/lib/migrations/**; applied SQL remains immutable and is verified through PostgreSQL integration tests.
+        area: auth
+        affectedPaths:
+          - libs/api/utils/src/lib/services/organization-context.service.ts
+          - libs/api/utils/src/lib/services/organization-context.service.spec.ts
+          - libs/api/utils/src/lib/services/auth-loader.service.ts
+          - libs/api/utils/src/lib/services/auth-loader.service.spec.ts
+          - apps/api-e2e/src/auth/organization-billing.spec.ts
+          - .github/workflows/ci.yml
+          - libs/api/custom/src/lib/default/organization/organization.service.ts
+          - sonar-project.properties
+        verification:
+          - "pnpm exec nx run api-utils:test"
+          - "pnpm exec nx run api-custom:test"
+          - pnpm exec nx run-many -t lint typecheck
+          - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
+        patch: patches/2026-10-07-organization-context-refresh.diff
