@@ -472,7 +472,12 @@ export class OrganizationService {
       // unconditionally. Waiting here holds no membership lock and cannot invert that order.
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR NO KEY UPDATE`
       await tx.organizationMember.delete({
-        where: { id: member.id },
+        where: {
+          id: member.id,
+          userId: input.userId,
+          organizationId: input.organizationId,
+          role: { name: { not: 'Owner' } },
+        },
       })
       await tx.user.updateMany({
         where: { id: input.userId, activeOrganizationId: input.organizationId },

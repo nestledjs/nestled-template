@@ -436,11 +436,13 @@ model User {
   activeOrganizationId      String?
   addresses                 Address[]                @relation("Address_belongsTo_User")
   invitesSent               Invite[]                 @relation("Invite_sentBy_User")
+  /// @crudReadOnly
   twoFactorEnabled          Boolean                  @default(false)
   /// @graphqlOmit
   twoFactorSecret           String?
   /// @graphqlOmit
   twoFactorRecoveryCodes    String[]
+  /// @crudReadOnly
   twoFactorMethod           TwoFactorMethod          @default(NONE)
   activeSessions            UserSession[]
   passwordHistory           PasswordHistory[]

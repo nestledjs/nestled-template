@@ -6543,12 +6543,6 @@ export class CreateUserInput {
   @Field({ nullable: true })
   activeOrganizationId?: string
 
-  @Field({ nullable: true })
-  twoFactorEnabled?: boolean
-
-  @Field(() => TwoFactorMethod, { nullable: true })
-  twoFactorMethod?: TwoFactorMethod
-
   @Field(() => GraphQLISODateTime, { nullable: true })
   lastSuccessfulLogin?: Date
 
@@ -6644,12 +6638,6 @@ export class UpdateUserInput {
 
   @Field({ nullable: true })
   activeOrganizationId?: string
-
-  @Field({ nullable: true })
-  twoFactorEnabled?: boolean
-
-  @Field(() => TwoFactorMethod, { nullable: true })
-  twoFactorMethod?: TwoFactorMethod
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   lastSuccessfulLogin?: Date

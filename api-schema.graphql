@@ -894,8 +894,6 @@ input CreateUserInput {
   phoneNumbersIds: [String!]
   privacyPolicyAcceptedAt: DateTime
   termsAcceptedAt: DateTime
-  twoFactorEnabled: Boolean
-  twoFactorMethod: TwoFactorMethod
   updatedAt: DateTime
 }
 
@@ -3689,8 +3687,6 @@ input UpdateUserInput {
   phoneNumbersIds: [String!]
   privacyPolicyAcceptedAt: DateTime
   termsAcceptedAt: DateTime
-  twoFactorEnabled: Boolean
-  twoFactorMethod: TwoFactorMethod
   updatedAt: DateTime
 }
 

@@ -937,8 +937,6 @@ export type CreateUserInput = {
   phoneNumbersIds?: InputMaybe<Array<Scalars['String']['input']>>
   privacyPolicyAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
   termsAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
-  twoFactorEnabled?: InputMaybe<Scalars['Boolean']['input']>
-  twoFactorMethod?: InputMaybe<TwoFactorMethod>
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
 }
 
@@ -4623,8 +4621,6 @@ export type UpdateUserInput = {
   phoneNumbersIds?: InputMaybe<Array<Scalars['String']['input']>>
   privacyPolicyAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
   termsAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
-  twoFactorEnabled?: InputMaybe<Scalars['Boolean']['input']>
-  twoFactorMethod?: InputMaybe<TwoFactorMethod>
   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
 }
 
