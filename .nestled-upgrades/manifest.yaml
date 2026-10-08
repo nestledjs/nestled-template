@@ -1,7 +1,7 @@
 schemaVersion: 1
 generatedAt: 2026-10-08
 channels:
-  canary: 2026.10.7
+  canary: 2026.10.8
   stable: 2026.10.5
 releases:
   - id: 2026.08.0
@@ -359,3 +359,23 @@ releases:
           - pnpm exec nx run-many -t lint typecheck
           - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
         patch: patches/2026-10-07-organization-context-refresh.diff
+  - id: 2026.10.8
+    date: 2026-10-08
+    title: Preserve explicit authentication and membership workflows
+    templateCommit: 5bef40d
+    notes:
+      - id: 2026-10-08-auth-workflow-boundaries
+        title: Preserve explicit authentication and membership workflows
+        delivery: code-patch
+        intent: Mark User.twoFactorEnabled and User.twoFactorMethod CRUD-read-only and regenerate the complete API and SDK artifacts. Stored two-factor secrets and recovery codes remain GraphQL-omitted; add the omission where a project has lost it. Keep their readable output fields and the explicit two-factor setup, verification and disable workflows. When removing an organization member, constrain the delete by the selected membership ID, target user ID and organization ID after acquiring the account lock. Keep the existing owner-removal guard atomic by excluding the owner role in the write predicate. A changed membership must fail without deleting its new assignment or a newly promoted owner.
+        area: auth
+        affectedPaths:
+          - libs/api/prisma/src/lib/schemas/schema.prisma
+          - libs/api/custom/src/lib/default/organization/organization.service.ts
+          - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+          - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+        verification:
+          - "pnpm exec nx run api-custom:test"
+          - "pnpm exec nx run api-e2e:test"
+          - pnpm exec nx run-many -t lint typecheck
+        patch: patches/2026-10-08-auth-workflow-boundaries.diff
