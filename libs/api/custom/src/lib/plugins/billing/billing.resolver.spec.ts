@@ -1,4 +1,12 @@
 import { Logger } from '@nestjs/common'
+import { GUARDS_METADATA } from '@nestjs/common/constants'
+import { Reflector } from '@nestjs/core'
+import {
+  ACCESS_POLICY_KEY,
+  AUTH_LEVEL_KEY,
+  AccessPolicyGuard,
+  GqlAuthAdminGuard,
+} from '@nestled-template/api/utils'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { User } from '@nestled-template/api/core/models'
 import { BillingResolver } from './billing.resolver'
@@ -219,4 +227,30 @@ describe('BillingResolver admin queries', () => {
 
     expect(data.subscription.findMany.mock.calls[0][0].where).toBeUndefined()
   })
+})
+
+describe('BillingResolver authorization metadata', () => {
+  it.each<[keyof BillingResolver, string]>([
+    ['adminBillingPlans', 'platform.billing.read'],
+    ['adminBillingSubscriptions', 'platform.billing.read'],
+    ['syncStripeProducts', 'platform.billing.manage'],
+    ['syncStripePrices', 'platform.billing.manage'],
+    ['syncStripeProduct', 'platform.billing.manage'],
+    ['syncStripePrice', 'platform.billing.manage'],
+    ['syncStripeSubscription', 'platform.billing.manage'],
+  ])(
+    '%s preserves the admin gate and adds its policy without authenticating again',
+    (method, permission) => {
+      const handler = BillingResolver.prototype[method]
+      const reflector = new Reflector()
+      expect(reflector.getAllAndOverride(AUTH_LEVEL_KEY, [handler, BillingResolver])).toBe('admin')
+      expect(Reflect.getMetadata(GUARDS_METADATA, BillingResolver)).toEqual([GqlAuthAdminGuard])
+      expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([AccessPolicyGuard])
+      expect(Reflect.getMetadata(ACCESS_POLICY_KEY, handler)).toEqual({
+        scope: 'platform',
+        permissions: [permission],
+        match: 'any',
+      })
+    },
+  )
 })

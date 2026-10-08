@@ -4,7 +4,7 @@ import {
   AdminOnly,
   CtxUser,
   GqlAuthAdminGuard,
-  RequirePlatformPermission,
+  RequirePlatformPermissionUnderClassGuard,
 } from '@nestled-template/api/utils'
 import { SyncService } from './sync.service'
 import { Plan, Subscription, User } from '@nestled-template/api/core/models'
@@ -18,12 +18,10 @@ import {
 /**
  * Billing Resolver
  *
- * Admin queries and mutations for billing infrastructure. Every operation states its own guard
- * (`GqlAuthAdminGuard`) and its own permission, rather than inheriting protection from the guard
- * tier the CRUD generator happens to emit. The admin Billing pages read through the queries here
- * for exactly that reason: a page that calls a generated CRUD root silently widens whenever the
- * repo's generated-crud posture changes, which is how a member-facing surface can lose its gate
- * without any change to the page.
+ * The class authenticates super administrators with GqlAuthAdminGuard and declares AdminOnly.
+ * Each operation adds its platform permission through the under-class-guard decorator, preserving
+ * that admin declaration without authenticating again. These explicit billing APIs keep their
+ * authorization independent of the generated CRUD surface.
  */
 @AdminOnly()
 @Resolver()
@@ -35,13 +33,13 @@ export class BillingResolver {
   ) {}
 
   @Query(() => [Plan])
-  @RequirePlatformPermission('platform.billing.read')
+  @RequirePlatformPermissionUnderClassGuard('platform.billing.read')
   async adminBillingPlans(): Promise<Plan[]> {
     return this.data.plan.findMany({ orderBy: { createdAt: 'desc' } })
   }
 
   @Query(() => AdminBillingSubscriptionsResponse)
-  @RequirePlatformPermission('platform.billing.read')
+  @RequirePlatformPermissionUnderClassGuard('platform.billing.read')
   async adminBillingSubscriptions(
     @Args('input', { nullable: true }) input?: AdminBillingSubscriptionsInput,
   ): Promise<AdminBillingSubscriptionsResponse> {
@@ -69,7 +67,7 @@ export class BillingResolver {
   }
 
   @Mutation(() => Boolean)
-  @RequirePlatformPermission('platform.billing.manage')
+  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
   async syncStripeProducts(@CtxUser() user: User): Promise<boolean> {
     const result = await this.syncService.syncAllProducts()
     await recordAuditLog(this.data, {
@@ -83,7 +81,7 @@ export class BillingResolver {
   }
 
   @Mutation(() => Boolean)
-  @RequirePlatformPermission('platform.billing.manage')
+  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
   async syncStripePrices(@CtxUser() user: User): Promise<boolean> {
     const result = await this.syncService.syncAllPrices()
     await recordAuditLog(this.data, {
@@ -97,7 +95,7 @@ export class BillingResolver {
   }
 
   @Mutation(() => Boolean)
-  @RequirePlatformPermission('platform.billing.manage')
+  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
   async syncStripeProduct(
     @Args('productId') productId: string,
     @CtxUser() user: User,
@@ -114,7 +112,7 @@ export class BillingResolver {
   }
 
   @Mutation(() => Boolean)
-  @RequirePlatformPermission('platform.billing.manage')
+  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
   async syncStripePrice(@Args('priceId') priceId: string, @CtxUser() user: User): Promise<boolean> {
     await this.syncService.syncPriceFromStripe(priceId)
     await recordAuditLog(this.data, {
@@ -128,7 +126,7 @@ export class BillingResolver {
   }
 
   @Mutation(() => Boolean)
-  @RequirePlatformPermission('platform.billing.manage')
+  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
   async syncStripeSubscription(
     @Args('subscriptionId') subscriptionId: string,
     @CtxUser() user: User,
