@@ -91,6 +91,74 @@ describe('Concurrent administrative authentication maintenance', () => {
     }
   }
 
+  it.each(['userId', 'organizationId', 'roleId'] as const)(
+    'refuses to remove a membership whose %s changes before the account lock',
+    async changedField => {
+      const actor = await TestHelpers.registerUser()
+      const member = await TestHelpers.registerUser()
+      const replacement = await TestHelpers.registerUser()
+      const organizationId = sql(`SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`, {
+        id: actor.id,
+      })
+      const targetOrganizationId = sql(
+        `SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`,
+        { id: replacement.id },
+      )
+      const roleId = sql(
+        `SELECT id FROM "Role" WHERE "organizationId" = :'id' AND name = 'Member';`,
+        { id: organizationId },
+      )
+      const ownerRoleId = sql(
+        `SELECT id FROM "Role" WHERE "organizationId" = :'id' AND name = 'Owner';`,
+        { id: organizationId },
+      )
+      const membershipId = randomUUID()
+      sql(
+        `INSERT INTO "OrganizationMember" (id, "createdAt", "updatedAt", "userId", "organizationId", "roleId")
+         VALUES (:'id', NOW(), NOW(), :'userId', :'organizationId', :'roleId');`,
+        { id: membershipId, userId: member.id, organizationId, roleId },
+      )
+      const response = await holdingOwner(member.id, async owner => {
+        const writing = TestHelpers.authenticatedGraphql(
+          `mutation($input: RemoveOrganizationMemberInput!) { removeOrganizationMember(input: $input) }`,
+          actor,
+          { input: { organizationId, userId: member.id } },
+        )
+        await waitForAccountLock(owner, writing)
+        if (changedField === 'userId') {
+          await owner.query(`UPDATE "OrganizationMember" SET "userId" = $1 WHERE id = $2`, [
+            replacement.id,
+            membershipId,
+          ])
+        } else if (changedField === 'organizationId') {
+          await owner.query(
+            `UPDATE "OrganizationMember" SET "organizationId" = $1, "roleId" = (SELECT id FROM "Role" WHERE "organizationId" = $1 AND name = 'Member') WHERE id = $2`,
+            [targetOrganizationId, membershipId],
+          )
+        }
+        if (changedField === 'roleId') {
+          await owner.query(`UPDATE "OrganizationMember" SET "roleId" = $1 WHERE id = $2`, [
+            ownerRoleId,
+            membershipId,
+          ])
+        }
+        await owner.query('COMMIT')
+        return writing
+      })
+      expect(response.data.errors?.length).toBeGreaterThan(0)
+      const expectedValue = {
+        userId: replacement.id,
+        organizationId: targetOrganizationId,
+        roleId: ownerRoleId,
+      }[changedField]
+      expect(
+        sql(`SELECT "${changedField}" FROM "OrganizationMember" WHERE id = :'id';`, {
+          id: membershipId,
+        }),
+      ).toBe(expectedValue)
+    },
+  )
+
   it('rolls back immediately with a retryable conflict instead of waiting for an owner', async () => {
     const user = await TestHelpers.registerUser()
     const emailId = primaryId(user)

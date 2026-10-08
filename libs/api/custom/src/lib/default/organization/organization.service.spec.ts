@@ -410,7 +410,12 @@ describe('OrganizationService', () => {
       const result = await service.removeOrganizationMember(userId, input)
       expect(result).toBe(true)
       expect(data.organizationMember.delete).toHaveBeenCalledWith({
-        where: { id: 'member-to-delete' },
+        where: {
+          id: 'member-to-delete',
+          userId: input.userId,
+          organizationId: input.organizationId,
+          role: { name: { not: 'Owner' } },
+        },
       })
       expect(data.auditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({

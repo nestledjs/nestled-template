@@ -69,6 +69,10 @@ describe('Administrative authentication records', () => {
       const names = data[operation].inputFields.map((field: { name: string }) => field.name)
       expect(names).not.toContain('emailValidated')
       expect(names).not.toContain('isSuperAdmin')
+      expect(names).not.toContain('twoFactorEnabled')
+      expect(names).not.toContain('twoFactorMethod')
+      expect(names).not.toContain('twoFactorSecret')
+      expect(names).not.toContain('twoFactorRecoveryCodes')
       expect(names).not.toContain('activeSessionsIds')
     }
     expect(data.email.fields.map((field: { name: string }) => field.name)).toEqual(
@@ -77,6 +81,9 @@ describe('Administrative authentication records', () => {
     expect(data.user.fields.map((field: { name: string }) => field.name)).toEqual(
       expect.arrayContaining(['emailValidated', 'isSuperAdmin']),
     )
+    const userFields = data.user.fields.map((field: { name: string }) => field.name)
+    expect(userFields).not.toContain('twoFactorSecret')
+    expect(userFields).not.toContain('twoFactorRecoveryCodes')
     const mutations = data.mutation.fields.map((field: { name: string }) => field.name)
     for (const operation of ['createUserSession', 'updateUserSession', 'deleteUserSession']) {
       expect(mutations).not.toContain(operation)
