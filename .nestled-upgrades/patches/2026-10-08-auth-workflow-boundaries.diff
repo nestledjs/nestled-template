@@ -1,0 +1,338 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-10-08-auth-workflow-boundaries.yaml b/.nestled-updates/upgrade-notes/2026-10-08-auth-workflow-boundaries.yaml
+new file mode 100644
+index 0000000..aaefe78
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-08-auth-workflow-boundaries.yaml
+@@ -0,0 +1,32 @@
++id: 2026-10-08-auth-workflow-boundaries
++title: Preserve explicit authentication and membership workflows
++priority: high
++area: auth
++type: security
++delivery: code-patch
++intent: >
++  Mark User.twoFactorEnabled and User.twoFactorMethod CRUD-read-only and regenerate
++  the complete API and SDK artifacts. Stored two-factor secrets and recovery codes remain
++  GraphQL-omitted; add the omission where a project has lost it. Keep their readable output fields and the explicit
++  two-factor setup, verification and disable workflows. When removing an organization member,
++  constrain the delete by the selected membership ID, target user ID and organization ID after
++  acquiring the account lock. Keep the existing owner-removal guard atomic by excluding the owner
++  role in the write predicate. A changed membership must fail without deleting its new assignment
++  or a newly promoted owner.
++why: >
++  Authentication settings and organization changes retain their application workflow boundaries
++  across administrative and concurrent writes. Details will follow in a coordinated advisory.
++affectedPaths:
++  - libs/api/prisma/src/lib/schemas/schema.prisma
++  - libs/api/custom/src/lib/default/organization/organization.service.ts
++  - apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
++  - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
++packageReleases: []
++verification:
++  - pnpm exec nx run api-custom:test
++  - pnpm exec nx run api-e2e:test
++  - pnpm exec nx run-many -t lint typecheck
++agentHints:
++  - Run full generation; never hand-edit generated DTOs or SDK types.
++  - Preserve the project's explicit two-factor workflows and membership authorization policies.
++  - There is no database migration and normal rolling deployment is supported.
+diff --git a/api-schema.graphql b/api-schema.graphql
+index c68b92d..d272f91 100644
+--- a/api-schema.graphql
++++ b/api-schema.graphql
+@@ -894,8 +894,6 @@ input CreateUserInput {
+   phoneNumbersIds: [String!]
+   privacyPolicyAcceptedAt: DateTime
+   termsAcceptedAt: DateTime
+-  twoFactorEnabled: Boolean
+-  twoFactorMethod: TwoFactorMethod
+   updatedAt: DateTime
+ }
+ 
+@@ -3689,8 +3687,6 @@ input UpdateUserInput {
+   phoneNumbersIds: [String!]
+   privacyPolicyAcceptedAt: DateTime
+   termsAcceptedAt: DateTime
+-  twoFactorEnabled: Boolean
+-  twoFactorMethod: TwoFactorMethod
+   updatedAt: DateTime
+ }
+ 
+diff --git a/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+index 53f947d..6e69c92 100644
+--- a/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
++++ b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+@@ -91,6 +91,74 @@ describe('Concurrent administrative authentication maintenance', () => {
+     }
+   }
+ 
++  it.each(['userId', 'organizationId', 'roleId'] as const)(
++    'refuses to remove a membership whose %s changes before the account lock',
++    async changedField => {
++      const actor = await TestHelpers.registerUser()
++      const member = await TestHelpers.registerUser()
++      const replacement = await TestHelpers.registerUser()
++      const organizationId = sql(`SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`, {
++        id: actor.id,
++      })
++      const targetOrganizationId = sql(
++        `SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`,
++        { id: replacement.id },
++      )
++      const roleId = sql(
++        `SELECT id FROM "Role" WHERE "organizationId" = :'id' AND name = 'Member';`,
++        { id: organizationId },
++      )
++      const ownerRoleId = sql(
++        `SELECT id FROM "Role" WHERE "organizationId" = :'id' AND name = 'Owner';`,
++        { id: organizationId },
++      )
++      const membershipId = randomUUID()
++      sql(
++        `INSERT INTO "OrganizationMember" (id, "createdAt", "updatedAt", "userId", "organizationId", "roleId")
++         VALUES (:'id', NOW(), NOW(), :'userId', :'organizationId', :'roleId');`,
++        { id: membershipId, userId: member.id, organizationId, roleId },
++      )
++      const response = await holdingOwner(member.id, async owner => {
++        const writing = TestHelpers.authenticatedGraphql(
++          `mutation($input: RemoveOrganizationMemberInput!) { removeOrganizationMember(input: $input) }`,
++          actor,
++          { input: { organizationId, userId: member.id } },
++        )
++        await waitForAccountLock(owner, writing)
++        if (changedField === 'userId') {
++          await owner.query(`UPDATE "OrganizationMember" SET "userId" = $1 WHERE id = $2`, [
++            replacement.id,
++            membershipId,
++          ])
++        } else if (changedField === 'organizationId') {
++          await owner.query(
++            `UPDATE "OrganizationMember" SET "organizationId" = $1, "roleId" = (SELECT id FROM "Role" WHERE "organizationId" = $1 AND name = 'Member') WHERE id = $2`,
++            [targetOrganizationId, membershipId],
++          )
++        }
++        if (changedField === 'roleId') {
++          await owner.query(`UPDATE "OrganizationMember" SET "roleId" = $1 WHERE id = $2`, [
++            ownerRoleId,
++            membershipId,
++          ])
++        }
++        await owner.query('COMMIT')
++        return writing
++      })
++      expect(response.data.errors?.length).toBeGreaterThan(0)
++      const expectedValue = {
++        userId: replacement.id,
++        organizationId: targetOrganizationId,
++        roleId: ownerRoleId,
++      }[changedField]
++      expect(
++        sql(`SELECT "${changedField}" FROM "OrganizationMember" WHERE id = :'id';`, {
++          id: membershipId,
++        }),
++      ).toBe(expectedValue)
++    },
++  )
++
+   it('rolls back immediately with a retryable conflict instead of waiting for an owner', async () => {
+     const user = await TestHelpers.registerUser()
+     const emailId = primaryId(user)
+diff --git a/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts b/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+index 71aedaa..8109c8c 100644
+--- a/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
++++ b/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+@@ -69,6 +69,10 @@ describe('Administrative authentication records', () => {
+       const names = data[operation].inputFields.map((field: { name: string }) => field.name)
+       expect(names).not.toContain('emailValidated')
+       expect(names).not.toContain('isSuperAdmin')
++      expect(names).not.toContain('twoFactorEnabled')
++      expect(names).not.toContain('twoFactorMethod')
++      expect(names).not.toContain('twoFactorSecret')
++      expect(names).not.toContain('twoFactorRecoveryCodes')
+       expect(names).not.toContain('activeSessionsIds')
+     }
+     expect(data.email.fields.map((field: { name: string }) => field.name)).toEqual(
+@@ -77,6 +81,9 @@ describe('Administrative authentication records', () => {
+     expect(data.user.fields.map((field: { name: string }) => field.name)).toEqual(
+       expect.arrayContaining(['emailValidated', 'isSuperAdmin']),
+     )
++    const userFields = data.user.fields.map((field: { name: string }) => field.name)
++    expect(userFields).not.toContain('twoFactorSecret')
++    expect(userFields).not.toContain('twoFactorRecoveryCodes')
+     const mutations = data.mutation.fields.map((field: { name: string }) => field.name)
+     for (const operation of ['createUserSession', 'updateUserSession', 'deleteUserSession']) {
+       expect(mutations).not.toContain(operation)
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+index 98ef4d1..1e6e657 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+@@ -410,7 +410,12 @@ describe('OrganizationService', () => {
+       const result = await service.removeOrganizationMember(userId, input)
+       expect(result).toBe(true)
+       expect(data.organizationMember.delete).toHaveBeenCalledWith({
+-        where: { id: 'member-to-delete' },
++        where: {
++          id: 'member-to-delete',
++          userId: input.userId,
++          organizationId: input.organizationId,
++          role: { name: { not: 'Owner' } },
++        },
+       })
+       expect(data.auditLog.create).toHaveBeenCalledWith({
+         data: expect.objectContaining({
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.ts b/libs/api/custom/src/lib/default/organization/organization.service.ts
+index fd1ae6f..1b278f9 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.ts
+@@ -472,7 +472,12 @@ export class OrganizationService {
+       // unconditionally. Waiting here holds no membership lock and cannot invert that order.
+       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR NO KEY UPDATE`
+       await tx.organizationMember.delete({
+-        where: { id: member.id },
++        where: {
++          id: member.id,
++          userId: input.userId,
++          organizationId: input.organizationId,
++          role: { name: { not: 'Owner' } },
++        },
+       })
+       await tx.user.updateMany({
+         where: { id: input.userId, activeOrganizationId: input.organizationId },
+diff --git a/libs/api/generated-crud/data-access/src/lib/database-models.ts b/libs/api/generated-crud/data-access/src/lib/database-models.ts
+index 23bb611..0030c9e 100644
+--- a/libs/api/generated-crud/data-access/src/lib/database-models.ts
++++ b/libs/api/generated-crud/data-access/src/lib/database-models.ts
+@@ -3980,11 +3980,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'twoFactorMethod',
+@@ -3994,11 +3996,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: 'NONE',
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'loginAttempts',
+diff --git a/libs/api/generated-crud/data-access/src/lib/dto/index.ts b/libs/api/generated-crud/data-access/src/lib/dto/index.ts
+index 971cdad..e831763 100644
+--- a/libs/api/generated-crud/data-access/src/lib/dto/index.ts
++++ b/libs/api/generated-crud/data-access/src/lib/dto/index.ts
+@@ -6543,12 +6543,6 @@ export class CreateUserInput {
+   @Field({ nullable: true })
+   activeOrganizationId?: string
+ 
+-  @Field({ nullable: true })
+-  twoFactorEnabled?: boolean
+-
+-  @Field(() => TwoFactorMethod, { nullable: true })
+-  twoFactorMethod?: TwoFactorMethod
+-
+   @Field(() => GraphQLISODateTime, { nullable: true })
+   lastSuccessfulLogin?: Date
+ 
+@@ -6645,12 +6639,6 @@ export class UpdateUserInput {
+   @Field({ nullable: true })
+   activeOrganizationId?: string
+ 
+-  @Field({ nullable: true })
+-  twoFactorEnabled?: boolean
+-
+-  @Field(() => TwoFactorMethod, { nullable: true })
+-  twoFactorMethod?: TwoFactorMethod
+-
+   @Field(() => GraphQLISODateTime, { nullable: true })
+   lastSuccessfulLogin?: Date
+ 
+diff --git a/libs/api/prisma/src/lib/schemas/schema.prisma b/libs/api/prisma/src/lib/schemas/schema.prisma
+index 7fb254d..f1276e5 100644
+--- a/libs/api/prisma/src/lib/schemas/schema.prisma
++++ b/libs/api/prisma/src/lib/schemas/schema.prisma
+@@ -436,11 +436,13 @@ model User {
+   activeOrganizationId      String?
+   addresses                 Address[]                @relation("Address_belongsTo_User")
+   invitesSent               Invite[]                 @relation("Invite_sentBy_User")
++  /// @crudReadOnly
+   twoFactorEnabled          Boolean                  @default(false)
+   /// @graphqlOmit
+   twoFactorSecret           String?
+   /// @graphqlOmit
+   twoFactorRecoveryCodes    String[]
++  /// @crudReadOnly
+   twoFactorMethod           TwoFactorMethod          @default(NONE)
+   activeSessions            UserSession[]
+   passwordHistory           PasswordHistory[]
+diff --git a/libs/shared/sdk/src/generated/graphql.ts b/libs/shared/sdk/src/generated/graphql.ts
+index 301d4c4..403af7e 100644
+--- a/libs/shared/sdk/src/generated/graphql.ts
++++ b/libs/shared/sdk/src/generated/graphql.ts
+@@ -937,8 +937,6 @@ export type CreateUserInput = {
+   phoneNumbersIds?: InputMaybe<Array<Scalars['String']['input']>>
+   privacyPolicyAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
+   termsAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
+-  twoFactorEnabled?: InputMaybe<Scalars['Boolean']['input']>
+-  twoFactorMethod?: InputMaybe<TwoFactorMethod>
+   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
+ }
+ 
+@@ -4623,8 +4621,6 @@ export type UpdateUserInput = {
+   phoneNumbersIds?: InputMaybe<Array<Scalars['String']['input']>>
+   privacyPolicyAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
+   termsAcceptedAt?: InputMaybe<Scalars['DateTime']['input']>
+-  twoFactorEnabled?: InputMaybe<Scalars['Boolean']['input']>
+-  twoFactorMethod?: InputMaybe<TwoFactorMethod>
+   updatedAt?: InputMaybe<Scalars['DateTime']['input']>
+ }
+ 
+diff --git a/libs/shared/sdk/src/lib/database-models.ts b/libs/shared/sdk/src/lib/database-models.ts
+index 23bb611..0030c9e 100644
+--- a/libs/shared/sdk/src/lib/database-models.ts
++++ b/libs/shared/sdk/src/lib/database-models.ts
+@@ -3980,11 +3980,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: false,
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'twoFactorMethod',
+@@ -3994,11 +3996,13 @@ export const DATABASE_MODELS: DatabaseModel[] = [
+         isId: false,
+         isUnique: false,
+         isList: false,
+-        isReadOnly: false,
++        isReadOnly: true,
+         hasDefaultValue: true,
+         default: 'NONE',
+         isGenerated: false,
+         isUpdatedAt: false,
++        documentation: '@crudReadOnly',
++        isCrudReadOnly: true,
+       },
+       {
+         name: 'loginAttempts',
