@@ -2,6 +2,7 @@ import { waitForPortOpen } from '@nx/node/utils'
 import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createConnection } from 'node:net'
 import { killApiProcessTree, registerApiProcessCleanup } from './api-process'
+import globalTeardown from './global-teardown'
 
 type E2EGlobalState = typeof globalThis & {
   __API_PROCESS__?: ChildProcess | null
@@ -362,4 +363,5 @@ module.exports = async function globalSetup() {
 
   // Hint: Use `globalThis` to pass variables to global teardown.
   e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
+  return globalTeardown
 }

@@ -18,7 +18,7 @@ type ProcessWithDiagnostics = NodeJS.Process & {
   _getActiveRequests?: () => unknown[]
 }
 
-module.exports = async function globalTeardown() {
+export default async function globalTeardown() {
   const e2eGlobal = globalThis as E2EGlobalState
 
   // Put clean up logic here (e.g. stopping services, docker-compose, etc.).
@@ -55,7 +55,7 @@ module.exports = async function globalTeardown() {
       if (result === 'group') console.log('✅ API server process group stopped')
     } catch (error) {
       console.warn('⚠️  Error stopping API server:', error)
-      // Don't throw - we want tests to complete even if cleanup fails
+      throw error
     }
   } else if (!weStartedApi) {
     console.log('ℹ️  API server was already running - leaving it running')

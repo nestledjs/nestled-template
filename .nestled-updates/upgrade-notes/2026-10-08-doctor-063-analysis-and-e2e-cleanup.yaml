@@ -23,8 +23,11 @@ intent: >
   Remove the preemptive prisma migrate deploy from scripts/run-e2e-tests.sh: global setup owns
   migrations and recovery for disposable databases originally built with db push. Keep all three
   test database URL variables pinned to the same test database. Register API process-group cleanup
-  immediately after spawn for exit, SIGINT and SIGTERM, remove listeners on normal teardown, and
-  report whether cleanup killed a group, only the launcher, or found it already stopped. Include
+  immediately after spawn for exit, SIGINT and SIGTERM. Return the normal teardown callback from
+  Vitest global setup; a standalone globalTeardown config key is not supported. Remove fallback
+  listeners only after successful cleanup. Treat ESRCH as absence, propagate other signaling
+  failures, and fail normal teardown rather than claiming success. Report whether cleanup killed
+  a group, only the launcher, or found it already stopped. Include
   the process-cleanup unit tests and strict support typecheck in both api-e2e:test and
   api-e2e:e2e target dependencies. Exclude the support specs from the main e2e config so
   each entry point runs them once.
