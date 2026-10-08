@@ -1,7 +1,7 @@
 schemaVersion: 1
 generatedAt: 2026-10-08
 channels:
-  canary: 2026.10.8
+  canary: 2026.10.9
   stable: 2026.10.8
 releases:
   - id: 2026.08.0
@@ -379,3 +379,43 @@ releases:
           - "pnpm exec nx run api-e2e:test"
           - pnpm exec nx run-many -t lint typecheck
         patch: patches/2026-10-08-auth-workflow-boundaries.diff
+  - id: 2026.10.9
+    date: 2026-10-08
+    title: Doctor 0.6.4 and reliable API test cleanup
+    templateCommit: e22b927
+    notes:
+      - id: 2026-10-08-doctor-063-analysis-and-e2e-cleanup
+        title: Doctor 0.6.4 precise checks and reliable e2e cleanup
+        delivery: hybrid
+        intent: "Upgrade @nestledjs/doctor to 0.6.4 (including the 0.6.3 analysis improvements). Review missing guard-baseline entries and update only reviewed operations with --update-guard-baseline --guard-operation '<file>::<operation>'. Preserve existing authentication and authorization policies. On billing methods whose class already has GqlAuthAdminGuard and AdminOnly, use RequirePlatformPermissionUnderClassGuard for the existing platform permission instead of adding a second authentication guard and overriding the declared admin level. Keep RequirePlatformPermission on resolvers without that class guard. Remove private-helper workarounds that existed solely to evade false-positive text matches when doing so makes the code clearer. Declare intentional cross-account resolver filters in resolver-scope-exemptions.json with a non-empty authorization reason. Identity used only for audit attribution is not caller scope; retain or add a reasoned permission exemption where another mechanism authorizes the operation. Audit markers must be identifiers, not string prose. Declare durable audit-model delegate names in doctor.config.json auditModels, or document structured-log auditing per operation in the existing audit-exemptions.json. Fragment verification now uses selectFileSuffixes exactly; include every suffix the repository intentionally uses for select constants. Remove the preemptive prisma migrate deploy from scripts/run-e2e-tests.sh: global setup owns migrations and recovery for disposable databases originally built with db push. Keep all three test database URL variables pinned to the same test database. Register API process-group cleanup immediately after spawn for exit, SIGINT and SIGTERM. Return the normal teardown callback from Vitest global setup; a standalone globalTeardown config key is not supported. Remove fallback listeners only after successful cleanup. Treat ESRCH as absence, propagate other signaling failures, and fail normal teardown rather than claiming success. Report whether cleanup killed a group, only the launcher, or found it already stopped. Include the process-cleanup unit tests and strict support typecheck in both api-e2e:test and api-e2e:e2e target dependencies. Exclude the support specs from the main e2e config so each entry point runs them once."
+        area: infra
+        affectedPaths:
+          - package.json
+          - pnpm-lock.yaml
+          - .nestled-updates/doctor.config.json
+          - .nestled-updates/security/guard-baseline.json
+          - .nestled-updates/security/resolver-scope-exemptions.json
+          - libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+          - libs/api/custom/src/lib/plugins/billing/billing.resolver.spec.ts
+          - scripts/run-e2e-tests.sh
+          - apps/api-e2e/project.json
+          - apps/api-e2e/vitest.config.mts
+          - apps/api-e2e/vitest.support.config.mts
+          - apps/api-e2e/tsconfig.support.json
+          - apps/api-e2e/src/support/api-process.ts
+          - apps/api-e2e/src/support/api-process.spec.ts
+          - apps/api-e2e/src/support/e2e-runner.spec.ts
+          - apps/api-e2e/src/support/global-setup.ts
+          - apps/api-e2e/src/support/global-teardown.ts
+        verification:
+          - pnpm exec nestled-doctor --full
+          - "pnpm verify:selects"
+          - "pnpm verify:select-coverage"
+          - "pnpm verify:fragments"
+          - "pnpm exec nx run api-e2e:test-support"
+          - "pnpm exec nx run api-e2e:test"
+        patch: patches/2026-10-08-doctor-063-analysis-and-e2e-cleanup.diff
+        packageReleases:
+          - name: "@nestledjs/doctor"
+            targetVersion: 0.6.4
+            versionRange: ^0.6.4
