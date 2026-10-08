@@ -1,26 +1,69 @@
 import type { ChildProcess } from 'node:child_process'
 
-/**
- * Stop the API the e2e setup started, with everything it spawned.
- *
- * The setup runs `pnpm nx serve api`, so the API is a grandchild of the process it holds. Killing
- * only that process leaves `nx serve` and the API running, still listening on the e2e port, and the
- * next run then refuses to start. The setup spawns it as the leader of its own process group, so
- * the whole group is killed here.
- */
-export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): void {
-  if (!apiProcess?.pid) return
-  if (process.platform !== 'win32') {
+export type ApiStopResult = 'group' | 'process' | 'already-stopped'
+
+const registrations = new WeakMap<ChildProcess, () => void>()
+
+function sendKill(pid: number): boolean {
+  try {
+    process.kill(pid, 'SIGKILL')
+    return true
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH')
+      return false
+    throw error
+  }
+}
+
+function stopOwnedProcess(apiProcess: ChildProcess, pid: number): ApiStopResult {
+  if (process.platform !== 'win32' && sendKill(-pid)) return 'group'
+  // A reaped launcher must not be signaled again: its PID could have been reused.
+  if (apiProcess.exitCode != null || apiProcess.signalCode != null) return 'already-stopped'
+  // process.kill reports syscall errors directly; ChildProcess.kill can instead return false.
+  return sendKill(pid) ? 'process' : 'already-stopped'
+}
+
+/** Stop the API process group started by e2e setup, including pnpm and Nx descendants. */
+export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): ApiStopResult {
+  if (!apiProcess) return 'already-stopped'
+  const result = apiProcess.pid ? stopOwnedProcess(apiProcess, apiProcess.pid) : 'already-stopped'
+  // Keep the exit fallback registered if signaling throws, so shutdown can retry cleanup.
+  registrations.get(apiProcess)?.()
+  return result
+}
+
+/** Register immediately after spawn, so cancellation during startup also cleans up the API. */
+export function registerApiProcessCleanup(apiProcess: ChildProcess): () => void {
+  registrations.get(apiProcess)?.()
+  const attemptCleanup = () => {
     try {
-      process.kill(-apiProcess.pid, 'SIGKILL')
-      return
-    } catch {
-      // No such group (already gone, or not spawned detached): fall back to the process itself.
+      killApiProcessTree(apiProcess)
+      return true
+    } catch (error) {
+      console.error('Failed to stop owned API process:', error)
+      return false
     }
   }
-  try {
-    apiProcess.kill('SIGKILL')
-  } catch {
-    // Process already dead
+  const onExit = (code: number) => {
+    if (!attemptCleanup() && code === 0) process.exitCode = 1
   }
+  const onInterrupt = () => {
+    attemptCleanup()
+    process.exit(130)
+  }
+  const onTerminate = () => {
+    attemptCleanup()
+    process.exit(143)
+  }
+  const unregister = () => {
+    process.removeListener('exit', onExit)
+    process.removeListener('SIGINT', onInterrupt)
+    process.removeListener('SIGTERM', onTerminate)
+    registrations.delete(apiProcess)
+  }
+  registrations.set(apiProcess, unregister)
+  process.once('exit', onExit)
+  process.once('SIGINT', onInterrupt)
+  process.once('SIGTERM', onTerminate)
+  return unregister
 }

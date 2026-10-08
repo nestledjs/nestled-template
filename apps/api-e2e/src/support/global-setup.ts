@@ -1,7 +1,8 @@
 import { waitForPortOpen } from '@nx/node/utils'
 import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createConnection } from 'node:net'
-import { killApiProcessTree } from './api-process'
+import { killApiProcessTree, registerApiProcessCleanup } from './api-process'
+import globalTeardown from './global-teardown'
 
 type E2EGlobalState = typeof globalThis & {
   __API_PROCESS__?: ChildProcess | null
@@ -168,6 +169,8 @@ async function startApiServer(
     // Its own process group, so teardown can stop `nx serve` and the API it starts, not just pnpm.
     detached: process.platform !== 'win32',
   })
+
+  registerApiProcessCleanup(apiProcess)
 
   let startupOutput = ''
   apiProcess.stdout?.on('data', data => {
@@ -360,9 +363,5 @@ module.exports = async function globalSetup() {
 
   // Hint: Use `globalThis` to pass variables to global teardown.
   e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
-
-  // Fallback for when globalTeardown doesn't run: stop the API's process group on exit.
-  process.on('exit', () => {
-    killApiProcessTree(e2eGlobal.__API_PROCESS__)
-  })
+  return globalTeardown
 }

@@ -127,11 +127,13 @@
     "originalAdminId": ["GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/plugins/billing/billing.resolver.ts": {
-    "syncStripeProducts": ["GqlAuthAdminGuard"],
-    "syncStripePrices": ["GqlAuthAdminGuard"],
-    "syncStripeProduct": ["GqlAuthAdminGuard"],
-    "syncStripePrice": ["GqlAuthAdminGuard"],
-    "syncStripeSubscription": ["GqlAuthAdminGuard"]
+    "syncStripeProducts": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
+    "syncStripePrices": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
+    "syncStripeProduct": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
+    "syncStripePrice": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
+    "syncStripeSubscription": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
+    "adminBillingPlans": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
+    "adminBillingSubscriptions": ["AccessPolicyGuard", "GqlAuthAdminGuard"]
   },
   "libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts": {
     "getOidcConfig": [],
