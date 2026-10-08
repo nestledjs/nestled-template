@@ -1,0 +1,357 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 53fd56c..9db350f 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -37,6 +37,16 @@ jobs:
+         ports:
+           - 5432:5432
+ 
++      redis:
++        image: redis:7-alpine
++        options: >-
++          --health-cmd "redis-cli ping"
++          --health-interval 10s
++          --health-timeout 5s
++          --health-retries 5
++        ports:
++          - 6379:6379
++
+     steps:
+       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+         with:
+@@ -110,6 +120,7 @@ jobs:
+         run: pnpm test:coverage
+         env:
+           TEST_DATABASE_URL: postgresql://prisma:prisma@localhost:5432/nestled_template_test
++          REDIS_URL: redis://127.0.0.1:6379
+           NODE_ENV: test
+           JWT_SECRET: test-jwt-secret-for-ci-only-not-production
+           EMAIL_PROVIDER: mock
+diff --git a/.nestled-updates/upgrade-notes/2026-10-07-organization-context-refresh.yaml b/.nestled-updates/upgrade-notes/2026-10-07-organization-context-refresh.yaml
+new file mode 100644
+index 0000000..79df1ab
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-07-organization-context-refresh.yaml
+@@ -0,0 +1,38 @@
++id: 2026-10-07-organization-context-refresh
++title: Resolve organization permissions from current membership on each request
++priority: high
++area: auth
++type: security
++delivery: code-patch
++intent: >
++  OrganizationContextService and AuthLoaderService load the current membership, role and permissions
++  from the database for each request. Keep request-scoped reuse and batching, but do not authorize
++  from a cross-request membership cache. Cached active organization IDs are only selection hints;
++  the selected organization still requires a current membership. Preserve project-specific context
++  resolution and API-token scope rules. CI exercises API authorization with Redis enabled.
++  Membership transaction retries remain sequential and bounded to six attempts, with randomInt
++  jitter between attempts.
++  Correct the existing Sonar migration-history exclusion to libs/api/prisma/src/lib/migrations/**;
++  applied SQL remains immutable and is verified through PostgreSQL integration tests.
++why: >
++  Organization-scoped authorization must use current membership and permission state across all
++  administrative and application write paths. Details will follow in a coordinated advisory.
++affectedPaths:
++  - libs/api/utils/src/lib/services/organization-context.service.ts
++  - libs/api/utils/src/lib/services/organization-context.service.spec.ts
++  - libs/api/utils/src/lib/services/auth-loader.service.ts
++  - libs/api/utils/src/lib/services/auth-loader.service.spec.ts
++  - apps/api-e2e/src/auth/organization-billing.spec.ts
++  - .github/workflows/ci.yml
++  - libs/api/custom/src/lib/default/organization/organization.service.ts
++  - sonar-project.properties
++packageReleases: []
++verification:
++  - pnpm exec nx run api-utils:test
++  - pnpm exec nx run api-custom:test
++  - pnpm exec nx run-many -t lint typecheck
++  - pnpm exec vitest run --config apps/api-e2e/vitest.config.mts
++agentHints:
++  - Run the API tests with Redis and PostgreSQL isolated from development and production services.
++  - Preserve the current organization's scope rules and derive permissions from the fresh database result.
++  - This update has no database migration and supports a normal rolling API deployment.
+diff --git a/apps/api-e2e/src/auth/organization-billing.spec.ts b/apps/api-e2e/src/auth/organization-billing.spec.ts
+index 0b493a5..27a5d7a 100644
+--- a/apps/api-e2e/src/auth/organization-billing.spec.ts
++++ b/apps/api-e2e/src/auth/organization-billing.spec.ts
+@@ -116,4 +116,37 @@ describe('Authorization: organization billing', () => {
+     expect(plan.data.errors).toBeUndefined()
+     expect(plan.data.data.currentPlan).toBeNull()
+   })
++
++  it.each(['delete', 'demote'] as const)(
++    'checks current permissions after administrative membership %s',
++    async change => {
++      const owner = await TestHelpers.registerUser(UserFactory.create())
++      const organizationId = sql(`SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`, {
++        id: owner.id,
++      })
++      // Warm the context through a real request before changing the database directly.
++      const allowed = await gql(owner, CURRENT_SUBSCRIPTION, undefined, organizationId)
++      expect(allowed.data.errors).toBeUndefined()
++      if (change === 'delete') {
++        sql(
++          `DELETE FROM "OrganizationMember" WHERE "userId" = :'id' AND "organizationId" = :'orgId';`,
++          {
++            id: owner.id,
++            orgId: organizationId,
++          },
++        )
++      } else {
++        sql(
++          `UPDATE "OrganizationMember" SET "roleId" = (
++          SELECT id FROM "Role" WHERE "organizationId" = :'orgId' AND name = 'Member'
++        ) WHERE "userId" = :'id' AND "organizationId" = :'orgId';`,
++          {
++            id: owner.id,
++            orgId: organizationId,
++          },
++        )
++      }
++      forbidden(await gql(owner, CURRENT_SUBSCRIPTION, undefined, organizationId))
++    },
++  )
+ })
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.ts b/libs/api/custom/src/lib/default/organization/organization.service.ts
+index 2df824a..fd1ae6f 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.ts
+@@ -28,7 +28,7 @@ import {
+ } from './dto'
+ import { EmailService } from '@nestled-template/api/integrations'
+ import { ConfigService } from '@nestjs/config'
+-import { randomBytes } from 'node:crypto'
++import { randomBytes, randomInt } from 'node:crypto'
+ import { AuthCacheService } from '@nestled-template/api/utils'
+ 
+ @Injectable()
+@@ -42,22 +42,22 @@ export class OrganizationService {
+ 
+   private async retryMembershipTransaction<T>(
+     work: (tx: Prisma.TransactionClient) => Promise<T>,
++    attempt = 0,
+   ): Promise<T> {
+-    for (let attempt = 0; ; attempt++) {
+-      try {
+-        return await this.data.$transaction(work)
+-      } catch (error) {
+-        if (
+-          attempt >= 5 ||
+-          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+-          error.code !== 'P2034'
+-        ) {
+-          throw error
+-        }
+-        // Memberships can change after the owner snapshot. Start a fresh transaction so its
+-        // owner set is refreshed, and repeat every write only after Prisma rolled it all back.
+-        await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt + Math.random() * 50))
++    try {
++      return await this.data.$transaction(work)
++    } catch (error) {
++      if (
++        attempt >= 5 ||
++        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
++        error.code !== 'P2034'
++      ) {
++        throw error
+       }
++      // Memberships can change after the owner snapshot. Start a fresh transaction so its
++      // owner set is refreshed, and repeat every write only after Prisma rolled it all back.
++      await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt + randomInt(50)))
++      return this.retryMembershipTransaction(work, attempt + 1)
+     }
+   }
+ 
+diff --git a/libs/api/utils/src/lib/services/auth-loader.service.spec.ts b/libs/api/utils/src/lib/services/auth-loader.service.spec.ts
+index 86e176d..f2d7d78 100644
+--- a/libs/api/utils/src/lib/services/auth-loader.service.spec.ts
++++ b/libs/api/utils/src/lib/services/auth-loader.service.spec.ts
+@@ -46,20 +46,19 @@ describe('AuthLoaderService', () => {
+     expect(queryMemberships).not.toHaveBeenCalled()
+   })
+ 
+-  it('uses active organization and returns cached membership before batching', async () => {
++  it('checks current membership despite a cached organization and permission grant', async () => {
+     const authCache = createAuthCacheMock()
+     authCache.getUserActiveOrganization.mockResolvedValue('org-1')
+     authCache.getMembership.mockResolvedValue(context)
+-    const queryMemberships = jest.fn()
++    const queryMemberships = jest.fn().mockResolvedValue([])
+     const service = new AuthLoaderService(
+       authCache as unknown as AuthCacheService,
+       queryMemberships,
+     )
+ 
+-    await expect(service.loadMembership('user-1')).resolves.toEqual(context)
++    await expect(service.loadMembership('user-1')).resolves.toBeNull()
+ 
+-    expect(authCache.getMembership).toHaveBeenCalledWith('user-1', 'org-1')
+-    expect(queryMemberships).not.toHaveBeenCalled()
++    expect(queryMemberships).toHaveBeenCalledWith([{ userId: 'user-1', organizationId: 'org-1' }])
+   })
+ 
+   it('batches membership lookups and maps results back to request order', async () => {
+diff --git a/libs/api/utils/src/lib/services/auth-loader.service.ts b/libs/api/utils/src/lib/services/auth-loader.service.ts
+index d44f6ba..2eae221 100644
+--- a/libs/api/utils/src/lib/services/auth-loader.service.ts
++++ b/libs/api/utils/src/lib/services/auth-loader.service.ts
+@@ -29,10 +29,8 @@ interface MembershipResult {
+ 
+ /**
+  * DataLoader service for batching and caching authentication data lookups.
+- * Implements the third tier of the three-tier caching architecture:
+- * 1. Request-level cache (req.organizationContext)
+- * 2. Redis cache (auth-cache.service.ts)
+- * 3. DataLoader (this service) - batches within a single request
++ * Reads current memberships and permissions from the database, batching within a single request.
++ * Redis organization hints may select a scope, but cached permissions never authorize it.
+  *
+  * Note: This service is request-scoped to ensure DataLoader caches are isolated per request.
+  */
+@@ -81,14 +79,8 @@ export class AuthLoaderService {
+       }
+     }
+ 
+-    // First check Redis cache
+-    const cachedContext = await this.authCache.getMembership(userId, organizationId)
+-    if (cachedContext) {
+-      this.logger.debug(`Membership cache hit for ${userId}:${organizationId}`)
+-      return cachedContext
+-    }
+-
+-    // Use DataLoader for batching
++    // Redis may retain permissions after a membership or role change. Batch a fresh
++    // database read per request; the request-scoped loader still coalesces repeated lookups.
+     return this.membershipLoader.load({ userId, organizationId })
+   }
+ 
+diff --git a/libs/api/utils/src/lib/services/organization-context.service.spec.ts b/libs/api/utils/src/lib/services/organization-context.service.spec.ts
+index 811f906..0a98687 100644
+--- a/libs/api/utils/src/lib/services/organization-context.service.spec.ts
++++ b/libs/api/utils/src/lib/services/organization-context.service.spec.ts
+@@ -167,6 +167,68 @@ describe('OrganizationContextService', () => {
+     ).resolves.toBeUndefined()
+   })
+ 
++  it('refuses a removed membership even when Redis still holds its permissions', async () => {
++    const { authCache, data, service } = createService()
++    authCache.isEnabled.mockReturnValue(true)
++    authCache.getMembership.mockResolvedValue({
++      organizationId: 'org-1',
++      userId: 'user-1',
++      roleId: 'role-1',
++      roleName: 'Owner',
++      permissions: [{ subject: 'all', action: 'manage' }],
++    })
++    data.organizationMember.findFirst.mockResolvedValue(null)
++
++    await expect(
++      service.attach({
++        headers: { 'x-organization-id': 'org-1' },
++        user: { id: 'user-1', isSuperAdmin: false },
++      } as never),
++    ).resolves.toBeUndefined()
++  })
++
++  it('uses current role permissions instead of a cached authorization grant', async () => {
++    const { authCache, data, service } = createService()
++    authCache.isEnabled.mockReturnValue(true)
++    authCache.getMembership.mockResolvedValue({
++      organizationId: 'org-1',
++      userId: 'user-1',
++      roleId: 'role-1',
++      roleName: 'Owner',
++      permissions: [{ subject: 'all', action: 'manage' }],
++    })
++    data.organizationMember.findFirst.mockResolvedValue({
++      ...membership,
++      role: { name: 'Member', permissions: [] },
++    })
++
++    const context = await service.attach({
++      headers: { 'x-organization-id': 'org-1' },
++      user: { id: 'user-1', isSuperAdmin: false },
++    } as never)
++    expect(context?.roleName).toBe('Member')
++    expect(context?.permissions).toEqual([])
++  })
++
++  it('does not fall back to cached permissions when the database is unavailable', async () => {
++    const { authCache, data, service } = createService()
++    authCache.isEnabled.mockReturnValue(true)
++    authCache.getMembership.mockResolvedValue({
++      organizationId: 'org-1',
++      userId: 'user-1',
++      roleId: 'role-1',
++      roleName: 'Owner',
++      permissions: [{ subject: 'all', action: 'manage' }],
++    })
++    data.organizationMember.findFirst.mockRejectedValue(new Error('database unavailable'))
++    await expect(
++      service.attach({
++        headers: { 'x-organization-id': 'org-1' },
++        user: { id: 'user-1', isSuperAdmin: false },
++      } as never),
++    ).rejects.toThrow('database unavailable')
++  })
++
+   it('adds all:manage for super admins without mutating cached permissions', async () => {
+     const { authCache, service } = createService()
+     const cachedContext = {
+diff --git a/libs/api/utils/src/lib/services/organization-context.service.ts b/libs/api/utils/src/lib/services/organization-context.service.ts
+index 4e0e800..35f551d 100644
+--- a/libs/api/utils/src/lib/services/organization-context.service.ts
++++ b/libs/api/utils/src/lib/services/organization-context.service.ts
+@@ -38,12 +38,8 @@ export class OrganizationContextService {
+     }
+     req.organizationContext = undefined
+ 
+-    const cachedContext = await this.getCachedMembership(req.user.id, organizationId)
+-    if (cachedContext) {
+-      req.organizationContext = this.applySuperAdminBoost(cachedContext, req.user)
+-      return req.organizationContext
+-    }
+-
++    // Cross-request permission snapshots cannot authorize this request. Membership and role
++    // edits may originate in administrative CRUD or a transaction outside cache invalidation.
+     const membership = await this.data.organizationMember.findFirst({
+       where: {
+         userId: req.user.id,
+@@ -94,14 +90,6 @@ export class OrganizationContextService {
+     return undefined
+   }
+ 
+-  private async getCachedMembership(
+-    userId: string,
+-    organizationId: string,
+-  ): Promise<OrganizationContext | null> {
+-    if (!this.authCache?.isEnabled()) return null
+-    return (await this.authCache.getMembership(userId, organizationId)) ?? null
+-  }
+-
+   private async cacheMembership(
+     userId: string,
+     organizationId: string,
+diff --git a/sonar-project.properties b/sonar-project.properties
+index d0ab672..d1f0faf 100644
+--- a/sonar-project.properties
++++ b/sonar-project.properties
+@@ -19,6 +19,8 @@ sonar.sources=\
+   libs/web/src,\
+   libs/web-ui/src,\
+   scripts
++# Applied migration history is immutable and verified by PostgreSQL integration tests.
++# Scope the existing migration exclusion to the actual Prisma migration directory.
+ sonar.exclusions=\
+   **/node_modules/**,\
+   **/.agents/**,\
+@@ -36,7 +38,7 @@ sonar.exclusions=\
+   libs/shared/sdk/src/generated/**,\
+   libs/shared/sdk/src/lib/database-models.ts,\
+   libs/api/generated-crud/**,\
+-  **/prisma/migrations/**,\
++  libs/api/prisma/src/lib/migrations/**,\
+   libs/api/prisma/src/lib/seed/seed-data/**,\
+   **/vite.config.ts
+ 
