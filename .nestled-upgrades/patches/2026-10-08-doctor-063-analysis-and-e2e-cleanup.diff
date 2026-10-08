@@ -1,0 +1,819 @@
+diff --git a/.nestled-updates/security/guard-baseline.json b/.nestled-updates/security/guard-baseline.json
+index 50a1721..28799d8 100644
+--- a/.nestled-updates/security/guard-baseline.json
++++ b/.nestled-updates/security/guard-baseline.json
+@@ -127,11 +127,13 @@
+     "originalAdminId": ["GqlAuthGuard"]
+   },
+   "libs/api/custom/src/lib/plugins/billing/billing.resolver.ts": {
+-    "syncStripeProducts": ["GqlAuthAdminGuard"],
+-    "syncStripePrices": ["GqlAuthAdminGuard"],
+-    "syncStripeProduct": ["GqlAuthAdminGuard"],
+-    "syncStripePrice": ["GqlAuthAdminGuard"],
+-    "syncStripeSubscription": ["GqlAuthAdminGuard"]
++    "syncStripeProducts": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
++    "syncStripePrices": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
++    "syncStripeProduct": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
++    "syncStripePrice": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
++    "syncStripeSubscription": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
++    "adminBillingPlans": ["AccessPolicyGuard", "GqlAuthAdminGuard"],
++    "adminBillingSubscriptions": ["AccessPolicyGuard", "GqlAuthAdminGuard"]
+   },
+   "libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts": {
+     "getOidcConfig": [],
+diff --git a/.nestled-updates/security/resolver-scope-exemptions.json b/.nestled-updates/security/resolver-scope-exemptions.json
+new file mode 100644
+index 0000000..110e2fa
+--- /dev/null
++++ b/.nestled-updates/security/resolver-scope-exemptions.json
+@@ -0,0 +1,5 @@
++{
++  "libs/api/custom/src/lib/plugins/billing/billing.resolver.ts": {
++    "adminBillingSubscriptions": "Class-level GqlAuthAdminGuard and RequirePlatformPermissionUnderClassGuard('platform.billing.read') authorize this cross-organization billing search; caller scoping would hide the administration surface."
++  }
++}
+diff --git a/.nestled-updates/upgrade-notes/2026-10-08-doctor-063-analysis-and-e2e-cleanup.yaml b/.nestled-updates/upgrade-notes/2026-10-08-doctor-063-analysis-and-e2e-cleanup.yaml
+new file mode 100644
+index 0000000..726eea3
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-08-doctor-063-analysis-and-e2e-cleanup.yaml
+@@ -0,0 +1,75 @@
++id: 2026-10-08-doctor-063-analysis-and-e2e-cleanup
++title: Doctor 0.6.4 precise checks and reliable e2e cleanup
++priority: normal
++area: infra
++type: correctness
++delivery: hybrid
++intent: >
++  Upgrade @nestledjs/doctor to 0.6.4 (including the 0.6.3 analysis improvements). Review missing guard-baseline entries and update only
++  reviewed operations with --update-guard-baseline --guard-operation '<file>::<operation>'.
++  Preserve existing authentication and authorization policies. On billing methods whose class
++  already has GqlAuthAdminGuard and AdminOnly, use RequirePlatformPermissionUnderClassGuard for
++  the existing platform permission instead of adding a second authentication guard and overriding
++  the declared admin level. Keep RequirePlatformPermission on resolvers without that class guard. Remove private-helper workarounds
++  that existed solely to evade false-positive text matches when doing so makes the code clearer.
++  Declare intentional cross-account resolver filters in resolver-scope-exemptions.json with a
++  non-empty authorization reason. Identity used only for audit attribution is not caller scope;
++  retain or add a reasoned permission exemption where another mechanism authorizes the operation.
++  Audit markers must be identifiers, not string prose. Declare durable audit-model delegate names
++  in doctor.config.json auditModels, or document structured-log auditing per operation in the
++  existing audit-exemptions.json. Fragment verification now uses selectFileSuffixes exactly;
++  include every suffix the repository intentionally uses for select constants.
++
++  Remove the preemptive prisma migrate deploy from scripts/run-e2e-tests.sh: global setup owns
++  migrations and recovery for disposable databases originally built with db push. Keep all three
++  test database URL variables pinned to the same test database. Register API process-group cleanup
++  immediately after spawn for exit, SIGINT and SIGTERM. Return the normal teardown callback from
++  Vitest global setup; a standalone globalTeardown config key is not supported. Remove fallback
++  listeners only after successful cleanup. Treat ESRCH as absence, propagate other signaling
++  failures, and fail normal teardown rather than claiming success. Report whether cleanup killed
++  a group, only the launcher, or found it already stopped. Include
++  the process-cleanup unit tests and strict support typecheck in both api-e2e:test and
++  api-e2e:e2e target dependencies. Exclude the support specs from the main e2e config so
++  each entry point runs them once.
++why: >
++  Syntax-aware checks reduce false positives without allowing log prose or unused identity
++  injection to certify enforcement. Guard-baseline omissions now fail explicitly. E2e cancellation
++  must stop the API descendants it started, and the shell runner must allow global setup's
++  disposable-database recovery to execute.
++packageReleases:
++  - name: '@nestledjs/doctor'
++    targetVersion: 0.6.4
++    versionRange: ^0.6.4
++affectedPaths:
++  - package.json
++  - pnpm-lock.yaml
++  - .nestled-updates/doctor.config.json
++  - .nestled-updates/security/guard-baseline.json
++  - .nestled-updates/security/resolver-scope-exemptions.json
++  - libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
++  - libs/api/custom/src/lib/plugins/billing/billing.resolver.spec.ts
++  - scripts/run-e2e-tests.sh
++  - apps/api-e2e/project.json
++  - apps/api-e2e/vitest.config.mts
++  - apps/api-e2e/vitest.support.config.mts
++  - apps/api-e2e/tsconfig.support.json
++  - apps/api-e2e/src/support/api-process.ts
++  - apps/api-e2e/src/support/api-process.spec.ts
++  - apps/api-e2e/src/support/e2e-runner.spec.ts
++  - apps/api-e2e/src/support/global-setup.ts
++  - apps/api-e2e/src/support/global-teardown.ts
++verification:
++  - pnpm exec nestled-doctor --full
++  - pnpm verify:selects
++  - pnpm verify:select-coverage
++  - pnpm verify:fragments
++  - pnpm exec nx run api-e2e:test-support
++  - pnpm exec nx run api-e2e:test
++agentHints:
++  - Never rewrite the whole guard baseline merely to make the check green. Inspect and select each missing or changed operation.
++  - Do not change production databases or auth policies to satisfy a static check.
++  - Gitignored caches are excluded; tracked files remain checked even when matched by an ignore rule.
++  - >
++    This release changes Doctor checks, test lifecycle and billing authentication-decorator
++    composition while preserving existing admin and permission policies. No database migration or
++    writer maintenance is required; deliver the billing change through the normal staged release process.
+diff --git a/apps/api-e2e/project.json b/apps/api-e2e/project.json
+index b16ef90..2e84ac3 100644
+--- a/apps/api-e2e/project.json
++++ b/apps/api-e2e/project.json
+@@ -14,7 +14,7 @@
+         "config": "apps/api-e2e/vitest.config.mts",
+         "passWithNoTests": true
+       },
+-      "dependsOn": ["api:build"]
++      "dependsOn": ["api:build", "test-support"]
+     },
+     "test": {
+       "executor": "nx:run-commands",
+@@ -26,6 +26,18 @@
+       "options": {
+         "command": "bash apps/api-e2e/run-tests.sh",
+         "cwd": "{workspaceRoot}"
++      },
++      "dependsOn": ["test-support"]
++    },
++    "test-support": {
++      "executor": "nx:run-commands",
++      "options": {
++        "commands": [
++          "pnpm exec tsc -p apps/api-e2e/tsconfig.support.json",
++          "pnpm exec vitest run --config apps/api-e2e/vitest.support.config.mts"
++        ],
++        "parallel": false,
++        "cwd": "{workspaceRoot}"
+       }
+     }
+   }
+diff --git a/apps/api-e2e/src/support/api-process.spec.ts b/apps/api-e2e/src/support/api-process.spec.ts
+new file mode 100644
+index 0000000..868c324
+--- /dev/null
++++ b/apps/api-e2e/src/support/api-process.spec.ts
+@@ -0,0 +1,168 @@
++import type { ChildProcess } from 'node:child_process'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { killApiProcessTree, registerApiProcessCleanup } from './api-process'
++import globalTeardown from './global-teardown'
++
++const originalPlatform = process.platform
++const originalExitCode = process.exitCode
++const setPlatform = (value: string) => Object.defineProperty(process, 'platform', { value })
++const disposers: (() => void)[] = []
++afterEach(() => {
++  disposers.splice(0).forEach(dispose => dispose())
++  vi.restoreAllMocks()
++  vi.unstubAllGlobals()
++  process.exitCode = originalExitCode
++  setPlatform(originalPlatform)
++})
++const child = () => ({ pid: 43210, kill: vi.fn(() => true) }) as unknown as ChildProcess
++const signalError = (code: string) => Object.assign(new Error(code), { code })
++
++describe('API process cleanup', () => {
++  it.each(['EPERM', 'EINVAL'])(
++    'preserves fallback handlers when group signaling fails with %s',
++    code => {
++      setPlatform('darwin')
++      const error = signalError(code)
++      vi.spyOn(process, 'kill').mockImplementation(() => {
++        throw error
++      })
++      const api = child()
++      const before = process.listenerCount('exit')
++      disposers.push(registerApiProcessCleanup(api))
++      expect(() => killApiProcessTree(api)).toThrow(error)
++      expect(api.kill).not.toHaveBeenCalled()
++      expect(process.listenerCount('exit')).toBe(before + 1)
++    },
++  )
++
++  it('propagates a launcher signaling error after an absent process group', () => {
++    setPlatform('darwin')
++    const error = signalError('EPERM')
++    vi.spyOn(process, 'kill').mockImplementation(pid => {
++      throw pid < 0 ? signalError('ESRCH') : error
++    })
++    expect(() => killApiProcessTree(child())).toThrow(error)
++  })
++
++  it('kills the entire detached process group on POSIX', () => {
++    setPlatform('darwin')
++    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
++    const api = child()
++    expect(killApiProcessTree(api)).toBe('group')
++    expect(kill).toHaveBeenCalledWith(-43210, 'SIGKILL')
++    expect(api.kill).not.toHaveBeenCalled()
++  })
++
++  it('reports the single-process fallback accurately', () => {
++    setPlatform('darwin')
++    const kill = vi.spyOn(process, 'kill').mockImplementation(pid => {
++      if (pid < 0) throw signalError('ESRCH')
++      return true
++    })
++    const api = child()
++    expect(killApiProcessTree(api)).toBe('process')
++    expect(kill).toHaveBeenLastCalledWith(43210, 'SIGKILL')
++  })
++
++  it('uses the launcher fallback on Windows', () => {
++    setPlatform('win32')
++    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
++    expect(killApiProcessTree(child())).toBe('process')
++    expect(kill).toHaveBeenCalledExactlyOnceWith(43210, 'SIGKILL')
++  })
++
++  it('handles absent or already-dead children', () => {
++    vi.spyOn(process, 'kill').mockImplementation(() => {
++      throw signalError('ESRCH')
++    })
++    const api = child()
++    expect(killApiProcessTree(api)).toBe('already-stopped')
++    expect(killApiProcessTree(null)).toBe('already-stopped')
++    expect(killApiProcessTree({} as ChildProcess)).toBe('already-stopped')
++  })
++
++  it('does not signal a reaped launcher after its group is gone', () => {
++    setPlatform('darwin')
++    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
++      throw signalError('ESRCH')
++    })
++    expect(killApiProcessTree(Object.assign(child(), { exitCode: 0 }))).toBe('already-stopped')
++    expect(kill).toHaveBeenCalledExactlyOnceWith(-43210, 'SIGKILL')
++  })
++
++  it('reports failure and retries on exit while preserving cancellation status', () => {
++    const error = signalError('EPERM')
++    vi.spyOn(process, 'kill').mockImplementation(() => {
++      throw error
++    })
++    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
++    const before = process.listeners('SIGTERM')
++    const beforeExit = process.listeners('exit')
++    disposers.push(registerApiProcessCleanup(child()))
++    process.listeners('SIGTERM').find(item => !before.includes(item))?.('SIGTERM')
++    expect(exit).toHaveBeenCalledWith(143)
++    expect(log).toHaveBeenCalledWith('Failed to stop owned API process:', error)
++    const fallback = process.listeners('exit').find(item => !beforeExit.includes(item))
++    expect(fallback).toBeDefined()
++    fallback?.(0)
++    expect(log).toHaveBeenCalledTimes(2)
++    expect(process.exitCode).toBe(1)
++  })
++
++  it('fails teardown without reporting completion when signaling fails', async () => {
++    const error = signalError('EPERM')
++    vi.spyOn(process, 'kill').mockImplementation(() => {
++      throw error
++    })
++    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
++    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++    vi.stubGlobal('__WE_STARTED_API__', true)
++    vi.stubGlobal('__API_PROCESS__', child())
++    await expect(globalTeardown()).rejects.toThrow(error)
++    expect(log).not.toHaveBeenCalledWith('✅ E2E test teardown complete')
++  })
++
++  it.each([
++    ['SIGINT', 130],
++    ['SIGTERM', 143],
++  ] as const)('cleans up on %s with the standard cancellation status', (signal, code) => {
++    setPlatform('darwin')
++    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
++    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
++    const before = process.listeners(signal)
++    const dispose = registerApiProcessCleanup(child())
++    disposers.push(dispose)
++    const listener = process.listeners(signal).find(item => !before.includes(item))
++    expect(listener).toBeDefined()
++    // Invoke only our handler; emitting a real signal would invoke the test runner's handlers too.
++    listener?.(signal)
++    expect(kill).toHaveBeenCalledWith(-43210, 'SIGKILL')
++    expect(exit).toHaveBeenCalledWith(code)
++    expect(process.listeners(signal)).toEqual(before)
++  })
++
++  it('unregisters all fallbacks after ordinary teardown and avoids duplicate registrations', () => {
++    vi.spyOn(process, 'kill').mockReturnValue(true)
++    const before = ['exit', 'SIGINT', 'SIGTERM'].map(event => process.listenerCount(event))
++    const api = child()
++    disposers.push(registerApiProcessCleanup(api))
++    disposers.push(registerApiProcessCleanup(api))
++    expect(['exit', 'SIGINT', 'SIGTERM'].map(event => process.listenerCount(event))).toEqual(
++      before.map(count => count + 1),
++    )
++    killApiProcessTree(api)
++    expect(['exit', 'SIGINT', 'SIGTERM'].map(event => process.listenerCount(event))).toEqual(before)
++  })
++
++  it('cleans up on ordinary process exit without recursively exiting', () => {
++    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
++    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
++    const before = process.listeners('exit')
++    disposers.push(registerApiProcessCleanup(child()))
++    const listener = process.listeners('exit').find(item => !before.includes(item))
++    listener?.(0)
++    expect(kill).toHaveBeenCalledOnce()
++    expect(exit).not.toHaveBeenCalled()
++  })
++})
+diff --git a/apps/api-e2e/src/support/api-process.ts b/apps/api-e2e/src/support/api-process.ts
+index e307a15..053c3e0 100644
+--- a/apps/api-e2e/src/support/api-process.ts
++++ b/apps/api-e2e/src/support/api-process.ts
+@@ -1,26 +1,69 @@
+ import type { ChildProcess } from 'node:child_process'
+ 
+-/**
+- * Stop the API the e2e setup started, with everything it spawned.
+- *
+- * The setup runs `pnpm nx serve api`, so the API is a grandchild of the process it holds. Killing
+- * only that process leaves `nx serve` and the API running, still listening on the e2e port, and the
+- * next run then refuses to start. The setup spawns it as the leader of its own process group, so
+- * the whole group is killed here.
+- */
+-export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): void {
+-  if (!apiProcess?.pid) return
+-  if (process.platform !== 'win32') {
++export type ApiStopResult = 'group' | 'process' | 'already-stopped'
++
++const registrations = new WeakMap<ChildProcess, () => void>()
++
++function sendKill(pid: number): boolean {
++  try {
++    process.kill(pid, 'SIGKILL')
++    return true
++  } catch (error) {
++    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH')
++      return false
++    throw error
++  }
++}
++
++function stopOwnedProcess(apiProcess: ChildProcess, pid: number): ApiStopResult {
++  if (process.platform !== 'win32' && sendKill(-pid)) return 'group'
++  // A reaped launcher must not be signaled again: its PID could have been reused.
++  if (apiProcess.exitCode != null || apiProcess.signalCode != null) return 'already-stopped'
++  // process.kill reports syscall errors directly; ChildProcess.kill can instead return false.
++  return sendKill(pid) ? 'process' : 'already-stopped'
++}
++
++/** Stop the API process group started by e2e setup, including pnpm and Nx descendants. */
++export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): ApiStopResult {
++  if (!apiProcess) return 'already-stopped'
++  const result = apiProcess.pid ? stopOwnedProcess(apiProcess, apiProcess.pid) : 'already-stopped'
++  // Keep the exit fallback registered if signaling throws, so shutdown can retry cleanup.
++  registrations.get(apiProcess)?.()
++  return result
++}
++
++/** Register immediately after spawn, so cancellation during startup also cleans up the API. */
++export function registerApiProcessCleanup(apiProcess: ChildProcess): () => void {
++  registrations.get(apiProcess)?.()
++  const attemptCleanup = () => {
+     try {
+-      process.kill(-apiProcess.pid, 'SIGKILL')
+-      return
+-    } catch {
+-      // No such group (already gone, or not spawned detached): fall back to the process itself.
++      killApiProcessTree(apiProcess)
++      return true
++    } catch (error) {
++      console.error('Failed to stop owned API process:', error)
++      return false
+     }
+   }
+-  try {
+-    apiProcess.kill('SIGKILL')
+-  } catch {
+-    // Process already dead
++  const onExit = (code: number) => {
++    if (!attemptCleanup() && code === 0) process.exitCode = 1
++  }
++  const onInterrupt = () => {
++    attemptCleanup()
++    process.exit(130)
++  }
++  const onTerminate = () => {
++    attemptCleanup()
++    process.exit(143)
++  }
++  const unregister = () => {
++    process.removeListener('exit', onExit)
++    process.removeListener('SIGINT', onInterrupt)
++    process.removeListener('SIGTERM', onTerminate)
++    registrations.delete(apiProcess)
+   }
++  registrations.set(apiProcess, unregister)
++  process.once('exit', onExit)
++  process.once('SIGINT', onInterrupt)
++  process.once('SIGTERM', onTerminate)
++  return unregister
+ }
+diff --git a/apps/api-e2e/src/support/e2e-runner.spec.ts b/apps/api-e2e/src/support/e2e-runner.spec.ts
+new file mode 100644
+index 0000000..085014a
+--- /dev/null
++++ b/apps/api-e2e/src/support/e2e-runner.spec.ts
+@@ -0,0 +1,60 @@
++import { spawnSync } from 'node:child_process'
++import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join, resolve } from 'node:path'
++import { afterEach, describe, expect, it } from 'vitest'
++
++const roots: string[] = []
++afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })))
++
++const run = (exitCode: number, suppliedUrl?: string) => {
++  const root = mkdtempSync(join(tmpdir(), 'e2e-shell-runner-'))
++  roots.push(root)
++  mkdirSync(join(root, 'scripts'))
++  mkdirSync(join(root, 'bin'))
++  copyFileSync(
++    resolve(__dirname, '../../../../scripts/run-e2e-tests.sh'),
++    join(root, 'scripts/run-e2e-tests.sh'),
++  )
++  writeFileSync(
++    join(root, 'scripts/test-db.sh'),
++    '#!/bin/bash\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
++    { mode: 0o755 },
++  )
++  writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
++  writeFileSync(
++    join(root, 'bin/pnpm'),
++    '#!/bin/bash\nprintf "%s\\n" "$*" "$TEST_DATABASE_URL" "$DATABASE_URL" "$DIRECT_URL" >> calls\nexit "$FAKE_EXIT"\n',
++    { mode: 0o755 },
++  )
++  const result = spawnSync('bash', ['scripts/run-e2e-tests.sh'], {
++    cwd: root,
++    env: {
++      ...process.env,
++      PATH: `${root}/bin:${process.env.PATH}`,
++      TEST_DATABASE_URL: suppliedUrl ?? '',
++      FAKE_EXIT: String(exitCode),
++    },
++    encoding: 'utf8',
++  })
++  return { result, calls: readFileSync(join(root, 'calls'), 'utf8').trim().split('\n') }
++}
++
++describe('e2e shell runner', () => {
++  it('delegates migrations to global setup and pins all URLs to the test database', () => {
++    const { result, calls } = run(0)
++    expect(result.status).toBe(0)
++    expect(calls).toEqual(['nx run api-e2e:test', ...Array(3).fill('postgresql://local/test')])
++  })
++  it('preserves a caller-provided isolated database URL', () => {
++    expect(run(0, 'postgresql://local/isolated_test').calls.slice(1)).toEqual(
++      Array(3).fill('postgresql://local/isolated_test'),
++    )
++  })
++  it('propagates a failing test target instead of reporting success', () => {
++    const { result } = run(7)
++    expect(result.status).toBe(7)
++    expect(result.stdout).toContain('Some tests failed')
++    expect(result.stdout).not.toContain('All tests passed')
++  })
++})
+diff --git a/apps/api-e2e/src/support/global-setup.ts b/apps/api-e2e/src/support/global-setup.ts
+index 7142df7..3a57521 100644
+--- a/apps/api-e2e/src/support/global-setup.ts
++++ b/apps/api-e2e/src/support/global-setup.ts
+@@ -1,7 +1,8 @@
+ import { waitForPortOpen } from '@nx/node/utils'
+ import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+ import { createConnection } from 'node:net'
+-import { killApiProcessTree } from './api-process'
++import { killApiProcessTree, registerApiProcessCleanup } from './api-process'
++import globalTeardown from './global-teardown'
+ 
+ type E2EGlobalState = typeof globalThis & {
+   __API_PROCESS__?: ChildProcess | null
+@@ -169,6 +170,8 @@ async function startApiServer(
+     detached: process.platform !== 'win32',
+   })
+ 
++  registerApiProcessCleanup(apiProcess)
++
+   let startupOutput = ''
+   apiProcess.stdout?.on('data', data => {
+     const text = data.toString()
+@@ -360,9 +363,5 @@ module.exports = async function globalSetup() {
+ 
+   // Hint: Use `globalThis` to pass variables to global teardown.
+   e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
+-
+-  // Fallback for when globalTeardown doesn't run: stop the API's process group on exit.
+-  process.on('exit', () => {
+-    killApiProcessTree(e2eGlobal.__API_PROCESS__)
+-  })
++  return globalTeardown
+ }
+diff --git a/apps/api-e2e/src/support/global-teardown.ts b/apps/api-e2e/src/support/global-teardown.ts
+index b5802f1..be3abab 100644
+--- a/apps/api-e2e/src/support/global-teardown.ts
++++ b/apps/api-e2e/src/support/global-teardown.ts
+@@ -18,7 +18,7 @@ type ProcessWithDiagnostics = NodeJS.Process & {
+   _getActiveRequests?: () => unknown[]
+ }
+ 
+-module.exports = async function globalTeardown() {
++export default async function globalTeardown() {
+   const e2eGlobal = globalThis as E2EGlobalState
+ 
+   // Put clean up logic here (e.g. stopping services, docker-compose, etc.).
+@@ -43,16 +43,19 @@ module.exports = async function globalTeardown() {
+       }
+ 
+       // Kill the API server's process group (pnpm, nx serve and the API itself)
+-      killApiProcessTree(apiProcess)
+-      console.log(`   Killed API server process group ${apiProcess.pid}`)
++      const result = killApiProcessTree(apiProcess)
++      if (result === 'group') console.log(`   Killed API server process group ${apiProcess.pid}`)
++      else if (result === 'process')
++        console.log(`   Killed API launcher ${apiProcess.pid} (process-group cleanup unavailable)`)
++      else console.log('   API launcher was already stopped; no process group was killed')
+ 
+       // Brief wait for kill to complete
+       await new Promise(resolve => setTimeout(resolve, 100))
+ 
+-      console.log('✅ API server stopped')
++      if (result === 'group') console.log('✅ API server process group stopped')
+     } catch (error) {
+       console.warn('⚠️  Error stopping API server:', error)
+-      // Don't throw - we want tests to complete even if cleanup fails
++      throw error
+     }
+   } else if (!weStartedApi) {
+     console.log('ℹ️  API server was already running - leaving it running')
+diff --git a/apps/api-e2e/tsconfig.support.json b/apps/api-e2e/tsconfig.support.json
+new file mode 100644
+index 0000000..2e77050
+--- /dev/null
++++ b/apps/api-e2e/tsconfig.support.json
+@@ -0,0 +1,17 @@
++{
++  "extends": "../../tsconfig.base.json",
++  "compilerOptions": {
++    "noEmit": true,
++    "strict": true,
++    "moduleResolution": "bundler",
++    "types": [
++      "node"
++    ]
++  },
++  "include": [
++    "src/support/api-process.ts",
++    "src/support/api-process.spec.ts",
++    "src/support/e2e-runner.spec.ts"
++  ],
++  "exclude": []
++}
+diff --git a/apps/api-e2e/vitest.config.mts b/apps/api-e2e/vitest.config.mts
+index 43a7548..b4200af 100644
+--- a/apps/api-e2e/vitest.config.mts
++++ b/apps/api-e2e/vitest.config.mts
+@@ -18,9 +18,10 @@ export default defineConfig({
+     root: resolve(__dirname),
+     environment: 'node',
+     globalSetup: resolve(__dirname, './src/support/global-setup.ts'),
+-    globalTeardown: resolve(__dirname, './src/support/global-teardown.ts'),
+     setupFiles: [resolve(__dirname, './src/support/test-setup.ts')],
+     include: [resolve(__dirname, './src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}')],
++    // The test-support dependency runs these without starting databases or an API.
++    exclude: ['**/support/api-process.spec.ts', '**/support/e2e-runner.spec.ts'],
+     testTimeout: 30000,
+     hookTimeout: 30000,
+     teardownTimeout: 30000,
+diff --git a/apps/api-e2e/vitest.support.config.mts b/apps/api-e2e/vitest.support.config.mts
+new file mode 100644
+index 0000000..985af58
+--- /dev/null
++++ b/apps/api-e2e/vitest.support.config.mts
+@@ -0,0 +1,12 @@
++import { defineConfig } from 'vitest/config'
++import { resolve } from 'node:path'
++
++export default defineConfig({
++  test: {
++    name: 'api-e2e-support',
++    root: resolve(__dirname),
++    environment: 'node',
++    include: ['src/support/api-process.spec.ts', 'src/support/e2e-runner.spec.ts'],
++    passWithNoTests: false,
++  },
++})
+diff --git a/libs/api/custom/src/lib/plugins/billing/billing.resolver.spec.ts b/libs/api/custom/src/lib/plugins/billing/billing.resolver.spec.ts
+index 7ed344a..2eb1a4b 100644
+--- a/libs/api/custom/src/lib/plugins/billing/billing.resolver.spec.ts
++++ b/libs/api/custom/src/lib/plugins/billing/billing.resolver.spec.ts
+@@ -1,4 +1,12 @@
+ import { Logger } from '@nestjs/common'
++import { GUARDS_METADATA } from '@nestjs/common/constants'
++import { Reflector } from '@nestjs/core'
++import {
++  ACCESS_POLICY_KEY,
++  AUTH_LEVEL_KEY,
++  AccessPolicyGuard,
++  GqlAuthAdminGuard,
++} from '@nestled-template/api/utils'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+ import { User } from '@nestled-template/api/core/models'
+ import { BillingResolver } from './billing.resolver'
+@@ -220,3 +228,29 @@ describe('BillingResolver admin queries', () => {
+     expect(data.subscription.findMany.mock.calls[0][0].where).toBeUndefined()
+   })
+ })
++
++describe('BillingResolver authorization metadata', () => {
++  it.each<[keyof BillingResolver, string]>([
++    ['adminBillingPlans', 'platform.billing.read'],
++    ['adminBillingSubscriptions', 'platform.billing.read'],
++    ['syncStripeProducts', 'platform.billing.manage'],
++    ['syncStripePrices', 'platform.billing.manage'],
++    ['syncStripeProduct', 'platform.billing.manage'],
++    ['syncStripePrice', 'platform.billing.manage'],
++    ['syncStripeSubscription', 'platform.billing.manage'],
++  ])(
++    '%s preserves the admin gate and adds its policy without authenticating again',
++    (method, permission) => {
++      const handler = BillingResolver.prototype[method]
++      const reflector = new Reflector()
++      expect(reflector.getAllAndOverride(AUTH_LEVEL_KEY, [handler, BillingResolver])).toBe('admin')
++      expect(Reflect.getMetadata(GUARDS_METADATA, BillingResolver)).toEqual([GqlAuthAdminGuard])
++      expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([AccessPolicyGuard])
++      expect(Reflect.getMetadata(ACCESS_POLICY_KEY, handler)).toEqual({
++        scope: 'platform',
++        permissions: [permission],
++        match: 'any',
++      })
++    },
++  )
++})
+diff --git a/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts b/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+index 2a42526..0f47a67 100644
+--- a/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
++++ b/libs/api/custom/src/lib/plugins/billing/billing.resolver.ts
+@@ -4,7 +4,7 @@ import {
+   AdminOnly,
+   CtxUser,
+   GqlAuthAdminGuard,
+-  RequirePlatformPermission,
++  RequirePlatformPermissionUnderClassGuard,
+ } from '@nestled-template/api/utils'
+ import { SyncService } from './sync.service'
+ import { Plan, Subscription, User } from '@nestled-template/api/core/models'
+@@ -18,12 +18,10 @@ import {
+ /**
+  * Billing Resolver
+  *
+- * Admin queries and mutations for billing infrastructure. Every operation states its own guard
+- * (`GqlAuthAdminGuard`) and its own permission, rather than inheriting protection from the guard
+- * tier the CRUD generator happens to emit. The admin Billing pages read through the queries here
+- * for exactly that reason: a page that calls a generated CRUD root silently widens whenever the
+- * repo's generated-crud posture changes, which is how a member-facing surface can lose its gate
+- * without any change to the page.
++ * The class authenticates super administrators with GqlAuthAdminGuard and declares AdminOnly.
++ * Each operation adds its platform permission through the under-class-guard decorator, preserving
++ * that admin declaration without authenticating again. These explicit billing APIs keep their
++ * authorization independent of the generated CRUD surface.
+  */
+ @AdminOnly()
+ @Resolver()
+@@ -35,13 +33,13 @@ export class BillingResolver {
+   ) {}
+ 
+   @Query(() => [Plan])
+-  @RequirePlatformPermission('platform.billing.read')
++  @RequirePlatformPermissionUnderClassGuard('platform.billing.read')
+   async adminBillingPlans(): Promise<Plan[]> {
+     return this.data.plan.findMany({ orderBy: { createdAt: 'desc' } })
+   }
+ 
+   @Query(() => AdminBillingSubscriptionsResponse)
+-  @RequirePlatformPermission('platform.billing.read')
++  @RequirePlatformPermissionUnderClassGuard('platform.billing.read')
+   async adminBillingSubscriptions(
+     @Args('input', { nullable: true }) input?: AdminBillingSubscriptionsInput,
+   ): Promise<AdminBillingSubscriptionsResponse> {
+@@ -69,7 +67,7 @@ export class BillingResolver {
+   }
+ 
+   @Mutation(() => Boolean)
+-  @RequirePlatformPermission('platform.billing.manage')
++  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
+   async syncStripeProducts(@CtxUser() user: User): Promise<boolean> {
+     const result = await this.syncService.syncAllProducts()
+     await recordAuditLog(this.data, {
+@@ -83,7 +81,7 @@ export class BillingResolver {
+   }
+ 
+   @Mutation(() => Boolean)
+-  @RequirePlatformPermission('platform.billing.manage')
++  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
+   async syncStripePrices(@CtxUser() user: User): Promise<boolean> {
+     const result = await this.syncService.syncAllPrices()
+     await recordAuditLog(this.data, {
+@@ -97,7 +95,7 @@ export class BillingResolver {
+   }
+ 
+   @Mutation(() => Boolean)
+-  @RequirePlatformPermission('platform.billing.manage')
++  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
+   async syncStripeProduct(
+     @Args('productId') productId: string,
+     @CtxUser() user: User,
+@@ -114,7 +112,7 @@ export class BillingResolver {
+   }
+ 
+   @Mutation(() => Boolean)
+-  @RequirePlatformPermission('platform.billing.manage')
++  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
+   async syncStripePrice(@Args('priceId') priceId: string, @CtxUser() user: User): Promise<boolean> {
+     await this.syncService.syncPriceFromStripe(priceId)
+     await recordAuditLog(this.data, {
+@@ -128,7 +126,7 @@ export class BillingResolver {
+   }
+ 
+   @Mutation(() => Boolean)
+-  @RequirePlatformPermission('platform.billing.manage')
++  @RequirePlatformPermissionUnderClassGuard('platform.billing.manage')
+   async syncStripeSubscription(
+     @Args('subscriptionId') subscriptionId: string,
+     @CtxUser() user: User,
+diff --git a/package.json b/package.json
+index 463c0be..04b8e1d 100644
+--- a/package.json
++++ b/package.json
+@@ -207,7 +207,7 @@
+     "@graphql-typed-document-node/core": "^3.2.0",
+     "@nestjs/schematics": "^11.1.0",
+     "@nestjs/testing": "^11.1.29",
+-    "@nestledjs/doctor": "0.6.2",
++    "@nestledjs/doctor": "0.6.4",
+     "@nx/eslint": "22.7.8",
+     "@nx/eslint-plugin": "22.7.8",
+     "@nx/jest": "22.7.8",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 3e196cf..fe823bf 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -404,8 +404,8 @@ importers:
+         specifier: ^11.1.29
+         version: 11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29)(@nestjs/platform-express@11.1.29)
+       '@nestledjs/doctor':
+-        specifier: 0.6.2
+-        version: 0.6.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
++        specifier: 0.6.4
++        version: 0.6.4(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
+       '@nx/eslint':
+         specifier: 22.7.8
+         version: 22.7.8(54731966972b5fabcf66c95f47a10080)
+@@ -3968,8 +3968,8 @@ packages:
+       react: 19.1.0
+       react-router: ^7.0.0
+ 
+-  '@nestledjs/doctor@0.6.2':
+-    resolution: {integrity: sha512-n/r2T2in2sjMcHJI19RlHNdMHrxxFSeoXFATWgIywbdutt3RhWIfdkDkA+Mo0JbMdanZVGXH5C72Akn1vC0gCA==}
++  '@nestledjs/doctor@0.6.4':
++    resolution: {integrity: sha512-axzRlTW30Rx53CSyve/fVh+s7H9Dn8Pf2RB5/YHwGS5f7Bv50f2Zn43mU3GDJ6vpl4IrPiEBksWO+dOVbMwRNg==}
+     hasBin: true
+     peerDependencies:
+       '@prisma/internals': '>=6'
+@@ -19132,7 +19132,7 @@ snapshots:
+       react: 19.1.0
+       react-router: 7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+ 
+-  '@nestledjs/doctor@0.6.2(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
++  '@nestledjs/doctor@0.6.4(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
+     dependencies:
+       graphql: 16.14.2
+       tslib: 2.8.1
+diff --git a/scripts/run-e2e-tests.sh b/scripts/run-e2e-tests.sh
+index 7fb61f9..fce7650 100755
+--- a/scripts/run-e2e-tests.sh
++++ b/scripts/run-e2e-tests.sh
+@@ -35,8 +35,8 @@ fi
+ echo -e "${BLUE}1. Starting test database...${NC}"
+ ./scripts/test-db.sh start
+ 
+-# Run database migrations
+-echo -e "${BLUE}2. Running database migrations...${NC}"
++# Configure the database used by the e2e setup
++echo -e "${BLUE}2. Configuring test database...${NC}"
+ # Honor a caller-supplied TEST_DATABASE_URL instead of clobbering it. Otherwise ask test-db.sh,
+ # which resolved the port from .env when it started the container above — pnpm runs this script
+ # with a plain shell that never loads .env, so deriving the URL here would pin it to 5433 while
+@@ -47,7 +47,8 @@ export DATABASE_URL="$TEST_DATABASE_URL"
+ # .env DIRECT_URL wins and `migrate deploy` runs against the dev database. Quoted so a `?schema=`
+ # query in the URL isn't mangled by pathname expansion.
+ export DIRECT_URL="$TEST_DATABASE_URL"
+-pnpm prisma migrate deploy
++# Global setup owns migrations, including recovery for disposable databases created by db push.
++# Running migrate deploy here would exit on P3005 before that recovery can run.
+ 
+ # Run the tests
+ echo -e "${BLUE}3. Running E2E tests...${NC}"
