@@ -1,0 +1,63 @@
+id: 2026-10-08-doctor-063-analysis-and-e2e-cleanup
+title: Doctor 0.6.3 precise checks and reliable e2e cleanup
+priority: normal
+area: infra
+type: correctness
+delivery: hybrid
+intent: >
+  Upgrade @nestledjs/doctor to 0.6.3. Review missing guard-baseline entries and update only
+  reviewed operations with --update-guard-baseline --guard-operation '<file>::<operation>'.
+  Preserve existing authentication and authorization policies. Remove private-helper workarounds
+  that existed solely to evade false-positive text matches when doing so makes the code clearer.
+  Declare intentional cross-account resolver filters in resolver-scope-exemptions.json with a
+  non-empty authorization reason. Identity used only for audit attribution is not caller scope;
+  retain or add a reasoned permission exemption where another mechanism authorizes the operation.
+  Audit markers must be identifiers, not string prose. Declare durable audit-model delegate names
+  in doctor.config.json auditModels, or document structured-log auditing per operation in the
+  existing audit-exemptions.json. Fragment verification now uses selectFileSuffixes exactly;
+  include every suffix the repository intentionally uses for select constants.
+
+  Remove the preemptive prisma migrate deploy from scripts/run-e2e-tests.sh: global setup owns
+  migrations and recovery for disposable databases originally built with db push. Keep all three
+  test database URL variables pinned to the same test database. Register API process-group cleanup
+  immediately after spawn for exit, SIGINT and SIGTERM, remove listeners on normal teardown, and
+  report whether cleanup killed a group, only the launcher, or found it already stopped. Include
+  the process-cleanup unit tests in the e2e test target's dependencies and exclude them from
+  the main e2e config so they run once.
+why: >
+  Syntax-aware checks reduce false positives without allowing log prose or unused identity
+  injection to certify enforcement. Guard-baseline omissions now fail explicitly. E2e cancellation
+  must stop the API descendants it started, and the shell runner must allow global setup's
+  disposable-database recovery to execute.
+packageReleases:
+  - name: '@nestledjs/doctor'
+    targetVersion: 0.6.3
+    versionRange: ^0.6.3
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - .nestled-updates/doctor.config.json
+  - .nestled-updates/security/guard-baseline.json
+  - .nestled-updates/security/resolver-scope-exemptions.json
+  - scripts/run-e2e-tests.sh
+  - apps/api-e2e/project.json
+  - apps/api-e2e/vitest.config.mts
+  - apps/api-e2e/vitest.support.config.mts
+  - apps/api-e2e/tsconfig.support.json
+  - apps/api-e2e/src/support/api-process.ts
+  - apps/api-e2e/src/support/api-process.spec.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/global-teardown.ts
+verification:
+  - pnpm exec nestled-doctor --full
+  - pnpm verify:selects
+  - pnpm verify:select-coverage
+  - pnpm verify:fragments
+  - pnpm exec nx run api-e2e:test-support
+  - pnpm exec nx run api-e2e:test
+agentHints:
+  - Never rewrite the whole guard baseline merely to make the check green. Inspect and select each missing or changed operation.
+  - Do not change production databases or auth policies to satisfy a static check.
+  - Gitignored caches are excluded; tracked files remain checked even when matched by an ignore rule.
+  - This release changes tooling and test lifecycle only; no database migration or production deployment is required.

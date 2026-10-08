@@ -1,0 +1,5 @@
+{
+  "libs/api/custom/src/lib/plugins/billing/billing.resolver.ts": {
+    "adminBillingSubscriptions": "Class-level GqlAuthAdminGuard and RequirePlatformPermission('platform.billing.read') authorize this cross-organization billing search; caller scoping would hide the administration surface."
+  }
+}

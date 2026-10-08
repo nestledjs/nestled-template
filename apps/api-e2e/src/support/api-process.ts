@@ -1,26 +1,52 @@
 import type { ChildProcess } from 'node:child_process'
 
-/**
- * Stop the API the e2e setup started, with everything it spawned.
- *
- * The setup runs `pnpm nx serve api`, so the API is a grandchild of the process it holds. Killing
- * only that process leaves `nx serve` and the API running, still listening on the e2e port, and the
- * next run then refuses to start. The setup spawns it as the leader of its own process group, so
- * the whole group is killed here.
- */
-export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): void {
-  if (!apiProcess?.pid) return
+export type ApiStopResult = 'group' | 'process' | 'already-stopped'
+
+const registrations = new WeakMap<ChildProcess, () => void>()
+
+/** Stop the API process group started by e2e setup, including pnpm and Nx descendants. */
+export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): ApiStopResult {
+  if (!apiProcess) return 'already-stopped'
+  registrations.get(apiProcess)?.()
+  if (!apiProcess.pid) return 'already-stopped'
   if (process.platform !== 'win32') {
     try {
       process.kill(-apiProcess.pid, 'SIGKILL')
-      return
+      return 'group'
     } catch {
-      // No such group (already gone, or not spawned detached): fall back to the process itself.
+      // No group (already gone, or not spawned detached): try the process itself.
     }
   }
   try {
-    apiProcess.kill('SIGKILL')
+    return apiProcess.kill('SIGKILL') ? 'process' : 'already-stopped'
   } catch {
-    // Process already dead
+    return 'already-stopped'
   }
+}
+
+/** Register immediately after spawn, so cancellation during startup also cleans up the API. */
+export function registerApiProcessCleanup(apiProcess: ChildProcess): () => void {
+  registrations.get(apiProcess)?.()
+  const onExit = () => {
+    killApiProcessTree(apiProcess)
+  }
+  const onInterrupt = () => {
+    killApiProcessTree(apiProcess)
+    process.exit(130)
+  }
+  const onTerminate = () => {
+    killApiProcessTree(apiProcess)
+    process.exit(143)
+  }
+  const unregister = () => {
+    process.removeListener('exit', onExit)
+    process.removeListener('SIGINT', onInterrupt)
+    process.removeListener('SIGTERM', onTerminate)
+    registrations.delete(apiProcess)
+  }
+  registrations.set(apiProcess, unregister)
+  process.once('exit', onExit)
+  process.once('SIGINT', onInterrupt)
+  process.once('SIGTERM', onTerminate)
+  return unregister
 }

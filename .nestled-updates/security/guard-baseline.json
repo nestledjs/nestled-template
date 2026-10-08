@@ -131,7 +131,9 @@
     "syncStripePrices": ["GqlAuthAdminGuard"],
     "syncStripeProduct": ["GqlAuthAdminGuard"],
     "syncStripePrice": ["GqlAuthAdminGuard"],
-    "syncStripeSubscription": ["GqlAuthAdminGuard"]
+    "syncStripeSubscription": ["GqlAuthAdminGuard"],
+    "adminBillingPlans": ["AccessPolicyGuard", "GqlAuthAdminGuard", "GqlAuthGuard"],
+    "adminBillingSubscriptions": ["AccessPolicyGuard", "GqlAuthAdminGuard", "GqlAuthGuard"]
   },
   "libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts": {
     "getOidcConfig": [],

@@ -43,13 +43,16 @@ module.exports = async function globalTeardown() {
       }
 
       // Kill the API server's process group (pnpm, nx serve and the API itself)
-      killApiProcessTree(apiProcess)
-      console.log(`   Killed API server process group ${apiProcess.pid}`)
+      const result = killApiProcessTree(apiProcess)
+      if (result === 'group') console.log(`   Killed API server process group ${apiProcess.pid}`)
+      else if (result === 'process')
+        console.log(`   Killed API launcher ${apiProcess.pid} (process-group cleanup unavailable)`)
+      else console.log('   API launcher was already stopped; no process group was killed')
 
       // Brief wait for kill to complete
       await new Promise(resolve => setTimeout(resolve, 100))
 
-      console.log('✅ API server stopped')
+      if (result === 'group') console.log('✅ API server process group stopped')
     } catch (error) {
       console.warn('⚠️  Error stopping API server:', error)
       // Don't throw - we want tests to complete even if cleanup fails

@@ -35,8 +35,8 @@ fi
 echo -e "${BLUE}1. Starting test database...${NC}"
 ./scripts/test-db.sh start
 
-# Run database migrations
-echo -e "${BLUE}2. Running database migrations...${NC}"
+# Configure the database used by the e2e setup
+echo -e "${BLUE}2. Configuring test database...${NC}"
 # Honor a caller-supplied TEST_DATABASE_URL instead of clobbering it. Otherwise ask test-db.sh,
 # which resolved the port from .env when it started the container above — pnpm runs this script
 # with a plain shell that never loads .env, so deriving the URL here would pin it to 5433 while
@@ -47,7 +47,8 @@ export DATABASE_URL="$TEST_DATABASE_URL"
 # .env DIRECT_URL wins and `migrate deploy` runs against the dev database. Quoted so a `?schema=`
 # query in the URL isn't mangled by pathname expansion.
 export DIRECT_URL="$TEST_DATABASE_URL"
-pnpm prisma migrate deploy
+# Global setup owns migrations, including recovery for disposable databases created by db push.
+# Running migrate deploy here would exit on P3005 before that recovery can run.
 
 # Run the tests
 echo -e "${BLUE}3. Running E2E tests...${NC}"

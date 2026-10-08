@@ -2,7 +2,9 @@
   "name": "api-e2e",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
-  "implicitDependencies": ["api"],
+  "implicitDependencies": [
+    "api"
+  ],
   "targets": {
     "e2e": {
       "executor": "@nx/vitest:test",
@@ -14,7 +16,9 @@
         "config": "apps/api-e2e/vitest.config.mts",
         "passWithNoTests": true
       },
-      "dependsOn": ["api:build"]
+      "dependsOn": [
+        "api:build"
+      ]
     },
     "test": {
       "executor": "nx:run-commands",
@@ -25,6 +29,20 @@
       ],
       "options": {
         "command": "bash apps/api-e2e/run-tests.sh",
+        "cwd": "{workspaceRoot}"
+      },
+      "dependsOn": [
+        "test-support"
+      ]
+    },
+    "test-support": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "pnpm exec tsc -p apps/api-e2e/tsconfig.support.json",
+          "pnpm exec vitest run --config apps/api-e2e/vitest.support.config.mts"
+        ],
+        "parallel": false,
         "cwd": "{workspaceRoot}"
       }
     }
