@@ -28,7 +28,7 @@ import {
 } from './dto'
 import { EmailService } from '@nestled-template/api/integrations'
 import { ConfigService } from '@nestjs/config'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomInt } from 'node:crypto'
 import { AuthCacheService } from '@nestled-template/api/utils'
 
 @Injectable()
@@ -42,22 +42,22 @@ export class OrganizationService {
 
   private async retryMembershipTransaction<T>(
     work: (tx: Prisma.TransactionClient) => Promise<T>,
+    attempt = 0,
   ): Promise<T> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await this.data.$transaction(work)
-      } catch (error) {
-        if (
-          attempt >= 5 ||
-          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-          error.code !== 'P2034'
-        ) {
-          throw error
-        }
-        // Memberships can change after the owner snapshot. Start a fresh transaction so its
-        // owner set is refreshed, and repeat every write only after Prisma rolled it all back.
-        await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt + Math.random() * 50))
+    try {
+      return await this.data.$transaction(work)
+    } catch (error) {
+      if (
+        attempt >= 5 ||
+        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+        error.code !== 'P2034'
+      ) {
+        throw error
       }
+      // Memberships can change after the owner snapshot. Start a fresh transaction so its
+      // owner set is refreshed, and repeat every write only after Prisma rolled it all back.
+      await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt + randomInt(50)))
+      return this.retryMembershipTransaction(work, attempt + 1)
     }
   }
 

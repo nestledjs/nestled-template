@@ -116,4 +116,37 @@ describe('Authorization: organization billing', () => {
     expect(plan.data.errors).toBeUndefined()
     expect(plan.data.data.currentPlan).toBeNull()
   })
+
+  it.each(['delete', 'demote'] as const)(
+    'checks current permissions after administrative membership %s',
+    async change => {
+      const owner = await TestHelpers.registerUser(UserFactory.create())
+      const organizationId = sql(`SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`, {
+        id: owner.id,
+      })
+      // Warm the context through a real request before changing the database directly.
+      const allowed = await gql(owner, CURRENT_SUBSCRIPTION, undefined, organizationId)
+      expect(allowed.data.errors).toBeUndefined()
+      if (change === 'delete') {
+        sql(
+          `DELETE FROM "OrganizationMember" WHERE "userId" = :'id' AND "organizationId" = :'orgId';`,
+          {
+            id: owner.id,
+            orgId: organizationId,
+          },
+        )
+      } else {
+        sql(
+          `UPDATE "OrganizationMember" SET "roleId" = (
+          SELECT id FROM "Role" WHERE "organizationId" = :'orgId' AND name = 'Member'
+        ) WHERE "userId" = :'id' AND "organizationId" = :'orgId';`,
+          {
+            id: owner.id,
+            orgId: organizationId,
+          },
+        )
+      }
+      forbidden(await gql(owner, CURRENT_SUBSCRIPTION, undefined, organizationId))
+    },
+  )
 })
