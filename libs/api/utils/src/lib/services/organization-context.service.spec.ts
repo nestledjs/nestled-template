@@ -167,6 +167,68 @@ describe('OrganizationContextService', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('refuses a removed membership even when Redis still holds its permissions', async () => {
+    const { authCache, data, service } = createService()
+    authCache.isEnabled.mockReturnValue(true)
+    authCache.getMembership.mockResolvedValue({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      roleId: 'role-1',
+      roleName: 'Owner',
+      permissions: [{ subject: 'all', action: 'manage' }],
+    })
+    data.organizationMember.findFirst.mockResolvedValue(null)
+
+    await expect(
+      service.attach({
+        headers: { 'x-organization-id': 'org-1' },
+        user: { id: 'user-1', isSuperAdmin: false },
+      } as never),
+    ).resolves.toBeUndefined()
+  })
+
+  it('uses current role permissions instead of a cached authorization grant', async () => {
+    const { authCache, data, service } = createService()
+    authCache.isEnabled.mockReturnValue(true)
+    authCache.getMembership.mockResolvedValue({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      roleId: 'role-1',
+      roleName: 'Owner',
+      permissions: [{ subject: 'all', action: 'manage' }],
+    })
+    data.organizationMember.findFirst.mockResolvedValue({
+      ...membership,
+      role: { name: 'Member', permissions: [] },
+    })
+
+    const context = await service.attach({
+      headers: { 'x-organization-id': 'org-1' },
+      user: { id: 'user-1', isSuperAdmin: false },
+    } as never)
+    expect(context?.roleName).toBe('Member')
+    expect(context?.permissions).toEqual([])
+  })
+
+  it('does not fall back to cached permissions when the database is unavailable', async () => {
+    const { authCache, data, service } = createService()
+    authCache.isEnabled.mockReturnValue(true)
+    authCache.getMembership.mockResolvedValue({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      roleId: 'role-1',
+      roleName: 'Owner',
+      permissions: [{ subject: 'all', action: 'manage' }],
+    })
+    data.organizationMember.findFirst.mockRejectedValue(new Error('database unavailable'))
+    await expect(
+      service.attach({
+        headers: { 'x-organization-id': 'org-1' },
+        user: { id: 'user-1', isSuperAdmin: false },
+      } as never),
+    ).rejects.toThrow('database unavailable')
+  })
+
   it('adds all:manage for super admins without mutating cached permissions', async () => {
     const { authCache, service } = createService()
     const cachedContext = {

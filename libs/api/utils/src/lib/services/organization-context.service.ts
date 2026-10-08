@@ -38,12 +38,8 @@ export class OrganizationContextService {
     }
     req.organizationContext = undefined
 
-    const cachedContext = await this.getCachedMembership(req.user.id, organizationId)
-    if (cachedContext) {
-      req.organizationContext = this.applySuperAdminBoost(cachedContext, req.user)
-      return req.organizationContext
-    }
-
+    // Cross-request permission snapshots cannot authorize this request. Membership and role
+    // edits may originate in administrative CRUD or a transaction outside cache invalidation.
     const membership = await this.data.organizationMember.findFirst({
       where: {
         userId: req.user.id,
@@ -92,14 +88,6 @@ export class OrganizationContextService {
     }
 
     return undefined
-  }
-
-  private async getCachedMembership(
-    userId: string,
-    organizationId: string,
-  ): Promise<OrganizationContext | null> {
-    if (!this.authCache?.isEnabled()) return null
-    return (await this.authCache.getMembership(userId, organizationId)) ?? null
   }
 
   private async cacheMembership(

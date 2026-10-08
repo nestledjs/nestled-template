@@ -29,10 +29,8 @@ interface MembershipResult {
 
 /**
  * DataLoader service for batching and caching authentication data lookups.
- * Implements the third tier of the three-tier caching architecture:
- * 1. Request-level cache (req.organizationContext)
- * 2. Redis cache (auth-cache.service.ts)
- * 3. DataLoader (this service) - batches within a single request
+ * Reads current memberships and permissions from the database, batching within a single request.
+ * Redis organization hints may select a scope, but cached permissions never authorize it.
  *
  * Note: This service is request-scoped to ensure DataLoader caches are isolated per request.
  */
@@ -81,14 +79,8 @@ export class AuthLoaderService {
       }
     }
 
-    // First check Redis cache
-    const cachedContext = await this.authCache.getMembership(userId, organizationId)
-    if (cachedContext) {
-      this.logger.debug(`Membership cache hit for ${userId}:${organizationId}`)
-      return cachedContext
-    }
-
-    // Use DataLoader for batching
+    // Redis may retain permissions after a membership or role change. Batch a fresh
+    // database read per request; the request-scoped loader still coalesces repeated lookups.
     return this.membershipLoader.load({ userId, organizationId })
   }
 

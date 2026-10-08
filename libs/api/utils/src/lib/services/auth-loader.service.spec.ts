@@ -46,20 +46,19 @@ describe('AuthLoaderService', () => {
     expect(queryMemberships).not.toHaveBeenCalled()
   })
 
-  it('uses active organization and returns cached membership before batching', async () => {
+  it('checks current membership despite a cached organization and permission grant', async () => {
     const authCache = createAuthCacheMock()
     authCache.getUserActiveOrganization.mockResolvedValue('org-1')
     authCache.getMembership.mockResolvedValue(context)
-    const queryMemberships = jest.fn()
+    const queryMemberships = jest.fn().mockResolvedValue([])
     const service = new AuthLoaderService(
       authCache as unknown as AuthCacheService,
       queryMemberships,
     )
 
-    await expect(service.loadMembership('user-1')).resolves.toEqual(context)
+    await expect(service.loadMembership('user-1')).resolves.toBeNull()
 
-    expect(authCache.getMembership).toHaveBeenCalledWith('user-1', 'org-1')
-    expect(queryMemberships).not.toHaveBeenCalled()
+    expect(queryMemberships).toHaveBeenCalledWith([{ userId: 'user-1', organizationId: 'org-1' }])
   })
 
   it('batches membership lookups and maps results back to request order', async () => {
