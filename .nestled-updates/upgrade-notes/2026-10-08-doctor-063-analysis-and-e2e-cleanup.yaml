@@ -25,8 +25,9 @@ intent: >
   test database URL variables pinned to the same test database. Register API process-group cleanup
   immediately after spawn for exit, SIGINT and SIGTERM, remove listeners on normal teardown, and
   report whether cleanup killed a group, only the launcher, or found it already stopped. Include
-  the process-cleanup unit tests in the e2e test target's dependencies and exclude them from
-  the main e2e config so they run once.
+  the process-cleanup unit tests and strict support typecheck in both api-e2e:test and
+  api-e2e:e2e target dependencies. Exclude the support specs from the main e2e config so
+  each entry point runs them once.
 why: >
   Syntax-aware checks reduce false positives without allowing log prose or unused identity
   injection to certify enforcement. Guard-baseline omissions now fail explicitly. E2e cancellation
