@@ -298,7 +298,7 @@ releases:
   - id: 2026.10.6
     date: 2026-10-07
     title: Authentication record maintenance invariants
-    templateCommit: 4429822
+    templateCommit: "4429822"
     notes:
       - id: 2026-10-06-auth-record-invariants
         title: Keep authentication records consistent across administrative maintenance
@@ -337,7 +337,7 @@ releases:
   - id: 2026.10.7
     date: 2026-10-08
     title: Organization context refresh
-    templateCommit: 2158492
+    templateCommit: "2158492"
     notes:
       - id: 2026-10-07-organization-context-refresh
         title: Resolve organization permissions from current membership on each request
