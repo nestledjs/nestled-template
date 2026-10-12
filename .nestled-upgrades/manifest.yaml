@@ -1,7 +1,7 @@
 schemaVersion: 1
 generatedAt: 2026-10-12
 channels:
-  canary: 2026.10.10
+  canary: 2026.10.11
   stable: 2026.10.8
 releases:
   - id: 2026.08.0
@@ -483,3 +483,22 @@ releases:
           - "pnpm exec nx run api-e2e:test-support --skip-nx-cache"
           - "pnpm exec nx run api-e2e:e2e"
         patch: patches/2026-10-10-truthful-test-and-typecheck-gates.diff
+  - id: 2026.10.11
+    date: 2026-10-12
+    title: Typecheck runner completeness
+    templateCommit: f5fb705
+    notes:
+      - id: 2026-10-12-typecheck-runner-completeness
+        title: Typecheck runner reports every error in one run, and test tooling passes static analysis
+        delivery: code-patch
+        intent: "Make scripts/typecheck-project.mjs report everything in one run. When tracked files are in no checked config, it still compiles every config and then lists the uncovered files, failing on either; it used to stop at the coverage check, so type errors in covered files stayed hidden until the coverage was fixed. A tracked file deleted from the working tree, staged or not, is no longer reported as uncovered. Spawn git from an absolute path rather than through PATH. When GIT_EXECUTABLE is set to a non-empty value, gitExecutable() returns it if it is an absolute path to an existing file, and otherwise fails at once (a relative, missing or directory path never falls back). When it is unset or empty, gitExecutable() returns the first standard install location that holds a git file (/opt/homebrew/bin, /usr/local/bin and /usr/bin on macOS, /usr/bin, /usr/local/bin and /bin on Linux, Program Files\\Git\\cmd on Windows), and fails with a message naming GIT_EXECUTABLE when none does. The runner spec uses it for its fixtures too, and marks its node:test describe/it calls with `void`. Give the e2e SQL runner (apps/api-e2e/src/support/sql-runner.mjs) a 5 second connection timeout, so an unreachable test database fails promptly, as the probes it replaced did."
+        area: infra
+        affectedPaths:
+          - scripts/typecheck-project.mjs
+          - scripts/typecheck-project.spec.mjs
+          - apps/api-e2e/src/support/sql-runner.mjs
+        verification:
+          - node --test scripts/typecheck-project.spec.mjs
+          - pnpm exec nx run-many -t typecheck --parallel=1 --skip-nx-cache
+          - "pnpm exec nx run api-e2e:test-support --skip-nx-cache"
+        patch: patches/2026-10-12-typecheck-runner-completeness.diff
