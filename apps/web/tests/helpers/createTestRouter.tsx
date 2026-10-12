@@ -1,5 +1,7 @@
 import { createRoutesStub } from 'react-router'
-import type { RouteObject } from 'react-router'
+
+/** The route shape `createRoutesStub` accepts (react-router does not export it by name). */
+type StubRouteObject = Parameters<typeof createRoutesStub>[0][number]
 
 /**
  * Creates a router stub for testing - just a thin wrapper around createRoutesStub.
@@ -11,7 +13,7 @@ import type { RouteObject } from 'react-router'
  * @param routes - Array of route objects to stub
  * @returns A RouterStub component ready for testing
  */
-export function createTestRouter(routes: RouteObject[]) {
+export function createTestRouter(routes: StubRouteObject[]) {
   // Just pass through to createRoutesStub
   // The hydration warning is expected and harmless in test environment
   return createRoutesStub(routes)

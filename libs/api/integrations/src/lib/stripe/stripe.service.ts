@@ -355,7 +355,7 @@ export class StripeService implements OnModuleInit {
 
   async cancelSubscription(
     subscriptionId: string,
-    immediate: boolean = false,
+    immediate = false,
   ): Promise<Stripe.Subscription> {
     this.logger.log(`Canceling subscription: ${subscriptionId} (immediate: ${immediate})`)
     try {

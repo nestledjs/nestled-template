@@ -29,8 +29,6 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@react-router/dev": "7.18.2",
-    "@types/node": "^20.19.43",
     "@types/react": "19.1.0",
     "@types/react-dom": "19.1.0",
     "@types/ws": "^8.18.1"

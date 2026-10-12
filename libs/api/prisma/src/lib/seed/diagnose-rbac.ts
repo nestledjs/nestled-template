@@ -76,11 +76,11 @@ async function diagnoseRBAC() {
   console.log('\n=== Done ===')
 }
 
-try {
-  await diagnoseRBAC()
-  await prisma.$disconnect()
-} catch (e) {
-  console.error('Error:', e)
-  await prisma.$disconnect()
-  process.exit(1)
-}
+// No top-level await: this library compiles as CommonJS.
+diagnoseRBAC()
+  .then(() => prisma.$disconnect())
+  .catch(async (e: unknown) => {
+    console.error('Error:', e)
+    await prisma.$disconnect()
+    process.exit(1)
+  })

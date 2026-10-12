@@ -7,6 +7,9 @@
       "path": "./tsconfig.spec.json"
     },
     {
+      "path": "./tsconfig.support.json"
+    },
+    {
       "path": "../../libs/api/prisma"
     },
     {

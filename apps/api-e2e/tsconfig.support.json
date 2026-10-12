@@ -4,14 +4,18 @@
     "noEmit": true,
     "strict": true,
     "moduleResolution": "bundler",
-    "types": [
-      "node"
-    ]
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true
   },
   "include": [
     "src/support/api-process.ts",
     "src/support/api-process.spec.ts",
-    "src/support/e2e-runner.spec.ts"
+    "src/support/api-process.native.spec.ts",
+    "src/support/e2e-runner.spec.ts",
+    "src/support/process-tree-fixture.mjs",
+    "src/support/sql-runner.mjs",
+    "src/support/sql-runner.spec.ts"
   ],
   "exclude": []
 }

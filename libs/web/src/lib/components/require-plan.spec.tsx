@@ -55,11 +55,17 @@ describe('plan requirement components', () => {
 
     render(
       <>
-        <RequirePlan feature="reports" />
-        <RequireLimit limitKey="max_projects" currentValue={3} />
+        <RequirePlan feature="reports">
+          <span>Reports</span>
+        </RequirePlan>
+        <RequireLimit limitKey="max_projects" currentValue={3}>
+          <span>Create Project</span>
+        </RequireLimit>
       </>,
     )
 
+    expect(screen.queryByText('Reports')).toBeNull()
+    expect(screen.queryByText('Create Project')).toBeNull()
     expect(screen.getByText('Upgrade Required')).toBeTruthy()
     expect(screen.getByText('Limit Reached')).toBeTruthy()
     expect(screen.getAllByRole('link', { name: 'Upgrade Plan' })).toHaveLength(2)

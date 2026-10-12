@@ -37,7 +37,7 @@ describe('OAuth success loader', () => {
   it('sends the user back to login when no session cookie arrived', async () => {
     // Landing here without a cookie means the sign-in did not actually complete — bouncing to
     // the dashboard would just redirect straight back out again.
-    vi.mocked(getCookie).mockReturnValue(null)
+    vi.mocked(getCookie).mockReturnValue(undefined)
 
     const response = await runLoader()
 

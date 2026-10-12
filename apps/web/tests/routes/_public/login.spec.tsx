@@ -26,7 +26,7 @@ describe('Login Component', () => {
     mockLoginMutation = vi.fn()
 
     vi.mocked(useMutation).mockReturnValue([mockLoginMutation, { loading: false }] as any)
-    vi.mocked(getCookie).mockReturnValue(null)
+    vi.mocked(getCookie).mockReturnValue(undefined)
     vi.mocked(getJsonCookie).mockReturnValue(null)
     vi.mocked(isJwtExpired).mockReturnValue(false)
   })
@@ -83,7 +83,7 @@ describe('Login Component', () => {
     })
 
     it('should return remembered email data', async () => {
-      vi.mocked(getCookie).mockReturnValue(null)
+      vi.mocked(getCookie).mockReturnValue(undefined)
       vi.mocked(getJsonCookie).mockReturnValue({ email: 'remembered@example.com' })
 
       const request = new Request('http://localhost/login')
@@ -94,7 +94,7 @@ describe('Login Component', () => {
     })
 
     it('should return empty object when no remembered data', async () => {
-      vi.mocked(getCookie).mockReturnValue(null)
+      vi.mocked(getCookie).mockReturnValue(undefined)
       vi.mocked(getJsonCookie).mockReturnValue(null)
 
       const request = new Request('http://localhost/login')

@@ -1,3 +1,5 @@
+// Storybook loads the shared stylesheet file itself; no package path exposes the CSS.
+// eslint-disable-next-line @nx/enforce-module-boundaries
 import '../../shared/styles/src/lib/app.css'
 import { MemoryRouter } from 'react-router'
 import type { Preview } from '@storybook/react-vite'

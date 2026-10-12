@@ -42,9 +42,9 @@ vi.mock('@nestled-template/shared/styles', () => ({
 // Mock the Form component from @nestledjs/forms
 vi.mock('@nestledjs/forms', () => ({
   Form: ({ id, fields, submit }: any) => {
-    const handleSubmit = e => {
+    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault()
-      const formData = new FormData(e.target)
+      const formData = new FormData(e.currentTarget)
       const values: Record<string, any> = {}
       formData.forEach((value, key) => {
         values[key] = value

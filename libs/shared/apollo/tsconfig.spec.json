@@ -2,6 +2,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "../../../dist/out-tsc",
+    // Vitest runs specs (and the apollo.ts they import) as ES modules, where `import.meta` is
+    // valid. tsconfig.json here pins `module: commonjs`, so restore esnext as tsconfig.lib.json does.
+    "module": "esnext",
     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
   },
   "include": [
@@ -18,5 +21,6 @@
     "src/**/*.test.jsx",
     "src/**/*.spec.jsx",
     "src/**/*.d.ts"
-  ]
+  ],
+  "exclude": ["node_modules"]
 }

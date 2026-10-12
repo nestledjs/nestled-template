@@ -16,9 +16,8 @@ export default meta
 
 type Story = StoryObj<typeof meta>
 
-export const ListItemLi: Story = {
+export const NotClickable: Story = {
   args: {
-    type: 'li',
     onClick: undefined,
   },
   play: async ({ canvasElement }: StoryContext) => {
@@ -28,10 +27,9 @@ export const ListItemLi: Story = {
   },
 }
 
-export const ListItemDivClickable: Story = {
+export const Clickable: Story = {
   args: {
-    type: 'div',
-    onClick: () => {},
+    onClick: () => undefined,
   },
   play: async ({ canvasElement }: StoryContext) => {
     const canvas = within(canvasElement)
@@ -44,15 +42,7 @@ export const ListItemDivClickable: Story = {
 
 export const WithAvatars: Story = {
   args: {
-    type: 'li',
     avatar: <UserCircleIcon className="h-6 w-6 text-blue-500" />,
     avatar2: <UserCircleIcon className="h-6 w-6 text-green-500" />,
-  },
-}
-
-export const Selected: Story = {
-  args: {
-    type: 'li',
-    selected: true,
   },
 }

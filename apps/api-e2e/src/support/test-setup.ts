@@ -1,11 +1,10 @@
 import axios from 'axios'
-import { beforeEach } from 'vitest'
 import { Agent as HttpAgent } from 'node:http'
 import { Agent as HttpsAgent } from 'node:https'
+import { testDatabaseUrl } from './test-db'
 
 type E2EGlobalState = typeof globalThis & {
   __AXIOS_AGENT_CLEANUP_REGISTERED__?: boolean
-  __SKIP_E2E_TESTS__?: boolean
 }
 
 const e2eGlobal = globalThis as E2EGlobalState
@@ -45,21 +44,6 @@ if (!e2eGlobal.__AXIOS_AGENT_CLEANUP_REGISTERED__) {
 // Global test configuration
 process.env.NODE_ENV = 'test'
 
-// Use TEST_DATABASE_URL - do NOT override to dev database!
-// The API server will be started with this database URL by global-setup
-const testDatabaseUrl =
-  process.env.TEST_DATABASE_URL ||
-  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
+// The API server is started against this database by global-setup — never the dev database.
 console.log(`Test setup: axios base URL set to ${axios.defaults.baseURL}`)
 console.log(`Test setup: Using TEST database - ${testDatabaseUrl}`)
-
-// Skip tests if API is not available (set by global-setup)
-const shouldSkipE2E = e2eGlobal.__SKIP_E2E_TESTS__
-if (shouldSkipE2E) {
-  console.log('⚠️  E2E tests will be skipped (API not available)')
-
-  // Skip all tests in this suite
-  beforeEach(ctx => {
-    ctx.skip()
-  })
-}

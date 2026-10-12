@@ -1,0 +1,204 @@
+id: 2026-10-10-truthful-test-and-typecheck-gates
+title: Typecheck, lint and e2e gates that check what they claim
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  Make every project's typecheck cover all of its TypeScript and fail when it checks nothing, and
+  make lint reach every project.
+
+  Add scripts/typecheck-project.mjs and the local Nx plugin tools/nx-plugins/typecheck.js, and
+  list the plugin last in nx.json plugins so its `typecheck` target replaces the inferred
+  `tsc --noEmit -p tsconfig.lib.json`. The runner checks every config a project's tsconfig.json
+  references inside the project (lib/app, spec, storybook) one at a time with `tsc --noEmit`, and
+  fails when a config resolves no files, when an `exclude` inherited through `extends` removes files
+  the config's own `include` asks for, or when a tracked .ts/.tsx file under the project, build-tool
+  configs such as vite.config.ts included, is in no checked config. Only a nested directory with
+  both its own project.json and tsconfig.json (one the plugin gives a target) counts as a separate
+  project; either file alone does not hide its files. Projects whose
+  typecheck target is written in project.json (apps/api with tsconfig.typecheck.json, apps/web
+  after typegen) call the runner too, keeping their dependsOn. Typecheck inputs use `default`, not
+  `production`, so spec edits invalidate the cache.
+
+  Give every tsconfig.spec.json its own `exclude`. The workspace base config excludes
+  `**/*.spec.ts`, `**/*.test.ts` and their tsx forms, and a spec config that inherits that exclude
+  checks no spec at all. Add spec configs (and the solution-config reference) for libraries whose
+  specs had none, and include test folders outside src (for example apps/web/tests) in the spec
+  config that runs them. Then fix the type errors this exposes in tests, stories and tool configs
+  rather than excluding files or loosening strict.
+
+  Remove `@react-router/dev` and `@types/node` from apps/web/package.json devDependencies; the root
+  manifest declares both. The app-level copies resolved a second Vite with different peers, whose
+  Plugin type is nominally distinct from the root Vite's, so apps/web/vite.config.ts could not
+  typecheck.
+
+  Delete libs/api/core/data-access/src/lib/models/chapter-stats.ts and user-stats.ts. Nothing
+  imports them and no index exports them; they surfaced once libs/api code had its own typecheck.
+
+  Widen the web-ui social-links `member` prop from `Partial<User>` to `SocialLinkMember` (Partial<User>
+  plus the facebook/twitter/linkedin/instagram/youtube fields the component reads), and fix stories
+  that passed props their components do not have: the data-table `Loading` story becomes `Empty`,
+  and the simple-list-item stories become `NotClickable`/`Clickable` with the `Selected` story
+  removed.
+
+  Rename the inferred ESLint target from `eslint:lint` to `lint` in nx.json so `pnpm lint` and CI's
+  `nx affected -t lint` reach every project, and fix the lint errors that surfaces.
+
+  Make the API e2e result mean that the suite ran and passed. `api-e2e:e2e` runs the same wrapper as
+  `api-e2e:test` (apps/api-e2e/run-tests.sh) instead of the Vitest executor, and both targets set
+  `cache: false`. The wrapper reports PASSED only when Vitest exits 0, its summary counts no failure,
+  and at least one test passed, and prints that count; a run with no test file, or with every test
+  skipped, fails. Remove the wrapper's force-kill fallback, which accepted a non-zero exit when a
+  "Cleanup complete" marker appeared: teardown no longer calls process.exit and nothing prints the
+  marker. The e2e Vitest config sets `passWithNoTests: false` and the verbose reporter so the log
+  names every test, and drops both `dangerouslyIgnoreUnhandledErrors` and the onUnhandledError
+  filter for process.exit errors, so every unhandled error fails the run. Remove SKIP_API_CHECK and the
+  `__SKIP_E2E_TESTS__` flag: global setup set it on globalThis, which never reaches the forked test
+  worker, so the option produced a run of failures rather than a skip.
+
+  Resolve the test database URL in one place. apps/api-e2e/src/support/test-db.ts exports
+  testDatabaseUrl (TEST_DATABASE_URL, else `scripts/test-db.sh url`, the same answer the shell
+  runners use); global setup, test setup and specs import it instead of each carrying the template's
+  hard-coded fallback URL. Replace psql with the pg client: test-db.ts runs SQL through
+  apps/api-e2e/src/support/sql-runner.mjs, which keeps `sql()` synchronous and its `psql -At`
+  output (`|`-joined columns, server text values, one row per line, `:'name'` variables quoted as
+  literals, statements run one at a time with autocommit). Global setup's database probe and
+  disposable-database reset, and the wrapper's probe, use it too; the wrapper probe now uses the
+  URL's own credentials rather than postgres:postgres. Add @types/pg to devDependencies.
+
+  Stop the e2e API's whole process tree on native Windows. apps/api-e2e/src/support/api-process.ts
+  exports ownedProcessOptions(): POSIX keeps the detached process group; Windows keeps the launcher
+  attached and runs it through a shell, because pnpm is a .cmd shim that Node does not run without
+  one (global setup's `pnpm prisma migrate deploy` gets the same shell). killApiProcessTree runs
+  `%SystemRoot%\System32\taskkill.exe /PID <launcher> /T /F` on Windows and returns `tree`, treats
+  taskkill's not-found status (128) as already stopped, never runs it for a launcher Node has
+  already reaped, and throws on any other status, so teardown fails and the exit fallback retries.
+  Teardown logs the tree it stopped. Add process-tree-fixture.mjs and api-process.native.spec.ts,
+  which start a real launcher and descendant and check both stop on teardown, on SIGINT/SIGTERM
+  cancellation and from the exit fallback, plus (on Windows) that a taskkill failure is reported;
+  run them in test-support and in a windows-latest CI job.
+why: >
+  Spec files were never typechecked in any project: each spec config inherited the base
+  `**/*.spec.ts` exclude, so `tsc -p tsconfig.spec.json` compiled only a vite config or nothing.
+  `api-e2e:typecheck` ran `tsc -p` on a solution config with `files: []` and `include: []`, which
+  compiles zero files and exits 0. Libraries without a Vite or React Router plugin target (every
+  libs/api library) had no typecheck at all, so code only they contained was never checked, and
+  `pnpm lint`/CI lint ran ESLint for one project because the others' target was named
+  `eslint:lint`. Each of these reported green without checking the code. Enabling the checks found
+  real defects, including an e2e port wait passing an option the helper ignores.
+
+  The e2e gate had the same shape. `api-e2e:e2e` inherited `cache: true` and `passWithNoTests: true`
+  from the Vitest target defaults, so a green result could be a replay or a run of nothing, and
+  through Nx the log showed only a summary. `dangerouslyIgnoreUnhandledErrors` let any unhandled
+  error pass. The wrapper's probe used fixed postgres:postgres credentials: against CI's prisma
+  login it always failed and started a container the tests never used. test-db.ts needed a psql
+  binary that not every machine has, and three files hard-coded the template's own test URL, so a
+  clone on another port block reached the wrong database when run outside the wrappers.
+
+  On native Windows, teardown and cancellation killed only the pnpm launcher; the Nx and API
+  processes it started survived and kept the e2e port, so the next run attached to, or failed
+  against, a stale API. Setup could not start the API there at all: spawning `pnpm` without a shell
+  fails on Windows.
+affectedPaths:
+  - nx.json
+  - scripts/typecheck-project.mjs
+  - scripts/typecheck-project.spec.mjs
+  - tools/nx-plugins/typecheck.js
+  - apps/api/project.json
+  - apps/web/project.json
+  - apps/web/package.json
+  - pnpm-lock.yaml
+  - apps/web/tsconfig.spec.json
+  - apps/api-e2e/tsconfig.spec.json
+  - apps/api-e2e/src/support/global-setup.ts
+  - libs/**/tsconfig.json
+  - libs/**/tsconfig.spec.json
+  - libs/**/tsconfig.storybook.json
+  - libs/**/vitest.config.mts
+  - libs/web-ui/eslint.config.mjs
+  - libs/shared-components/eslint.config.mjs
+  - libs/api/prisma/src/lib/seed/seed.ts
+  - libs/api/core/data-access/src/lib/models/chapter-stats.ts
+  - libs/api/core/data-access/src/lib/models/user-stats.ts
+  - libs/web-ui/src/lib/web-ui-social-links.tsx
+  - libs/web-ui/src/lib/*.stories.tsx
+  - libs/api/prisma/src/lib/seed/diagnose-rbac.ts
+  - apps/web/tests/**
+  - apps/api-e2e/project.json
+  - apps/api-e2e/run-tests.sh
+  - apps/api-e2e/vitest.config.mts
+  - apps/api-e2e/vitest.support.config.mts
+  - apps/api-e2e/tsconfig.support.json
+  - apps/api-e2e/README.md
+  - apps/api-e2e/src/support/test-db.ts
+  - apps/api-e2e/src/support/sql-runner.mjs
+  - apps/api-e2e/src/support/sql-runner.spec.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/test-setup.ts
+  - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+  - apps/api-e2e/src/support/api-process.ts
+  - apps/api-e2e/src/support/api-process.spec.ts
+  - apps/api-e2e/src/support/api-process.native.spec.ts
+  - apps/api-e2e/src/support/process-tree-fixture.mjs
+  - apps/api-e2e/src/support/global-teardown.ts
+  - package.json
+  - .github/workflows/ci.yml
+  - AGENTS.md
+verification:
+  - node --test scripts/typecheck-project.spec.mjs
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx run-many -t lint
+  - pnpm test
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx run api-e2e:e2e
+agentHints:
+  - >
+    Expect the first run to fail with real errors in specs, stories and tool configs that were
+    never checked. Fix them in the tests and configs; change product source only where the error
+    shows the product type is wrong. Do not add @ts-ignore, broad any casts, or excludes to get green.
+  - >
+    Downstream libraries are covered automatically once the plugin is registered; any project the
+    runner reports with an uncovered file needs that file added to the config that matches how it
+    runs (lib/app, spec or storybook), or a spec config created and referenced from tsconfig.json.
+  - >
+    If CI, scripts or docs call `eslint:lint`, rename them to `lint`. A project.json `lint` target
+    still overrides the inferred one.
+  - >
+    Typecheck now runs spec configs as well, so it does more work; configs run one at a time per
+    project. If `nx run-many -t typecheck` runs out of memory on a small machine or CI runner, run it
+    with `--parallel=1`. A lower-memory typecheck follows in a later release.
+  - >
+    Vitest 4 no longer adds `test` to Vite's config type: a vitest.config that imports defineConfig
+    from 'vite' fails typecheck. Import defineConfig from 'vitest/config'. Storybook 10 packages
+    resolve only through package exports, so storybook and spec configs that load them need
+    moduleResolution bundler.
+  - >
+    If apps/web/vite.config.ts fails with two incompatible Vite Plugin types, apps/web still declares
+    its own @react-router/dev or @types/node. Remove them (keep the root versions), run pnpm install,
+    and confirm `ls node_modules/.pnpm | grep '^vite@'` shows one entry. Do not bridge it with a cast.
+  - >
+    Build-tool configs (vite.config.ts, vitest.config.mts, jest.config.ts) must sit in a checked
+    config too, normally the spec config. An unused one can be deleted instead.
+  - >
+    Template promotion and patch apply never delete files, so remove the two stats model files by
+    hand. First search the project for imports of ChapterStats or UserStats (or the file names): if
+    the project uses them, keep the files, add them to a checked config, and record the deletion as
+    not-applicable. A project with its own stories may have more stale args; fix them the same way.
+  - >
+    Specs that call psql or the pg client themselves, or that read TEST_DATABASE_URL with their own
+    fallback, should import sql and testDatabaseUrl from support/test-db instead. If a spec relied on
+    psql printing command tags (`UPDATE 1`), the pg runner prints rows only; take the rows you need.
+  - >
+    If CI or scripts set SKIP_API_CHECK=true, it never skipped anything; remove it. To skip e2e, do
+    not run the target. If CI calls `nx e2e api-e2e` and a workspace targetDefaults entry caches it,
+    the project.json `cache: false` now overrides it.
+  - >
+    A project whose wrapper differs from the template's must still refuse PASSED when the Vitest
+    summary counts any failure (this fix is in the template since 2026-10-05) or no passed test.
+  - >
+    If the project changed how global setup starts the API, keep its spawn options from
+    ownedProcessOptions() (or the same detached/shell split) so teardown can reach every descendant.
+    A project without Windows developers or CI can leave out the windows-latest job, but keep the
+    native spec in test-support: on Linux and macOS it checks the process-group path.

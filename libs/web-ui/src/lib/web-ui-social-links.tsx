@@ -1,17 +1,19 @@
 import { Profile, SocialLinks, TYPE_DESKTOP, TYPE_MOBILE } from 'social-links'
 import { User } from '@nestled-template/shared/sdk'
 
-interface SocialLinksProps {
-  readonly member?: Partial<User> | null
-  readonly color?: string
-}
-
+// The social fields are read here but are not part of the generated User model, so the prop type
+// declares them; without them the prop only accepted objects that could never render a link.
 type SocialLinkMember = Partial<User> & {
   facebook?: string | null
   twitter?: string | null
   instagram?: string | null
   linkedin?: string | null
   youtube?: string | null
+}
+
+interface SocialLinksProps {
+  readonly member?: SocialLinkMember | null
+  readonly color?: string
 }
 
 const linkedinCompanyProfile: Profile = {
@@ -43,13 +45,7 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
   function generateLink(
     value: string,
     network:
-      | 'facebook'
-      | 'twitter'
-      | 'instagram'
-      | 'linkedin'
-      | 'linkedin-company'
-      | 'youtube'
-      | 'global',
+      'facebook' | 'twitter' | 'instagram' | 'linkedin' | 'linkedin-company' | 'youtube' | 'global',
   ) {
     if (!value) return null
 
@@ -62,7 +58,7 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
     }
   }
 
-  const member = props.member as SocialLinkMember
+  const member = props.member
 
   const facebookLink = member?.facebook ? generateLink(member.facebook, 'facebook') : null
   const twitterLink = member?.twitter ? generateLink(member.twitter, 'twitter') : null

@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { TransferOwnershipModal } from '@nestled-template/web'
 
 // Mock Apollo Client
@@ -48,8 +48,8 @@ function requiredElement(element: Element | null, message: string): Element {
 
 describe('TransferOwnershipModal Component', () => {
   let mockTransferOwnership: ReturnType<typeof vi.fn>
-  let mockOnClose: ReturnType<typeof vi.fn>
-  let mockOnSuccess: ReturnType<typeof vi.fn>
+  let mockOnClose: Mock<() => void>
+  let mockOnSuccess: Mock<() => void>
 
   const mockCurrentUser = {
     id: 'user-1',
