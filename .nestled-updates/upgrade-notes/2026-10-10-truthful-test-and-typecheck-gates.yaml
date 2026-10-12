@@ -43,7 +43,10 @@ intent: >
   removed.
 
   Rename the inferred ESLint target from `eslint:lint` to `lint` in nx.json so `pnpm lint` and CI's
-  `nx affected -t lint` reach every project, and fix the lint errors that surfaces.
+  `nx affected -t lint` reach every project, and fix the lint errors this exposes. Point the root
+  `pre-commit:lint` script at `lint` too (it ran `nx affected --target eslint`, a target no project
+  has, so it linted nothing), and chain its format step with `&&` rather than `&`, which ran the
+  formatter in the background and dropped its exit status.
 
   Make the API e2e result mean that the suite ran and passed. `api-e2e:e2e` runs the same wrapper as
   `api-e2e:test` (apps/api-e2e/run-tests.sh) instead of the Vitest executor, and both targets set
@@ -163,8 +166,8 @@ agentHints:
     runner reports with an uncovered file needs that file added to the config that matches how it
     runs (lib/app, spec or storybook), or a spec config created and referenced from tsconfig.json.
   - >
-    If CI, scripts or docs call `eslint:lint`, rename them to `lint`. A project.json `lint` target
-    still overrides the inferred one.
+    If CI, scripts or docs call `eslint:lint` or `--target eslint`, rename them to `lint`. A
+    project.json `lint` target still overrides the inferred one.
   - >
     Typecheck now runs spec configs as well, so it does more work; configs run one at a time per
     project. If `nx run-many -t typecheck` runs out of memory on a small machine or CI runner, run it
