@@ -47,7 +47,7 @@
     "help": "nx help",
     "lint": "nx run-many -t lint",
     "nx": "nx",
-    "pre-commit:lint": "nx format:write --uncommitted & nx affected --target eslint --uncommitted",
+    "pre-commit:lint": "nx format:write --uncommitted && nx affected --target lint --uncommitted",
     "test": "nx run-many -t test",
     "test:coverage": "nx run-many -t test -- --coverage",
     "coverage:normalize-lcov": "tsx scripts/normalize-lcov-paths.ts",
