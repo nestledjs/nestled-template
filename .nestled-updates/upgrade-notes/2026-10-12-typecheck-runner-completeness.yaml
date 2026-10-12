@@ -11,12 +11,14 @@ intent: >
   until the coverage was fixed. A tracked file deleted from the working tree, staged or not, is no
   longer reported as uncovered.
 
-  Spawn git from an absolute path rather than through PATH. gitExecutable() returns
-  GIT_EXECUTABLE when it is an absolute path to an existing file (not a directory), otherwise the
-  first standard install location that holds a git file (/opt/homebrew/bin, /usr/local/bin and
-  /usr/bin on macOS, /usr/bin, /usr/local/bin and /bin on Linux, Program Files\Git\cmd on
-  Windows), and fails with a message naming GIT_EXECUTABLE when none does. The runner spec uses it for its fixtures too, and
-  marks its node:test describe/it calls with `void`.
+  Spawn git from an absolute path rather than through PATH. When GIT_EXECUTABLE is set to a
+  non-empty value, gitExecutable() returns it if it is an absolute path to an existing file, and
+  otherwise fails at once (a relative, missing or directory path never falls back). When it is
+  unset or empty, gitExecutable() returns the first standard install location that holds a git
+  file (/opt/homebrew/bin, /usr/local/bin and /usr/bin on macOS, /usr/bin, /usr/local/bin and /bin
+  on Linux, Program Files\Git\cmd on Windows), and fails with a message naming GIT_EXECUTABLE when
+  none does. The runner spec uses it for its fixtures too, and marks its node:test describe/it
+  calls with `void`.
 
   Give the e2e SQL runner (apps/api-e2e/src/support/sql-runner.mjs) a 5 second connection timeout,
   so an unreachable test database fails promptly, as the probes it replaced did.
