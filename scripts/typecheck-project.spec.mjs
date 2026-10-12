@@ -171,10 +171,14 @@ void describe('typecheck-project', () => {
     assert.ok(error.mock.calls.some(call => String(call.arguments[0]).includes('libs/a/loose.ts')))
   })
 
-  void it('spawns git from GIT_EXECUTABLE only when it is an absolute path that exists', () => {
+  void it('spawns git from GIT_EXECUTABLE only when it is an absolute path to a file', () => {
     const git = gitExecutable()
     assert.equal(gitExecutable({ GIT_EXECUTABLE: git }), git)
     assert.throws(() => gitExecutable({ GIT_EXECUTABLE: 'git' }), /absolute path/)
     assert.throws(() => gitExecutable({ GIT_EXECUTABLE: join(tmpdir(), 'no-git') }), /absolute/)
+    assert.throws(
+      () => gitExecutable({ GIT_EXECUTABLE: tmpdir() }),
+      /absolute path to the git file/,
+    )
   })
 })
