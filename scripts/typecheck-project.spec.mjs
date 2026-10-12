@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
+  gitExecutable,
   inspectConfigs,
   loadTypeScript,
   main,
@@ -24,8 +25,8 @@ function fixture(files) {
     mkdirSync(dirname(join(root, path)), { recursive: true })
     writeFileSync(join(root, path), typeof content === 'string' ? content : JSON.stringify(content))
   }
-  spawnSync('git', ['init', '-q'], { cwd: root })
-  spawnSync('git', ['add', '.'], { cwd: root })
+  spawnSync(gitExecutable(), ['init', '-q'], { cwd: root })
+  spawnSync(gitExecutable(), ['add', '.'], { cwd: root })
   return root
 }
 
@@ -42,8 +43,8 @@ afterEach(() => {
   for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-describe('typecheck-project', () => {
-  it('resolves the configs a project owns, not references into other projects', () => {
+void describe('typecheck-project', () => {
+  void it('resolves the configs a project owns, not references into other projects', () => {
     const root = fixture({
       'tsconfig.base.json': base,
       'libs/a/tsconfig.json': {
@@ -58,7 +59,7 @@ describe('typecheck-project', () => {
     ])
   })
 
-  it('refuses a spec config whose inherited exclude drops every spec', () => {
+  void it('refuses a spec config whose inherited exclude drops every spec', () => {
     const root = fixture({
       'tsconfig.base.json': base,
       'libs/a/tsconfig.json': solution,
@@ -73,7 +74,7 @@ describe('typecheck-project', () => {
     assert.match(result.problem, /inherited through "extends" removes 1 file/)
   })
 
-  it('accepts a spec config that declares its own exclude', () => {
+  void it('accepts a spec config that declares its own exclude', () => {
     const root = fixture({
       'tsconfig.base.json': base,
       'libs/a/tsconfig.json': solution,
@@ -89,7 +90,7 @@ describe('typecheck-project', () => {
     assert.equal(result.fileCount, 1)
   })
 
-  it('refuses a config that matches no files and a referenced config that is missing', () => {
+  void it('refuses a config that matches no files and a referenced config that is missing', () => {
     const root = fixture({
       'tsconfig.base.json': base,
       'libs/a/tsconfig.json': solution,
@@ -100,7 +101,7 @@ describe('typecheck-project', () => {
     assert.match(results[1].problem, /does not exist/)
   })
 
-  it('reports tracked sources no checked config compiles, tool configs included', () => {
+  void it('reports tracked sources no checked config compiles, tool configs included', () => {
     const root = fixture({
       'tsconfig.base.json': base,
       'apps/w/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
@@ -128,7 +129,7 @@ describe('typecheck-project', () => {
     ])
   })
 
-  it('fails on a type error and passes once the project is clean', () => {
+  void it('fails on a type error and passes once the project is clean', () => {
     const files = {
       'tsconfig.base.json': base,
       'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
@@ -139,5 +140,41 @@ describe('typecheck-project', () => {
     assert.equal(main(['libs/a'], broken), 1)
     const clean = fixture({ ...files, 'libs/a/src/a.ts': 'export const value: number = 1\n' })
     assert.equal(main(['libs/a'], clean), 0)
+  })
+
+  void it('does not report a tracked file deleted from the working tree', () => {
+    const root = fixture({
+      'tsconfig.base.json': base,
+      'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
+      'libs/a/tsconfig.lib.json': lib,
+      'libs/a/src/a.ts': 'export const a = 1\n',
+      'libs/a/gone.ts': 'export const gone = 1\n',
+    })
+    unlinkSync(join(root, 'libs/a/gone.ts'))
+    const projectRoot = join(root, 'libs/a')
+    const inspected = inspectConfigs(ts, resolveProjectConfigs(ts, projectRoot))
+    assert.deepEqual(uncoveredFiles(root, projectRoot, inspected), [])
+  })
+
+  void it('still compiles every config when files are uncovered, and fails', t => {
+    const root = fixture({
+      'tsconfig.base.json': base,
+      'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
+      'libs/a/tsconfig.lib.json': lib,
+      'libs/a/src/a.ts': 'export const a = 1\n',
+      'libs/a/loose.ts': 'export const loose = 1\n',
+    })
+    const log = t.mock.method(console, 'log', () => undefined)
+    const error = t.mock.method(console, 'error', () => undefined)
+    assert.equal(main(['libs/a'], root), 1)
+    assert.ok(log.mock.calls.some(call => String(call.arguments[0]).includes('tsconfig.lib.json')))
+    assert.ok(error.mock.calls.some(call => String(call.arguments[0]).includes('libs/a/loose.ts')))
+  })
+
+  void it('spawns git from GIT_EXECUTABLE only when it is an absolute path that exists', () => {
+    const git = gitExecutable()
+    assert.equal(gitExecutable({ GIT_EXECUTABLE: git }), git)
+    assert.throws(() => gitExecutable({ GIT_EXECUTABLE: 'git' }), /absolute path/)
+    assert.throws(() => gitExecutable({ GIT_EXECUTABLE: join(tmpdir(), 'no-git') }), /absolute/)
   })
 })
