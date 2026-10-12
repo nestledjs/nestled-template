@@ -5,23 +5,26 @@
   "implicitDependencies": ["api"],
   "targets": {
     "e2e": {
-      "executor": "@nx/vitest:test",
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
       "outputs": [
-        "{workspaceRoot}/coverage/{e2eProjectRoot}",
-        "{workspaceRoot}/test-results/{e2eProjectRoot}"
+        "{workspaceRoot}/coverage/{projectRoot}",
+        "{workspaceRoot}/test-results/{projectRoot}"
       ],
       "options": {
-        "config": "apps/api-e2e/vitest.config.mts",
-        "passWithNoTests": true
+        "command": "bash apps/api-e2e/run-tests.sh",
+        "cwd": "{workspaceRoot}"
       },
-      "dependsOn": ["api:build", "test-support"]
+      "dependsOn": ["test-support"]
     },
     "test": {
       "executor": "nx:run-commands",
+      "cache": false,
       "parallelism": false,
       "outputs": [
-        "{workspaceRoot}/coverage/{e2eProjectRoot}",
-        "{workspaceRoot}/test-results/{e2eProjectRoot}"
+        "{workspaceRoot}/coverage/{projectRoot}",
+        "{workspaceRoot}/test-results/{projectRoot}"
       ],
       "options": {
         "command": "bash apps/api-e2e/run-tests.sh",

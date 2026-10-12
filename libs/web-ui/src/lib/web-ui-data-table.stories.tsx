@@ -43,13 +43,12 @@ export const Default: Story = {
 export const WithPagination: Story = {
   args: {
     pagination: mockPagination,
-    setSkip: () => {},
+    setSkip: () => undefined,
   },
 }
 
-export const Loading: Story = {
+export const Empty: Story = {
   args: {
-    loading: true,
     data: [],
   },
 }

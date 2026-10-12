@@ -5,5 +5,16 @@
     "module": "commonjs",
     "types": ["jest", "node"]
   },
-  "include": ["jest.config.ts", "src/**/*.ts"]
+  "include": [
+    "jest.config.ts",
+    "jest.config.simple.ts",
+    "vitest.config.mts",
+    "vitest.support.config.mts",
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/support/api-process.native.spec.ts",
+    "src/support/sql-runner.spec.ts"
+  ]
 }

@@ -34,7 +34,7 @@ export const Multiline: Story = {
     const canvas = within(canvasElement)
     // Use a function matcher since the text contains a literal newline
     const text = canvas.getByText(
-      content => content.includes('Multiline') && content.includes('Text'),
+      (content: string) => content.includes('Multiline') && content.includes('Text'),
     )
     expect(text).toBeInTheDocument()
     await userEvent.click(text)

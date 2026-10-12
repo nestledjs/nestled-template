@@ -42,6 +42,8 @@ describe('BillingSettings Component', () => {
   const mockActiveOrganization = {
     id: 'org-123',
     name: 'Acme Corp',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
     _count: {
       members: 5,
     },
@@ -90,9 +92,10 @@ describe('BillingSettings Component', () => {
       hasLimit: false,
       limit: -1,
       percentUsed: 0,
+      isWithin: true,
       isAtLimit: false,
       remaining: 0,
-    } as any)
+    })
   })
 
   const renderWithRouter = () => {
@@ -469,6 +472,7 @@ describe('BillingSettings Component', () => {
             hasLimit: true,
             limit: 10,
             percentUsed: 50,
+            isWithin: true,
             isAtLimit: false,
             remaining: 5,
           }
@@ -477,6 +481,7 @@ describe('BillingSettings Component', () => {
           hasLimit: false,
           limit: -1,
           percentUsed: 0,
+          isWithin: true,
           isAtLimit: false,
           remaining: 0,
         }
@@ -494,6 +499,7 @@ describe('BillingSettings Component', () => {
             hasLimit: true,
             limit: 10,
             percentUsed: 50,
+            isWithin: true,
             isAtLimit: false,
             remaining: 5,
           }
@@ -502,6 +508,7 @@ describe('BillingSettings Component', () => {
           hasLimit: false,
           limit: -1,
           percentUsed: 0,
+          isWithin: true,
           isAtLimit: false,
           remaining: 0,
         }
@@ -520,6 +527,7 @@ describe('BillingSettings Component', () => {
             hasLimit: true,
             limit: -1,
             percentUsed: 0,
+            isWithin: true,
             isAtLimit: false,
             remaining: 0,
           }
@@ -528,6 +536,7 @@ describe('BillingSettings Component', () => {
           hasLimit: false,
           limit: -1,
           percentUsed: 0,
+          isWithin: true,
           isAtLimit: false,
           remaining: 0,
         }
@@ -545,6 +554,7 @@ describe('BillingSettings Component', () => {
             hasLimit: true,
             limit: 10,
             percentUsed: 85,
+            isWithin: true,
             isAtLimit: false,
             remaining: 1,
           }
@@ -553,6 +563,7 @@ describe('BillingSettings Component', () => {
           hasLimit: false,
           limit: -1,
           percentUsed: 0,
+          isWithin: true,
           isAtLimit: false,
           remaining: 0,
         }
@@ -570,6 +581,7 @@ describe('BillingSettings Component', () => {
             hasLimit: true,
             limit: 10,
             percentUsed: 100,
+            isWithin: false,
             isAtLimit: true,
             remaining: 0,
           }
@@ -578,6 +590,7 @@ describe('BillingSettings Component', () => {
           hasLimit: false,
           limit: -1,
           percentUsed: 0,
+          isWithin: true,
           isAtLimit: false,
           remaining: 0,
         }
@@ -595,6 +608,7 @@ describe('BillingSettings Component', () => {
             hasLimit: true,
             limit: 100,
             percentUsed: 25,
+            isWithin: true,
             isAtLimit: false,
             remaining: 75,
           }
@@ -603,6 +617,7 @@ describe('BillingSettings Component', () => {
           hasLimit: false,
           limit: -1,
           percentUsed: 0,
+          isWithin: true,
           isAtLimit: false,
           remaining: 0,
         }

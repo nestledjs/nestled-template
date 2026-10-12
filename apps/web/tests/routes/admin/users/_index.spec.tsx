@@ -542,7 +542,9 @@ describe('Admin Users Management Page', () => {
       await user.click(emulateButton)
 
       await waitFor(() => {
-        const dialog = screen.getByText(/You are about to emulate:/).closest('div[class*="fixed"]')
+        const dialog = screen
+          .getByText(/You are about to emulate:/)
+          .closest<HTMLElement>('div[class*="fixed"]')
         expect(dialog).toBeInTheDocument()
         expect(within(dialog!).getByText('john@example.com')).toBeInTheDocument()
       })
@@ -752,7 +754,7 @@ describe('Admin Users Management Page', () => {
       await user.click(viewButton)
 
       await waitFor(() => {
-        const modal = screen.getByText('User Details').closest('div[class*="fixed"]')
+        const modal = screen.getByText('User Details').closest<HTMLElement>('div[class*="fixed"]')
         expect(modal).toBeInTheDocument()
         expect(within(modal!).getByText('John Doe')).toBeInTheDocument()
         expect(within(modal!).getByText('user-1')).toBeInTheDocument()

@@ -42,9 +42,9 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
 
 vi.mock('@nestledjs/forms-core', () => ({
   FormFieldClass: {
-    content: (key: string, options: unknown) => ({ key, ...options }),
-    email: (key: string, options: unknown) => ({ key, ...options }),
-    text: (key: string, options: unknown) => ({ key, ...options }),
+    content: (key: string, options: object) => ({ key, ...options }),
+    email: (key: string, options: object) => ({ key, ...options }),
+    text: (key: string, options: object) => ({ key, ...options }),
   },
 }))
 

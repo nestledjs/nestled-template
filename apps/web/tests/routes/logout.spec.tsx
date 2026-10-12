@@ -42,7 +42,7 @@ function createLogoutRender() {
     },
     {
       path: '/login',
-      element: <div data-testid="login-page">Login Page</div>,
+      Component: () => <div data-testid="login-page">Login Page</div>,
     },
   ])
 

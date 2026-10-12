@@ -1,36 +1,53 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 
-const testDatabaseUrl =
-  process.env.TEST_DATABASE_URL ||
-  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
+const workspaceRoot = resolve(__dirname, '../../../..')
+const sqlRunner = resolve(__dirname, 'sql-runner.mjs')
 
 /**
- * Run one statement against the test database and return its unaligned, tuples-only output.
- * Values are passed as psql variables (`:'name'` in the statement), never interpolated.
+ * The test database URL: TEST_DATABASE_URL when set, otherwise what `scripts/test-db.sh url` resolves
+ * from the repo-root .env. The shell runners ask the same script, so a direct Vitest run and a
+ * wrapped one reach the same database, and a clone on another port block needs no edit here.
  */
-export function sql(statement: string, variables: Record<string, string> = {}): string {
-  const url = new URL(testDatabaseUrl)
-  const args = [
-    '-U',
-    url.username || 'postgres',
-    '-h',
-    url.hostname || 'localhost',
-    '-p',
-    url.port || '5432',
-    '-d',
-    url.pathname.slice(1).split('?')[0],
-    '-v',
-    'ON_ERROR_STOP=1',
-    '-At',
-  ]
-  for (const [name, value] of Object.entries(variables)) {
-    args.push('-v', `${name}=${value}`)
+export function resolveTestDatabaseUrl(): string {
+  if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL
+  const resolved = spawnSync('bash', [resolve(workspaceRoot, 'scripts/test-db.sh'), 'url'], {
+    cwd: workspaceRoot,
+    encoding: 'utf8',
+  })
+  const url = resolved.status === 0 ? resolved.stdout.trim() : ''
+  if (!url) {
+    throw new Error(
+      'TEST_DATABASE_URL is not set and `scripts/test-db.sh url` could not resolve it' +
+        `${resolved.error ? ` (${resolved.error.message})` : ''}. Set TEST_DATABASE_URL.`,
+    )
   }
-  return execFileSync('psql', args, {
-    input: statement,
-    env: { ...process.env, PGPASSWORD: url.password || 'postgres' },
+  return url
+}
+
+export const testDatabaseUrl = resolveTestDatabaseUrl()
+
+/**
+ * Run SQL against a database with the `pg` client and return the rows as `psql -At` prints them
+ * (columns joined by `|`, one row per line). Values are passed as `:'name'` variables, quoted as
+ * literals, never interpolated. Statements run one at a time with autocommit; the first error throws.
+ */
+export function runSql(
+  url: string,
+  statement: string,
+  variables: Record<string, string> = {},
+  timeout?: number,
+): string {
+  return execFileSync(process.execPath, [sqlRunner], {
+    input: JSON.stringify({ url, statement, variables }),
     stdio: ['pipe', 'pipe', 'pipe'],
+    timeout,
   })
     .toString()
     .trim()
+}
+
+/** Run one statement, or a script, against the test database. See runSql. */
+export function sql(statement: string, variables: Record<string, string> = {}): string {
+  return runSql(testDatabaseUrl, statement, variables)
 }

@@ -98,7 +98,11 @@ describe('table utils', () => {
     expect(renderValue({ slug: 'launch-plan' })).toBe('launch-plan')
     expect(renderValue({ custom: 'value' })).toBe('{"custom":"value"}')
     expect(renderValue(Symbol('ready'))).toBe('ready')
-    expect(renderValue(function namedHelper() {})).toBe('namedHelper')
+    expect(
+      renderValue(function namedHelper() {
+        // Only the name is read.
+      }),
+    ).toBe('namedHelper')
   })
 
   it('formats dotted and camelCase field names for labels', () => {

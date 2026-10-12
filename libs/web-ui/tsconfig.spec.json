@@ -2,6 +2,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "../../dist/out-tsc",
+    // vitest.config.mts imports @storybook/addon-vitest, whose types are reachable only through
+    // package `exports`. Vite/Vitest resolve modules as a bundler does, so check them that way.
+    "moduleResolution": "bundler",
     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
   },
   "include": [
@@ -17,6 +20,8 @@
     "src/**/*.spec.js",
     "src/**/*.test.jsx",
     "src/**/*.spec.jsx",
-    "src/**/*.d.ts"
-  ]
+    "src/**/*.d.ts",
+    "setupTests.ts"
+  ],
+  "exclude": ["node_modules"]
 }

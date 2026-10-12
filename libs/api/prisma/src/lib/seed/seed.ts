@@ -76,14 +76,14 @@ async function reconnectOrgRolePermissions(prisma: PrismaClient): Promise<number
 
 function isDuplicateDisplayNameError(error: unknown): boolean {
   const errorRecord = isRecord(error) ? error : {}
-  const errorMeta = isRecord(errorRecord.meta) ? errorRecord.meta : {}
-  const isPrismaError = errorRecord.code === 'P2002'
+  const errorMeta = isRecord(errorRecord['meta']) ? errorRecord['meta'] : {}
+  const isPrismaError = errorRecord['code'] === 'P2002'
 
   return (
     isPrismaError &&
-    (valueIncludes(errorMeta.target, 'displayName') ||
-      valueIncludes(errorRecord.message, 'displayName') ||
-      valueIncludes(errorMeta.driverAdapterError, 'UniqueConstraintViolation'))
+    (valueIncludes(errorMeta['target'], 'displayName') ||
+      valueIncludes(errorRecord['message'], 'displayName') ||
+      valueIncludes(errorMeta['driverAdapterError'], 'UniqueConstraintViolation'))
   )
 }
 

@@ -1,21 +1,38 @@
-import type { ChildProcess } from 'node:child_process'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { killApiProcessTree, registerApiProcessCleanup } from './api-process'
+import { spawnSync, type ChildProcess } from 'node:child_process'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
 import globalTeardown from './global-teardown'
+
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawnSync: vi.fn(() => {
+      throw new Error('unexpected spawnSync')
+    }),
+  }
+})
 
 const originalPlatform = process.platform
 const originalExitCode = process.exitCode
 const setPlatform = (value: string) => Object.defineProperty(process, 'platform', { value })
 const disposers: (() => void)[] = []
+// Every test signals a made-up PID through mocks. Pin POSIX unless a test opts into Windows, so a
+// run on Windows never sends a real taskkill to whatever process holds that PID.
+beforeEach(() => setPlatform('darwin'))
 afterEach(() => {
   disposers.splice(0).forEach(dispose => dispose())
   vi.restoreAllMocks()
+  vi.mocked(spawnSync).mockReset()
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   process.exitCode = originalExitCode
   setPlatform(originalPlatform)
 })
 const child = () => ({ pid: 43210, kill: vi.fn(() => true) }) as unknown as ChildProcess
 const signalError = (code: string) => Object.assign(new Error(code), { code })
+const taskkillResult = (status: number | null, stderr = '', error?: Error) =>
+  ({ status, stdout: '', stderr, error }) as unknown as ReturnType<typeof spawnSync>
 
 describe('API process cleanup', () => {
   it.each(['EPERM', 'EINVAL'])(
@@ -64,11 +81,52 @@ describe('API process cleanup', () => {
     expect(kill).toHaveBeenLastCalledWith(43210, 'SIGKILL')
   })
 
-  it('uses the launcher fallback on Windows', () => {
+  it('spawns the launcher so its whole tree can be stopped', () => {
+    setPlatform('darwin')
+    expect(ownedProcessOptions()).toEqual({ detached: true, shell: false })
     setPlatform('win32')
-    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
-    expect(killApiProcessTree(child())).toBe('process')
-    expect(kill).toHaveBeenCalledExactlyOnceWith(43210, 'SIGKILL')
+    expect(ownedProcessOptions()).toEqual({ detached: false, shell: true })
+  })
+
+  it('stops the launcher and its descendants with taskkill on Windows', () => {
+    setPlatform('win32')
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    const kill = vi.spyOn(process, 'kill')
+    vi.mocked(spawnSync).mockReturnValue(taskkillResult(0))
+    const api = child()
+    expect(killApiProcessTree(api)).toBe('tree')
+    expect(spawnSync).toHaveBeenCalledExactlyOnceWith(
+      'C:\\Windows\\System32\\taskkill.exe',
+      ['/PID', '43210', '/T', '/F'],
+      expect.objectContaining({ windowsHide: true }),
+    )
+    expect(kill).not.toHaveBeenCalled()
+    expect(api.kill).not.toHaveBeenCalled()
+  })
+
+  it('reports a Windows launcher taskkill cannot find as already stopped', () => {
+    setPlatform('win32')
+    vi.mocked(spawnSync).mockReturnValue(taskkillResult(128, 'ERROR: not found'))
+    expect(killApiProcessTree(child())).toBe('already-stopped')
+  })
+
+  it('does not run taskkill against a reaped Windows launcher', () => {
+    setPlatform('win32')
+    expect(killApiProcessTree(Object.assign(child(), { exitCode: 1 }))).toBe('already-stopped')
+    expect(spawnSync).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a taskkill failure', taskkillResult(1, 'ERROR: Access is denied.'), /exit status 1.*denied/],
+    ['a missing taskkill', taskkillResult(null, '', signalError('ENOENT')), /ENOENT/],
+  ])('throws on %s on Windows and keeps the exit fallback', (_, result, message) => {
+    setPlatform('win32')
+    vi.mocked(spawnSync).mockReturnValue(result)
+    const api = child()
+    const before = process.listenerCount('exit')
+    disposers.push(registerApiProcessCleanup(api))
+    expect(() => killApiProcessTree(api)).toThrow(message)
+    expect(process.listenerCount('exit')).toBe(before + 1)
   })
 
   it('handles absent or already-dead children', () => {

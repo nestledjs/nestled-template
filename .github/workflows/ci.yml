@@ -14,6 +14,30 @@ permissions:
   pull-requests: read
 
 jobs:
+  # Native Windows has no process groups: e2e teardown stops the API's launcher and descendants
+  # with taskkill. These tests start a real launcher and descendant and check both stop.
+  windows-process-cleanup:
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.1
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Test API process cleanup on Windows
+        run: pnpm exec vitest run --config apps/api-e2e/vitest.support.config.mts src/support/api-process
+
   main:
     runs-on: ubuntu-latest
     env:
@@ -105,15 +129,21 @@ jobs:
       # Prepend any command with "nx-cloud record --" to record its logs to Nx Cloud
       # - run: pnpm exec nx-cloud record -- echo Hello World
       # Nx Affected runs only tasks affected by the changes in this PR/commit. Learn more: https://nx.dev/ci/features/affected
+      # `lint` is every project's ESLint target (nx.json names the inferred target `lint`). It used
+      # to be inferred as `eslint:lint`, so this step and `pnpm lint` reached one project.
       - run: pnpm exec nx affected -t lint build
+
+      - name: Test the typecheck runner
+        run: node --test scripts/typecheck-project.spec.mjs
 
       # run-many, not `nx run web:typecheck`: `nx affected -t build` above compiles the API through
       # webpack, which does not enforce strict. A passing build was never a passing typecheck, and
       # for the API no typecheck ran at all.
       #
-      # Unscoped: this covers every project with a typecheck target, including the ones Nx infers
-      # from a tsconfig.lib.json. Keep it that way — a scoped list silently stops covering new
-      # projects as they are added.
+      # Unscoped: every project with a tsconfig.json gets a typecheck target from
+      # tools/nx-plugins/typecheck.js, which checks all of its configs (lib/app, spec, storybook) and
+      # fails when a config checks nothing or a tracked source is in no config. Keep it unscoped — a
+      # scoped list silently stops covering new projects as they are added.
       - run: pnpm exec nx run-many -t typecheck
 
       - name: Run tests with coverage

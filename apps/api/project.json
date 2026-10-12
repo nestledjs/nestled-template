@@ -21,14 +21,16 @@
       "dependsOn": ["api-prisma:generate"],
       "cache": true,
       "inputs": [
-        "production",
+        "default",
         "^production",
+        "{workspaceRoot}/tsconfig.base.json",
+        "{workspaceRoot}/scripts/typecheck-project.mjs",
         {
           "externalDependencies": ["typescript", "prisma", "@prisma/client"]
         }
       ],
       "options": {
-        "command": "tsc -p apps/api/tsconfig.typecheck.json"
+        "command": "node scripts/typecheck-project.mjs apps/api tsconfig.typecheck.json"
       }
     },
     "serve": {

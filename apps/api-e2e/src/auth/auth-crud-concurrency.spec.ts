@@ -3,11 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import pg from 'pg'
 import { TestHelpers, type TestUser } from '../support/test-helpers'
-import { sql } from '../support/test-db'
+import { sql, testDatabaseUrl as connectionString } from '../support/test-db'
 
-const connectionString =
-  process.env.TEST_DATABASE_URL ||
-  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
 const primaryId = (user: TestUser) =>
   sql(`SELECT id FROM "Email" WHERE "userId" = :'userId' AND "primary";`, { userId: user.id })
 

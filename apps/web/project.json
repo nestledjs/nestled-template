@@ -20,8 +20,10 @@
       "dependsOn": ["typegen"],
       "cache": true,
       "inputs": [
-        "production",
+        "default",
         "^production",
+        "{workspaceRoot}/tsconfig.base.json",
+        "{workspaceRoot}/scripts/typecheck-project.mjs",
         {
           "externalDependencies": [
             "typescript",
@@ -34,8 +36,7 @@
         }
       ],
       "options": {
-        "command": "tsc -p tsconfig.app.json --noEmit",
-        "cwd": "apps/web"
+        "command": "node scripts/typecheck-project.mjs apps/web"
       }
     },
     "clean": {

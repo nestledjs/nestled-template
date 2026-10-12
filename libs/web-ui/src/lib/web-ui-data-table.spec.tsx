@@ -54,7 +54,7 @@ describe('WebUiDataTable', () => {
     // copyToClipboard awaits navigator.clipboard.writeText and then sets state, so the
     // update lands on a later microtask. Flush it inside act() to avoid a "not wrapped in
     // act(...)" warning — the click itself already self-flushes, so it stays outside act().
-    await act(async () => {})
+    await act(async () => undefined)
 
     fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))

@@ -49,8 +49,8 @@ vi.mock('@nestled-template/web', () => ({
 
 vi.mock('@nestledjs/forms-core', () => ({
   FormFieldClass: {
-    button: (key: string, options: unknown) => ({ key, ...options }),
-    text: (key: string, options: unknown) => ({ key, ...options }),
+    button: (key: string, options: object) => ({ key, ...options }),
+    text: (key: string, options: object) => ({ key, ...options }),
   },
 }))
 
