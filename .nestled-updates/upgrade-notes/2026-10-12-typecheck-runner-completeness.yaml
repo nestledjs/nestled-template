@@ -1,0 +1,48 @@
+id: 2026-10-12-typecheck-runner-completeness
+title: Typecheck runner reports every error in one run, and test tooling passes static analysis
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  Make scripts/typecheck-project.mjs report everything in one run. When tracked files are in no
+  checked config, it still compiles every config and then lists the uncovered files, failing on
+  either; it used to stop at the coverage check, so type errors in covered files stayed hidden
+  until the coverage was fixed. A tracked file deleted from the working tree, staged or not, is no
+  longer reported as uncovered.
+
+  Spawn git from an absolute path rather than through PATH. gitExecutable() returns
+  GIT_EXECUTABLE when it is an absolute path to an existing file, otherwise the first standard
+  install location that exists (/opt/homebrew/bin, /usr/local/bin and /usr/bin on macOS,
+  /usr/bin, /usr/local/bin and /bin on Linux, Program Files\Git\cmd on Windows), and fails with a
+  message naming GIT_EXECUTABLE when none does. The runner spec uses it for its fixtures too, and
+  marks its node:test describe/it calls with `void`.
+
+  Give the e2e SQL runner (apps/api-e2e/src/support/sql-runner.mjs) a 5 second connection timeout,
+  so an unreachable test database fails promptly, as the probes it replaced did.
+why: >
+  A first typecheck run on a project with uncovered files reported only those files; the type
+  errors behind them appeared only after the coverage was fixed, so one run understated the work.
+  Deleting a source file without staging it made the runner report the deleted file as uncovered.
+  Static analysis that includes scripts/ (the template's own sonar-project.properties does) flagged
+  the runner for resolving git through PATH and its spec for floating node:test promises, failing
+  the quality gate. The pg client has no connect timeout by default, so an e2e run against an
+  unreachable database hung until the operating system gave up on the connection.
+affectedPaths:
+  - scripts/typecheck-project.mjs
+  - scripts/typecheck-project.spec.mjs
+  - apps/api-e2e/src/support/sql-runner.mjs
+verification:
+  - node --test scripts/typecheck-project.spec.mjs
+  - pnpm exec nx run-many -t typecheck --parallel=1 --skip-nx-cache
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+agentHints:
+  - >
+    If the project already made these fixes locally, compare and keep one version; the template's
+    differs only in the GIT_EXECUTABLE override and the compile-before-report order.
+  - >
+    If CI runs on a host where git is installed outside the standard locations, set
+    GIT_EXECUTABLE to its absolute path in that job.
+  - >
+    After this change a typecheck run may show more errors than the last one did: these were
+    hidden behind the coverage report, not introduced. Fix them as the 2026-10-10 note describes.

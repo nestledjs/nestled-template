@@ -118,13 +118,42 @@ export function inspectConfigs(ts, configPaths) {
   })
 }
 
+// git is spawned by absolute path, never looked up through PATH. GIT_EXECUTABLE names it on a host
+// that installs git somewhere else.
+const gitExecutableCandidates = {
+  darwin: ['/opt/homebrew/bin/git', '/usr/local/bin/git', '/usr/bin/git'],
+  win32: [
+    String.raw`C:\Program Files\Git\cmd\git.exe`,
+    String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
+  ],
+}[process.platform] ?? ['/usr/bin/git', '/usr/local/bin/git', '/bin/git']
+
+export function gitExecutable(env = process.env) {
+  const configured = env.GIT_EXECUTABLE
+  if (configured) {
+    if (!isAbsolute(configured) || !existsSync(configured)) {
+      throw new Error(`GIT_EXECUTABLE must be an absolute path to git; got ${configured}`)
+    }
+    return configured
+  }
+  const executable = gitExecutableCandidates.find(candidate => existsSync(candidate))
+  if (!executable) {
+    throw new Error(
+      `git was not found at any of ${gitExecutableCandidates.join(', ')}. Set GIT_EXECUTABLE.`,
+    )
+  }
+  return executable
+}
+
 // Tracked TypeScript sources under the project that none of its checked configs compile. A test
-// folder no config includes (apps/web/tests) is otherwise invisible to every typecheck.
+// folder no config includes (apps/web/tests) is otherwise invisible to every typecheck. A tracked
+// file deleted from the working tree is not a source any more, staged or not.
 export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
-  const listed = spawnSync('git', ['ls-files', '-z', '--', relative(workspaceRoot, projectRoot)], {
-    cwd: workspaceRoot,
-    encoding: 'utf8',
-  })
+  const listed = spawnSync(
+    gitExecutable(),
+    ['ls-files', '-z', '--', relative(workspaceRoot, projectRoot)],
+    { cwd: workspaceRoot, encoding: 'utf8' },
+  )
   if (listed.status !== 0) {
     throw new Error(`git ls-files failed: ${listed.stderr || listed.error?.message}`)
   }
@@ -145,7 +174,7 @@ export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
   return files
     .map(file => resolve(workspaceRoot, file))
     .filter(file => /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file))
-    .filter(file => !covered.has(file))
+    .filter(file => !covered.has(file) && existsSync(file))
     .filter(file => ![...nestedProjects].some(nested => isInside(nested, file)))
 }
 
@@ -181,7 +210,16 @@ export function main(argv, workspaceRoot = process.cwd()) {
   if (broken.length > 0) {
     return 1
   }
+  // Uncovered files fail the run, but every config is still compiled, so one run reports both the
+  // coverage gap and every type error in what is covered.
   const uncovered = uncoveredFiles(workspaceRoot, projectRoot, inspected)
+  let failed = 0
+  for (const config of inspected) {
+    console.log(`→ ${display(config.configPath)} (${config.fileCount} files)`)
+    if (runTsc(workspaceRoot, config.configPath) !== 0) {
+      failed += 1
+    }
+  }
   if (uncovered.length > 0) {
     console.error(
       `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
@@ -190,17 +228,8 @@ export function main(argv, workspaceRoot = process.cwd()) {
       console.error(`    ${display(file)}`)
     }
     console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
-    return 1
   }
-
-  let failed = 0
-  for (const config of inspected) {
-    console.log(`→ ${display(config.configPath)} (${config.fileCount} files)`)
-    if (runTsc(workspaceRoot, config.configPath) !== 0) {
-      failed += 1
-    }
-  }
-  return failed > 0 ? 1 : 0
+  return failed > 0 || uncovered.length > 0 ? 1 : 0
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

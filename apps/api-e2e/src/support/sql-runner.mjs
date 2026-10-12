@@ -92,7 +92,9 @@ const serverText = { getTypeParser: () => (/** @type {string} */ value) => value
  * @returns {Promise<string>}
  */
 export async function runSql({ url, statement, variables = {} }) {
-  const client = new pg.Client({ connectionString: url })
+  // Bounded like the probes it replaced: an unreachable database fails in seconds, not at the OS
+  // TCP timeout.
+  const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 5000 })
   await client.connect()
   try {
     const lines = []
