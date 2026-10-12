@@ -14,7 +14,9 @@ intent: >
   references inside the project (lib/app, spec, storybook) one at a time with `tsc --noEmit`, and
   fails when a config resolves no files, when an `exclude` inherited through `extends` removes files
   the config's own `include` asks for, or when a tracked .ts/.tsx file under the project, build-tool
-  configs such as vite.config.ts included, is in no checked config. Projects whose
+  configs such as vite.config.ts included, is in no checked config. Only a nested directory with
+  both its own project.json and tsconfig.json (one the plugin gives a target) counts as a separate
+  project; either file alone does not hide its files. Projects whose
   typecheck target is written in project.json (apps/api with tsconfig.typecheck.json, apps/web
   after typegen) call the runner too, keeping their dependsOn. Typecheck inputs use `default`, not
   `production`, so spec edits invalidate the cache.

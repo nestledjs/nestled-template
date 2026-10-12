@@ -110,10 +110,19 @@ describe('typecheck-project', () => {
       'apps/w/vite.config.ts': 'export default {}\n',
       'apps/w/nested/tsconfig.json': { files: [] },
       'apps/w/nested/other.ts': 'export const other = 1\n',
+      'apps/w/inner/project.json': {},
+      'apps/w/inner/tsconfig.json': { files: [] },
+      'apps/w/inner/own.ts': 'export const own = 1\n',
+      'apps/w/bare/project.json': {},
+      'apps/w/bare/bare.ts': 'export const bare = 1\n',
     })
     const projectRoot = join(root, 'apps/w')
     const inspected = inspectConfigs(ts, resolveProjectConfigs(ts, projectRoot))
+    // inner/ has project.json and tsconfig.json, so the plugin gives it its own typecheck. bare/
+    // (project.json only) and nested/ (tsconfig.json only) get none, so their files are uncovered.
     assert.deepEqual(uncoveredFiles(root, projectRoot, inspected), [
+      join(projectRoot, 'bare/bare.ts'),
+      join(projectRoot, 'nested/other.ts'),
       join(projectRoot, 'tests/main.spec.ts'),
       join(projectRoot, 'vite.config.ts'),
     ])
