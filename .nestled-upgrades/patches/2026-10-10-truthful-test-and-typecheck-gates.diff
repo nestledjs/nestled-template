@@ -1,0 +1,3527 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 9db350f..3fdafe5 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -14,6 +14,30 @@ permissions:
+   pull-requests: read
+ 
+ jobs:
++  # Native Windows has no process groups: e2e teardown stops the API's launcher and descendants
++  # with taskkill. These tests start a real launcher and descendant and check both stop.
++  windows-process-cleanup:
++    runs-on: windows-latest
++    env:
++      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
++    steps:
++      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
++
++      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
++        name: Install pnpm
++        with:
++          run_install: false
++
++      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
++        with:
++          node-version: 22.22.1
++          cache: 'pnpm'
++
++      - run: pnpm install --frozen-lockfile --ignore-scripts
++
++      - name: Test API process cleanup on Windows
++        run: pnpm exec vitest run --config apps/api-e2e/vitest.support.config.mts src/support/api-process
++
+   main:
+     runs-on: ubuntu-latest
+     env:
+@@ -105,15 +129,21 @@ jobs:
+       # Prepend any command with "nx-cloud record --" to record its logs to Nx Cloud
+       # - run: pnpm exec nx-cloud record -- echo Hello World
+       # Nx Affected runs only tasks affected by the changes in this PR/commit. Learn more: https://nx.dev/ci/features/affected
++      # `lint` is every project's ESLint target (nx.json names the inferred target `lint`). It used
++      # to be inferred as `eslint:lint`, so this step and `pnpm lint` reached one project.
+       - run: pnpm exec nx affected -t lint build
+ 
++      - name: Test the typecheck runner
++        run: node --test scripts/typecheck-project.spec.mjs
++
+       # run-many, not `nx run web:typecheck`: `nx affected -t build` above compiles the API through
+       # webpack, which does not enforce strict. A passing build was never a passing typecheck, and
+       # for the API no typecheck ran at all.
+       #
+-      # Unscoped: this covers every project with a typecheck target, including the ones Nx infers
+-      # from a tsconfig.lib.json. Keep it that way — a scoped list silently stops covering new
+-      # projects as they are added.
++      # Unscoped: every project with a tsconfig.json gets a typecheck target from
++      # tools/nx-plugins/typecheck.js, which checks all of its configs (lib/app, spec, storybook) and
++      # fails when a config checks nothing or a tracked source is in no config. Keep it unscoped — a
++      # scoped list silently stops covering new projects as they are added.
+       - run: pnpm exec nx run-many -t typecheck
+ 
+       - name: Run tests with coverage
+diff --git a/.gitignore b/.gitignore
+index 0b1b45e..6f28365 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -35,6 +35,7 @@ yarn-error.log
+ testem.log
+ /typings
+ .temp-review
++__pycache__/
+ 
+ # System Files
+ .DS_Store
+diff --git a/.nestled-updates/upgrade-notes/2026-10-10-truthful-test-and-typecheck-gates.yaml b/.nestled-updates/upgrade-notes/2026-10-10-truthful-test-and-typecheck-gates.yaml
+new file mode 100644
+index 0000000..515ad12
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-10-truthful-test-and-typecheck-gates.yaml
+@@ -0,0 +1,207 @@
++id: 2026-10-10-truthful-test-and-typecheck-gates
++title: Typecheck, lint and e2e gates that check what they claim
++priority: normal
++area: infra
++type: correctness
++delivery: code-patch
++intent: >
++  Make every project's typecheck cover all of its TypeScript and fail when it checks nothing, and
++  make lint reach every project.
++
++  Add scripts/typecheck-project.mjs and the local Nx plugin tools/nx-plugins/typecheck.js, and
++  list the plugin last in nx.json plugins so its `typecheck` target replaces the inferred
++  `tsc --noEmit -p tsconfig.lib.json`. The runner checks every config a project's tsconfig.json
++  references inside the project (lib/app, spec, storybook) one at a time with `tsc --noEmit`, and
++  fails when a config resolves no files, when an `exclude` inherited through `extends` removes files
++  the config's own `include` asks for, or when a tracked .ts/.tsx file under the project, build-tool
++  configs such as vite.config.ts included, is in no checked config. Only a nested directory with
++  both its own project.json and tsconfig.json (one the plugin gives a target) counts as a separate
++  project; either file alone does not hide its files. Projects whose
++  typecheck target is written in project.json (apps/api with tsconfig.typecheck.json, apps/web
++  after typegen) call the runner too, keeping their dependsOn. Typecheck inputs use `default`, not
++  `production`, so spec edits invalidate the cache.
++
++  Give every tsconfig.spec.json its own `exclude`. The workspace base config excludes
++  `**/*.spec.ts`, `**/*.test.ts` and their tsx forms, and a spec config that inherits that exclude
++  checks no spec at all. Add spec configs (and the solution-config reference) for libraries whose
++  specs had none, and include test folders outside src (for example apps/web/tests) in the spec
++  config that runs them. Then fix the type errors this exposes in tests, stories and tool configs
++  rather than excluding files or loosening strict.
++
++  Remove `@react-router/dev` and `@types/node` from apps/web/package.json devDependencies; the root
++  manifest declares both. The app-level copies resolved a second Vite with different peers, whose
++  Plugin type is nominally distinct from the root Vite's, so apps/web/vite.config.ts could not
++  typecheck.
++
++  Delete libs/api/core/data-access/src/lib/models/chapter-stats.ts and user-stats.ts. Nothing
++  imports them and no index exports them; they surfaced once libs/api code had its own typecheck.
++
++  Widen the web-ui social-links `member` prop from `Partial<User>` to `SocialLinkMember` (Partial<User>
++  plus the facebook/twitter/linkedin/instagram/youtube fields the component reads), and fix stories
++  that passed props their components do not have: the data-table `Loading` story becomes `Empty`,
++  and the simple-list-item stories become `NotClickable`/`Clickable` with the `Selected` story
++  removed.
++
++  Rename the inferred ESLint target from `eslint:lint` to `lint` in nx.json so `pnpm lint` and CI's
++  `nx affected -t lint` reach every project, and fix the lint errors this exposes. Point the root
++  `pre-commit:lint` script at `lint` too (it ran `nx affected --target eslint`, a target no project
++  has, so it linted nothing), and chain its format step with `&&` rather than `&`, which ran the
++  formatter in the background and dropped its exit status.
++
++  Make the API e2e result mean that the suite ran and passed. `api-e2e:e2e` runs the same wrapper as
++  `api-e2e:test` (apps/api-e2e/run-tests.sh) instead of the Vitest executor, and both targets set
++  `cache: false`. The wrapper reports PASSED only when Vitest exits 0, its summary counts no failure,
++  and at least one test passed, and prints that count; a run with no test file, or with every test
++  skipped, fails. Remove the wrapper's force-kill fallback, which accepted a non-zero exit when a
++  "Cleanup complete" marker appeared: teardown no longer calls process.exit and nothing prints the
++  marker. The e2e Vitest config sets `passWithNoTests: false` and the verbose reporter so the log
++  names every test, and drops both `dangerouslyIgnoreUnhandledErrors` and the onUnhandledError
++  filter for process.exit errors, so every unhandled error fails the run. Remove SKIP_API_CHECK and the
++  `__SKIP_E2E_TESTS__` flag: global setup set it on globalThis, which never reaches the forked test
++  worker, so the option produced a run of failures rather than a skip.
++
++  Resolve the test database URL in one place. apps/api-e2e/src/support/test-db.ts exports
++  testDatabaseUrl (TEST_DATABASE_URL, else `scripts/test-db.sh url`, the same answer the shell
++  runners use); global setup, test setup and specs import it instead of each carrying the template's
++  hard-coded fallback URL. Replace psql with the pg client: test-db.ts runs SQL through
++  apps/api-e2e/src/support/sql-runner.mjs, which keeps `sql()` synchronous and its `psql -At`
++  output (`|`-joined columns, server text values, one row per line, `:'name'` variables quoted as
++  literals, statements run one at a time with autocommit). Global setup's database probe and
++  disposable-database reset, and the wrapper's probe, use it too; the wrapper probe now uses the
++  URL's own credentials rather than postgres:postgres. Add @types/pg to devDependencies.
++
++  Stop the e2e API's whole process tree on native Windows. apps/api-e2e/src/support/api-process.ts
++  exports ownedProcessOptions(): POSIX keeps the detached process group; Windows keeps the launcher
++  attached and runs it through a shell, because pnpm is a .cmd shim that Node does not run without
++  one (global setup's `pnpm prisma migrate deploy` gets the same shell). killApiProcessTree runs
++  `%SystemRoot%\System32\taskkill.exe /PID <launcher> /T /F` on Windows and returns `tree`, treats
++  taskkill's not-found status (128) as already stopped, never runs it for a launcher Node has
++  already reaped, and throws on any other status, so teardown fails and the exit fallback retries.
++  Teardown logs the tree it stopped. Add process-tree-fixture.mjs and api-process.native.spec.ts,
++  which start a real launcher and descendant and check both stop on teardown, on SIGINT/SIGTERM
++  cancellation and from the exit fallback, plus (on Windows) that a taskkill failure is reported;
++  run them in test-support and in a windows-latest CI job.
++why: >
++  Spec files were never typechecked in any project: each spec config inherited the base
++  `**/*.spec.ts` exclude, so `tsc -p tsconfig.spec.json` compiled only a vite config or nothing.
++  `api-e2e:typecheck` ran `tsc -p` on a solution config with `files: []` and `include: []`, which
++  compiles zero files and exits 0. Libraries without a Vite or React Router plugin target (every
++  libs/api library) had no typecheck at all, so code only they contained was never checked, and
++  `pnpm lint`/CI lint ran ESLint for one project because the others' target was named
++  `eslint:lint`. Each of these reported green without checking the code. Enabling the checks found
++  real defects, including an e2e port wait passing an option the helper ignores.
++
++  The e2e gate had the same shape. `api-e2e:e2e` inherited `cache: true` and `passWithNoTests: true`
++  from the Vitest target defaults, so a green result could be a replay or a run of nothing, and
++  through Nx the log showed only a summary. `dangerouslyIgnoreUnhandledErrors` let any unhandled
++  error pass. The wrapper's probe used fixed postgres:postgres credentials: against CI's prisma
++  login it always failed and started a container the tests never used. test-db.ts needed a psql
++  binary that not every machine has, and three files hard-coded the template's own test URL, so a
++  clone on another port block reached the wrong database when run outside the wrappers.
++
++  On native Windows, teardown and cancellation killed only the pnpm launcher; the Nx and API
++  processes it started survived and kept the e2e port, so the next run attached to, or failed
++  against, a stale API. Setup could not start the API there at all: spawning `pnpm` without a shell
++  fails on Windows.
++affectedPaths:
++  - nx.json
++  - scripts/typecheck-project.mjs
++  - scripts/typecheck-project.spec.mjs
++  - tools/nx-plugins/typecheck.js
++  - apps/api/project.json
++  - apps/web/project.json
++  - apps/web/package.json
++  - pnpm-lock.yaml
++  - apps/web/tsconfig.spec.json
++  - apps/api-e2e/tsconfig.spec.json
++  - apps/api-e2e/src/support/global-setup.ts
++  - libs/**/tsconfig.json
++  - libs/**/tsconfig.spec.json
++  - libs/**/tsconfig.storybook.json
++  - libs/**/vitest.config.mts
++  - libs/web-ui/eslint.config.mjs
++  - libs/shared-components/eslint.config.mjs
++  - libs/api/prisma/src/lib/seed/seed.ts
++  - libs/api/core/data-access/src/lib/models/chapter-stats.ts
++  - libs/api/core/data-access/src/lib/models/user-stats.ts
++  - libs/web-ui/src/lib/web-ui-social-links.tsx
++  - libs/web-ui/src/lib/*.stories.tsx
++  - libs/api/prisma/src/lib/seed/diagnose-rbac.ts
++  - apps/web/tests/**
++  - apps/api-e2e/project.json
++  - apps/api-e2e/run-tests.sh
++  - apps/api-e2e/vitest.config.mts
++  - apps/api-e2e/vitest.support.config.mts
++  - apps/api-e2e/tsconfig.support.json
++  - apps/api-e2e/README.md
++  - apps/api-e2e/src/support/test-db.ts
++  - apps/api-e2e/src/support/sql-runner.mjs
++  - apps/api-e2e/src/support/sql-runner.spec.ts
++  - apps/api-e2e/src/support/e2e-runner.spec.ts
++  - apps/api-e2e/src/support/global-setup.ts
++  - apps/api-e2e/src/support/test-setup.ts
++  - apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
++  - apps/api-e2e/src/support/api-process.ts
++  - apps/api-e2e/src/support/api-process.spec.ts
++  - apps/api-e2e/src/support/api-process.native.spec.ts
++  - apps/api-e2e/src/support/process-tree-fixture.mjs
++  - apps/api-e2e/src/support/global-teardown.ts
++  - package.json
++  - .github/workflows/ci.yml
++  - AGENTS.md
++verification:
++  - node --test scripts/typecheck-project.spec.mjs
++  - pnpm exec nx run-many -t typecheck --skip-nx-cache
++  - pnpm exec nx run-many -t lint
++  - pnpm test
++  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
++  - pnpm exec nx run api-e2e:e2e
++agentHints:
++  - >
++    Expect the first run to fail with real errors in specs, stories and tool configs that were
++    never checked. Fix them in the tests and configs; change product source only where the error
++    shows the product type is wrong. Do not add @ts-ignore, broad any casts, or excludes to get green.
++  - >
++    Downstream libraries are covered automatically once the plugin is registered; any project the
++    runner reports with an uncovered file needs that file added to the config that matches how it
++    runs (lib/app, spec or storybook), or a spec config created and referenced from tsconfig.json.
++  - >
++    If CI, scripts or docs call `eslint:lint` or `--target eslint`, rename them to `lint`. A
++    project.json `lint` target still overrides the inferred one.
++  - >
++    Typecheck now runs spec configs as well, so it does more work; configs run one at a time per
++    project. If `nx run-many -t typecheck` runs out of memory on a small machine or CI runner, run it
++    with `--parallel=1`. A lower-memory typecheck follows in a later release.
++  - >
++    Vitest 4 no longer adds `test` to Vite's config type: a vitest.config that imports defineConfig
++    from 'vite' fails typecheck. Import defineConfig from 'vitest/config'. Storybook 10 packages
++    resolve only through package exports, so storybook and spec configs that load them need
++    moduleResolution bundler.
++  - >
++    If apps/web/vite.config.ts fails with two incompatible Vite Plugin types, apps/web still declares
++    its own @react-router/dev or @types/node. Remove them (keep the root versions), run pnpm install,
++    and confirm `ls node_modules/.pnpm | grep '^vite@'` shows one entry. Do not bridge it with a cast.
++  - >
++    Build-tool configs (vite.config.ts, vitest.config.mts, jest.config.ts) must sit in a checked
++    config too, normally the spec config. An unused one can be deleted instead.
++  - >
++    Template promotion and patch apply never delete files, so remove the two stats model files by
++    hand. First search the project for imports of ChapterStats or UserStats (or the file names): if
++    the project uses them, keep the files, add them to a checked config, and record the deletion as
++    not-applicable. A project with its own stories may have more stale args; fix them the same way.
++  - >
++    Specs that call psql or the pg client themselves, or that read TEST_DATABASE_URL with their own
++    fallback, should import sql and testDatabaseUrl from support/test-db instead. If a spec relied on
++    psql printing command tags (`UPDATE 1`), the pg runner prints rows only; take the rows you need.
++  - >
++    If CI or scripts set SKIP_API_CHECK=true, it never skipped anything; remove it. To skip e2e, do
++    not run the target. If CI calls `nx e2e api-e2e` and a workspace targetDefaults entry caches it,
++    the project.json `cache: false` now overrides it.
++  - >
++    A project whose wrapper differs from the template's must still refuse PASSED when the Vitest
++    summary counts any failure (this fix is in the template since 2026-10-05) or no passed test.
++  - >
++    If the project changed how global setup starts the API, keep its spawn options from
++    ownedProcessOptions() (or the same detached/shell split) so teardown can reach every descendant.
++    A project without Windows developers or CI can leave out the windows-latest job, but keep the
++    native spec in test-support: on Linux and macOS it checks the process-group path.
+diff --git a/apps/api-e2e/README.md b/apps/api-e2e/README.md
+index 762e379..d9a5bff 100644
+--- a/apps/api-e2e/README.md
++++ b/apps/api-e2e/README.md
+@@ -1,76 +1,58 @@
+ # API E2E Tests
+ 
+-End-to-end tests for the Nestled Template API.
++End-to-end tests for the Nestled Template API. They start the API against a disposable test
++database and exercise it over HTTP.
+ 
+ ## Prerequisites
+ 
+-Before running E2E tests locally, you need:
+-
+-1. **PostgreSQL database** running locally (e.g., via Docker)
+-2. **TEST_DATABASE_URL** environment variable set (or use default in `.env`)
+-
+-The API server will be started automatically by the test setup.
++- Docker, for the test database container, or a PostgreSQL test database you point
++  `TEST_DATABASE_URL` at. No `psql` binary is needed: the suite talks to PostgreSQL through the `pg`
++  client.
++- Redis, as for the API itself.
+ 
+ ## Running E2E Tests
+ 
+-Simply run:
+-
+ ```bash
+-pnpm nx test api-e2e
++pnpm test:e2e               # starts the test database container, runs the suite, stops it
++pnpm nx e2e api-e2e         # runs the suite; starts the container only if the database is unreachable
++pnpm nx e2e api-e2e -- src/auth/auth-generation.spec.ts   # one file
+ ```
+ 
+-The test setup will:
+-
+-1. Check if PostgreSQL test database is accessible
+-2. Sync the database schema
+-3. Seed required data
+-4. Start the API server if not already running
+-5. Run tests
+-6. Stop the API server if tests started it
++`api-e2e:e2e` and `api-e2e:test` run the same wrapper, `run-tests.sh`, and are never cached: every
++green result comes from a run that just happened. The wrapper prints every test by name and reports
++PASSED, with the number of tests that passed, only when Vitest's summary has no failure and at least
++one test passed. A filter that matches nothing, or a run in which every test is skipped, fails.
+ 
+ ## How It Works
+ 
+-### Test Setup Flow
+-
+-1. **Global Setup** (`src/support/global-setup.ts`):
+-   - Checks if database is accessible
+-   - Syncs database schema with `prisma db push`
+-   - Seeds the database with required data
+-   - Waits for API server to be ready on port 3000
+-
+-2. **Test Execution**:
+-   - Tests run against the live API server
+-   - Uses axios to make HTTP requests
+-   - Tests are isolated using database transactions or cleanup
+-
+-3. **Global Teardown** (`src/support/global-teardown.ts`):
+-   - Cleans up and forces process exit
+-   - Ensures test process doesn't hang
++1. **Wrapper** (`run-tests.sh`): resolves the test database URL, probes it with its own
++   credentials, starts the test container if it is unreachable, runs Vitest and checks the summary.
++2. **Global setup** (`src/support/global-setup.ts`):
++   - applies migrations with `prisma migrate deploy`. A local test database built by `db push` alone
++     has no migration history; it is emptied and migrated from scratch.
++   - runs `prisma db push` and the seed
++   - starts the API with `nx serve api` on `E2E_API_PORT`, and refuses to run against an API it did
++     not start unless `E2E_ALLOW_EXISTING_API=1` is set
++3. **Tests** run against that API with axios. `src/support/test-db.ts` runs SQL against the test
++   database for setup and assertions.
++4. **Teardown** stops the API process tree it started: its process group on Linux and macOS, the
++   launcher and its descendants (`taskkill /T`) on Windows. Cancellation (Ctrl+C) and an exit
++   before teardown stop it the same way.
+ 
+ ### Environment Variables
+ 
+-- `TEST_DATABASE_URL` - Database URL for tests (default: `postgresql://postgres:postgres@localhost:5433/nestled_template_test`)
+-- `HOST` - API host (default: `localhost`)
+-- `PORT` - API port (default: `3000`)
+-- `SKIP_API_CHECK` - Skip E2E tests entirely (set to `'true'` to skip)
++- `TEST_DATABASE_URL`: the test database. Unset, it is what `scripts/test-db.sh url` resolves from
++  `POSTGRES_TEST_PORT` in the repo-root `.env` (default port 5433). The runners, global setup and
++  `test-db.ts` all use that same answer.
++- `E2E_API_PORT`: the port the e2e API listens on (default `3100`), kept apart from the dev `PORT`.
++- `HOST`: the API host (default `localhost`).
++- `E2E_ALLOW_EXISTING_API`: set to `1` only when you started an API on `E2E_API_PORT` against the
++  test database yourself.
+ 
+-## CI/CD
++## CI
+ 
+-E2E tests run automatically in CI with:
+-
+-- PostgreSQL 15 service container
+-- Test database pre-configured with credentials `prisma:prisma`
+-- API server automatically started by the test setup
+-- Database schema synced and seeded before tests
+-
+-The CI workflow:
+-
+-1. Starts PostgreSQL service on port 5432
+-2. Sets `TEST_DATABASE_URL` environment variable
+-3. Runs affected tests (including E2E)
+-4. E2E setup automatically starts API server with test database
+-5. Tests run against the temporary API server
+-6. Cleanup stops the API server after tests complete
++CI runs `pnpm test:coverage`, which includes `api-e2e:test`, against PostgreSQL and Redis service
++containers. `TEST_DATABASE_URL` points at the service database with its own credentials.
+ 
+ ## Test Structure
+ 
+@@ -79,59 +61,13 @@ src/
+ ├── api/           # API endpoint tests
+ ├── auth/          # Authentication tests
+ ├── security/      # Security and permissions tests
+-└── support/       # Test helpers and setup
+-    ├── factories/ # Test data factories
+-    ├── global-setup.ts
+-    ├── global-teardown.ts
+-    └── test-setup.ts
+-```
+-
+-## Writing Tests
+-
+-Example test:
+-
+-```typescript
+-import { describe, it, expect } from 'vitest'
+-import axios from 'axios'
+-
+-describe('My Feature', () => {
+-  it('should work correctly', async () => {
+-    const response = await axios.get('/api/my-endpoint')
+-
+-    expect(response.status).toBe(200)
+-    expect(response.data).toMatchObject({
+-      // expected data
+-    })
+-  })
+-})
++└── support/       # Setup, teardown, helpers and the wrapper's own tests
+ ```
+ 
+ ## Troubleshooting
+ 
+-### Tests hang after completion
+-
+-This should be fixed by the global teardown which forces process exit. If tests still hang:
+-
+-1. Check if any database connections are not being closed
+-2. Check if any timers/intervals are not being cleared
+-3. Increase the timeout in `global-teardown.ts`
+-
+-### Database connection errors
+-
+-Make sure PostgreSQL is running:
+-
+-```bash
+-# Check if PostgreSQL is running
+-pg_isready
+-
+-# Start PostgreSQL (macOS with Homebrew)
+-brew services start postgresql
+-```
+-
+-### API not found errors
+-
+-The tests will automatically start the API server if it's not running. If you see connection errors:
+-
+-1. Check that port 3000 is not in use by another process
+-2. Check API server logs in test output for startup errors
+-3. Verify `TEST_DATABASE_URL` is correct
++- **"Refusing to run e2e against an API this suite did not start"**: something already listens on
++  `E2E_API_PORT`. Stop it or choose another port.
++- **"Test database not accessible"**: check `TEST_DATABASE_URL`, or start the container with
++  `pnpm test:db:start`.
++- **"no test passed"**: the file filter matched nothing, or every test was skipped.
+diff --git a/apps/api-e2e/project.json b/apps/api-e2e/project.json
+index 2e84ac3..11b35a7 100644
+--- a/apps/api-e2e/project.json
++++ b/apps/api-e2e/project.json
+@@ -5,23 +5,26 @@
+   "implicitDependencies": ["api"],
+   "targets": {
+     "e2e": {
+-      "executor": "@nx/vitest:test",
++      "executor": "nx:run-commands",
++      "cache": false,
++      "parallelism": false,
+       "outputs": [
+-        "{workspaceRoot}/coverage/{e2eProjectRoot}",
+-        "{workspaceRoot}/test-results/{e2eProjectRoot}"
++        "{workspaceRoot}/coverage/{projectRoot}",
++        "{workspaceRoot}/test-results/{projectRoot}"
+       ],
+       "options": {
+-        "config": "apps/api-e2e/vitest.config.mts",
+-        "passWithNoTests": true
++        "command": "bash apps/api-e2e/run-tests.sh",
++        "cwd": "{workspaceRoot}"
+       },
+-      "dependsOn": ["api:build", "test-support"]
++      "dependsOn": ["test-support"]
+     },
+     "test": {
+       "executor": "nx:run-commands",
++      "cache": false,
+       "parallelism": false,
+       "outputs": [
+-        "{workspaceRoot}/coverage/{e2eProjectRoot}",
+-        "{workspaceRoot}/test-results/{e2eProjectRoot}"
++        "{workspaceRoot}/coverage/{projectRoot}",
++        "{workspaceRoot}/test-results/{projectRoot}"
+       ],
+       "options": {
+         "command": "bash apps/api-e2e/run-tests.sh",
+diff --git a/apps/api-e2e/run-tests.sh b/apps/api-e2e/run-tests.sh
+index 7969eb2..9ad26f2 100755
+--- a/apps/api-e2e/run-tests.sh
++++ b/apps/api-e2e/run-tests.sh
+@@ -1,7 +1,6 @@
+ #!/bin/bash
+-# Wrapper script for e2e tests that handles SIGKILL exit properly
+-# The tests use SIGKILL to prevent hanging, which causes a non-zero exit code
+-# but if all tests passed, we should still report success
++# Runs the API e2e suite against the test database and reports PASSED only when Vitest exited 0, its
++# summary counts no failure, and at least one test passed.
+ 
+ set +e  # Don't exit on error
+ 
+@@ -16,16 +15,14 @@ export DIRECT_URL="$TEST_DATABASE_URL"
+ # E2E's own API port so a running dev API can't be attached to; global-setup/test-setup read it.
+ export E2E_API_PORT="${E2E_API_PORT:-3100}"
+ 
+-# Probe the DB at the URL's own host/port/name — the URL is the single source of truth. Probing
+-# POSTGRES_TEST_PORT instead would mismatch a caller-supplied TEST_DATABASE_URL on a non-default port
+-# (e.g. a block-specific 5473), producing a false "not accessible" or a redundant container start.
+-_db="${TEST_DATABASE_URL#*://}"                     # strip scheme://
+-_db="${_db##*@}"                                     # strip any user:pass@
+-_db_hostport="${_db%%/*}"                            # host[:port]
+-_db_name="${_db#*/}"; _db_name="${_db_name%%[?]*}"   # dbname (drop ?query if present)
+-_db_host="${_db_hostport%%:*}"
+-_db_port="${_db_hostport##*:}"
+-[ "$_db_port" = "$_db_hostport" ] && _db_port=5432   # no explicit port in the URL
++# Probe the database with the URL itself — its host, port, credentials and name — through the
++# suite's pg runner, so no psql binary is needed. A probe with fixed postgres:postgres credentials
++# failed against any other login (CI's test database uses prisma:prisma) and started a container
++# the tests never used.
++probe_test_database() {
++  node -e 'process.stdout.write(JSON.stringify({ url: process.env.TEST_DATABASE_URL, statement: "SELECT 1" }))' |
++    node apps/api-e2e/src/support/sql-runner.mjs >/dev/null 2>&1
++}
+ 
+ TEST_DB_STARTED=false
+ 
+@@ -38,7 +35,7 @@ cleanup() {
+ 
+ trap cleanup EXIT
+ 
+-if ! PGPASSWORD=postgres psql -U postgres -h "$_db_host" -p "$_db_port" -d "$_db_name" -c "SELECT 1" >/dev/null 2>&1; then
++if ! probe_test_database; then
+   if ! docker info >/dev/null 2>&1; then
+     echo "❌ Test database is not accessible and Docker is not running"
+     echo "   Start Docker or set TEST_DATABASE_URL to an accessible test database"
+@@ -66,34 +63,31 @@ if echo "$OUTPUT" | grep -qE '^[[:space:]]*(Test Files|Tests)[[:space:]].*[0-9]+
+   SUMMARY_HAS_FAILURES=true
+ fi
+ 
+-# Check if tests actually passed by looking for success indicators
++# How many tests passed, from the summary line "Tests  3 failed | 125 passed (128)". A run in which
++# no test passed — no test matched, or every test was skipped — proves nothing, so it never reports
++# PASSED, whatever the exit code.
++PASSED_COUNT=$(echo "$OUTPUT" | grep -E '^[[:space:]]*Tests[[:space:]]' | tail -1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
++PASSED_COUNT=${PASSED_COUNT:-0}
++
+ SEPARATOR="════════════════════════════════════════════════════════════"
+ 
+-if [[ $EXIT_CODE -eq 0 ]]; then
+-  # Vitest exited cleanly — the tests passed. Trust the exit code first: a legitimate pass can exit 0
+-  # without the custom "Cleanup complete" console line reaching the captured stream, and requiring
+-  # that marker here printed a false failure banner even though the tests passed.
+-  echo ""
+-  echo "$SEPARATOR"
+-  echo "✅ E2E Tests PASSED"
+-  echo "$SEPARATOR"
+-  exit 0
+-elif [[ "$SUMMARY_HAS_FAILURES" == false ]] && \
+-   echo "$OUTPUT" | grep -q "✅ Cleanup complete - all tests passed!" && \
+-   echo "$OUTPUT" | grep -qE '^[[:space:]]*Test Files[[:space:]].*passed' && \
+-   echo "$OUTPUT" | grep -qE '^[[:space:]]*Tests[[:space:]].*passed'; then
+-  # Non-zero exit but the run completed with all tests passing: the intentional SIGKILL-to-prevent-
+-  # hanging case. The marker fallback is retained only for this.
++if [[ $EXIT_CODE -eq 0 && "$SUMMARY_HAS_FAILURES" == false && "$PASSED_COUNT" -gt 0 ]]; then
+   echo ""
+   echo "$SEPARATOR"
+-  echo "✅ E2E Tests PASSED (exit code adjusted from $EXIT_CODE to 0)"
+-  echo "   Process was force-killed to prevent hanging - this is expected"
++  echo "✅ E2E Tests PASSED ($PASSED_COUNT tests)"
+   echo "$SEPARATOR"
+   exit 0
++fi
++
++echo ""
++echo "$SEPARATOR"
++if [[ "$SUMMARY_HAS_FAILURES" == true ]]; then
++  echo "❌ E2E Tests FAILED (the summary counts a failure; Vitest exit code: $EXIT_CODE)"
++elif [[ "$PASSED_COUNT" -eq 0 ]]; then
++  echo "❌ E2E Tests FAILED: no test passed (none ran, or all were skipped; Vitest exit code: $EXIT_CODE)"
+ else
+-  echo ""
+-  echo "$SEPARATOR"
+-  echo "❌ E2E Tests FAILED (exit code: $EXIT_CODE)"
+-  echo "$SEPARATOR"
+-  exit $EXIT_CODE
++  echo "❌ E2E Tests FAILED (Vitest exit code: $EXIT_CODE)"
+ fi
++echo "$SEPARATOR"
++[[ $EXIT_CODE -ne 0 ]] && exit $EXIT_CODE
++exit 1
+diff --git a/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+index 6e69c92..efa3e5a 100644
+--- a/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
++++ b/apps/api-e2e/src/auth/auth-crud-concurrency.spec.ts
+@@ -3,11 +3,8 @@ import { randomUUID } from 'node:crypto'
+ import { setTimeout as delay } from 'node:timers/promises'
+ import pg from 'pg'
+ import { TestHelpers, type TestUser } from '../support/test-helpers'
+-import { sql } from '../support/test-db'
++import { sql, testDatabaseUrl as connectionString } from '../support/test-db'
+ 
+-const connectionString =
+-  process.env.TEST_DATABASE_URL ||
+-  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
+ const primaryId = (user: TestUser) =>
+   sql(`SELECT id FROM "Email" WHERE "userId" = :'userId' AND "primary";`, { userId: user.id })
+ 
+diff --git a/apps/api-e2e/src/support/api-process.native.spec.ts b/apps/api-e2e/src/support/api-process.native.spec.ts
+new file mode 100644
+index 0000000..c9acff4
+--- /dev/null
++++ b/apps/api-e2e/src/support/api-process.native.spec.ts
+@@ -0,0 +1,110 @@
++import { spawn } from 'node:child_process'
++import { once } from 'node:events'
++import { resolve } from 'node:path'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
++
++// Real processes, no mocks: a launcher and a descendant started the way global setup starts the
++// API, stopped the way teardown and cancellation stop it. CI runs this on Linux and native Windows.
++
++const fixture = resolve(__dirname, 'process-tree-fixture.mjs')
++const started: number[] = []
++const disposers: (() => void)[] = []
++
++function isRunning(pid: number) {
++  try {
++    process.kill(pid, 0)
++    return true
++  } catch (error) {
++    return (error as NodeJS.ErrnoException).code === 'EPERM'
++  }
++}
++
++async function waitUntilStopped(pids: number[]) {
++  const deadline = Date.now() + 4_000
++  while (pids.some(isRunning) && Date.now() < deadline)
++    await new Promise(done => setTimeout(done, 50))
++  return pids.filter(isRunning)
++}
++
++async function startTree() {
++  // Spawned with global setup's own options. On Windows that means through a shell, so the
++  // launcher's PID is cmd.exe's and the fixture runs below it, as pnpm's .cmd shim does. The command
++  // is one quoted string there, so paths with spaces survive the shell.
++  const options = ownedProcessOptions()
++  const stdio: ['ignore', 'pipe', 'inherit'] = ['ignore', 'pipe', 'inherit']
++  const launcher = options.shell
++    ? spawn(`"${process.execPath}" "${fixture}"`, { stdio, ...options })
++    : spawn(process.execPath, [fixture], { stdio, ...options })
++  const [data] = await once(launcher.stdout, 'data')
++  const fixturePids = JSON.parse(String(data)) as { launcher: number; descendant: number }
++  if (!launcher.pid) throw new Error('the launcher did not start')
++  const pids = [...new Set([launcher.pid, fixturePids.launcher, fixturePids.descendant])]
++  // Through a shell the tree is three processes deep; without one the launcher is the fixture.
++  expect(pids).toHaveLength(options.shell ? 3 : 2)
++  started.push(...pids)
++  expect(pids.every(isRunning)).toBe(true)
++  return { launcher, pids }
++}
++
++afterEach(() => {
++  disposers.splice(0).forEach(dispose => dispose())
++  vi.restoreAllMocks()
++  vi.unstubAllEnvs()
++  for (const pid of started.splice(0).filter(isRunning)) process.kill(pid, 'SIGKILL')
++})
++
++describe('API process tree cleanup on this platform', () => {
++  const expected = process.platform === 'win32' ? 'tree' : 'group'
++
++  it('stops the launcher and its descendant during ordinary teardown', async () => {
++    const { launcher, pids } = await startTree()
++    expect(killApiProcessTree(launcher)).toBe(expected)
++    expect(await waitUntilStopped(pids)).toEqual([])
++  })
++
++  it.each([
++    ['SIGINT', 130],
++    ['SIGTERM', 143],
++  ] as const)('stops both on %s cancellation', async (signal, code) => {
++    const { launcher, pids } = await startTree()
++    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
++    const before = process.listeners(signal)
++    disposers.push(registerApiProcessCleanup(launcher))
++    // Only our handler: a real signal would also reach the test runner's own handlers.
++    process.listeners(signal).find(item => !before.includes(item))?.(signal)
++    expect(exit).toHaveBeenCalledWith(code)
++    expect(await waitUntilStopped(pids)).toEqual([])
++  })
++
++  it('stops both from the exit fallback when teardown never ran', async () => {
++    const { launcher, pids } = await startTree()
++    const before = process.listeners('exit')
++    disposers.push(registerApiProcessCleanup(launcher))
++    process.listeners('exit').find(item => !before.includes(item))?.(0)
++    expect(await waitUntilStopped(pids)).toEqual([])
++  })
++
++  it.runIf(process.platform === 'win32')(
++    'reports a taskkill failure and leaves the exit fallback to retry',
++    async () => {
++      const { launcher, pids } = await startTree()
++      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
++      const originalExitCode = process.exitCode
++      const before = process.listeners('exit')
++      disposers.push(registerApiProcessCleanup(launcher))
++      vi.stubEnv('SystemRoot', resolve(__dirname, 'no-such-system-root'))
++      expect(() => killApiProcessTree(launcher)).toThrow(/ENOENT/)
++      expect(pids.every(isRunning)).toBe(true)
++      const fallback = process.listeners('exit').find(item => !before.includes(item))
++      expect(fallback).toBeDefined()
++      fallback?.(0)
++      expect(log).toHaveBeenCalledWith('Failed to stop owned API process:', expect.any(Error))
++      expect(process.exitCode).toBe(1)
++      process.exitCode = originalExitCode
++      vi.unstubAllEnvs()
++      expect(killApiProcessTree(launcher)).toBe('tree')
++      expect(await waitUntilStopped(pids)).toEqual([])
++    },
++  )
++})
+diff --git a/apps/api-e2e/src/support/api-process.spec.ts b/apps/api-e2e/src/support/api-process.spec.ts
+index 868c324..9432758 100644
+--- a/apps/api-e2e/src/support/api-process.spec.ts
++++ b/apps/api-e2e/src/support/api-process.spec.ts
+@@ -1,21 +1,38 @@
+-import type { ChildProcess } from 'node:child_process'
+-import { afterEach, describe, expect, it, vi } from 'vitest'
+-import { killApiProcessTree, registerApiProcessCleanup } from './api-process'
++import { spawnSync, type ChildProcess } from 'node:child_process'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
+ import globalTeardown from './global-teardown'
+ 
++vi.mock('node:child_process', async importOriginal => {
++  const actual = await importOriginal<typeof import('node:child_process')>()
++  return {
++    ...actual,
++    spawnSync: vi.fn(() => {
++      throw new Error('unexpected spawnSync')
++    }),
++  }
++})
++
+ const originalPlatform = process.platform
+ const originalExitCode = process.exitCode
+ const setPlatform = (value: string) => Object.defineProperty(process, 'platform', { value })
+ const disposers: (() => void)[] = []
++// Every test signals a made-up PID through mocks. Pin POSIX unless a test opts into Windows, so a
++// run on Windows never sends a real taskkill to whatever process holds that PID.
++beforeEach(() => setPlatform('darwin'))
+ afterEach(() => {
+   disposers.splice(0).forEach(dispose => dispose())
+   vi.restoreAllMocks()
++  vi.mocked(spawnSync).mockReset()
+   vi.unstubAllGlobals()
++  vi.unstubAllEnvs()
+   process.exitCode = originalExitCode
+   setPlatform(originalPlatform)
+ })
+ const child = () => ({ pid: 43210, kill: vi.fn(() => true) }) as unknown as ChildProcess
+ const signalError = (code: string) => Object.assign(new Error(code), { code })
++const taskkillResult = (status: number | null, stderr = '', error?: Error) =>
++  ({ status, stdout: '', stderr, error }) as unknown as ReturnType<typeof spawnSync>
+ 
+ describe('API process cleanup', () => {
+   it.each(['EPERM', 'EINVAL'])(
+@@ -64,11 +81,52 @@ describe('API process cleanup', () => {
+     expect(kill).toHaveBeenLastCalledWith(43210, 'SIGKILL')
+   })
+ 
+-  it('uses the launcher fallback on Windows', () => {
++  it('spawns the launcher so its whole tree can be stopped', () => {
++    setPlatform('darwin')
++    expect(ownedProcessOptions()).toEqual({ detached: true, shell: false })
+     setPlatform('win32')
+-    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+-    expect(killApiProcessTree(child())).toBe('process')
+-    expect(kill).toHaveBeenCalledExactlyOnceWith(43210, 'SIGKILL')
++    expect(ownedProcessOptions()).toEqual({ detached: false, shell: true })
++  })
++
++  it('stops the launcher and its descendants with taskkill on Windows', () => {
++    setPlatform('win32')
++    vi.stubEnv('SystemRoot', 'C:\\Windows')
++    const kill = vi.spyOn(process, 'kill')
++    vi.mocked(spawnSync).mockReturnValue(taskkillResult(0))
++    const api = child()
++    expect(killApiProcessTree(api)).toBe('tree')
++    expect(spawnSync).toHaveBeenCalledExactlyOnceWith(
++      'C:\\Windows\\System32\\taskkill.exe',
++      ['/PID', '43210', '/T', '/F'],
++      expect.objectContaining({ windowsHide: true }),
++    )
++    expect(kill).not.toHaveBeenCalled()
++    expect(api.kill).not.toHaveBeenCalled()
++  })
++
++  it('reports a Windows launcher taskkill cannot find as already stopped', () => {
++    setPlatform('win32')
++    vi.mocked(spawnSync).mockReturnValue(taskkillResult(128, 'ERROR: not found'))
++    expect(killApiProcessTree(child())).toBe('already-stopped')
++  })
++
++  it('does not run taskkill against a reaped Windows launcher', () => {
++    setPlatform('win32')
++    expect(killApiProcessTree(Object.assign(child(), { exitCode: 1 }))).toBe('already-stopped')
++    expect(spawnSync).not.toHaveBeenCalled()
++  })
++
++  it.each([
++    ['a taskkill failure', taskkillResult(1, 'ERROR: Access is denied.'), /exit status 1.*denied/],
++    ['a missing taskkill', taskkillResult(null, '', signalError('ENOENT')), /ENOENT/],
++  ])('throws on %s on Windows and keeps the exit fallback', (_, result, message) => {
++    setPlatform('win32')
++    vi.mocked(spawnSync).mockReturnValue(result)
++    const api = child()
++    const before = process.listenerCount('exit')
++    disposers.push(registerApiProcessCleanup(api))
++    expect(() => killApiProcessTree(api)).toThrow(message)
++    expect(process.listenerCount('exit')).toBe(before + 1)
+   })
+ 
+   it('handles absent or already-dead children', () => {
+diff --git a/apps/api-e2e/src/support/api-process.ts b/apps/api-e2e/src/support/api-process.ts
+index 053c3e0..9696329 100644
+--- a/apps/api-e2e/src/support/api-process.ts
++++ b/apps/api-e2e/src/support/api-process.ts
+@@ -1,6 +1,21 @@
+-import type { ChildProcess } from 'node:child_process'
++import { spawnSync, type ChildProcess } from 'node:child_process'
++import { win32 } from 'node:path'
+ 
+-export type ApiStopResult = 'group' | 'process' | 'already-stopped'
++export type ApiStopResult = 'group' | 'tree' | 'process' | 'already-stopped'
++
++/**
++ * Spawn options that let killApiProcessTree reach every descendant. On POSIX the launcher leads its
++ * own process group. On Windows there are no process groups to signal; the launcher's PID is the
++ * root of the tree taskkill walks, so it stays attached. pnpm is a .cmd shim there, which Node only
++ * runs through a shell.
++ */
++export function ownedProcessOptions() {
++  const windows = process.platform === 'win32'
++  return { detached: !windows, shell: windows }
++}
++
++// taskkill's exit status when the PID no longer exists.
++const TASKKILL_NOT_FOUND = 128
+ 
+ const registrations = new WeakMap<ChildProcess, () => void>()
+ 
+@@ -15,15 +30,40 @@ function sendKill(pid: number): boolean {
+   }
+ }
+ 
++/**
++ * Force-stop a Windows process and every descendant. taskkill finds descendants by parent PID, so
++ * the launcher must still be running: a descendant whose launcher already exited is unreachable.
++ */
++function taskkillTree(pid: number): boolean {
++  // Resolved from SystemRoot, not PATH, so a taskkill earlier on PATH is never run instead.
++  const taskkill = win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe')
++  const result = spawnSync(taskkill, ['/PID', String(pid), '/T', '/F'], {
++    encoding: 'utf8',
++    windowsHide: true,
++  })
++  if (result.error) throw result.error
++  if (result.status === 0) return true
++  if (result.status === TASKKILL_NOT_FOUND) return false
++  const detail = `${result.stderr ?? ''}${result.stdout ?? ''}`.trim()
++  throw new Error(
++    `taskkill could not stop process tree ${pid} (exit status ${result.status})` +
++      (detail ? `: ${detail}` : ''),
++  )
++}
++
+ function stopOwnedProcess(apiProcess: ChildProcess, pid: number): ApiStopResult {
+   if (process.platform !== 'win32' && sendKill(-pid)) return 'group'
+   // A reaped launcher must not be signaled again: its PID could have been reused.
+   if (apiProcess.exitCode != null || apiProcess.signalCode != null) return 'already-stopped'
++  if (process.platform === 'win32') return taskkillTree(pid) ? 'tree' : 'already-stopped'
+   // process.kill reports syscall errors directly; ChildProcess.kill can instead return false.
+   return sendKill(pid) ? 'process' : 'already-stopped'
+ }
+ 
+-/** Stop the API process group started by e2e setup, including pnpm and Nx descendants. */
++/**
++ * Stop the API process tree started by e2e setup, including pnpm and Nx descendants: the process
++ * group on POSIX, the launcher's process tree on Windows.
++ */
+ export function killApiProcessTree(apiProcess: ChildProcess | null | undefined): ApiStopResult {
+   if (!apiProcess) return 'already-stopped'
+   const result = apiProcess.pid ? stopOwnedProcess(apiProcess, apiProcess.pid) : 'already-stopped'
+diff --git a/apps/api-e2e/src/support/e2e-runner.spec.ts b/apps/api-e2e/src/support/e2e-runner.spec.ts
+index 085014a..d3647a5 100644
+--- a/apps/api-e2e/src/support/e2e-runner.spec.ts
++++ b/apps/api-e2e/src/support/e2e-runner.spec.ts
+@@ -58,3 +58,93 @@ describe('e2e shell runner', () => {
+     expect(result.stdout).not.toContain('All tests passed')
+   })
+ })
++
++const runWrapper = (vitestOutput: string, vitestExit: number, probeExit = 0) => {
++  const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
++  roots.push(root)
++  mkdirSync(join(root, 'scripts'))
++  mkdirSync(join(root, 'bin'))
++  mkdirSync(join(root, 'apps/api-e2e/src/support'), { recursive: true })
++  copyFileSync(resolve(__dirname, '../../run-tests.sh'), join(root, 'apps/api-e2e/run-tests.sh'))
++  writeFileSync(
++    join(root, 'scripts/test-db.sh'),
++    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
++    { mode: 0o755 },
++  )
++  // Stands in for the pg runner: records the probe request and answers with the probe's result.
++  writeFileSync(
++    join(root, 'apps/api-e2e/src/support/sql-runner.mjs'),
++    "import { readFileSync, writeFileSync } from 'node:fs'\n" +
++      `writeFileSync('probe', readFileSync(0))\nprocess.exit(${probeExit})\n`,
++  )
++  writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
++  writeFileSync(join(root, 'vitest-output'), vitestOutput)
++  writeFileSync(join(root, 'bin/npx'), `#!/bin/bash\ncat vitest-output\nexit ${vitestExit}\n`, {
++    mode: 0o755,
++  })
++  const result = spawnSync('bash', ['apps/api-e2e/run-tests.sh'], {
++    cwd: root,
++    env: {
++      ...process.env,
++      PATH: `${root}/bin:${process.env.PATH}`,
++      TEST_DATABASE_URL: 'postgresql://prisma:secret@db.local:5599/app_test',
++    },
++    encoding: 'utf8',
++  })
++  const read = (file: string) => {
++    try {
++      return readFileSync(join(root, file), 'utf8')
++    } catch {
++      return ''
++    }
++  }
++  return { result, probe: read('probe'), dbCalls: read('db-calls') }
++}
++
++const summary = (tests: string) => `\n Test Files  2 passed (2)\n      Tests  ${tests}\n`
++
++describe('api-e2e test wrapper', () => {
++  it('reports a pass with the number of tests that passed', () => {
++    const { result } = runWrapper(summary('5 passed (5)'), 0)
++    expect(result.status).toBe(0)
++    expect(result.stdout).toContain('E2E Tests PASSED (5 tests)')
++  })
++  it('fails a run in which every test was skipped', () => {
++    const { result } = runWrapper(summary('4 skipped (4)'), 0)
++    expect(result.status).toBe(1)
++    expect(result.stdout).toContain('no test passed')
++    expect(result.stdout).not.toContain('PASSED')
++  })
++  it('fails a run that found no test files', () => {
++    const { result } = runWrapper('No test files found, exiting with code 1\n', 1)
++    expect(result.status).toBe(1)
++    expect(result.stdout).not.toContain('PASSED')
++  })
++  it('fails a run whose summary counts a failure', () => {
++    const { result } = runWrapper(summary('1 failed | 4 passed (5)'), 1)
++    expect(result.status).toBe(1)
++    expect(result.stdout).toContain('E2E Tests FAILED')
++  })
++  it('fails a zero exit whose summary counts a failure', () => {
++    const { result } = runWrapper(summary('1 failed | 4 passed (5)'), 0)
++    expect(result.status).toBe(1)
++    expect(result.stdout).toContain('the summary counts a failure')
++    expect(result.stdout).not.toContain('PASSED')
++  })
++  it('fails a non-zero exit even when the summary shows only passes', () => {
++    const { result } = runWrapper(summary('5 passed (5)'), 137)
++    expect(result.status).toBe(137)
++    expect(result.stdout).not.toContain('PASSED')
++  })
++  it('probes the database with the URL and its own credentials, starting no container', () => {
++    const { probe, dbCalls } = runWrapper(summary('5 passed (5)'), 0)
++    expect(JSON.parse(probe)).toEqual({
++      url: 'postgresql://prisma:secret@db.local:5599/app_test',
++      statement: 'SELECT 1',
++    })
++    expect(dbCalls).not.toContain('start')
++  })
++  it('starts the test database when the probe fails', () => {
++    expect(runWrapper(summary('5 passed (5)'), 0, 1).dbCalls).toContain('start')
++  })
++})
+diff --git a/apps/api-e2e/src/support/global-setup.ts b/apps/api-e2e/src/support/global-setup.ts
+index 3a57521..d5da4c4 100644
+--- a/apps/api-e2e/src/support/global-setup.ts
++++ b/apps/api-e2e/src/support/global-setup.ts
+@@ -1,13 +1,13 @@
+ import { waitForPortOpen } from '@nx/node/utils'
+ import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+-import { createConnection } from 'node:net'
+-import { killApiProcessTree, registerApiProcessCleanup } from './api-process'
++import { createConnection, type Socket } from 'node:net'
++import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
+ import globalTeardown from './global-teardown'
++import { runSql, testDatabaseUrl } from './test-db'
+ 
+ type E2EGlobalState = typeof globalThis & {
+   __API_PROCESS__?: ChildProcess | null
+   __WE_STARTED_API__?: boolean
+-  __SKIP_E2E_TESTS__?: boolean
+   __TEARDOWN_MESSAGE__?: string
+ }
+ 
+@@ -16,21 +16,9 @@ const e2eGlobal = globalThis as E2EGlobalState
+ /**
+  * Check if database is accessible
+  */
+-async function isDatabaseAccessible(databaseUrl: string): Promise<boolean> {
++function isDatabaseAccessible(databaseUrl: string): boolean {
+   try {
+-    // Parse the URL to extract credentials for direct psql test
+-    const url = new URL(databaseUrl)
+-    const username = url.username || 'prisma'
+-    const password = url.password || 'prisma'
+-    const host = url.hostname || 'localhost'
+-    const port = url.port || '5432'
+-    const database = url.pathname.slice(1) // Remove leading slash
+-
+-    execSync(`psql -U ${username} -h ${host} -p ${port} -d ${database} -c "SELECT 1"`, {
+-      env: { ...process.env, PGPASSWORD: password },
+-      stdio: 'pipe',
+-      timeout: 2000,
+-    })
++    runSql(databaseUrl, 'SELECT 1', {}, 10000)
+     return true
+   } catch {
+     return false
+@@ -82,6 +70,8 @@ function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
+     cwd: projectRoot,
+     env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
+     encoding: 'utf8',
++    // pnpm is a .cmd shim on Windows, which Node only runs through a shell.
++    shell: process.platform === 'win32',
+   })
+   process.stdout.write(result.stdout ?? '')
+   process.stderr.write(result.stderr ?? '')
+@@ -99,22 +89,7 @@ function resetTestDatabase(testDatabaseUrl: string) {
+         'database (e.g. nestled_template_test) is reset by the e2e setup.',
+     )
+   }
+-  const url = new URL(testDatabaseUrl)
+-  const database = decodeURIComponent(url.pathname.slice(1))
+-  execSync(
+-    'psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE" -c "CREATE SCHEMA public"',
+-    {
+-      env: {
+-        ...process.env,
+-        PGHOST: url.hostname,
+-        PGPORT: url.port || '5432',
+-        PGUSER: decodeURIComponent(url.username) || 'postgres',
+-        PGPASSWORD: decodeURIComponent(url.password),
+-        PGDATABASE: database,
+-      },
+-      stdio: 'inherit',
+-    },
+-  )
++  runSql(testDatabaseUrl, 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;')
+ }
+ 
+ /**
+@@ -166,8 +141,8 @@ async function startApiServer(
+       NODE_ENV: 'test',
+     },
+     stdio: ['ignore', 'pipe', 'pipe'],
+-    // Its own process group, so teardown can stop `nx serve` and the API it starts, not just pnpm.
+-    detached: process.platform !== 'win32',
++    // So teardown can stop `nx serve` and the API it starts, not just pnpm.
++    ...ownedProcessOptions(),
+   })
+ 
+   registerApiProcessCleanup(apiProcess)
+@@ -194,12 +169,15 @@ async function startApiServer(
+   })
+ 
+   apiProcess.unref()
+-  apiProcess.stdout?.unref()
+-  apiProcess.stderr?.unref()
++  // Piped stdio streams are sockets at runtime; ChildProcess types them as plain Readable.
++  ;(apiProcess.stdout as Socket | null)?.unref()
++  ;(apiProcess.stderr as Socket | null)?.unref()
+ 
+   console.log(`⏳ Waiting for API to start...`)
+   try {
+-    await waitForPortOpen(port, { host, timeout: 45000 })
++    // waitForPortOpen has no `timeout` option; it retries. A `timeout: 45000` here was ignored, so
++    // the wait was always the 120 x 1s default — keep that proven budget and state it.
++    await waitForPortOpen(port, { host, retries: 120, retryDelay: 1000 })
+   } catch (portError) {
+     console.error('❌ API server did not start within timeout')
+     console.error('Last output from API server:')
+@@ -231,10 +209,7 @@ module.exports = async function globalSetup() {
+   process.env.SIGNUP_THROTTLE_ENABLED = 'false'
+   process.env.SIGNUP_REQUIRE_MX = 'false'
+ 
+-  // Always use TEST_DATABASE_URL for E2E tests
+-  const testDatabaseUrl =
+-    process.env.TEST_DATABASE_URL ||
+-    'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
++  // Always use the test database (TEST_DATABASE_URL, or what scripts/test-db.sh resolves from .env)
+   process.env.DATABASE_URL = testDatabaseUrl
+   // prisma.config.ts prefers DIRECT_URL — pin it too, or db push / seed below (and any Prisma call)
+   // could run against the dev database instead of the isolated test DB.
+@@ -244,24 +219,16 @@ module.exports = async function globalSetup() {
+   // E2E's own port, not the normal PORT from .env — a running dev API on that port would otherwise
+   // make waitForPortOpen false-pass and the harness attach to the wrong server.
+   const port = process.env.E2E_API_PORT ? Number(process.env.E2E_API_PORT) : 3100
+-  const skipApiCheck = process.env.SKIP_API_CHECK === 'true'
+ 
+   // Track if we started the API (so teardown knows to stop it)
+   let apiProcess: ChildProcess | null = null
+   e2eGlobal.__API_PROCESS__ = null
+   e2eGlobal.__WE_STARTED_API__ = false
+ 
+-  if (skipApiCheck) {
+-    console.log('⏭️  Skipping E2E tests (SKIP_API_CHECK=true)')
+-    e2eGlobal.__SKIP_E2E_TESTS__ = true
+-    e2eGlobal.__TEARDOWN_MESSAGE__ = '\n✨ Tearing down E2E tests...\n'
+-    return
+-  }
+-
+   console.log(`📊 Using test database: ${testDatabaseUrl}`)
+ 
+   // Check if database is accessible
+-  const dbAccessible = await isDatabaseAccessible(testDatabaseUrl)
++  const dbAccessible = isDatabaseAccessible(testDatabaseUrl)
+ 
+   if (!dbAccessible) {
+     console.error('❌ Test database is not accessible')
+@@ -342,7 +309,6 @@ module.exports = async function globalSetup() {
+       '   E2E_ALLOW_EXISTING_API=1 was set — you have asserted it uses the test database.',
+     )
+     e2eGlobal.__WE_STARTED_API__ = false
+-    e2eGlobal.__SKIP_E2E_TESTS__ = false
+   } else {
+     // Start the API server with the test database
+     console.log(`🚀 Starting API server with test database on ${host}:${port}...`)
+@@ -353,7 +319,6 @@ module.exports = async function globalSetup() {
+       // Store process reference for teardown
+       e2eGlobal.__API_PROCESS__ = apiProcess
+       e2eGlobal.__WE_STARTED_API__ = true
+-      e2eGlobal.__SKIP_E2E_TESTS__ = false
+     } catch (error) {
+       console.error('❌ Failed to start API server')
+       killApiProcessTree(apiProcess)
+diff --git a/apps/api-e2e/src/support/global-teardown.ts b/apps/api-e2e/src/support/global-teardown.ts
+index be3abab..e0157dd 100644
+--- a/apps/api-e2e/src/support/global-teardown.ts
++++ b/apps/api-e2e/src/support/global-teardown.ts
+@@ -42,17 +42,18 @@ export default async function globalTeardown() {
+         // Ignore stream cleanup errors
+       }
+ 
+-      // Kill the API server's process group (pnpm, nx serve and the API itself)
++      // Kill the API server's process tree (pnpm, nx serve and the API itself)
+       const result = killApiProcessTree(apiProcess)
+       if (result === 'group') console.log(`   Killed API server process group ${apiProcess.pid}`)
++      else if (result === 'tree') console.log(`   Killed API server process tree ${apiProcess.pid}`)
+       else if (result === 'process')
+         console.log(`   Killed API launcher ${apiProcess.pid} (process-group cleanup unavailable)`)
+-      else console.log('   API launcher was already stopped; no process group was killed')
++      else console.log('   API launcher was already stopped; no process tree was killed')
+ 
+       // Brief wait for kill to complete
+       await new Promise(resolve => setTimeout(resolve, 100))
+ 
+-      if (result === 'group') console.log('✅ API server process group stopped')
++      if (result === 'group' || result === 'tree') console.log('✅ API server process tree stopped')
+     } catch (error) {
+       console.warn('⚠️  Error stopping API server:', error)
+       throw error
+diff --git a/apps/api-e2e/src/support/process-tree-fixture.mjs b/apps/api-e2e/src/support/process-tree-fixture.mjs
+new file mode 100644
+index 0000000..902cd70
+--- /dev/null
++++ b/apps/api-e2e/src/support/process-tree-fixture.mjs
+@@ -0,0 +1,24 @@
++// @ts-check
++// A stand-in for `pnpm nx serve api`: a launcher that starts one descendant and keeps running. The
++// launcher prints `{"launcher": <pid>, "descendant": <pid>}` once both are up.
++import { spawn } from 'node:child_process'
++import { fileURLToPath } from 'node:url'
++
++const keepAlive = () => setInterval(() => undefined, 60_000)
++
++if (process.argv[2] === 'descendant') {
++  keepAlive()
++  process.stdout.write(`${process.pid}\n`)
++} else {
++  const descendant = spawn(process.execPath, [fileURLToPath(import.meta.url), 'descendant'], {
++    stdio: ['ignore', 'pipe', 'inherit'],
++  })
++  keepAlive()
++  descendant.stdout.once('data', data => {
++    const output = JSON.stringify({
++      launcher: process.pid,
++      descendant: Number(String(data).trim()),
++    })
++    process.stdout.write(`${output}\n`)
++  })
++}
+diff --git a/apps/api-e2e/src/support/sql-runner.mjs b/apps/api-e2e/src/support/sql-runner.mjs
+new file mode 100644
+index 0000000..41d57cb
+--- /dev/null
++++ b/apps/api-e2e/src/support/sql-runner.mjs
+@@ -0,0 +1,121 @@
++// @ts-check
++// Runs SQL against a PostgreSQL URL with the `pg` client and prints the rows the way `psql -At` does
++// (columns joined by `|`, NULL as empty, one row per line, the server's text form of every value), so
++// the e2e helpers need no psql binary. Statements are split at top-level semicolons and run one at a
++// time with autocommit, as psql runs a script; the first error stops the script.
++//
++// Usage: node sql-runner.mjs < {"url": "...", "statement": "...", "variables": {"name": "value"}}
++// The request arrives on stdin, so the URL and its password never appear in a process listing.
++// `:'name'` in the statement is replaced by the variable's value as a quoted literal.
++
++import pg from 'pg'
++import { readFileSync } from 'node:fs'
++import { pathToFileURL } from 'node:url'
++
++/**
++ * Split a script into statements, replacing `:'name'` with `quote(variables[name])`. Quoted strings,
++ * quoted identifiers, dollar-quoted bodies and comments are copied untouched.
++ *
++ * @param {string} script
++ * @param {Record<string, string>} variables
++ * @param {(value: string) => string} quote
++ * @returns {string[]}
++ */
++export function prepareStatements(script, variables, quote) {
++  const statements = []
++  let current = ''
++  let i = 0
++  const copyUntil = (/** @type {number} */ end) => {
++    current += script.slice(i, end)
++    i = end
++  }
++  while (i < script.length) {
++    const rest = script.slice(i)
++    if (rest.startsWith('--')) {
++      const end = script.indexOf('\n', i)
++      copyUntil(end === -1 ? script.length : end)
++    } else if (rest.startsWith('/*')) {
++      const end = script.indexOf('*/', i + 2)
++      copyUntil(end === -1 ? script.length : end + 2)
++    } else if (rest[0] === "'" || rest[0] === '"') {
++      let end = i + 1
++      while (end < script.length) {
++        if (script[end] === rest[0]) {
++          if (script[end + 1] !== rest[0]) break
++          end++
++        }
++        end++
++      }
++      copyUntil(Math.min(end + 1, script.length))
++    } else if (/^\$([A-Za-z_]\w*)?\$/.test(rest)) {
++      const tag = /^\$([A-Za-z_]\w*)?\$/.exec(rest)?.[0] ?? '$$'
++      const end = script.indexOf(tag, i + tag.length)
++      copyUntil(end === -1 ? script.length : end + tag.length)
++    } else if (rest.startsWith('::')) {
++      copyUntil(i + 2)
++    } else if (/^:'[A-Za-z_]\w*'/.test(rest)) {
++      const reference = /^:'([A-Za-z_]\w*)'/.exec(rest)
++      const name = reference?.[1] ?? ''
++      if (!Object.prototype.hasOwnProperty.call(variables, name))
++        throw new Error(`SQL variable :'${name}' was not supplied`)
++      current += quote(variables[name])
++      i += name.length + 3
++    } else if (rest[0] === ';') {
++      statements.push(current.trim())
++      current = ''
++      i++
++    } else {
++      copyUntil(i + 1)
++    }
++  }
++  statements.push(current.trim())
++  return statements.filter(Boolean)
++}
++
++/**
++ * Format a result as `psql -At` prints it. A statement that returns no columns (UPDATE without
++ * RETURNING, DDL) prints nothing; psql's command tags are not reproduced.
++ *
++ * @param {{ fields: unknown[], rows: unknown[][] }} result
++ * @returns {string[]}
++ */
++export function formatRows(result) {
++  if (result.fields.length === 0) return []
++  return result.rows.map(row => row.map(value => (value === null ? '' : String(value))).join('|'))
++}
++
++// Every value as the server's text, as psql prints it: no Date, number or JSON conversion.
++const serverText = { getTypeParser: () => (/** @type {string} */ value) => value }
++
++/**
++ * @param {{ url: string, statement: string, variables?: Record<string, string> }} request
++ * @returns {Promise<string>}
++ */
++export async function runSql({ url, statement, variables = {} }) {
++  const client = new pg.Client({ connectionString: url })
++  await client.connect()
++  try {
++    const lines = []
++    for (const text of prepareStatements(statement, variables, value =>
++      client.escapeLiteral(value),
++    )) {
++      const result = await client.query({ text, rowMode: 'array', types: serverText })
++      lines.push(...formatRows(result))
++    }
++    return lines.join('\n')
++  } finally {
++    await client.end()
++  }
++}
++
++if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
++  Promise.resolve()
++    .then(() => runSql(JSON.parse(readFileSync(0, 'utf8'))))
++    .then(
++      output => process.stdout.write(output),
++      error => {
++        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
++        process.exitCode = 1
++      },
++    )
++}
+diff --git a/apps/api-e2e/src/support/sql-runner.spec.ts b/apps/api-e2e/src/support/sql-runner.spec.ts
+new file mode 100644
+index 0000000..ff5c756
+--- /dev/null
++++ b/apps/api-e2e/src/support/sql-runner.spec.ts
+@@ -0,0 +1,58 @@
++import { describe, expect, it } from 'vitest'
++import { formatRows, prepareStatements } from './sql-runner.mjs'
++
++const quote = (value: string) => `'${value.replaceAll("'", "''")}'`
++
++describe('sql runner', () => {
++  it('splits a script at top-level semicolons, as psql runs it', () => {
++    expect(prepareStatements('SELECT 1; UPDATE t SET a = 2 ;\n SELECT 3;', {}, quote)).toEqual([
++      'SELECT 1',
++      'UPDATE t SET a = 2',
++      'SELECT 3',
++    ])
++  })
++
++  it('substitutes :name variables as quoted literals', () => {
++    expect(
++      prepareStatements(
++        `SELECT id FROM "User" WHERE id = :'id' AND x::text = :'x';`,
++        {
++          id: "it's",
++          x: 'y',
++        },
++        quote,
++      ),
++    ).toEqual([`SELECT id FROM "User" WHERE id = 'it''s' AND x::text = 'y'`])
++  })
++
++  it('leaves strings, identifiers, comments and dollar-quoted bodies untouched', () => {
++    const script = [
++      `SELECT ';:''id''', "a;b" -- not; :'id'`,
++      `/* ; :'id' */ FROM t;`,
++      `CREATE FUNCTION f() RETURNS trigger AS $body$ BEGIN PERFORM 1; RETURN NULL; END; $body$ LANGUAGE plpgsql;`,
++      `DO $$ BEGIN PERFORM 2; END $$`,
++    ].join('\n')
++    expect(prepareStatements(script, {}, quote)).toEqual([
++      `SELECT ';:''id''', "a;b" -- not; :'id'\n/* ; :'id' */ FROM t`,
++      'CREATE FUNCTION f() RETURNS trigger AS $body$ BEGIN PERFORM 1; RETURN NULL; END; $body$ LANGUAGE plpgsql',
++      'DO $$ BEGIN PERFORM 2; END $$',
++    ])
++  })
++
++  it('refuses a variable that was not supplied', () => {
++    expect(() => prepareStatements(`SELECT :'missing'`, {}, quote)).toThrow(/:'missing'/)
++  })
++
++  it('formats rows like psql -At and prints nothing for a statement without columns', () => {
++    expect(
++      formatRows({
++        fields: [{}, {}, {}],
++        rows: [
++          ['1', 't', null],
++          ['2', 'f', 'x|y'],
++        ],
++      }),
++    ).toEqual(['1|t|', '2|f|x|y'])
++    expect(formatRows({ fields: [], rows: [] })).toEqual([])
++  })
++})
+diff --git a/apps/api-e2e/src/support/test-db.ts b/apps/api-e2e/src/support/test-db.ts
+index ed90f70..e6ee501 100644
+--- a/apps/api-e2e/src/support/test-db.ts
++++ b/apps/api-e2e/src/support/test-db.ts
+@@ -1,36 +1,53 @@
+-import { execFileSync } from 'node:child_process'
++import { execFileSync, spawnSync } from 'node:child_process'
++import { resolve } from 'node:path'
+ 
+-const testDatabaseUrl =
+-  process.env.TEST_DATABASE_URL ||
+-  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
++const workspaceRoot = resolve(__dirname, '../../../..')
++const sqlRunner = resolve(__dirname, 'sql-runner.mjs')
+ 
+ /**
+- * Run one statement against the test database and return its unaligned, tuples-only output.
+- * Values are passed as psql variables (`:'name'` in the statement), never interpolated.
++ * The test database URL: TEST_DATABASE_URL when set, otherwise what `scripts/test-db.sh url` resolves
++ * from the repo-root .env. The shell runners ask the same script, so a direct Vitest run and a
++ * wrapped one reach the same database, and a clone on another port block needs no edit here.
+  */
+-export function sql(statement: string, variables: Record<string, string> = {}): string {
+-  const url = new URL(testDatabaseUrl)
+-  const args = [
+-    '-U',
+-    url.username || 'postgres',
+-    '-h',
+-    url.hostname || 'localhost',
+-    '-p',
+-    url.port || '5432',
+-    '-d',
+-    url.pathname.slice(1).split('?')[0],
+-    '-v',
+-    'ON_ERROR_STOP=1',
+-    '-At',
+-  ]
+-  for (const [name, value] of Object.entries(variables)) {
+-    args.push('-v', `${name}=${value}`)
++export function resolveTestDatabaseUrl(): string {
++  if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL
++  const resolved = spawnSync('bash', [resolve(workspaceRoot, 'scripts/test-db.sh'), 'url'], {
++    cwd: workspaceRoot,
++    encoding: 'utf8',
++  })
++  const url = resolved.status === 0 ? resolved.stdout.trim() : ''
++  if (!url) {
++    throw new Error(
++      'TEST_DATABASE_URL is not set and `scripts/test-db.sh url` could not resolve it' +
++        `${resolved.error ? ` (${resolved.error.message})` : ''}. Set TEST_DATABASE_URL.`,
++    )
+   }
+-  return execFileSync('psql', args, {
+-    input: statement,
+-    env: { ...process.env, PGPASSWORD: url.password || 'postgres' },
++  return url
++}
++
++export const testDatabaseUrl = resolveTestDatabaseUrl()
++
++/**
++ * Run SQL against a database with the `pg` client and return the rows as `psql -At` prints them
++ * (columns joined by `|`, one row per line). Values are passed as `:'name'` variables, quoted as
++ * literals, never interpolated. Statements run one at a time with autocommit; the first error throws.
++ */
++export function runSql(
++  url: string,
++  statement: string,
++  variables: Record<string, string> = {},
++  timeout?: number,
++): string {
++  return execFileSync(process.execPath, [sqlRunner], {
++    input: JSON.stringify({ url, statement, variables }),
+     stdio: ['pipe', 'pipe', 'pipe'],
++    timeout,
+   })
+     .toString()
+     .trim()
+ }
++
++/** Run one statement, or a script, against the test database. See runSql. */
++export function sql(statement: string, variables: Record<string, string> = {}): string {
++  return runSql(testDatabaseUrl, statement, variables)
++}
+diff --git a/apps/api-e2e/src/support/test-setup.ts b/apps/api-e2e/src/support/test-setup.ts
+index 41ef618..a52c1af 100644
+--- a/apps/api-e2e/src/support/test-setup.ts
++++ b/apps/api-e2e/src/support/test-setup.ts
+@@ -1,11 +1,10 @@
+ import axios from 'axios'
+-import { beforeEach } from 'vitest'
+ import { Agent as HttpAgent } from 'node:http'
+ import { Agent as HttpsAgent } from 'node:https'
++import { testDatabaseUrl } from './test-db'
+ 
+ type E2EGlobalState = typeof globalThis & {
+   __AXIOS_AGENT_CLEANUP_REGISTERED__?: boolean
+-  __SKIP_E2E_TESTS__?: boolean
+ }
+ 
+ const e2eGlobal = globalThis as E2EGlobalState
+@@ -45,21 +44,6 @@ if (!e2eGlobal.__AXIOS_AGENT_CLEANUP_REGISTERED__) {
+ // Global test configuration
+ process.env.NODE_ENV = 'test'
+ 
+-// Use TEST_DATABASE_URL - do NOT override to dev database!
+-// The API server will be started with this database URL by global-setup
+-const testDatabaseUrl =
+-  process.env.TEST_DATABASE_URL ||
+-  'postgresql://postgres:postgres@localhost:5433/nestled_template_test'
++// The API server is started against this database by global-setup — never the dev database.
+ console.log(`Test setup: axios base URL set to ${axios.defaults.baseURL}`)
+ console.log(`Test setup: Using TEST database - ${testDatabaseUrl}`)
+-
+-// Skip tests if API is not available (set by global-setup)
+-const shouldSkipE2E = e2eGlobal.__SKIP_E2E_TESTS__
+-if (shouldSkipE2E) {
+-  console.log('⚠️  E2E tests will be skipped (API not available)')
+-
+-  // Skip all tests in this suite
+-  beforeEach(ctx => {
+-    ctx.skip()
+-  })
+-}
+diff --git a/apps/api-e2e/tsconfig.json b/apps/api-e2e/tsconfig.json
+index 5805778..b8e3cd8 100644
+--- a/apps/api-e2e/tsconfig.json
++++ b/apps/api-e2e/tsconfig.json
+@@ -6,6 +6,9 @@
+     {
+       "path": "./tsconfig.spec.json"
+     },
++    {
++      "path": "./tsconfig.support.json"
++    },
+     {
+       "path": "../../libs/api/prisma"
+     },
+diff --git a/apps/api-e2e/tsconfig.spec.json b/apps/api-e2e/tsconfig.spec.json
+index d7f9cf2..7ceab36 100644
+--- a/apps/api-e2e/tsconfig.spec.json
++++ b/apps/api-e2e/tsconfig.spec.json
+@@ -5,5 +5,16 @@
+     "module": "commonjs",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.ts"]
++  "include": [
++    "jest.config.ts",
++    "jest.config.simple.ts",
++    "vitest.config.mts",
++    "vitest.support.config.mts",
++    "src/**/*.ts"
++  ],
++  "exclude": [
++    "node_modules",
++    "src/support/api-process.native.spec.ts",
++    "src/support/sql-runner.spec.ts"
++  ]
+ }
+diff --git a/apps/api-e2e/tsconfig.support.json b/apps/api-e2e/tsconfig.support.json
+index 2e77050..fbbd6c5 100644
+--- a/apps/api-e2e/tsconfig.support.json
++++ b/apps/api-e2e/tsconfig.support.json
+@@ -4,14 +4,18 @@
+     "noEmit": true,
+     "strict": true,
+     "moduleResolution": "bundler",
+-    "types": [
+-      "node"
+-    ]
++    "types": ["node"],
++    "allowJs": true,
++    "checkJs": true
+   },
+   "include": [
+     "src/support/api-process.ts",
+     "src/support/api-process.spec.ts",
+-    "src/support/e2e-runner.spec.ts"
++    "src/support/api-process.native.spec.ts",
++    "src/support/e2e-runner.spec.ts",
++    "src/support/process-tree-fixture.mjs",
++    "src/support/sql-runner.mjs",
++    "src/support/sql-runner.spec.ts"
+   ],
+   "exclude": []
+ }
+diff --git a/apps/api-e2e/vitest.config.mts b/apps/api-e2e/vitest.config.mts
+index b4200af..81b6819 100644
+--- a/apps/api-e2e/vitest.config.mts
++++ b/apps/api-e2e/vitest.config.mts
+@@ -21,7 +21,17 @@ export default defineConfig({
+     setupFiles: [resolve(__dirname, './src/support/test-setup.ts')],
+     include: [resolve(__dirname, './src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}')],
+     // The test-support dependency runs these without starting databases or an API.
+-    exclude: ['**/support/api-process.spec.ts', '**/support/e2e-runner.spec.ts'],
++    exclude: [
++      '**/support/api-process.spec.ts',
++      '**/support/api-process.native.spec.ts',
++      '**/support/e2e-runner.spec.ts',
++      '**/support/sql-runner.spec.ts',
++    ],
++    // Name every test and its result. Under Nx and in CI the output is not a TTY, and the default
++    // reporter then prints only the summary, so a log could not show which tests ran.
++    reporters: ['verbose'],
++    // A run that matches no test file is a failure, not a pass.
++    passWithNoTests: false,
+     testTimeout: 30000,
+     hookTimeout: 30000,
+     teardownTimeout: 30000,
+@@ -30,21 +40,7 @@ export default defineConfig({
+     },
+     pool: 'forks', // Use forks instead of threads for better isolation and cleanup
+     maxWorkers: 1, // Run in single fork for sequential test execution
+-    isolate: false, // Allow process.exit() to work
+-    // Don't fail on process.exit() - we use it intentionally for cleanup
+-    dangerouslyIgnoreUnhandledErrors: true,
+-    // Filter out the process.exit error specifically
+-    onUnhandledError(error): boolean | void {
+-      console.log('🔍 onUnhandledError called:', error.message || String(error))
+-      // Return true to filter out this error (it won't fail the test run)
+-      const errorStr = String(error.message || error)
+-      if (errorStr.includes('process.exit')) {
+-        console.log('🔕 Filtering process.exit error')
+-        return true
+-      }
+-      console.log('❌ Not filtering this error')
+-      return false
+-    },
++    isolate: false, // Spec files share one module context in that fork
+     coverage: {
+       provider: 'v8',
+       reportsDirectory: '../../coverage/apps/api-e2e',
+diff --git a/apps/api-e2e/vitest.support.config.mts b/apps/api-e2e/vitest.support.config.mts
+index 985af58..a389ce4 100644
+--- a/apps/api-e2e/vitest.support.config.mts
++++ b/apps/api-e2e/vitest.support.config.mts
+@@ -6,7 +6,12 @@ export default defineConfig({
+     name: 'api-e2e-support',
+     root: resolve(__dirname),
+     environment: 'node',
+-    include: ['src/support/api-process.spec.ts', 'src/support/e2e-runner.spec.ts'],
++    include: [
++      'src/support/api-process.spec.ts',
++      'src/support/api-process.native.spec.ts',
++      'src/support/e2e-runner.spec.ts',
++      'src/support/sql-runner.spec.ts',
++    ],
+     passWithNoTests: false,
+   },
+ })
+diff --git a/apps/api/project.json b/apps/api/project.json
+index 5ee5dfb..b846373 100644
+--- a/apps/api/project.json
++++ b/apps/api/project.json
+@@ -21,14 +21,16 @@
+       "dependsOn": ["api-prisma:generate"],
+       "cache": true,
+       "inputs": [
+-        "production",
++        "default",
+         "^production",
++        "{workspaceRoot}/tsconfig.base.json",
++        "{workspaceRoot}/scripts/typecheck-project.mjs",
+         {
+           "externalDependencies": ["typescript", "prisma", "@prisma/client"]
+         }
+       ],
+       "options": {
+-        "command": "tsc -p apps/api/tsconfig.typecheck.json"
++        "command": "node scripts/typecheck-project.mjs apps/api tsconfig.typecheck.json"
+       }
+     },
+     "serve": {
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 6167f88..f7e39e3 100644
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -29,8 +29,6 @@
+     "ws": "^8.21.3"
+   },
+   "devDependencies": {
+-    "@react-router/dev": "7.18.2",
+-    "@types/node": "^20.19.43",
+     "@types/react": "19.1.0",
+     "@types/react-dom": "19.1.0",
+     "@types/ws": "^8.18.1"
+diff --git a/apps/web/project.json b/apps/web/project.json
+index cc6eeac..8829903 100644
+--- a/apps/web/project.json
++++ b/apps/web/project.json
+@@ -20,8 +20,10 @@
+       "dependsOn": ["typegen"],
+       "cache": true,
+       "inputs": [
+-        "production",
++        "default",
+         "^production",
++        "{workspaceRoot}/tsconfig.base.json",
++        "{workspaceRoot}/scripts/typecheck-project.mjs",
+         {
+           "externalDependencies": [
+             "typescript",
+@@ -34,8 +36,7 @@
+         }
+       ],
+       "options": {
+-        "command": "tsc -p tsconfig.app.json --noEmit",
+-        "cwd": "apps/web"
++        "command": "node scripts/typecheck-project.mjs apps/web"
+       }
+     },
+     "clean": {
+diff --git a/apps/web/tests/components/TransferOwnershipModal.spec.tsx b/apps/web/tests/components/TransferOwnershipModal.spec.tsx
+index 7fcd748..782f3d0 100644
+--- a/apps/web/tests/components/TransferOwnershipModal.spec.tsx
++++ b/apps/web/tests/components/TransferOwnershipModal.spec.tsx
+@@ -1,7 +1,7 @@
+ import React from 'react'
+ import { render, screen, waitFor } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+-import { beforeEach, describe, expect, it, vi } from 'vitest'
++import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+ import { TransferOwnershipModal } from '@nestled-template/web'
+ 
+ // Mock Apollo Client
+@@ -48,8 +48,8 @@ function requiredElement(element: Element | null, message: string): Element {
+ 
+ describe('TransferOwnershipModal Component', () => {
+   let mockTransferOwnership: ReturnType<typeof vi.fn>
+-  let mockOnClose: ReturnType<typeof vi.fn>
+-  let mockOnSuccess: ReturnType<typeof vi.fn>
++  let mockOnClose: Mock<() => void>
++  let mockOnSuccess: Mock<() => void>
+ 
+   const mockCurrentUser = {
+     id: 'user-1',
+diff --git a/apps/web/tests/helpers/createTestRouter.tsx b/apps/web/tests/helpers/createTestRouter.tsx
+index 0144bd6..400601c 100644
+--- a/apps/web/tests/helpers/createTestRouter.tsx
++++ b/apps/web/tests/helpers/createTestRouter.tsx
+@@ -1,5 +1,7 @@
+ import { createRoutesStub } from 'react-router'
+-import type { RouteObject } from 'react-router'
++
++/** The route shape `createRoutesStub` accepts (react-router does not export it by name). */
++type StubRouteObject = Parameters<typeof createRoutesStub>[0][number]
+ 
+ /**
+  * Creates a router stub for testing - just a thin wrapper around createRoutesStub.
+@@ -11,7 +13,7 @@ import type { RouteObject } from 'react-router'
+  * @param routes - Array of route objects to stub
+  * @returns A RouterStub component ready for testing
+  */
+-export function createTestRouter(routes: RouteObject[]) {
++export function createTestRouter(routes: StubRouteObject[]) {
+   // Just pass through to createRoutesStub
+   // The hydration warning is expected and harmless in test environment
+   return createRoutesStub(routes)
+diff --git a/apps/web/tests/routes/_public/email-verification.spec.tsx b/apps/web/tests/routes/_public/email-verification.spec.tsx
+index cb0f1b8..355e705 100644
+--- a/apps/web/tests/routes/_public/email-verification.spec.tsx
++++ b/apps/web/tests/routes/_public/email-verification.spec.tsx
+@@ -44,9 +44,9 @@ vi.mock('@nestled-template/shared/styles', () => ({
+ // Mock the Form component for ResendVerification
+ vi.mock('@nestledjs/forms', () => ({
+   Form: ({ id, fields, submit }: any) => {
+-    const handleSubmit = e => {
++    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+       e.preventDefault()
+-      const formData = new FormData(e.target)
++      const formData = new FormData(e.currentTarget)
+       const values: Record<string, any> = {}
+       formData.forEach((value, key) => {
+         values[key] = value
+diff --git a/apps/web/tests/routes/_public/forgot-password.spec.tsx b/apps/web/tests/routes/_public/forgot-password.spec.tsx
+index b132e86..8c36d2f 100644
+--- a/apps/web/tests/routes/_public/forgot-password.spec.tsx
++++ b/apps/web/tests/routes/_public/forgot-password.spec.tsx
+@@ -42,9 +42,9 @@ vi.mock('@nestled-template/shared/styles', () => ({
+ // Mock the Form component from @nestledjs/forms
+ vi.mock('@nestledjs/forms', () => ({
+   Form: ({ id, fields, submit }: any) => {
+-    const handleSubmit = e => {
++    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+       e.preventDefault()
+-      const formData = new FormData(e.target)
++      const formData = new FormData(e.currentTarget)
+       const values: Record<string, any> = {}
+       formData.forEach((value, key) => {
+         values[key] = value
+diff --git a/apps/web/tests/routes/_public/login.spec.tsx b/apps/web/tests/routes/_public/login.spec.tsx
+index cb2a016..b8740c9 100644
+--- a/apps/web/tests/routes/_public/login.spec.tsx
++++ b/apps/web/tests/routes/_public/login.spec.tsx
+@@ -26,7 +26,7 @@ describe('Login Component', () => {
+     mockLoginMutation = vi.fn()
+ 
+     vi.mocked(useMutation).mockReturnValue([mockLoginMutation, { loading: false }] as any)
+-    vi.mocked(getCookie).mockReturnValue(null)
++    vi.mocked(getCookie).mockReturnValue(undefined)
+     vi.mocked(getJsonCookie).mockReturnValue(null)
+     vi.mocked(isJwtExpired).mockReturnValue(false)
+   })
+@@ -83,7 +83,7 @@ describe('Login Component', () => {
+     })
+ 
+     it('should return remembered email data', async () => {
+-      vi.mocked(getCookie).mockReturnValue(null)
++      vi.mocked(getCookie).mockReturnValue(undefined)
+       vi.mocked(getJsonCookie).mockReturnValue({ email: 'remembered@example.com' })
+ 
+       const request = new Request('http://localhost/login')
+@@ -94,7 +94,7 @@ describe('Login Component', () => {
+     })
+ 
+     it('should return empty object when no remembered data', async () => {
+-      vi.mocked(getCookie).mockReturnValue(null)
++      vi.mocked(getCookie).mockReturnValue(undefined)
+       vi.mocked(getJsonCookie).mockReturnValue(null)
+ 
+       const request = new Request('http://localhost/login')
+diff --git a/apps/web/tests/routes/_public/register.spec.tsx b/apps/web/tests/routes/_public/register.spec.tsx
+index b59a244..5fe76aa 100644
+--- a/apps/web/tests/routes/_public/register.spec.tsx
++++ b/apps/web/tests/routes/_public/register.spec.tsx
+@@ -42,9 +42,9 @@ vi.mock('@nestled-template/web', () => ({
+ // Mock the Form component from @nestledjs/forms
+ vi.mock('@nestledjs/forms', () => ({
+   Form: ({ id, fields, submit }: any) => {
+-    const handleSubmit = e => {
++    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+       e.preventDefault()
+-      const formData = new FormData(e.target)
++      const formData = new FormData(e.currentTarget)
+       const values: Record<string, any> = {}
+       formData.forEach((value, key) => {
+         values[key] = value
+diff --git a/apps/web/tests/routes/_public/reset-password.spec.tsx b/apps/web/tests/routes/_public/reset-password.spec.tsx
+index 53c520b..48c913a 100644
+--- a/apps/web/tests/routes/_public/reset-password.spec.tsx
++++ b/apps/web/tests/routes/_public/reset-password.spec.tsx
+@@ -32,9 +32,9 @@ vi.mock('@nestled-template/shared/styles', () => ({
+ // Mock the Form component from @nestledjs/forms
+ vi.mock('@nestledjs/forms', () => ({
+   Form: ({ id, fields, submit }: any) => {
+-    const handleSubmit = e => {
++    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+       e.preventDefault()
+-      const formData = new FormData(e.target)
++      const formData = new FormData(e.currentTarget)
+       const values: Record<string, any> = {}
+       formData.forEach((value, key) => {
+         values[key] = value
+diff --git a/apps/web/tests/routes/admin/users/_index.spec.tsx b/apps/web/tests/routes/admin/users/_index.spec.tsx
+index c9a574f..20184e7 100644
+--- a/apps/web/tests/routes/admin/users/_index.spec.tsx
++++ b/apps/web/tests/routes/admin/users/_index.spec.tsx
+@@ -542,7 +542,9 @@ describe('Admin Users Management Page', () => {
+       await user.click(emulateButton)
+ 
+       await waitFor(() => {
+-        const dialog = screen.getByText(/You are about to emulate:/).closest('div[class*="fixed"]')
++        const dialog = screen
++          .getByText(/You are about to emulate:/)
++          .closest<HTMLElement>('div[class*="fixed"]')
+         expect(dialog).toBeInTheDocument()
+         expect(within(dialog!).getByText('john@example.com')).toBeInTheDocument()
+       })
+@@ -752,7 +754,7 @@ describe('Admin Users Management Page', () => {
+       await user.click(viewButton)
+ 
+       await waitFor(() => {
+-        const modal = screen.getByText('User Details').closest('div[class*="fixed"]')
++        const modal = screen.getByText('User Details').closest<HTMLElement>('div[class*="fixed"]')
+         expect(modal).toBeInTheDocument()
+         expect(within(modal!).getByText('John Doe')).toBeInTheDocument()
+         expect(within(modal!).getByText('user-1')).toBeInTheDocument()
+diff --git a/apps/web/tests/routes/auth/oauth-success.spec.tsx b/apps/web/tests/routes/auth/oauth-success.spec.tsx
+index e411f3c..bc80a1c 100644
+--- a/apps/web/tests/routes/auth/oauth-success.spec.tsx
++++ b/apps/web/tests/routes/auth/oauth-success.spec.tsx
+@@ -37,7 +37,7 @@ describe('OAuth success loader', () => {
+   it('sends the user back to login when no session cookie arrived', async () => {
+     // Landing here without a cookie means the sign-in did not actually complete — bouncing to
+     // the dashboard would just redirect straight back out again.
+-    vi.mocked(getCookie).mockReturnValue(null)
++    vi.mocked(getCookie).mockReturnValue(undefined)
+ 
+     const response = await runLoader()
+ 
+diff --git a/apps/web/tests/routes/logout.spec.tsx b/apps/web/tests/routes/logout.spec.tsx
+index 448e809..212a5bf 100644
+--- a/apps/web/tests/routes/logout.spec.tsx
++++ b/apps/web/tests/routes/logout.spec.tsx
+@@ -42,7 +42,7 @@ function createLogoutRender() {
+     },
+     {
+       path: '/login',
+-      element: <div data-testid="login-page">Login Page</div>,
++      Component: () => <div data-testid="login-page">Login Page</div>,
+     },
+   ])
+ 
+diff --git a/apps/web/tests/routes/settings/billing.spec.tsx b/apps/web/tests/routes/settings/billing.spec.tsx
+index 1c4263a..b585351 100644
+--- a/apps/web/tests/routes/settings/billing.spec.tsx
++++ b/apps/web/tests/routes/settings/billing.spec.tsx
+@@ -42,6 +42,8 @@ describe('BillingSettings Component', () => {
+   const mockActiveOrganization = {
+     id: 'org-123',
+     name: 'Acme Corp',
++    createdAt: '2024-01-01T00:00:00.000Z',
++    updatedAt: '2024-01-01T00:00:00.000Z',
+     _count: {
+       members: 5,
+     },
+@@ -90,9 +92,10 @@ describe('BillingSettings Component', () => {
+       hasLimit: false,
+       limit: -1,
+       percentUsed: 0,
++      isWithin: true,
+       isAtLimit: false,
+       remaining: 0,
+-    } as any)
++    })
+   })
+ 
+   const renderWithRouter = () => {
+@@ -469,6 +472,7 @@ describe('BillingSettings Component', () => {
+             hasLimit: true,
+             limit: 10,
+             percentUsed: 50,
++            isWithin: true,
+             isAtLimit: false,
+             remaining: 5,
+           }
+@@ -477,6 +481,7 @@ describe('BillingSettings Component', () => {
+           hasLimit: false,
+           limit: -1,
+           percentUsed: 0,
++          isWithin: true,
+           isAtLimit: false,
+           remaining: 0,
+         }
+@@ -494,6 +499,7 @@ describe('BillingSettings Component', () => {
+             hasLimit: true,
+             limit: 10,
+             percentUsed: 50,
++            isWithin: true,
+             isAtLimit: false,
+             remaining: 5,
+           }
+@@ -502,6 +508,7 @@ describe('BillingSettings Component', () => {
+           hasLimit: false,
+           limit: -1,
+           percentUsed: 0,
++          isWithin: true,
+           isAtLimit: false,
+           remaining: 0,
+         }
+@@ -520,6 +527,7 @@ describe('BillingSettings Component', () => {
+             hasLimit: true,
+             limit: -1,
+             percentUsed: 0,
++            isWithin: true,
+             isAtLimit: false,
+             remaining: 0,
+           }
+@@ -528,6 +536,7 @@ describe('BillingSettings Component', () => {
+           hasLimit: false,
+           limit: -1,
+           percentUsed: 0,
++          isWithin: true,
+           isAtLimit: false,
+           remaining: 0,
+         }
+@@ -545,6 +554,7 @@ describe('BillingSettings Component', () => {
+             hasLimit: true,
+             limit: 10,
+             percentUsed: 85,
++            isWithin: true,
+             isAtLimit: false,
+             remaining: 1,
+           }
+@@ -553,6 +563,7 @@ describe('BillingSettings Component', () => {
+           hasLimit: false,
+           limit: -1,
+           percentUsed: 0,
++          isWithin: true,
+           isAtLimit: false,
+           remaining: 0,
+         }
+@@ -570,6 +581,7 @@ describe('BillingSettings Component', () => {
+             hasLimit: true,
+             limit: 10,
+             percentUsed: 100,
++            isWithin: false,
+             isAtLimit: true,
+             remaining: 0,
+           }
+@@ -578,6 +590,7 @@ describe('BillingSettings Component', () => {
+           hasLimit: false,
+           limit: -1,
+           percentUsed: 0,
++          isWithin: true,
+           isAtLimit: false,
+           remaining: 0,
+         }
+@@ -595,6 +608,7 @@ describe('BillingSettings Component', () => {
+             hasLimit: true,
+             limit: 100,
+             percentUsed: 25,
++            isWithin: true,
+             isAtLimit: false,
+             remaining: 75,
+           }
+@@ -603,6 +617,7 @@ describe('BillingSettings Component', () => {
+           hasLimit: false,
+           limit: -1,
+           percentUsed: 0,
++          isWithin: true,
+           isAtLimit: false,
+           remaining: 0,
+         }
+diff --git a/apps/web/tests/routes/settings/organization.spec.tsx b/apps/web/tests/routes/settings/organization.spec.tsx
+index 45927ba..6d24be7 100644
+--- a/apps/web/tests/routes/settings/organization.spec.tsx
++++ b/apps/web/tests/routes/settings/organization.spec.tsx
+@@ -49,8 +49,8 @@ vi.mock('@nestled-template/web', () => ({
+ 
+ vi.mock('@nestledjs/forms-core', () => ({
+   FormFieldClass: {
+-    button: (key: string, options: unknown) => ({ key, ...options }),
+-    text: (key: string, options: unknown) => ({ key, ...options }),
++    button: (key: string, options: object) => ({ key, ...options }),
++    text: (key: string, options: object) => ({ key, ...options }),
+   },
+ }))
+ 
+diff --git a/apps/web/tests/routes/settings/profile.spec.tsx b/apps/web/tests/routes/settings/profile.spec.tsx
+index 8a5cf82..9e75e03 100644
+--- a/apps/web/tests/routes/settings/profile.spec.tsx
++++ b/apps/web/tests/routes/settings/profile.spec.tsx
+@@ -42,9 +42,9 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
+ 
+ vi.mock('@nestledjs/forms-core', () => ({
+   FormFieldClass: {
+-    content: (key: string, options: unknown) => ({ key, ...options }),
+-    email: (key: string, options: unknown) => ({ key, ...options }),
+-    text: (key: string, options: unknown) => ({ key, ...options }),
++    content: (key: string, options: object) => ({ key, ...options }),
++    email: (key: string, options: object) => ({ key, ...options }),
++    text: (key: string, options: object) => ({ key, ...options }),
+   },
+ }))
+ 
+diff --git a/apps/web/tsconfig.spec.json b/apps/web/tsconfig.spec.json
+index 1b31a60..28cf9ac 100644
+--- a/apps/web/tsconfig.spec.json
++++ b/apps/web/tsconfig.spec.json
+@@ -14,9 +14,7 @@
+   },
+   "include": [
+     "vite.config.ts",
+-    "vite.config.mts",
+-    "vitest.config.mts",
+-    "vitest.config.mts",
++    "react-router.config.ts",
+     "src/**/*.test.ts",
+     "src/**/*.spec.ts",
+     "src/**/*.test.tsx",
+@@ -25,6 +23,9 @@
+     "src/**/*.spec.js",
+     "src/**/*.test.jsx",
+     "src/**/*.spec.jsx",
+-    "src/**/*.d.ts"
+-  ]
++    "src/**/*.d.ts",
++    "tests/**/*.ts",
++    "tests/**/*.tsx"
++  ],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/config/tsconfig.spec.json b/libs/api/config/tsconfig.spec.json
+index f578bd7..e705276 100644
+--- a/libs/api/config/tsconfig.spec.json
++++ b/libs/api/config/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/core/data-access/src/lib/models/chapter-stats.ts b/libs/api/core/data-access/src/lib/models/chapter-stats.ts
+deleted file mode 100644
+index 983e4fc..0000000
+--- a/libs/api/core/data-access/src/lib/models/chapter-stats.ts
++++ /dev/null
+@@ -1,49 +0,0 @@
+-import { Field, ObjectType } from '@nestjs/graphql'
+-
+-@ObjectType()
+-export class ChapterBizStats {
+-  @Field()
+-  chapterId: string
+-
+-  @Field()
+-  chapterName: string
+-
+-  @Field()
+-  memberCount: number
+-
+-  @Field()
+-  totalBiz: number
+-}
+-
+-@ObjectType()
+-export class ChapterReferralStats {
+-  @Field()
+-  chapterId: string
+-
+-  @Field()
+-  chapterName: string
+-
+-  @Field()
+-  memberCount: number
+-
+-  @Field()
+-  totalReferrals: number
+-}
+-
+-@ObjectType()
+-export class ChapterPowerHourStats {
+-  @Field()
+-  chapterId: string
+-
+-  @Field()
+-  chapterName: string
+-
+-  @Field()
+-  memberCount: number
+-
+-  @Field()
+-  totalPowerHours: number
+-
+-  @Field()
+-  avgPowerHoursPerMember: number
+-}
+diff --git a/libs/api/core/data-access/src/lib/models/user-stats.ts b/libs/api/core/data-access/src/lib/models/user-stats.ts
+deleted file mode 100644
+index 845c1d3..0000000
+--- a/libs/api/core/data-access/src/lib/models/user-stats.ts
++++ /dev/null
+@@ -1,43 +0,0 @@
+-import { Field, ObjectType } from '@nestjs/graphql'
+-
+-@ObjectType()
+-export class UserReferralStats {
+-  @Field()
+-  id: string
+-
+-  @Field()
+-  firstName: string
+-
+-  @Field()
+-  lastName: string
+-
+-  @Field({ nullable: true })
+-  chapterName?: string
+-
+-  @Field()
+-  referralCount: number
+-
+-  @Field({ nullable: true })
+-  chapterMemberCount?: number
+-}
+-
+-@ObjectType()
+-export class UserPowerHourStats {
+-  @Field()
+-  id: string
+-
+-  @Field()
+-  firstName: string
+-
+-  @Field()
+-  lastName: string
+-
+-  @Field({ nullable: true })
+-  chapterName?: string
+-
+-  @Field()
+-  powerHourCount: number
+-
+-  @Field({ nullable: true })
+-  chapterMemberCount?: number
+-}
+diff --git a/libs/api/core/data-access/tsconfig.spec.json b/libs/api/core/data-access/tsconfig.spec.json
+index 195593a..1cebeba 100644
+--- a/libs/api/core/data-access/tsconfig.spec.json
++++ b/libs/api/core/data-access/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/core/feature/tsconfig.spec.json b/libs/api/core/feature/tsconfig.spec.json
+index 195593a..1cebeba 100644
+--- a/libs/api/core/feature/tsconfig.spec.json
++++ b/libs/api/core/feature/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/core/models/tsconfig.spec.json b/libs/api/core/models/tsconfig.spec.json
+index 195593a..1cebeba 100644
+--- a/libs/api/core/models/tsconfig.spec.json
++++ b/libs/api/core/models/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/custom/tsconfig.spec.json b/libs/api/custom/tsconfig.spec.json
+index f578bd7..e705276 100644
+--- a/libs/api/custom/tsconfig.spec.json
++++ b/libs/api/custom/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/generated-crud/data-access/tsconfig.spec.json b/libs/api/generated-crud/data-access/tsconfig.spec.json
+index 195593a..1cebeba 100644
+--- a/libs/api/generated-crud/data-access/tsconfig.spec.json
++++ b/libs/api/generated-crud/data-access/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/generated-crud/feature/tsconfig.spec.json b/libs/api/generated-crud/feature/tsconfig.spec.json
+index 195593a..1cebeba 100644
+--- a/libs/api/generated-crud/feature/tsconfig.spec.json
++++ b/libs/api/generated-crud/feature/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/integrations/src/lib/stripe/stripe.service.ts b/libs/api/integrations/src/lib/stripe/stripe.service.ts
+index 27872c7..62a0f80 100644
+--- a/libs/api/integrations/src/lib/stripe/stripe.service.ts
++++ b/libs/api/integrations/src/lib/stripe/stripe.service.ts
+@@ -355,7 +355,7 @@ export class StripeService implements OnModuleInit {
+ 
+   async cancelSubscription(
+     subscriptionId: string,
+-    immediate: boolean = false,
++    immediate = false,
+   ): Promise<Stripe.Subscription> {
+     this.logger.log(`Canceling subscription: ${subscriptionId} (immediate: ${immediate})`)
+     try {
+diff --git a/libs/api/integrations/tsconfig.spec.json b/libs/api/integrations/tsconfig.spec.json
+index f578bd7..e705276 100644
+--- a/libs/api/integrations/tsconfig.spec.json
++++ b/libs/api/integrations/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/prisma/src/lib/seed/diagnose-rbac.ts b/libs/api/prisma/src/lib/seed/diagnose-rbac.ts
+index 0ce93ab..31efefa 100644
+--- a/libs/api/prisma/src/lib/seed/diagnose-rbac.ts
++++ b/libs/api/prisma/src/lib/seed/diagnose-rbac.ts
+@@ -76,11 +76,11 @@ async function diagnoseRBAC() {
+   console.log('\n=== Done ===')
+ }
+ 
+-try {
+-  await diagnoseRBAC()
+-  await prisma.$disconnect()
+-} catch (e) {
+-  console.error('Error:', e)
+-  await prisma.$disconnect()
+-  process.exit(1)
+-}
++// No top-level await: this library compiles as CommonJS.
++diagnoseRBAC()
++  .then(() => prisma.$disconnect())
++  .catch(async (e: unknown) => {
++    console.error('Error:', e)
++    await prisma.$disconnect()
++    process.exit(1)
++  })
+diff --git a/libs/api/prisma/src/lib/seed/seed.ts b/libs/api/prisma/src/lib/seed/seed.ts
+index c6da33e..9f4f4dc 100644
+--- a/libs/api/prisma/src/lib/seed/seed.ts
++++ b/libs/api/prisma/src/lib/seed/seed.ts
+@@ -76,14 +76,14 @@ async function reconnectOrgRolePermissions(prisma: PrismaClient): Promise<number
+ 
+ function isDuplicateDisplayNameError(error: unknown): boolean {
+   const errorRecord = isRecord(error) ? error : {}
+-  const errorMeta = isRecord(errorRecord.meta) ? errorRecord.meta : {}
+-  const isPrismaError = errorRecord.code === 'P2002'
++  const errorMeta = isRecord(errorRecord['meta']) ? errorRecord['meta'] : {}
++  const isPrismaError = errorRecord['code'] === 'P2002'
+ 
+   return (
+     isPrismaError &&
+-    (valueIncludes(errorMeta.target, 'displayName') ||
+-      valueIncludes(errorRecord.message, 'displayName') ||
+-      valueIncludes(errorMeta.driverAdapterError, 'UniqueConstraintViolation'))
++    (valueIncludes(errorMeta['target'], 'displayName') ||
++      valueIncludes(errorRecord['message'], 'displayName') ||
++      valueIncludes(errorMeta['driverAdapterError'], 'UniqueConstraintViolation'))
+   )
+ }
+ 
+diff --git a/libs/api/prisma/tsconfig.spec.json b/libs/api/prisma/tsconfig.spec.json
+index f578bd7..e705276 100644
+--- a/libs/api/prisma/tsconfig.spec.json
++++ b/libs/api/prisma/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/api/utils/tsconfig.spec.json b/libs/api/utils/tsconfig.spec.json
+index f578bd7..e705276 100644
+--- a/libs/api/utils/tsconfig.spec.json
++++ b/libs/api/utils/tsconfig.spec.json
+@@ -6,5 +6,6 @@
+     "moduleResolution": "node10",
+     "types": ["jest", "node"]
+   },
+-  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
++  "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/shared/apollo/tsconfig.spec.json b/libs/shared/apollo/tsconfig.spec.json
+index ffd7e3b..74a2b10 100644
+--- a/libs/shared/apollo/tsconfig.spec.json
++++ b/libs/shared/apollo/tsconfig.spec.json
+@@ -2,6 +2,9 @@
+   "extends": "./tsconfig.json",
+   "compilerOptions": {
+     "outDir": "../../../dist/out-tsc",
++    // Vitest runs specs (and the apollo.ts they import) as ES modules, where `import.meta` is
++    // valid. tsconfig.json here pins `module: commonjs`, so restore esnext as tsconfig.lib.json does.
++    "module": "esnext",
+     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
+   },
+   "include": [
+@@ -18,5 +21,6 @@
+     "src/**/*.test.jsx",
+     "src/**/*.spec.jsx",
+     "src/**/*.d.ts"
+-  ]
++  ],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/shared/sdk/tsconfig.spec.json b/libs/shared/sdk/tsconfig.spec.json
+index ffd7e3b..ac205be 100644
+--- a/libs/shared/sdk/tsconfig.spec.json
++++ b/libs/shared/sdk/tsconfig.spec.json
+@@ -18,5 +18,6 @@
+     "src/**/*.test.jsx",
+     "src/**/*.spec.jsx",
+     "src/**/*.d.ts"
+-  ]
++  ],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/shared/styles/tsconfig.lib.json b/libs/shared/styles/tsconfig.lib.json
+index f554b12..e967b2e 100644
+--- a/libs/shared/styles/tsconfig.lib.json
++++ b/libs/shared/styles/tsconfig.lib.json
+@@ -5,5 +5,5 @@
+     "declaration": true,
+     "types": ["node"]
+   },
+-  "include": ["src/**/*.ts"]
++  "include": ["src/**/*.ts", "src/**/*.tsx"]
+ }
+diff --git a/libs/shared/utils/src/lib/table-utils.spec.ts b/libs/shared/utils/src/lib/table-utils.spec.ts
+index 1abbc65..ac05e75 100644
+--- a/libs/shared/utils/src/lib/table-utils.spec.ts
++++ b/libs/shared/utils/src/lib/table-utils.spec.ts
+@@ -98,7 +98,11 @@ describe('table utils', () => {
+     expect(renderValue({ slug: 'launch-plan' })).toBe('launch-plan')
+     expect(renderValue({ custom: 'value' })).toBe('{"custom":"value"}')
+     expect(renderValue(Symbol('ready'))).toBe('ready')
+-    expect(renderValue(function namedHelper() {})).toBe('namedHelper')
++    expect(
++      renderValue(function namedHelper() {
++        // Only the name is read.
++      }),
++    ).toBe('namedHelper')
+   })
+ 
+   it('formats dotted and camelCase field names for labels', () => {
+diff --git a/libs/shared/utils/tsconfig.json b/libs/shared/utils/tsconfig.json
+index 89f8ac0..4daaf45 100644
+--- a/libs/shared/utils/tsconfig.json
++++ b/libs/shared/utils/tsconfig.json
+@@ -11,6 +11,9 @@
+   "references": [
+     {
+       "path": "./tsconfig.lib.json"
++    },
++    {
++      "path": "./tsconfig.spec.json"
+     }
+   ],
+   "extends": "../../../tsconfig.base.json"
+diff --git a/libs/shared/utils/tsconfig.spec.json b/libs/shared/utils/tsconfig.spec.json
+new file mode 100644
+index 0000000..cdfe443
+--- /dev/null
++++ b/libs/shared/utils/tsconfig.spec.json
+@@ -0,0 +1,17 @@
++{
++  "extends": "./tsconfig.json",
++  "compilerOptions": {
++    "outDir": "../../../dist/out-tsc",
++    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
++  },
++  "include": [
++    "vite.config.ts",
++    "vitest.config.mts",
++    "src/**/*.test.ts",
++    "src/**/*.spec.ts",
++    "src/**/*.test.tsx",
++    "src/**/*.spec.tsx",
++    "src/**/*.d.ts"
++  ],
++  "exclude": ["node_modules"]
++}
+diff --git a/libs/shared/utils/vitest.config.mts b/libs/shared/utils/vitest.config.mts
+index a92ca28..48a47f4 100644
+--- a/libs/shared/utils/vitest.config.mts
++++ b/libs/shared/utils/vitest.config.mts
+@@ -1,5 +1,4 @@
+-/// <reference types='vitest' />
+-import { defineConfig } from 'vite'
++import { defineConfig } from 'vitest/config'
+ import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin'
+ 
+ export default defineConfig({
+diff --git a/libs/web-ui/.storybook/main.ts b/libs/web-ui/.storybook/main.ts
+index a762539..69511d4 100644
+--- a/libs/web-ui/.storybook/main.ts
++++ b/libs/web-ui/.storybook/main.ts
+@@ -20,6 +20,6 @@ const config: StorybookConfig = {
+ 
+ export default config
+ 
+-function getAbsolutePath(value: string): any {
++function getAbsolutePath(value: string): string {
+   return dirname(fileURLToPath(import.meta.resolve(`${value}/package.json`)))
+ }
+diff --git a/libs/web-ui/.storybook/preview.tsx b/libs/web-ui/.storybook/preview.tsx
+index 58fa8dc..1416631 100644
+--- a/libs/web-ui/.storybook/preview.tsx
++++ b/libs/web-ui/.storybook/preview.tsx
+@@ -1,3 +1,5 @@
++// Storybook loads the shared stylesheet file itself; no package path exposes the CSS.
++// eslint-disable-next-line @nx/enforce-module-boundaries
+ import '../../shared/styles/src/lib/app.css'
+ import { MemoryRouter } from 'react-router'
+ import type { Preview } from '@storybook/react-vite'
+diff --git a/libs/web-ui/eslint.config.mjs b/libs/web-ui/eslint.config.mjs
+index 68bca0d..2ff9302 100644
+--- a/libs/web-ui/eslint.config.mjs
++++ b/libs/web-ui/eslint.config.mjs
+@@ -1,6 +1,7 @@
+ // For more info, see https://github.com/storybookjs/eslint-plugin-storybook#configuration-flat-config-format
+ import storybook from 'eslint-plugin-storybook'
+ 
++import { fileURLToPath } from 'node:url'
+ import nx from '@nx/eslint-plugin'
+ import baseConfig from '../../eslint.config.mjs'
+ 
+@@ -13,4 +14,14 @@ export default [
+     rules: {},
+   },
+   ...storybook.configs['flat/recommended'],
++  {
++    // Storybook addons are installed by the workspace manifest; this library has no package.json.
++    files: ['.storybook/main.@(js|cjs|mjs|ts)'],
++    rules: {
++      'storybook/no-uninstalled-addons': [
++        'error',
++        { packageJsonLocation: fileURLToPath(new URL('../../package.json', import.meta.url)) },
++      ],
++    },
++  },
+ ]
+diff --git a/libs/web-ui/src/lib/web-ui-data-table.spec.tsx b/libs/web-ui/src/lib/web-ui-data-table.spec.tsx
+index bfd92e8..77e2929 100644
+--- a/libs/web-ui/src/lib/web-ui-data-table.spec.tsx
++++ b/libs/web-ui/src/lib/web-ui-data-table.spec.tsx
+@@ -54,7 +54,7 @@ describe('WebUiDataTable', () => {
+     // copyToClipboard awaits navigator.clipboard.writeText and then sets state, so the
+     // update lands on a later microtask. Flush it inside act() to avoid a "not wrapped in
+     // act(...)" warning — the click itself already self-flushes, so it stays outside act().
+-    await act(async () => {})
++    await act(async () => undefined)
+ 
+     fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
+     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+diff --git a/libs/web-ui/src/lib/web-ui-data-table.stories.tsx b/libs/web-ui/src/lib/web-ui-data-table.stories.tsx
+index c56219c..0d385e4 100644
+--- a/libs/web-ui/src/lib/web-ui-data-table.stories.tsx
++++ b/libs/web-ui/src/lib/web-ui-data-table.stories.tsx
+@@ -43,13 +43,12 @@ export const Default: Story = {
+ export const WithPagination: Story = {
+   args: {
+     pagination: mockPagination,
+-    setSkip: () => {},
++    setSkip: () => undefined,
+   },
+ }
+ 
+-export const Loading: Story = {
++export const Empty: Story = {
+   args: {
+-    loading: true,
+     data: [],
+   },
+ }
+diff --git a/libs/web-ui/src/lib/web-ui-editable-text.stories.tsx b/libs/web-ui/src/lib/web-ui-editable-text.stories.tsx
+index 09c20c3..1fccd4a 100644
+--- a/libs/web-ui/src/lib/web-ui-editable-text.stories.tsx
++++ b/libs/web-ui/src/lib/web-ui-editable-text.stories.tsx
+@@ -34,7 +34,7 @@ export const Multiline: Story = {
+     const canvas = within(canvasElement)
+     // Use a function matcher since the text contains a literal newline
+     const text = canvas.getByText(
+-      content => content.includes('Multiline') && content.includes('Text'),
++      (content: string) => content.includes('Multiline') && content.includes('Text'),
+     )
+     expect(text).toBeInTheDocument()
+     await userEvent.click(text)
+diff --git a/libs/web-ui/src/lib/web-ui-simple-list-item.stories.tsx b/libs/web-ui/src/lib/web-ui-simple-list-item.stories.tsx
+index ab1ebd6..7f2ad14 100644
+--- a/libs/web-ui/src/lib/web-ui-simple-list-item.stories.tsx
++++ b/libs/web-ui/src/lib/web-ui-simple-list-item.stories.tsx
+@@ -16,9 +16,8 @@ export default meta
+ 
+ type Story = StoryObj<typeof meta>
+ 
+-export const ListItemLi: Story = {
++export const NotClickable: Story = {
+   args: {
+-    type: 'li',
+     onClick: undefined,
+   },
+   play: async ({ canvasElement }: StoryContext) => {
+@@ -28,10 +27,9 @@ export const ListItemLi: Story = {
+   },
+ }
+ 
+-export const ListItemDivClickable: Story = {
++export const Clickable: Story = {
+   args: {
+-    type: 'div',
+-    onClick: () => {},
++    onClick: () => undefined,
+   },
+   play: async ({ canvasElement }: StoryContext) => {
+     const canvas = within(canvasElement)
+@@ -44,15 +42,7 @@ export const ListItemDivClickable: Story = {
+ 
+ export const WithAvatars: Story = {
+   args: {
+-    type: 'li',
+     avatar: <UserCircleIcon className="h-6 w-6 text-blue-500" />,
+     avatar2: <UserCircleIcon className="h-6 w-6 text-green-500" />,
+   },
+ }
+-
+-export const Selected: Story = {
+-  args: {
+-    type: 'li',
+-    selected: true,
+-  },
+-}
+diff --git a/libs/web-ui/src/lib/web-ui-social-links.tsx b/libs/web-ui/src/lib/web-ui-social-links.tsx
+index d772e02..084184e 100644
+--- a/libs/web-ui/src/lib/web-ui-social-links.tsx
++++ b/libs/web-ui/src/lib/web-ui-social-links.tsx
+@@ -1,11 +1,8 @@
+ import { Profile, SocialLinks, TYPE_DESKTOP, TYPE_MOBILE } from 'social-links'
+ import { User } from '@nestled-template/shared/sdk'
+ 
+-interface SocialLinksProps {
+-  readonly member?: Partial<User> | null
+-  readonly color?: string
+-}
+-
++// The social fields are read here but are not part of the generated User model, so the prop type
++// declares them; without them the prop only accepted objects that could never render a link.
+ type SocialLinkMember = Partial<User> & {
+   facebook?: string | null
+   twitter?: string | null
+@@ -14,6 +11,11 @@ type SocialLinkMember = Partial<User> & {
+   youtube?: string | null
+ }
+ 
++interface SocialLinksProps {
++  readonly member?: SocialLinkMember | null
++  readonly color?: string
++}
++
+ const linkedinCompanyProfile: Profile = {
+   name: 'linkedin-company',
+   matches: [
+@@ -43,13 +45,7 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
+   function generateLink(
+     value: string,
+     network:
+-      | 'facebook'
+-      | 'twitter'
+-      | 'instagram'
+-      | 'linkedin'
+-      | 'linkedin-company'
+-      | 'youtube'
+-      | 'global',
++      'facebook' | 'twitter' | 'instagram' | 'linkedin' | 'linkedin-company' | 'youtube' | 'global',
+   ) {
+     if (!value) return null
+ 
+@@ -62,7 +58,7 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
+     }
+   }
+ 
+-  const member = props.member as SocialLinkMember
++  const member = props.member
+ 
+   const facebookLink = member?.facebook ? generateLink(member.facebook, 'facebook') : null
+   const twitterLink = member?.twitter ? generateLink(member.twitter, 'twitter') : null
+diff --git a/libs/web-ui/tsconfig.spec.json b/libs/web-ui/tsconfig.spec.json
+index ddb393e..2ff3960 100644
+--- a/libs/web-ui/tsconfig.spec.json
++++ b/libs/web-ui/tsconfig.spec.json
+@@ -2,6 +2,9 @@
+   "extends": "./tsconfig.json",
+   "compilerOptions": {
+     "outDir": "../../dist/out-tsc",
++    // vitest.config.mts imports @storybook/addon-vitest, whose types are reachable only through
++    // package `exports`. Vite/Vitest resolve modules as a bundler does, so check them that way.
++    "moduleResolution": "bundler",
+     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
+   },
+   "include": [
+@@ -17,6 +20,8 @@
+     "src/**/*.spec.js",
+     "src/**/*.test.jsx",
+     "src/**/*.spec.jsx",
+-    "src/**/*.d.ts"
+-  ]
++    "src/**/*.d.ts",
++    "setupTests.ts"
++  ],
++  "exclude": ["node_modules"]
+ }
+diff --git a/libs/web-ui/tsconfig.storybook.json b/libs/web-ui/tsconfig.storybook.json
+index 9e70826..40f954a 100644
+--- a/libs/web-ui/tsconfig.storybook.json
++++ b/libs/web-ui/tsconfig.storybook.json
+@@ -2,7 +2,14 @@
+   "extends": "./tsconfig.json",
+   "compilerOptions": {
+     "emitDecoratorMetadata": true,
+-    "outDir": ""
++    "outDir": "",
++    // Storybook 10 packages expose their entry points (and types) only through package
++    // `exports`, which the base config's node10 resolution cannot read. Vite resolves them
++    // as a bundler does, so check them the same way.
++    "moduleResolution": "bundler",
++    // vite/client is needed because stories compile libs/shared/utils sources through the
++    // path mappings, and those read `import.meta.env`.
++    "types": ["node", "vite/client"]
+   },
+   "exclude": [
+     "src/**/*.spec.ts",
+@@ -21,7 +28,8 @@
+     "src/**/*.stories.tsx",
+     "src/**/*.stories.mdx",
+     ".storybook/*.js",
+-    ".storybook/*.ts"
++    ".storybook/*.ts",
++    ".storybook/*.tsx"
+   ],
+   "files": [
+     "../../node_modules/@nx/react/typings/styled-jsx.d.ts",
+diff --git a/libs/web-ui/vite.config.ts b/libs/web-ui/vite.config.ts
+index f9b639d..a136318 100644
+--- a/libs/web-ui/vite.config.ts
++++ b/libs/web-ui/vite.config.ts
+@@ -26,7 +26,6 @@ export default defineConfig({
+       provider: 'v8',
+       reportsDirectory: '../../coverage/libs/web-ui',
+       reporter: ['text', 'json', 'html', 'lcov'],
+-      all: true,
+       include: ['src/**/*.{ts,tsx}'],
+       exclude: ['**/*.stories.{ts,tsx}', '**/*.d.ts', '**/index.ts', '**/types.ts'],
+     },
+diff --git a/libs/web/src/lib/components/require-plan.spec.tsx b/libs/web/src/lib/components/require-plan.spec.tsx
+index 333aeeb..f4366c9 100644
+--- a/libs/web/src/lib/components/require-plan.spec.tsx
++++ b/libs/web/src/lib/components/require-plan.spec.tsx
+@@ -55,11 +55,17 @@ describe('plan requirement components', () => {
+ 
+     render(
+       <>
+-        <RequirePlan feature="reports" />
+-        <RequireLimit limitKey="max_projects" currentValue={3} />
++        <RequirePlan feature="reports">
++          <span>Reports</span>
++        </RequirePlan>
++        <RequireLimit limitKey="max_projects" currentValue={3}>
++          <span>Create Project</span>
++        </RequireLimit>
+       </>,
+     )
+ 
++    expect(screen.queryByText('Reports')).toBeNull()
++    expect(screen.queryByText('Create Project')).toBeNull()
+     expect(screen.getByText('Upgrade Required')).toBeTruthy()
+     expect(screen.getByText('Limit Reached')).toBeTruthy()
+     expect(screen.getAllByRole('link', { name: 'Upgrade Plan' })).toHaveLength(2)
+diff --git a/libs/web/tsconfig.json b/libs/web/tsconfig.json
+index 95cfeb2..3c41f10 100644
+--- a/libs/web/tsconfig.json
++++ b/libs/web/tsconfig.json
+@@ -11,6 +11,9 @@
+   "references": [
+     {
+       "path": "./tsconfig.lib.json"
++    },
++    {
++      "path": "./tsconfig.spec.json"
+     }
+   ],
+   "extends": "../../tsconfig.base.json"
+diff --git a/libs/web/tsconfig.spec.json b/libs/web/tsconfig.spec.json
+new file mode 100644
+index 0000000..01c6b01
+--- /dev/null
++++ b/libs/web/tsconfig.spec.json
+@@ -0,0 +1,17 @@
++{
++  "extends": "./tsconfig.json",
++  "compilerOptions": {
++    "outDir": "../../dist/out-tsc",
++    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
++  },
++  "include": [
++    "vite.config.ts",
++    "vitest.config.mts",
++    "src/**/*.test.ts",
++    "src/**/*.spec.ts",
++    "src/**/*.test.tsx",
++    "src/**/*.spec.tsx",
++    "src/**/*.d.ts"
++  ],
++  "exclude": ["node_modules"]
++}
+diff --git a/libs/web/vitest.config.mts b/libs/web/vitest.config.mts
+index 7aa08f1..b9b9f93 100644
+--- a/libs/web/vitest.config.mts
++++ b/libs/web/vitest.config.mts
+@@ -1,5 +1,4 @@
+-/// <reference types='vitest' />
+-import { defineConfig } from 'vite'
++import { defineConfig } from 'vitest/config'
+ import react from '@vitejs/plugin-react'
+ import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin'
+ 
+diff --git a/nx.json b/nx.json
+index e3c645f..00e1f91 100644
+--- a/nx.json
++++ b/nx.json
+@@ -42,7 +42,7 @@
+     {
+       "plugin": "@nx/eslint/plugin",
+       "options": {
+-        "targetName": "eslint:lint"
++        "targetName": "lint"
+       }
+     },
+     {
+@@ -81,7 +81,8 @@
+       "options": {
+         "testTargetName": "vite:test"
+       }
+-    }
++    },
++    "./tools/nx-plugins/typecheck.js"
+   ],
+   "targetDefaults": {
+     "@nx/eslint:lint": {
+diff --git a/package.json b/package.json
+index 04b8e1d..f1efd27 100644
+--- a/package.json
++++ b/package.json
+@@ -47,7 +47,7 @@
+     "help": "nx help",
+     "lint": "nx run-many -t lint",
+     "nx": "nx",
+-    "pre-commit:lint": "nx format:write --uncommitted & nx affected --target eslint --uncommitted",
++    "pre-commit:lint": "nx format:write --uncommitted && nx affected --target lint --uncommitted",
+     "test": "nx run-many -t test",
+     "test:coverage": "nx run-many -t test -- --coverage",
+     "coverage:normalize-lcov": "tsx scripts/normalize-lcov-paths.ts",
+@@ -245,6 +245,7 @@
+     "@types/node": "^24.13.3",
+     "@types/nodemailer": "^8.0.1",
+     "@types/passport-jwt": "^4.0.1",
++    "@types/pg": "8.16.0",
+     "@types/qrcode": "^1.5.6",
+     "@types/react": "19.1.0",
+     "@types/react-dom": "19.1.0",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index fe823bf..ba63035 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -517,6 +517,9 @@ importers:
+       '@types/passport-jwt':
+         specifier: ^4.0.1
+         version: 4.0.1
++      '@types/pg':
++        specifier: 8.16.0
++        version: 8.16.0
+       '@types/qrcode':
+         specifier: ^1.5.6
+         version: 1.5.6
+@@ -743,12 +746,6 @@ importers:
+         specifier: ^8.21.3
+         version: 8.21.3
+     devDependencies:
+-      '@react-router/dev':
+-        specifier: 7.18.2
+-        version: 7.18.2(@react-router/serve@7.18.2(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3))(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(typescript@5.9.3)(vite@7.3.6(@types/node@20.19.43)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0))(yaml@2.9.0)
+-      '@types/node':
+-        specifier: ^20.19.43
+-        version: 20.19.43
+       '@types/react':
+         specifier: 19.1.0
+         version: 19.1.0
+@@ -5319,6 +5316,7 @@ packages:
+ 
+   '@react-router/dev@7.18.2':
+     resolution: {integrity: sha512-EHd0nt6JzrrJzIQLD0VkomLQ5mRaaVdnvYmY86s2OHSiPvlRIFT4mftn1xzahDgmV1qDEf5lqSs3Yqr0tGELBg==}
++    version: 7.18.2
+     engines: {node: '>=20.0.0'}
+     hasBin: true
+     peerDependencies:
+@@ -6549,8 +6547,8 @@ packages:
+   '@types/passport@1.0.17':
+     resolution: {integrity: sha512-aciLyx+wDwT2t2/kJGJR2AEeBz0nJU4WuRX04Wu9Dqc5lSUtwu0WERPHYsLhF9PtseiAMPBGNUOtFjxZ56prsg==}
+ 
+-  '@types/pg@8.20.0':
+-    resolution: {integrity: sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow==}
++  '@types/pg@8.16.0':
++    resolution: {integrity: sha512-RmhMd/wD+CF8Dfo+cVIy3RR5cl8CyfXQ0tGgW6XBL8L4LM/UTEbNXYRbLwU6w+CgrKBNbrQWt4FUtTfaU5jSYQ==}
+ 
+   '@types/pluralize@0.0.33':
+     resolution: {integrity: sha512-JOqsl+ZoCpP4e8TDke9W79FDcSgPAR0l6pixx2JHkhnRjvShyYiAYw2LVsnA7K08Y6DeOnaU6ujmENO4os/cYg==}
+@@ -13160,10 +13158,6 @@ packages:
+   sax@1.4.1:
+     resolution: {integrity: sha512-+aWOz7yVScEGoKNd4PA10LZ8sk0A/z5+nXQG5giUO5rprX9jgYsTdov9qCchZiPIZezbZH+jRut8nPodFAX4Jg==}
+ 
+-  sax@1.4.4:
+-    resolution: {integrity: sha512-1n3r/tGXO6b6VXMdFT54SHzT9ytu9yr7TaELowdYpMqY/Ao7EnlQGmAQ1+RatX7Tkkdm6hONI2owqNx2aZj5Sw==}
+-    engines: {node: '>=11.0.0'}
+-
+   sax@1.6.0:
+     resolution: {integrity: sha512-6R3J5M4AcbtLUdZmRv2SygeVaM7IhrLXu9BmnOGmmACak8fiUtOsYNWUS4uK7upbmHIBbLBeFeI//477BKLBzA==}
+     engines: {node: '>=11.0.0'}
+@@ -13680,11 +13674,6 @@ packages:
+     peerDependencies:
+       postcss: ^8.4.32
+ 
+-  stylus@0.64.0:
+-    resolution: {integrity: sha512-ZIdT8eUv8tegmqy1tTIdJv9We2DumkNZFdCF5mz/Kpq3OcTaxSuCAYZge6HKK2CmNC02G1eJig2RV7XTw5hQrA==}
+-    engines: {node: '>=16'}
+-    hasBin: true
+-
+   stylus@https://codeload.github.com/stylus/stylus/tar.gz/1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9:
+     resolution: {tarball: https://codeload.github.com/stylus/stylus/tar.gz/1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9}
+     version: 0.64.0
+@@ -14418,6 +14407,7 @@ packages:
+ 
+   vite-node@3.2.4:
+     resolution: {integrity: sha512-EbKSKh+bh1E1IFxeO0pg1n4dvoOTt0UDiXMd/qn++r98+jPO1xtJilvXldeuQ8giIB5IkpjCgMleHMNEsGH6pg==}
++    version: 3.2.4
+     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
+     hasBin: true
+ 
+@@ -20288,7 +20278,7 @@ snapshots:
+   '@prisma/adapter-pg@7.9.1':
+     dependencies:
+       '@prisma/driver-adapter-utils': 7.9.1
+-      '@types/pg': 8.20.0
++      '@types/pg': 8.16.0
+       pg: 8.18.0
+       postgres-array: 3.0.4
+     transitivePeerDependencies:
+@@ -20920,56 +20910,6 @@ snapshots:
+       react: 19.1.0
+     optional: true
+ 
+-  '@react-router/dev@7.18.2(@react-router/serve@7.18.2(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3))(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(typescript@5.9.3)(vite@7.3.6(@types/node@20.19.43)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0))(yaml@2.9.0)':
+-    dependencies:
+-      '@babel/core': 7.29.7
+-      '@babel/generator': 7.29.1
+-      '@babel/parser': 7.29.2
+-      '@babel/plugin-syntax-jsx': 7.27.1(@babel/core@7.29.7)
+-      '@babel/preset-typescript': 7.27.1(@babel/core@7.29.7)
+-      '@babel/traverse': 7.29.0
+-      '@babel/types': 7.29.0
+-      '@react-router/node': 7.18.2(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3)
+-      '@remix-run/node-fetch-server': 0.13.1
+-      arg: 5.0.2
+-      babel-dead-code-elimination: 1.0.10
+-      chokidar: 4.0.3
+-      dedent: 1.6.0(babel-plugin-macros@3.1.0)
+-      es-module-lexer: 1.7.0
+-      exit-hook: 2.2.1
+-      isbot: 5.1.28
+-      jsesc: 3.0.2
+-      lodash: 4.18.0
+-      p-map: 7.0.3
+-      pathe: 1.1.2
+-      picocolors: 1.1.1
+-      pkg-types: 2.3.0
+-      prettier: 3.9.6
+-      react-refresh: 0.14.2
+-      react-router: 7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+-      semver: 7.7.4
+-      tinyglobby: 0.2.15
+-      valibot: 1.2.0(typescript@5.9.3)
+-      vite: 7.3.6(@types/node@20.19.43)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0)
+-      vite-node: 3.2.4(@types/node@20.19.43)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0)
+-    optionalDependencies:
+-      '@react-router/serve': 7.18.2(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3)
+-      typescript: 5.9.3
+-    transitivePeerDependencies:
+-      - '@types/node'
+-      - babel-plugin-macros
+-      - jiti
+-      - less
+-      - lightningcss
+-      - sass
+-      - sass-embedded
+-      - stylus
+-      - sugarss
+-      - supports-color
+-      - terser
+-      - tsx
+-      - yaml
+-
+   '@react-router/dev@7.18.2(@react-router/serve@7.18.2(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(typescript@5.9.3))(@types/node@24.13.3)(babel-plugin-macros@3.1.0)(jiti@2.4.2)(less@4.1.3)(lightningcss@1.32.0)(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(sass-embedded@1.89.2)(sass@1.89.2)(stylus@https://codeload.github.com/stylus/stylus/tar.gz/1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9)(terser@5.43.1)(tsx@4.23.12)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.3)(jiti@2.4.2)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@https://codeload.github.com/stylus/stylus/tar.gz/1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0))(yaml@2.9.0)':
+     dependencies:
+       '@babel/core': 7.29.7
+@@ -22198,7 +22138,7 @@ snapshots:
+     dependencies:
+       '@types/express': 5.0.6
+ 
+-  '@types/pg@8.20.0':
++  '@types/pg@8.16.0':
+     dependencies:
+       '@types/node': 24.13.3
+       pg-protocol: 1.11.0
+@@ -30314,9 +30254,6 @@ snapshots:
+ 
+   sax@1.4.1: {}
+ 
+-  sax@1.4.4:
+-    optional: true
+-
+   sax@1.6.0: {}
+ 
+   saxes@6.0.0:
+@@ -30922,17 +30859,6 @@ snapshots:
+       postcss: 8.5.6
+       postcss-selector-parser: 7.1.1
+ 
+-  stylus@0.64.0:
+-    dependencies:
+-      '@adobe/css-tools': 4.3.3
+-      debug: 4.4.3(supports-color@7.2.0)
+-      glob: 10.5.0
+-      sax: 1.4.4
+-      source-map: 0.7.6
+-    transitivePeerDependencies:
+-      - supports-color
+-    optional: true
+-
+   stylus@https://codeload.github.com/stylus/stylus/tar.gz/1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9:
+     dependencies:
+       '@adobe/css-tools': 4.3.3
+@@ -31736,27 +31662,6 @@ snapshots:
+       '@types/unist': 3.0.3
+       vfile-message: 4.0.2
+ 
+-  vite-node@3.2.4(@types/node@20.19.43)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0):
+-    dependencies:
+-      cac: 6.7.14
+-      debug: 4.4.3(supports-color@7.2.0)
+-      es-module-lexer: 1.7.0
+-      pathe: 2.0.3
+-      vite: 7.3.6(@types/node@20.19.43)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0)
+-    transitivePeerDependencies:
+-      - '@types/node'
+-      - jiti
+-      - less
+-      - lightningcss
+-      - sass
+-      - sass-embedded
+-      - stylus
+-      - sugarss
+-      - supports-color
+-      - terser
+-      - tsx
+-      - yaml
+-
+   vite-node@3.2.4(@types/node@24.13.3)(jiti@2.4.2)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@https://codeload.github.com/stylus/stylus/tar.gz/1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0):
+     dependencies:
+       cac: 6.7.14
+@@ -31808,27 +31713,6 @@ snapshots:
+       - supports-color
+       - typescript
+ 
+-  vite@7.3.6(@types/node@20.19.43)(jiti@2.7.0)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@0.64.0)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0):
+-    dependencies:
+-      esbuild: 0.27.3
+-      fdir: 6.5.0(picomatch@4.0.4)
+-      picomatch: 4.0.4
+-      postcss: 8.5.6
+-      rollup: 4.62.4
+-      tinyglobby: 0.2.15
+-    optionalDependencies:
+-      '@types/node': 20.19.43
+-      fsevents: 2.3.3
+-      jiti: 2.7.0
+-      less: 4.1.3
+-      lightningcss: 1.32.0
+-      sass: 1.89.2
+-      sass-embedded: 1.89.2
+-      stylus: 0.64.0
+-      terser: 5.43.1
+-      tsx: 4.23.12
+-      yaml: 2.9.0
+-
+   vite@7.3.6(@types/node@24.13.3)(jiti@2.4.2)(less@4.1.3)(lightningcss@1.32.0)(sass-embedded@1.89.2)(sass@1.89.2)(stylus@https://codeload.github.com/stylus/stylus/tar.gz/1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9)(terser@5.43.1)(tsx@4.23.12)(yaml@2.9.0):
+     dependencies:
+       esbuild: 0.27.3
+diff --git a/scripts/typecheck-project.mjs b/scripts/typecheck-project.mjs
+new file mode 100644
+index 0000000..8ab215e
+--- /dev/null
++++ b/scripts/typecheck-project.mjs
+@@ -0,0 +1,208 @@
++// Typecheck every TypeScript config a project owns, and fail when any of them checks nothing.
++//
++// `tsc -p tsconfig.json` on a solution config (`files: []`, `include: []`, `references`) compiles
++// zero files and exits 0, and a spec config that inherits the base `**/*.spec.ts` exclude does the
++// same for every test. Both looked like passing typechecks. This runner resolves the configs a
++// project owns, refuses any that resolve no files, and runs `tsc --noEmit` on each in turn.
++//
++// Usage: node scripts/typecheck-project.mjs <projectRoot> [tsconfig ...]
++// With no tsconfig arguments, the project's own references from <projectRoot>/tsconfig.json are
++// used (references into other projects are theirs to check), or tsconfig.json itself when it has
++// none. Configs run one at a time so a project never holds more than one compiler in memory.
++
++import { spawnSync } from 'node:child_process'
++import { existsSync, statSync } from 'node:fs'
++import { createRequire } from 'node:module'
++import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
++import { fileURLToPath, pathToFileURL } from 'node:url'
++
++const require = createRequire(import.meta.url)
++
++// The workspace's own TypeScript first, then the one installed beside this script.
++const resolveFrom = (workspaceRoot, request) =>
++  require.resolve(request, { paths: [workspaceRoot, dirname(fileURLToPath(import.meta.url))] })
++
++export function loadTypeScript(workspaceRoot) {
++  return require(resolveFrom(workspaceRoot, 'typescript'))
++}
++
++function isInside(parent, child) {
++  const path = relative(parent, child)
++  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
++}
++
++function referencePath(fromConfig, reference) {
++  const target = resolve(dirname(fromConfig), reference)
++  return existsSync(target) && statSync(target).isDirectory()
++    ? join(target, 'tsconfig.json')
++    : target
++}
++
++function formatDiagnostic(ts, diagnostic) {
++  return ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
++}
++
++export function readConfig(ts, configPath) {
++  const read = ts.readConfigFile(configPath, ts.sys.readFile)
++  if (read.error) {
++    return { configPath, error: formatDiagnostic(ts, read.error), fileNames: [], references: [] }
++  }
++  // Parsing mutates the raw object (it gains the merged `exclude`), so keep the original first.
++  const raw = structuredClone(read.config)
++  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(configPath))
++  // TS18003 is "No inputs were found": reported below as a config that checks nothing.
++  const errors = parsed.errors.filter(diagnostic => diagnostic.code !== 18003)
++  return {
++    configPath,
++    error: errors.length > 0 ? errors.map(d => formatDiagnostic(ts, d)).join('\n') : undefined,
++    fileNames: parsed.fileNames,
++    inheritedExclusions: inheritedExclusions(ts, configPath, raw, parsed.fileNames),
++    references: (raw.references ?? []).map(ref => referencePath(configPath, ref.path)),
++  }
++}
++
++// Files this config's own `include` asks for that only an `exclude` inherited through `extends`
++// removes. The workspace base excludes `**/*.spec.ts`, so a spec config without its own `exclude`
++// silently drops every spec while still matching `vite.config.ts` — a non-zero file count that
++// checks no test.
++function inheritedExclusions(ts, configPath, rawConfig, fileNames) {
++  if (rawConfig.exclude !== undefined || rawConfig.include === undefined || !rawConfig.extends) {
++    return []
++  }
++  const unexcluded = ts.parseJsonConfigFileContent(
++    { ...rawConfig, exclude: ['**/node_modules'] },
++    ts.sys,
++    dirname(configPath),
++  )
++  const kept = new Set(fileNames)
++  return unexcluded.fileNames.filter(fileName => !kept.has(fileName))
++}
++
++export function resolveProjectConfigs(ts, projectRoot, explicitConfigs = []) {
++  if (explicitConfigs.length > 0) {
++    return explicitConfigs.map(config => resolve(projectRoot, config))
++  }
++  const solution = join(projectRoot, 'tsconfig.json')
++  if (!existsSync(solution)) {
++    throw new Error(`${solution} does not exist`)
++  }
++  const { references } = readConfig(ts, solution)
++  const owned = references.filter(config => isInside(projectRoot, dirname(config)))
++  return owned.length > 0 ? owned : [solution]
++}
++
++export function inspectConfigs(ts, configPaths) {
++  return configPaths.map(configPath => {
++    if (!existsSync(configPath)) {
++      return { configPath, problem: 'does not exist' }
++    }
++    const config = readConfig(ts, configPath)
++    if (config.error) {
++      return { configPath, problem: config.error }
++    }
++    if (config.inheritedExclusions.length > 0) {
++      const examples = config.inheritedExclusions
++        .slice(0, 3)
++        .map(file => relative(dirname(configPath), file))
++      return {
++        configPath,
++        problem:
++          `an exclude inherited through "extends" removes ${config.inheritedExclusions.length} ` +
++          `file(s) its own include asks for (${examples.join(', ')}). Declare "exclude" in this config.`,
++      }
++    }
++    if (config.fileNames.length === 0) {
++      return { configPath, problem: 'matches no files, so it checks nothing' }
++    }
++    return { configPath, fileCount: config.fileNames.length, fileNames: config.fileNames }
++  })
++}
++
++// Tracked TypeScript sources under the project that none of its checked configs compile. A test
++// folder no config includes (apps/web/tests) is otherwise invisible to every typecheck.
++export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
++  const listed = spawnSync('git', ['ls-files', '-z', '--', relative(workspaceRoot, projectRoot)], {
++    cwd: workspaceRoot,
++    encoding: 'utf8',
++  })
++  if (listed.status !== 0) {
++    throw new Error(`git ls-files failed: ${listed.stderr || listed.error?.message}`)
++  }
++  const covered = new Set(inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)))
++  // A nested project checks its own files only when the typecheck plugin gives it a target: a root
++  // with both project.json and tsconfig.json. Either file alone gets no target, so its files would
++  // otherwise be checked nowhere.
++  const files = listed.stdout.split('\0').filter(Boolean)
++  const tracked = new Set(files)
++  const nestedProjects = new Set()
++  for (const file of files) {
++    const directory = dirname(resolve(workspaceRoot, file))
++    const sibling = join(dirname(file), 'tsconfig.json').split(sep).join('/')
++    if (file.endsWith('/project.json') && directory !== projectRoot && tracked.has(sibling)) {
++      nestedProjects.add(directory)
++    }
++  }
++  return files
++    .map(file => resolve(workspaceRoot, file))
++    .filter(file => /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file))
++    .filter(file => !covered.has(file))
++    .filter(file => ![...nestedProjects].some(nested => isInside(nested, file)))
++}
++
++function runTsc(workspaceRoot, configPath) {
++  const tsc = resolveFrom(workspaceRoot, 'typescript/bin/tsc')
++  const result = spawnSync(process.execPath, [tsc, '--noEmit', '-p', configPath], {
++    cwd: workspaceRoot,
++    stdio: 'inherit',
++  })
++  if (result.error) {
++    console.error(result.error.message)
++    return 1
++  }
++  return result.status ?? 1
++}
++
++export function main(argv, workspaceRoot = process.cwd()) {
++  const [projectArgument, ...explicitConfigs] = argv
++  if (!projectArgument) {
++    console.error('Usage: node scripts/typecheck-project.mjs <projectRoot> [tsconfig ...]')
++    return 2
++  }
++  const ts = loadTypeScript(workspaceRoot)
++  const projectRoot = resolve(workspaceRoot, projectArgument)
++  const configs = resolveProjectConfigs(ts, projectRoot, explicitConfigs)
++  const inspected = inspectConfigs(ts, configs)
++  const display = path => relative(workspaceRoot, path).split(sep).join('/')
++
++  const broken = inspected.filter(config => config.problem)
++  for (const config of broken) {
++    console.error(`✖ ${display(config.configPath)}: ${config.problem}`)
++  }
++  if (broken.length > 0) {
++    return 1
++  }
++  const uncovered = uncoveredFiles(workspaceRoot, projectRoot, inspected)
++  if (uncovered.length > 0) {
++    console.error(
++      `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
++    )
++    for (const file of uncovered) {
++      console.error(`    ${display(file)}`)
++    }
++    console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
++    return 1
++  }
++
++  let failed = 0
++  for (const config of inspected) {
++    console.log(`→ ${display(config.configPath)} (${config.fileCount} files)`)
++    if (runTsc(workspaceRoot, config.configPath) !== 0) {
++      failed += 1
++    }
++  }
++  return failed > 0 ? 1 : 0
++}
++
++if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
++  process.exitCode = main(process.argv.slice(2))
++}
+diff --git a/scripts/typecheck-project.spec.mjs b/scripts/typecheck-project.spec.mjs
+new file mode 100644
+index 0000000..026cb83
+--- /dev/null
++++ b/scripts/typecheck-project.spec.mjs
+@@ -0,0 +1,143 @@
++import assert from 'node:assert/strict'
++import { spawnSync } from 'node:child_process'
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { dirname, join } from 'node:path'
++import { afterEach, describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++import {
++  inspectConfigs,
++  loadTypeScript,
++  main,
++  resolveProjectConfigs,
++  uncoveredFiles,
++} from './typecheck-project.mjs'
++
++const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
++const ts = loadTypeScript(workspaceRoot)
++const fixtures = []
++
++function fixture(files) {
++  const root = mkdtempSync(join(tmpdir(), 'typecheck-project-'))
++  fixtures.push(root)
++  for (const [path, content] of Object.entries(files)) {
++    mkdirSync(dirname(join(root, path)), { recursive: true })
++    writeFileSync(join(root, path), typeof content === 'string' ? content : JSON.stringify(content))
++  }
++  spawnSync('git', ['init', '-q'], { cwd: root })
++  spawnSync('git', ['add', '.'], { cwd: root })
++  return root
++}
++
++const base = { compilerOptions: { strict: true, noEmit: true }, exclude: ['**/*.spec.ts'] }
++const solution = {
++  extends: '../../tsconfig.base.json',
++  files: [],
++  include: [],
++  references: [{ path: './tsconfig.lib.json' }, { path: './tsconfig.spec.json' }],
++}
++const lib = { extends: './tsconfig.json', include: ['src/**/*.ts'], exclude: ['src/**/*.spec.ts'] }
++
++afterEach(() => {
++  for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true })
++})
++
++describe('typecheck-project', () => {
++  it('resolves the configs a project owns, not references into other projects', () => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'libs/a/tsconfig.json': {
++        ...solution,
++        references: [...solution.references, { path: '../b' }],
++      },
++    })
++    const configs = resolveProjectConfigs(ts, join(root, 'libs/a'))
++    assert.deepEqual(configs, [
++      join(root, 'libs/a/tsconfig.lib.json'),
++      join(root, 'libs/a/tsconfig.spec.json'),
++    ])
++  })
++
++  it('refuses a spec config whose inherited exclude drops every spec', () => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'libs/a/tsconfig.json': solution,
++      'libs/a/tsconfig.spec.json': {
++        extends: './tsconfig.json',
++        include: ['vite.config.ts', 'src/**/*.spec.ts'],
++      },
++      'libs/a/vite.config.ts': 'export default {}\n',
++      'libs/a/src/a.spec.ts': 'export const checked = true\n',
++    })
++    const [result] = inspectConfigs(ts, [join(root, 'libs/a/tsconfig.spec.json')])
++    assert.match(result.problem, /inherited through "extends" removes 1 file/)
++  })
++
++  it('accepts a spec config that declares its own exclude', () => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'libs/a/tsconfig.json': solution,
++      'libs/a/tsconfig.spec.json': {
++        extends: './tsconfig.json',
++        include: ['src/**/*.spec.ts'],
++        exclude: ['node_modules'],
++      },
++      'libs/a/src/a.spec.ts': 'export const checked = true\n',
++    })
++    const [result] = inspectConfigs(ts, [join(root, 'libs/a/tsconfig.spec.json')])
++    assert.equal(result.problem, undefined)
++    assert.equal(result.fileCount, 1)
++  })
++
++  it('refuses a config that matches no files and a referenced config that is missing', () => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'libs/a/tsconfig.json': solution,
++      'libs/a/tsconfig.lib.json': lib,
++    })
++    const results = inspectConfigs(ts, resolveProjectConfigs(ts, join(root, 'libs/a')))
++    assert.match(results[0].problem, /matches no files/)
++    assert.match(results[1].problem, /does not exist/)
++  })
++
++  it('reports tracked sources no checked config compiles, tool configs included', () => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'apps/w/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
++      'apps/w/tsconfig.lib.json': lib,
++      'apps/w/src/main.ts': 'export const main = 1\n',
++      'apps/w/tests/main.spec.ts': 'export const test = 1\n',
++      'apps/w/vite.config.ts': 'export default {}\n',
++      'apps/w/nested/tsconfig.json': { files: [] },
++      'apps/w/nested/other.ts': 'export const other = 1\n',
++      'apps/w/inner/project.json': {},
++      'apps/w/inner/tsconfig.json': { files: [] },
++      'apps/w/inner/own.ts': 'export const own = 1\n',
++      'apps/w/bare/project.json': {},
++      'apps/w/bare/bare.ts': 'export const bare = 1\n',
++    })
++    const projectRoot = join(root, 'apps/w')
++    const inspected = inspectConfigs(ts, resolveProjectConfigs(ts, projectRoot))
++    // inner/ has project.json and tsconfig.json, so the plugin gives it its own typecheck. bare/
++    // (project.json only) and nested/ (tsconfig.json only) get none, so their files are uncovered.
++    assert.deepEqual(uncoveredFiles(root, projectRoot, inspected), [
++      join(projectRoot, 'bare/bare.ts'),
++      join(projectRoot, 'nested/other.ts'),
++      join(projectRoot, 'tests/main.spec.ts'),
++      join(projectRoot, 'vite.config.ts'),
++    ])
++  })
++
++  it('fails on a type error and passes once the project is clean', () => {
++    const files = {
++      'tsconfig.base.json': base,
++      'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
++      'libs/a/tsconfig.lib.json': lib,
++      'libs/a/src/a.ts': 'export const value: number = "text"\n',
++    }
++    const broken = fixture(files)
++    assert.equal(main(['libs/a'], broken), 1)
++    const clean = fixture({ ...files, 'libs/a/src/a.ts': 'export const value: number = 1\n' })
++    assert.equal(main(['libs/a'], clean), 0)
++  })
++})
+diff --git a/tools/nx-plugins/typecheck.js b/tools/nx-plugins/typecheck.js
+new file mode 100644
+index 0000000..c1d9739
+--- /dev/null
++++ b/tools/nx-plugins/typecheck.js
+@@ -0,0 +1,44 @@
++// Gives every Nx project with a tsconfig.json one `typecheck` target that checks all of the
++// project's configs — app or lib, spec, storybook — through scripts/typecheck-project.mjs.
++//
++// The Vite and React Router plugins infer `typecheck` as `tsc --noEmit -p tsconfig.lib.json`, which
++// never checks a spec, and projects without those plugins (every libs/api library) got no
++// typecheck at all. This plugin is listed last in nx.json so its target replaces the inferred one.
++// A target written in a project's project.json still wins, for projects that need extra dependsOn
++// or an explicit config list.
++
++const { existsSync } = require('node:fs')
++const { dirname, join } = require('node:path')
++
++const runner = 'scripts/typecheck-project.mjs'
++
++function typecheckTarget(projectRoot) {
++  return {
++    executor: 'nx:run-commands',
++    cache: true,
++    // Generated sources a project compiles against (the Prisma client) must exist first.
++    dependsOn: ['generate', '^generate'],
++    options: { command: `node ${runner} ${projectRoot}`, cwd: '' },
++    inputs: [
++      'default',
++      '^production',
++      '{workspaceRoot}/tsconfig.base.json',
++      `{workspaceRoot}/${runner}`,
++      { externalDependencies: ['typescript'] },
++    ],
++    outputs: [],
++  }
++}
++
++exports.createNodesV2 = [
++  '**/project.json',
++  async (projectFiles, _options, context) =>
++    projectFiles
++      .map(projectFile => dirname(projectFile))
++      .filter(projectRoot => projectRoot !== '.')
++      .filter(projectRoot => existsSync(join(context.workspaceRoot, projectRoot, 'tsconfig.json')))
++      .map(projectRoot => [
++        join(projectRoot, 'project.json'),
++        { projects: { [projectRoot]: { targets: { typecheck: typecheckTarget(projectRoot) } } } },
++      ]),
++]
