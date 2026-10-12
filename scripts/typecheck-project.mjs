@@ -128,15 +128,17 @@ const gitExecutableCandidates = {
   ],
 }[process.platform] ?? ['/usr/bin/git', '/usr/local/bin/git', '/bin/git']
 
+const isFile = path => existsSync(path) && statSync(path).isFile()
+
 export function gitExecutable(env = process.env) {
   const configured = env.GIT_EXECUTABLE
   if (configured) {
-    if (!isAbsolute(configured) || !existsSync(configured)) {
-      throw new Error(`GIT_EXECUTABLE must be an absolute path to git; got ${configured}`)
+    if (!isAbsolute(configured) || !isFile(configured)) {
+      throw new Error(`GIT_EXECUTABLE must be an absolute path to the git file; got ${configured}`)
     }
     return configured
   }
-  const executable = gitExecutableCandidates.find(candidate => existsSync(candidate))
+  const executable = gitExecutableCandidates.find(isFile)
   if (!executable) {
     throw new Error(
       `git was not found at any of ${gitExecutableCandidates.join(', ')}. Set GIT_EXECUTABLE.`,
