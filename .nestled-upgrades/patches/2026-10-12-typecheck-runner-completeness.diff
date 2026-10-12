@@ -1,0 +1,292 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-10-12-typecheck-runner-completeness.yaml b/.nestled-updates/upgrade-notes/2026-10-12-typecheck-runner-completeness.yaml
+new file mode 100644
+index 0000000..9f70c64
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-12-typecheck-runner-completeness.yaml
+@@ -0,0 +1,48 @@
++id: 2026-10-12-typecheck-runner-completeness
++title: Typecheck runner reports every error in one run, and test tooling passes static analysis
++priority: normal
++area: infra
++type: correctness
++delivery: code-patch
++intent: >
++  Make scripts/typecheck-project.mjs report everything in one run. When tracked files are in no
++  checked config, it still compiles every config and then lists the uncovered files, failing on
++  either; it used to stop at the coverage check, so type errors in covered files stayed hidden
++  until the coverage was fixed. A tracked file deleted from the working tree, staged or not, is no
++  longer reported as uncovered.
++
++  Spawn git from an absolute path rather than through PATH. gitExecutable() returns
++  GIT_EXECUTABLE when it is an absolute path to an existing file, otherwise the first standard
++  install location that exists (/opt/homebrew/bin, /usr/local/bin and /usr/bin on macOS,
++  /usr/bin, /usr/local/bin and /bin on Linux, Program Files\Git\cmd on Windows), and fails with a
++  message naming GIT_EXECUTABLE when none does. The runner spec uses it for its fixtures too, and
++  marks its node:test describe/it calls with `void`.
++
++  Give the e2e SQL runner (apps/api-e2e/src/support/sql-runner.mjs) a 5 second connection timeout,
++  so an unreachable test database fails promptly, as the probes it replaced did.
++why: >
++  A first typecheck run on a project with uncovered files reported only those files; the type
++  errors behind them appeared only after the coverage was fixed, so one run understated the work.
++  Deleting a source file without staging it made the runner report the deleted file as uncovered.
++  Static analysis that includes scripts/ (the template's own sonar-project.properties does) flagged
++  the runner for resolving git through PATH and its spec for floating node:test promises, failing
++  the quality gate. The pg client has no connect timeout by default, so an e2e run against an
++  unreachable database hung until the operating system gave up on the connection.
++affectedPaths:
++  - scripts/typecheck-project.mjs
++  - scripts/typecheck-project.spec.mjs
++  - apps/api-e2e/src/support/sql-runner.mjs
++verification:
++  - node --test scripts/typecheck-project.spec.mjs
++  - pnpm exec nx run-many -t typecheck --parallel=1 --skip-nx-cache
++  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
++agentHints:
++  - >
++    If the project already made these fixes locally, compare and keep one version; the template's
++    differs only in the GIT_EXECUTABLE override and the compile-before-report order.
++  - >
++    If CI runs on a host where git is installed outside the standard locations, set
++    GIT_EXECUTABLE to its absolute path in that job.
++  - >
++    After this change a typecheck run may show more errors than the last one did: these were
++    hidden behind the coverage report, not introduced. Fix them as the 2026-10-10 note describes.
+diff --git a/apps/api-e2e/src/support/sql-runner.mjs b/apps/api-e2e/src/support/sql-runner.mjs
+index 41d57cb..c461634 100644
+--- a/apps/api-e2e/src/support/sql-runner.mjs
++++ b/apps/api-e2e/src/support/sql-runner.mjs
+@@ -92,7 +92,9 @@ const serverText = { getTypeParser: () => (/** @type {string} */ value) => value
+  * @returns {Promise<string>}
+  */
+ export async function runSql({ url, statement, variables = {} }) {
+-  const client = new pg.Client({ connectionString: url })
++  // Bounded like the probes it replaced: an unreachable database fails in seconds, not at the OS
++  // TCP timeout.
++  const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 5000 })
+   await client.connect()
+   try {
+     const lines = []
+diff --git a/scripts/typecheck-project.mjs b/scripts/typecheck-project.mjs
+index 8ab215e..db7ec2e 100644
+--- a/scripts/typecheck-project.mjs
++++ b/scripts/typecheck-project.mjs
+@@ -118,13 +118,42 @@ export function inspectConfigs(ts, configPaths) {
+   })
+ }
+ 
++// git is spawned by absolute path, never looked up through PATH. GIT_EXECUTABLE names it on a host
++// that installs git somewhere else.
++const gitExecutableCandidates = {
++  darwin: ['/opt/homebrew/bin/git', '/usr/local/bin/git', '/usr/bin/git'],
++  win32: [
++    String.raw`C:\Program Files\Git\cmd\git.exe`,
++    String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
++  ],
++}[process.platform] ?? ['/usr/bin/git', '/usr/local/bin/git', '/bin/git']
++
++export function gitExecutable(env = process.env) {
++  const configured = env.GIT_EXECUTABLE
++  if (configured) {
++    if (!isAbsolute(configured) || !existsSync(configured)) {
++      throw new Error(`GIT_EXECUTABLE must be an absolute path to git; got ${configured}`)
++    }
++    return configured
++  }
++  const executable = gitExecutableCandidates.find(candidate => existsSync(candidate))
++  if (!executable) {
++    throw new Error(
++      `git was not found at any of ${gitExecutableCandidates.join(', ')}. Set GIT_EXECUTABLE.`,
++    )
++  }
++  return executable
++}
++
+ // Tracked TypeScript sources under the project that none of its checked configs compile. A test
+-// folder no config includes (apps/web/tests) is otherwise invisible to every typecheck.
++// folder no config includes (apps/web/tests) is otherwise invisible to every typecheck. A tracked
++// file deleted from the working tree is not a source any more, staged or not.
+ export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
+-  const listed = spawnSync('git', ['ls-files', '-z', '--', relative(workspaceRoot, projectRoot)], {
+-    cwd: workspaceRoot,
+-    encoding: 'utf8',
+-  })
++  const listed = spawnSync(
++    gitExecutable(),
++    ['ls-files', '-z', '--', relative(workspaceRoot, projectRoot)],
++    { cwd: workspaceRoot, encoding: 'utf8' },
++  )
+   if (listed.status !== 0) {
+     throw new Error(`git ls-files failed: ${listed.stderr || listed.error?.message}`)
+   }
+@@ -145,7 +174,7 @@ export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
+   return files
+     .map(file => resolve(workspaceRoot, file))
+     .filter(file => /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file))
+-    .filter(file => !covered.has(file))
++    .filter(file => !covered.has(file) && existsSync(file))
+     .filter(file => ![...nestedProjects].some(nested => isInside(nested, file)))
+ }
+ 
+@@ -181,7 +210,16 @@ export function main(argv, workspaceRoot = process.cwd()) {
+   if (broken.length > 0) {
+     return 1
+   }
++  // Uncovered files fail the run, but every config is still compiled, so one run reports both the
++  // coverage gap and every type error in what is covered.
+   const uncovered = uncoveredFiles(workspaceRoot, projectRoot, inspected)
++  let failed = 0
++  for (const config of inspected) {
++    console.log(`→ ${display(config.configPath)} (${config.fileCount} files)`)
++    if (runTsc(workspaceRoot, config.configPath) !== 0) {
++      failed += 1
++    }
++  }
+   if (uncovered.length > 0) {
+     console.error(
+       `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
+@@ -190,17 +228,8 @@ export function main(argv, workspaceRoot = process.cwd()) {
+       console.error(`    ${display(file)}`)
+     }
+     console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
+-    return 1
+-  }
+-
+-  let failed = 0
+-  for (const config of inspected) {
+-    console.log(`→ ${display(config.configPath)} (${config.fileCount} files)`)
+-    if (runTsc(workspaceRoot, config.configPath) !== 0) {
+-      failed += 1
+-    }
+   }
+-  return failed > 0 ? 1 : 0
++  return failed > 0 || uncovered.length > 0 ? 1 : 0
+ }
+ 
+ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+diff --git a/scripts/typecheck-project.spec.mjs b/scripts/typecheck-project.spec.mjs
+index 026cb83..65322d6 100644
+--- a/scripts/typecheck-project.spec.mjs
++++ b/scripts/typecheck-project.spec.mjs
+@@ -1,11 +1,12 @@
+ import assert from 'node:assert/strict'
+ import { spawnSync } from 'node:child_process'
+-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
++import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { dirname, join } from 'node:path'
+ import { afterEach, describe, it } from 'node:test'
+ import { fileURLToPath } from 'node:url'
+ import {
++  gitExecutable,
+   inspectConfigs,
+   loadTypeScript,
+   main,
+@@ -24,8 +25,8 @@ function fixture(files) {
+     mkdirSync(dirname(join(root, path)), { recursive: true })
+     writeFileSync(join(root, path), typeof content === 'string' ? content : JSON.stringify(content))
+   }
+-  spawnSync('git', ['init', '-q'], { cwd: root })
+-  spawnSync('git', ['add', '.'], { cwd: root })
++  spawnSync(gitExecutable(), ['init', '-q'], { cwd: root })
++  spawnSync(gitExecutable(), ['add', '.'], { cwd: root })
+   return root
+ }
+ 
+@@ -42,8 +43,8 @@ afterEach(() => {
+   for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true })
+ })
+ 
+-describe('typecheck-project', () => {
+-  it('resolves the configs a project owns, not references into other projects', () => {
++void describe('typecheck-project', () => {
++  void it('resolves the configs a project owns, not references into other projects', () => {
+     const root = fixture({
+       'tsconfig.base.json': base,
+       'libs/a/tsconfig.json': {
+@@ -58,7 +59,7 @@ describe('typecheck-project', () => {
+     ])
+   })
+ 
+-  it('refuses a spec config whose inherited exclude drops every spec', () => {
++  void it('refuses a spec config whose inherited exclude drops every spec', () => {
+     const root = fixture({
+       'tsconfig.base.json': base,
+       'libs/a/tsconfig.json': solution,
+@@ -73,7 +74,7 @@ describe('typecheck-project', () => {
+     assert.match(result.problem, /inherited through "extends" removes 1 file/)
+   })
+ 
+-  it('accepts a spec config that declares its own exclude', () => {
++  void it('accepts a spec config that declares its own exclude', () => {
+     const root = fixture({
+       'tsconfig.base.json': base,
+       'libs/a/tsconfig.json': solution,
+@@ -89,7 +90,7 @@ describe('typecheck-project', () => {
+     assert.equal(result.fileCount, 1)
+   })
+ 
+-  it('refuses a config that matches no files and a referenced config that is missing', () => {
++  void it('refuses a config that matches no files and a referenced config that is missing', () => {
+     const root = fixture({
+       'tsconfig.base.json': base,
+       'libs/a/tsconfig.json': solution,
+@@ -100,7 +101,7 @@ describe('typecheck-project', () => {
+     assert.match(results[1].problem, /does not exist/)
+   })
+ 
+-  it('reports tracked sources no checked config compiles, tool configs included', () => {
++  void it('reports tracked sources no checked config compiles, tool configs included', () => {
+     const root = fixture({
+       'tsconfig.base.json': base,
+       'apps/w/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
+@@ -128,7 +129,7 @@ describe('typecheck-project', () => {
+     ])
+   })
+ 
+-  it('fails on a type error and passes once the project is clean', () => {
++  void it('fails on a type error and passes once the project is clean', () => {
+     const files = {
+       'tsconfig.base.json': base,
+       'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
+@@ -140,4 +141,40 @@ describe('typecheck-project', () => {
+     const clean = fixture({ ...files, 'libs/a/src/a.ts': 'export const value: number = 1\n' })
+     assert.equal(main(['libs/a'], clean), 0)
+   })
++
++  void it('does not report a tracked file deleted from the working tree', () => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
++      'libs/a/tsconfig.lib.json': lib,
++      'libs/a/src/a.ts': 'export const a = 1\n',
++      'libs/a/gone.ts': 'export const gone = 1\n',
++    })
++    unlinkSync(join(root, 'libs/a/gone.ts'))
++    const projectRoot = join(root, 'libs/a')
++    const inspected = inspectConfigs(ts, resolveProjectConfigs(ts, projectRoot))
++    assert.deepEqual(uncoveredFiles(root, projectRoot, inspected), [])
++  })
++
++  void it('still compiles every config when files are uncovered, and fails', t => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
++      'libs/a/tsconfig.lib.json': lib,
++      'libs/a/src/a.ts': 'export const a = 1\n',
++      'libs/a/loose.ts': 'export const loose = 1\n',
++    })
++    const log = t.mock.method(console, 'log', () => undefined)
++    const error = t.mock.method(console, 'error', () => undefined)
++    assert.equal(main(['libs/a'], root), 1)
++    assert.ok(log.mock.calls.some(call => String(call.arguments[0]).includes('tsconfig.lib.json')))
++    assert.ok(error.mock.calls.some(call => String(call.arguments[0]).includes('libs/a/loose.ts')))
++  })
++
++  void it('spawns git from GIT_EXECUTABLE only when it is an absolute path that exists', () => {
++    const git = gitExecutable()
++    assert.equal(gitExecutable({ GIT_EXECUTABLE: git }), git)
++    assert.throws(() => gitExecutable({ GIT_EXECUTABLE: 'git' }), /absolute path/)
++    assert.throws(() => gitExecutable({ GIT_EXECUTABLE: join(tmpdir(), 'no-git') }), /absolute/)
++  })
+ })
