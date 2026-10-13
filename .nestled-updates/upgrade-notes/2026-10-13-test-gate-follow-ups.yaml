@@ -17,7 +17,8 @@ intent: >
   uncovered files. A tracked, hand-written declaration file (a global augmentation, a `declare
   module` shim) that no checked config includes is reported like any other uncovered source.
   Declarations under build output and typegen folders (dist, build, out, out-tsc, coverage,
-  node_modules, .react-router, +types) are still skipped as generated. apps/web/app-load-context.d.ts
+  node_modules, .react-router, +types) are still skipped as generated.
+  apps/web/app-load-context.d.ts
   surfaced this way; apps/web/tsconfig.app.json and tsconfig.spec.json now include it.
 
   Workspace root typecheck. scripts/ and tools/ each get a tsconfig.json (strict, Node types,
@@ -26,7 +27,8 @@ intent: >
   scripts/typecheck-project.mjs tools`). `pnpm typecheck` runs it after `nx run-many -t typecheck`,
   and CI runs it as its own step. Neither folder becomes an Nx project, so no lint, test or build
   target appears for them. tools/fragment-to-select.ts imported a module that no longer exists in
-  the repo (../scripts/doctor-sdk-contract-analysis); that analysis ships in @nestledjs/doctor, which
+  the repo (../scripts/doctor-sdk-contract-analysis); that analysis ships in @nestledjs/doctor,
+  which
   exports buildPrismaSelectFromFragments and its types, so the tool imports it from there.
 
   Windows spawn options. ownedProcessOptions() in apps/api-e2e/src/support/api-process.ts takes
@@ -91,7 +93,8 @@ intent: >
   `E2E_DATABASE_PROBE=psql` runs `psql -At -c 'SELECT 1'` from PATH instead, with the URL passed
   as PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE (and PGSSLMODE) so the password never reaches a
   command line. Inherited libpq variables (PGHOSTADDR, PGSERVICE, PGPASSFILE, a stale PGPASSWORD)
-  are dropped from psql's environment first, so the probe reaches only the URL's database. This is for a repo whose lifecycle tests stand in for the database with a stub
+  are dropped from psql's environment first, so the probe reaches only the URL's database. This is
+  for a repo whose lifecycle tests stand in for the database with a stub
   psql.
 
   SQL splitter. apps/api-e2e/src/support/sql-runner.mjs keeps a backslash-escaped quote inside an
@@ -165,7 +168,8 @@ agentHints:
     the Vitest executor against the e2e config), make `e2e` the only target that runs the suite and
     turn `test` into `{"executor": "nx:noop", "dependsOn": ["test-support"]}`. Then change every
     caller of `api-e2e:test` that means the e2e suite (scripts/run-e2e-tests.sh, package.json
-    scripts, CI, docs) to `api-e2e:e2e`. If CI got its e2e run from `pnpm test`/`pnpm test:coverage`,
+    scripts, CI, docs) to `api-e2e:e2e`. If CI got its e2e run from `pnpm test`/`pnpm
+    test:coverage`,
     add an explicit `nx run api-e2e:e2e -- --coverage` step with TEST_DATABASE_URL and the service
     containers, or the e2e suite silently stops running in CI. Never run `run-many -t test` in a
     way that starts e2e. Check with `nx run-many -t test` that no `api-e2e:e2e` runs and no
@@ -183,7 +187,8 @@ agentHints:
     E2E_DATABASE_PROBE=psql in those tests rather than restoring a psql-only probe. Otherwise keep
     the pg-runner default. The wrapper's own probe (run-tests.sh) always uses the pg runner.
   - >
-    Custom lib typecheck targets: a project.json `typecheck` that is a plain `tsc -p tsconfig.lib.json
+    Custom lib typecheck targets: a project.json `typecheck` that is a plain `tsc -p
+    tsconfig.lib.json
     && tsc -p tsconfig.spec.json` with no dependsOn should be deleted, and the plugin's target
     replaces it. A target that has dependsOn (for example a prisma generate) or needs an explicit
     config list becomes `node scripts/typecheck-project.mjs <projectRoot> [configs...]`, keeps its
@@ -245,5 +250,6 @@ agentHints:
   - >
     If the project's run-tests.sh differs from the template's, adopt `set -euo pipefail` with care.
     Wrap the test run in `set +e`/`set -e`, use here-strings for `grep -q` on captured output, and
-    add `|| true` to count pipelines that may match nothing. Run the wrapper spec (e2e-runner.spec.ts)
+    add `|| true` to count pipelines that may match nothing. Run the wrapper spec
+    (e2e-runner.spec.ts)
     and confirm a broken test and a zero-test run still fail.
