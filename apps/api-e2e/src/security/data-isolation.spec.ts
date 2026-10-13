@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { TestHelpers, TestUser } from '../support/test-helpers'
+import { TestHelpers, TestUser, type AuthUser } from '../support/test-helpers'
+
+// Only the fields the register documents below select.
+type Registered = {
+  register: { token: string; user: Pick<AuthUser, 'id' | 'emails' | 'firstName' | 'lastName'> }
+}
+type Organization = { id: string; name: string }
+type Member = { id: string; userId: string }
+type Preference = { id: string; key: string; value: string }
 /**
  * CRITICAL SECURITY TESTS: Multi-Tenant Data Isolation
  *
@@ -54,10 +62,10 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         }
       }
     `
-    const response1 = await TestHelpers.graphql(registerMutation, {
+    const response1 = await TestHelpers.graphql<Registered>(registerMutation, {
       input: user1Data,
     })
-    const response2 = await TestHelpers.graphql(registerMutation, {
+    const response2 = await TestHelpers.graphql<Registered>(registerMutation, {
       input: user2Data,
     })
     if (response1.data.errors) {
@@ -69,11 +77,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
       throw new Error(`Failed to register user 2: ${JSON.stringify(response2.data.errors)}`)
     }
     const user1Email =
-      response1.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
-      user1Data.email
+      response1.data.data.register.user.emails?.find(e => e.primary)?.email || user1Data.email
     const user2Email =
-      response2.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
-      user2Data.email
+      response2.data.data.register.user.emails?.find(e => e.primary)?.email || user2Data.email
     org1User = {
       id: response1.data.data.register.user.id,
       email: user1Email,
@@ -99,10 +105,14 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         }
       }
     `
-    const org1Response = await TestHelpers.authenticatedGraphql(createOrgMutation, org1User, {
+    const org1Response = await TestHelpers.authenticatedGraphql<{
+      userCreateOrganization: Organization
+    }>(createOrgMutation, org1User, {
       input: { name: 'Organization One' },
     })
-    const org2Response = await TestHelpers.authenticatedGraphql(createOrgMutation, org2User, {
+    const org2Response = await TestHelpers.authenticatedGraphql<{
+      userCreateOrganization: Organization
+    }>(createOrgMutation, org2User, {
       input: { name: 'Organization Two' },
     })
     if (org1Response.data.errors) {
@@ -124,10 +134,14 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         }
       }
     `
-    const org1MembersResponse = await TestHelpers.authenticatedGraphql(membersQuery, org1User, {
+    const org1MembersResponse = await TestHelpers.authenticatedGraphql<{
+      userOrganizationMembers: Member[]
+    }>(membersQuery, org1User, {
       organizationId: org1User.organizationId,
     })
-    const org2MembersResponse = await TestHelpers.authenticatedGraphql(membersQuery, org2User, {
+    const org2MembersResponse = await TestHelpers.authenticatedGraphql<{
+      userOrganizationMembers: Member[]
+    }>(membersQuery, org2User, {
       organizationId: org2User.organizationId,
     })
     org1MemberId = org1MembersResponse.data.data.userOrganizationMembers[0].id
@@ -147,18 +161,24 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         }
       `
       // User 1 queries their organizations
-      const response1 = await TestHelpers.authenticatedGraphql(orgQuery, org1User)
+      const response1 = await TestHelpers.authenticatedGraphql<{ myOrganizations: Organization[] }>(
+        orgQuery,
+        org1User,
+      )
       expect(response1.data.errors).toBeUndefined()
       expect(response1.data.data.myOrganizations).toHaveLength(2) // Auto-created + explicitly created
       // Verify User 1's org is in their list
-      const user1OrgIds = response1.data.data.myOrganizations.map((o: any) => o.id)
+      const user1OrgIds = response1.data.data.myOrganizations.map(o => o.id)
       expect(user1OrgIds).toContain(org1User.organizationId)
       // User 2 queries their organizations
-      const response2 = await TestHelpers.authenticatedGraphql(orgQuery, org2User)
+      const response2 = await TestHelpers.authenticatedGraphql<{ myOrganizations: Organization[] }>(
+        orgQuery,
+        org2User,
+      )
       expect(response2.data.errors).toBeUndefined()
       expect(response2.data.data.myOrganizations).toHaveLength(2) // Auto-created + explicitly created
       // Verify User 2's org is in their list
-      const user2OrgIds = response2.data.data.myOrganizations.map((o: any) => o.id)
+      const user2OrgIds = response2.data.data.myOrganizations.map(o => o.id)
       expect(user2OrgIds).toContain(org2User.organizationId)
       // Verify they don't see each other's organizations
       expect(user1OrgIds).not.toContain(org2User.organizationId)
@@ -174,7 +194,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         }
       `
       // User 1 tries to query User 2's organization members
-      const response = await TestHelpers.authenticatedGraphql(membersQuery, org1User, {
+      const response = await TestHelpers.authenticatedGraphql<{
+        userOrganizationMembers: Member[]
+      }>(membersQuery, org1User, {
         organizationId: org2User.organizationId,
       })
       // Should either return error or empty array (depending on implementation)
@@ -199,7 +221,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
       `
       try {
         // User 1 tries to query User 2's organization
-        const response = await TestHelpers.authenticatedGraphql(orgByIdQuery, org1User, {
+        const response = await TestHelpers.authenticatedGraphql<{
+          organization: Organization | null
+        }>(orgByIdQuery, org1User, {
           id: org2User.organizationId,
         })
         // Should return error or null
@@ -319,7 +343,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         lastName: 'Org',
         organizationName: 'Initial Org',
       }
-      const registerResponse = await TestHelpers.graphql(
+      const registerResponse = await TestHelpers.graphql<{
+        register: { token: string; user: Pick<AuthUser, 'id' | 'emails'> }
+      }>(
         `
         mutation Register($input: RegisterInput!) {
           register(input: $input) {
@@ -339,14 +365,16 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
       const multiOrgUser = {
         id: registerResponse.data.data.register.user.id,
         email:
-          registerResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
+          registerResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
           invitedUserData.email,
         firstName: invitedUserData.firstName,
         lastName: invitedUserData.lastName,
         tokens: { accessToken: registerResponse.data.data.register.token },
       }
       // Get Member role ID from org1
-      const rolesResponse = await TestHelpers.authenticatedGraphql(
+      const rolesResponse = await TestHelpers.authenticatedGraphql<{
+        organizationRoles: { id: string; name: string }[]
+      }>(
         `
         query OrganizationRoles($organizationId: String!) {
           organizationRoles(organizationId: $organizationId) {
@@ -358,9 +386,7 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         org1User,
         { organizationId: org1User.organizationId },
       )
-      const memberRole = rolesResponse.data.data.organizationRoles.find(
-        (r: any) => r.name === 'Member',
-      )
+      const memberRole = rolesResponse.data.data.organizationRoles.find(r => r.name === 'Member')
       // Invite user to org1
       await TestHelpers.authenticatedGraphql(
         `
@@ -380,7 +406,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
       // User accepts invitation and joins org1
       // (Implementation would require getting the invitation token)
       // When user queries organizations, they should see both
-      const orgsResponse = await TestHelpers.authenticatedGraphql(
+      const orgsResponse = await TestHelpers.authenticatedGraphql<{
+        myOrganizations: Organization[]
+      }>(
         `
         query MyOrganizations {
           myOrganizations {
@@ -410,7 +438,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         }
       `
       // User 1 creates a preference (should be in their org only)
-      const response = await TestHelpers.authenticatedGraphql(createPrefMutation, org1User, {
+      const response = await TestHelpers.authenticatedGraphql<{
+        userCreateUserPreference: Preference
+      }>(createPrefMutation, org1User, {
         input: { key: 'test-key', value: 'test-value' },
       })
       // Should succeed
@@ -426,9 +456,11 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
           }
         }
       `
-      const user2PrefsResponse = await TestHelpers.authenticatedGraphql(prefsQuery, org2User)
+      const user2PrefsResponse = await TestHelpers.authenticatedGraphql<{
+        userGetUserPreferences: Preference[]
+      }>(prefsQuery, org2User)
       const user2Prefs = user2PrefsResponse.data.data.userGetUserPreferences
-      const hasStolenPref = user2Prefs.some((p: any) => p.key === 'test-key')
+      const hasStolenPref = user2Prefs.some(p => p.key === 'test-key')
       expect(hasStolenPref).toBe(false)
     })
   })

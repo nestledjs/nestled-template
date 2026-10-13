@@ -24,11 +24,17 @@ function typecheckTarget(projectRoot) {
       '^production',
       '{workspaceRoot}/tsconfig.base.json',
       `{workspaceRoot}/${runner}`,
+      // externalDependencies hashes only the packages it names, so a dependency upgrade (a new
+      // @types package, a library whose types changed) would otherwise replay a cached green
+      // typecheck. The lockfile changes with every resolved version.
+      '{workspaceRoot}/pnpm-lock.yaml',
       { externalDependencies: ['typescript'] },
     ],
     outputs: [],
   }
 }
+
+exports.typecheckTarget = typecheckTarget
 
 exports.createNodesV2 = [
   '**/project.json',

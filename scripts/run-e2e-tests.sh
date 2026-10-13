@@ -1,7 +1,9 @@
 #!/bin/bash
 
 # E2E Test Runner
-# Automatically starts test database, runs tests, and cleans up
+# Starts the repo's test database, runs tests, and cleans up. With a caller-supplied
+# TEST_DATABASE_URL it uses that database as is: it neither starts nor stops the repo's own test
+# container, and the run fails if the supplied database is unreachable.
 
 set -e
 
@@ -15,25 +17,40 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# A caller-supplied URL names a database this script does not manage.
+MANAGE_TEST_DB=true
+if [[ -n "${TEST_DATABASE_URL:-}" ]]; then
+  MANAGE_TEST_DB=false
+fi
+
 # Cleanup function
 cleanup() {
+  if [[ "$MANAGE_TEST_DB" != true ]]; then
+    return 0
+  fi
   echo -e "\n${YELLOW}🧹 Cleaning up...${NC}"
-  ./scripts/test-db.sh stop 2>/dev/null || true
+  if ! ./scripts/test-db.sh stop 2>/dev/null; then
+    echo -e "${RED}⚠️  Could not stop the test database. Stop it with ./scripts/test-db.sh stop.${NC}" >&2
+  fi
   return 0
 }
 
 # Set up cleanup trap
 trap cleanup EXIT
 
-# Check if Docker is running
-if ! docker info > /dev/null 2>&1; then
-  echo -e "${RED}❌ Docker is not running. Please start Docker first.${NC}"
-  exit 1
-fi
+if [[ "$MANAGE_TEST_DB" = true ]]; then
+  # Check if Docker is running
+  if ! docker info > /dev/null 2>&1; then
+    echo -e "${RED}❌ Docker is not running. Please start Docker first.${NC}"
+    exit 1
+  fi
 
-# Start test database
-echo -e "${BLUE}1. Starting test database...${NC}"
-./scripts/test-db.sh start
+  # Start test database
+  echo -e "${BLUE}1. Starting test database...${NC}"
+  ./scripts/test-db.sh start
+else
+  echo -e "${BLUE}1. Using the supplied TEST_DATABASE_URL; not starting the repo's test database${NC}"
+fi
 
 # Configure the database used by the e2e setup
 echo -e "${BLUE}2. Configuring test database...${NC}"
@@ -53,21 +70,21 @@ export DIRECT_URL="$TEST_DATABASE_URL"
 # Run the tests
 echo -e "${BLUE}3. Running E2E tests...${NC}"
 
-# Route through api-e2e:test (the run-tests.sh wrapper), not api-e2e:e2e. The wrapper runs vitest
-# with tee'd output and adjusts the SIGKILL exit code, so a failure surfaces the actual Vitest
-# assertion details; api-e2e:e2e goes through the Nx executor and can exit with only Nx's failure
-# summary. Extra args after `--` reach the wrapper's "$@" and become a vitest file-path filter.
-# Option 1: Run specific test file
+# api-e2e:e2e runs the run-tests.sh wrapper, which tees Vitest's output and reports PASSED only when
+# Vitest exited 0, its summary counts no failure and at least one test passed. Extra args after `--`
+# reach the wrapper's "$@" and become a Vitest file-path filter. (api-e2e:test is the support suite
+# only, so `nx run-many -t test` never starts this e2e run or its database.)
+# Option 1: Run with the caller's arguments (a file filter, --coverage, ...)
 # set +e so a failing target doesn't abort under `set -e` before we capture its code — otherwise the
 # `$?` check below is unreachable on failure and the run reports success.
 set +e
-if [[ "$1" != "" ]]; then
-  echo -e "${YELLOW}Running specific test: $1${NC}"
-  pnpm nx run api-e2e:test -- "$1"
+if [[ $# -gt 0 ]]; then
+  echo -e "${YELLOW}Running with arguments: $*${NC}"
+  pnpm nx run api-e2e:e2e -- "$@"
 # Option 2: Run all tests
 else
   echo -e "${YELLOW}Running all E2E tests...${NC}"
-  pnpm nx run api-e2e:test
+  pnpm nx run api-e2e:e2e
 fi
 E2E_EXIT=$?
 set -e

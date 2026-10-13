@@ -12,6 +12,8 @@
     "src/support/api-process.ts",
     "src/support/api-process.spec.ts",
     "src/support/api-process.native.spec.ts",
+    "src/support/database-guards.ts",
+    "src/support/database-guards.spec.ts",
     "src/support/e2e-runner.spec.ts",
     "src/support/process-tree-fixture.mjs",
     "src/support/sql-runner.mjs",

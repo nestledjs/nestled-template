@@ -3,11 +3,13 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { createRequire } from 'node:module'
 import { afterEach, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   gitExecutable,
   inspectConfigs,
+  isGeneratedDeclaration,
   loadTypeScript,
   main,
   resolveProjectConfigs,
@@ -15,6 +17,7 @@ import {
 } from './typecheck-project.mjs'
 
 const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+const require = createRequire(import.meta.url)
 const ts = loadTypeScript(workspaceRoot)
 const fixtures = []
 
@@ -169,6 +172,49 @@ void describe('typecheck-project', () => {
     assert.equal(main(['libs/a'], root), 1)
     assert.ok(log.mock.calls.some(call => String(call.arguments[0]).includes('tsconfig.lib.json')))
     assert.ok(error.mock.calls.some(call => String(call.arguments[0]).includes('libs/a/loose.ts')))
+  })
+
+  void it('reports a hand-written declaration file no config includes, not generated ones', () => {
+    const root = fixture({
+      'tsconfig.base.json': base,
+      'apps/w/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
+      'apps/w/tsconfig.lib.json': { ...lib, include: ['src/**/*.ts'] },
+      'apps/w/src/main.ts': 'export const main = 1\n',
+      'apps/w/src/covered.d.ts': 'declare const covered: number\n',
+      'apps/w/load-context.d.ts': 'export {}\ndeclare global { const loose: number }\n',
+      'apps/w/types/shim.d.mts': 'export {}\n',
+      'apps/w/dist/main.d.ts': 'export declare const main = 1\n',
+      'apps/w/build/out-tsc/main.d.ts': 'export declare const main = 1\n',
+      'apps/w/.react-router/types/app/+types/root.d.ts': 'export {}\n',
+      'apps/w/app/routes/+types/home.d.ts': 'export {}\n',
+    })
+    const projectRoot = join(root, 'apps/w')
+    const inspected = inspectConfigs(ts, resolveProjectConfigs(ts, projectRoot))
+    assert.deepEqual(uncoveredFiles(root, projectRoot, inspected), [
+      join(projectRoot, 'load-context.d.ts'),
+      join(projectRoot, 'types/shim.d.mts'),
+    ])
+  })
+
+  void it('treats only declarations under build output and typegen folders as generated', () => {
+    const project = join(workspaceRoot, 'apps/w')
+    assert.equal(isGeneratedDeclaration(project, join(project, 'dist/a.d.ts')), true)
+    assert.equal(isGeneratedDeclaration(project, join(project, '.react-router/types/a.d.ts')), true)
+    assert.equal(isGeneratedDeclaration(project, join(project, 'app/+types/a.d.ts')), true)
+    assert.equal(isGeneratedDeclaration(project, join(project, 'env.d.ts')), false)
+    assert.equal(isGeneratedDeclaration(project, join(project, 'src/types/a.d.cts')), false)
+    // Only declarations: a source file under dist/ is still a source.
+    assert.equal(isGeneratedDeclaration(project, join(project, 'dist/a.ts')), false)
+  })
+
+  void it('invalidates every typecheck target on a lockfile change', () => {
+    const { typecheckTarget } = require('../tools/nx-plugins/typecheck.js')
+    const lockfile = '{workspaceRoot}/pnpm-lock.yaml'
+    assert.ok(typecheckTarget('libs/a').inputs.includes(lockfile))
+    for (const project of ['apps/api', 'apps/web']) {
+      const { targets } = require(join(workspaceRoot, project, 'project.json'))
+      assert.ok(targets.typecheck.inputs.includes(lockfile), `${project} typecheck inputs`)
+    }
   })
 
   void it('spawns git from GIT_EXECUTABLE only when it is an absolute path to a file', () => {

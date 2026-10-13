@@ -24,6 +24,7 @@ export default defineConfig({
     exclude: [
       '**/support/api-process.spec.ts',
       '**/support/api-process.native.spec.ts',
+      '**/support/database-guards.spec.ts',
       '**/support/e2e-runner.spec.ts',
       '**/support/sql-runner.spec.ts',
     ],

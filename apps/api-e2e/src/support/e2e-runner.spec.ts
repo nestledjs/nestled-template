@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })))
 
-const run = (exitCode: number, suppliedUrl?: string) => {
+const run = (exitCode: number, suppliedUrl?: string, args: string[] = []) => {
   const root = mkdtempSync(join(tmpdir(), 'e2e-shell-runner-'))
   roots.push(root)
   mkdirSync(join(root, 'scripts'))
@@ -18,7 +18,7 @@ const run = (exitCode: number, suppliedUrl?: string) => {
   )
   writeFileSync(
     join(root, 'scripts/test-db.sh'),
-    '#!/bin/bash\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
+    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
     { mode: 0o755 },
   )
   writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
@@ -27,7 +27,7 @@ const run = (exitCode: number, suppliedUrl?: string) => {
     '#!/bin/bash\nprintf "%s\\n" "$*" "$TEST_DATABASE_URL" "$DATABASE_URL" "$DIRECT_URL" >> calls\nexit "$FAKE_EXIT"\n',
     { mode: 0o755 },
   )
-  const result = spawnSync('bash', ['scripts/run-e2e-tests.sh'], {
+  const result = spawnSync('bash', ['scripts/run-e2e-tests.sh', ...args], {
     cwd: root,
     env: {
       ...process.env,
@@ -37,19 +37,36 @@ const run = (exitCode: number, suppliedUrl?: string) => {
     },
     encoding: 'utf8',
   })
-  return { result, calls: readFileSync(join(root, 'calls'), 'utf8').trim().split('\n') }
+  const dbCalls = (() => {
+    try {
+      return readFileSync(join(root, 'db-calls'), 'utf8')
+    } catch {
+      return ''
+    }
+  })()
+  return { result, calls: readFileSync(join(root, 'calls'), 'utf8').trim().split('\n'), dbCalls }
 }
 
 describe('e2e shell runner', () => {
   it('delegates migrations to global setup and pins all URLs to the test database', () => {
     const { result, calls } = run(0)
     expect(result.status).toBe(0)
-    expect(calls).toEqual(['nx run api-e2e:test', ...Array(3).fill('postgresql://local/test')])
+    expect(calls).toEqual(['nx run api-e2e:e2e', ...Array(3).fill('postgresql://local/test')])
   })
-  it('preserves a caller-provided isolated database URL', () => {
-    expect(run(0, 'postgresql://local/isolated_test').calls.slice(1)).toEqual(
-      Array(3).fill('postgresql://local/isolated_test'),
-    )
+  it('starts and stops the repo test database when no URL is supplied', () => {
+    const { dbCalls } = run(0)
+    expect(dbCalls).toContain('start')
+    expect(dbCalls).toContain('stop')
+  })
+  it('preserves a caller-provided isolated database URL without managing a container', () => {
+    const { calls, dbCalls } = run(0, 'postgresql://local/isolated_test')
+    expect(calls.slice(1)).toEqual(Array(3).fill('postgresql://local/isolated_test'))
+    expect(dbCalls).not.toContain('start')
+    expect(dbCalls).not.toContain('stop')
+  })
+  it('forwards every argument to the e2e target', () => {
+    const { calls } = run(0, undefined, ['src/auth/auth-generation.spec.ts', '--coverage'])
+    expect(calls[0]).toBe('nx run api-e2e:e2e -- src/auth/auth-generation.spec.ts --coverage')
   })
   it('propagates a failing test target instead of reporting success', () => {
     const { result } = run(7)
@@ -59,7 +76,15 @@ describe('e2e shell runner', () => {
   })
 })
 
-const runWrapper = (vitestOutput: string, vitestExit: number, probeExit = 0) => {
+const SUPPLIED_URL = 'postgresql://prisma:secret@db.local:5599/app_test'
+
+const runWrapper = (
+  vitestOutput: string,
+  vitestExit: number,
+  probeExit = 0,
+  stopExit = 0,
+  suppliedUrl = SUPPLIED_URL,
+) => {
   const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
   roots.push(root)
   mkdirSync(join(root, 'scripts'))
@@ -68,7 +93,8 @@ const runWrapper = (vitestOutput: string, vitestExit: number, probeExit = 0) => 
   copyFileSync(resolve(__dirname, '../../run-tests.sh'), join(root, 'apps/api-e2e/run-tests.sh'))
   writeFileSync(
     join(root, 'scripts/test-db.sh'),
-    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
+    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n' +
+      `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n`,
     { mode: 0o755 },
   )
   // Stands in for the pg runner: records the probe request and answers with the probe's result.
@@ -87,7 +113,7 @@ const runWrapper = (vitestOutput: string, vitestExit: number, probeExit = 0) => 
     env: {
       ...process.env,
       PATH: `${root}/bin:${process.env.PATH}`,
-      TEST_DATABASE_URL: 'postgresql://prisma:secret@db.local:5599/app_test',
+      TEST_DATABASE_URL: suppliedUrl,
     },
     encoding: 'utf8',
   })
@@ -144,7 +170,28 @@ describe('api-e2e test wrapper', () => {
     })
     expect(dbCalls).not.toContain('start')
   })
-  it('starts the test database when the probe fails', () => {
-    expect(runWrapper(summary('5 passed (5)'), 0, 1).dbCalls).toContain('start')
+  it('starts its own test database when no URL was supplied and the probe fails', () => {
+    expect(runWrapper(summary('5 passed (5)'), 0, 1, 0, '').dbCalls).toContain('start')
+  })
+  it('fails without starting a container when a supplied URL is unreachable', () => {
+    const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1)
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('TEST_DATABASE_URL is set but that database is not accessible')
+    expect(dbCalls).not.toContain('start')
+    expect(result.stdout).not.toContain('PASSED')
+  })
+  it('stops the test database it started, and warns when that fails without changing the result', () => {
+    const stopped = runWrapper(summary('5 passed (5)'), 0, 1, 0, '')
+    expect(stopped.dbCalls).toContain('stop')
+    expect(stopped.result.stderr).not.toContain('could not stop')
+    const stuck = runWrapper(summary('5 passed (5)'), 0, 1, 1, '')
+    expect(stuck.result.status).toBe(0)
+    expect(stuck.result.stderr).toContain('could not stop it')
+  })
+  it('finds a failure in the summary of a long log', () => {
+    const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`
+    const { result } = runWrapper(log, 0)
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('the summary counts a failure')
   })
 })

@@ -1,5 +1,18 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { TestHelpers, TestUser } from '../support/test-helpers'
+import { TestHelpers, TestUser, type AuthUser } from '../support/test-helpers'
+
+// Each type names only the fields its register document selects.
+type Registered<Field extends keyof AuthUser = 'id' | 'emails' | 'firstName' | 'lastName'> = {
+  register: { token: string; user: Pick<AuthUser, Field> }
+}
+type Organization = { id: string; name: string }
+type Role = {
+  id: string
+  name: string
+  permissions: { id: string; subject: string; action: string }[]
+}
+type MemberWithRole = { id: string; userId: string; role: { id: string; name: string } }
+type Invitation = { createOrganizationInvitation: string }
 /**
  * CRITICAL SECURITY TESTS: Permission Enforcement
  *
@@ -40,7 +53,7 @@ describe('CRITICAL: Permission Enforcement', () => {
       firstName: 'Test',
       lastName: 'Owner',
     }
-    const registerResponse = await TestHelpers.graphql(
+    const registerResponse = await TestHelpers.graphql<Registered>(
       `
       mutation Register($input: RegisterInput!) {
         register(input: $input) {
@@ -62,7 +75,7 @@ describe('CRITICAL: Permission Enforcement', () => {
     owner = {
       id: registerResponse.data.data.register.user.id,
       email:
-        registerResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
+        registerResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
         ownerData.email,
       firstName: registerResponse.data.data.register.user.firstName,
       lastName: registerResponse.data.data.register.user.lastName,
@@ -79,12 +92,14 @@ describe('CRITICAL: Permission Enforcement', () => {
         }
       }
     `
-    const orgResponse = await TestHelpers.authenticatedGraphql(createOrgMutation, owner, {
+    const orgResponse = await TestHelpers.authenticatedGraphql<{
+      userCreateOrganization: Organization
+    }>(createOrgMutation, owner, {
       input: { name: 'Permission Test Org' },
     })
     owner.organizationId = orgResponse.data.data.userCreateOrganization.id
     // Get role IDs with permissions
-    const rolesResponse = await TestHelpers.authenticatedGraphql(
+    const rolesResponse = await TestHelpers.authenticatedGraphql<{ organizationRoles: Role[] }>(
       `
       query OrganizationRoles($organizationId: String!) {
         organizationRoles(organizationId: $organizationId) {
@@ -104,9 +119,9 @@ describe('CRITICAL: Permission Enforcement', () => {
     const roles = rolesResponse.data.data.organizationRoles
     console.log('Available roles:', JSON.stringify(roles, null, 2))
     roleIds = {
-      owner: roles.find((r: any) => r.name === 'Owner')?.id || '',
-      admin: roles.find((r: any) => r.name === 'Admin')?.id || '',
-      member: roles.find((r: any) => r.name === 'Member')?.id || '',
+      owner: roles.find(r => r.name === 'Owner')?.id || '',
+      admin: roles.find(r => r.name === 'Admin')?.id || '',
+      member: roles.find(r => r.name === 'Member')?.id || '',
     }
     console.log('Role IDs:', roleIds)
     owner.roleId = roleIds.owner
@@ -123,7 +138,9 @@ describe('CRITICAL: Permission Enforcement', () => {
         }
       }
     `
-    const membershipResponse = await TestHelpers.authenticatedGraphql(ownerMembershipQuery, owner, {
+    const membershipResponse = await TestHelpers.authenticatedGraphql<{
+      userOrganizationMembers: MemberWithRole[]
+    }>(ownerMembershipQuery, owner, {
       organizationId: owner.organizationId,
     })
     console.log('Owner membership:', JSON.stringify(membershipResponse.data.data, null, 2))
@@ -134,7 +151,7 @@ describe('CRITICAL: Permission Enforcement', () => {
       firstName: 'Test',
       lastName: 'Admin',
     }
-    const adminRegResponse = await TestHelpers.graphql(
+    const adminRegResponse = await TestHelpers.graphql<Registered>(
       `
       mutation Register($input: RegisterInput!) {
         register(input: $input) {
@@ -156,7 +173,7 @@ describe('CRITICAL: Permission Enforcement', () => {
     admin = {
       id: adminRegResponse.data.data.register.user.id,
       email:
-        adminRegResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
+        adminRegResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
         adminData.email,
       firstName: adminRegResponse.data.data.register.user.firstName,
       lastName: adminRegResponse.data.data.register.user.lastName,
@@ -171,7 +188,7 @@ describe('CRITICAL: Permission Enforcement', () => {
       firstName: 'Test',
       lastName: 'Member',
     }
-    const memberRegResponse = await TestHelpers.graphql(
+    const memberRegResponse = await TestHelpers.graphql<Registered>(
       `
       mutation Register($input: RegisterInput!) {
         register(input: $input) {
@@ -193,7 +210,7 @@ describe('CRITICAL: Permission Enforcement', () => {
     member = {
       id: memberRegResponse.data.data.register.user.id,
       email:
-        memberRegResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
+        memberRegResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
         memberData.email,
       firstName: memberRegResponse.data.data.register.user.firstName,
       lastName: memberRegResponse.data.data.register.user.lastName,
@@ -208,7 +225,7 @@ describe('CRITICAL: Permission Enforcement', () => {
         createOrganizationInvitation(input: $input)
       }
     `
-    const adminInviteResponse = await TestHelpers.authenticatedGraphql(
+    const adminInviteResponse = await TestHelpers.authenticatedGraphql<Invitation>(
       createInvitationMutation,
       owner,
       {
@@ -225,7 +242,7 @@ describe('CRITICAL: Permission Enforcement', () => {
         `Failed to create admin invitation: ${JSON.stringify(adminInviteResponse.data.errors)}`,
       )
     }
-    const memberInviteResponse = await TestHelpers.authenticatedGraphql(
+    const memberInviteResponse = await TestHelpers.authenticatedGraphql<Invitation>(
       createInvitationMutation,
       owner,
       {
@@ -259,7 +276,9 @@ describe('CRITICAL: Permission Enforcement', () => {
         }
       }
     `
-    const adminInviteDetails = await TestHelpers.graphql(adminInviteDetailsQuery, {
+    const adminInviteDetails = await TestHelpers.graphql<{
+      getInvitationDetails: { email: string; roleName: string; organizationName: string }
+    }>(adminInviteDetailsQuery, {
       token: adminToken,
     })
     console.log(
@@ -297,17 +316,19 @@ describe('CRITICAL: Permission Enforcement', () => {
         }
       }
     `
-    const adminRoleCheck = await TestHelpers.authenticatedGraphql(adminRoleCheckQuery, owner, {
+    const adminRoleCheck = await TestHelpers.authenticatedGraphql<{
+      userOrganizationMembers: { userId: string; role: { name: string } }[]
+    }>(adminRoleCheckQuery, owner, {
       organizationId: owner.organizationId,
     })
     const adminMembership = adminRoleCheck.data.data.userOrganizationMembers.find(
-      (m: any) => m.userId === admin.id,
+      m => m.userId === admin.id,
     )
     console.log(`\n🔍 Admin role after acceptance: ${adminMembership?.role?.name || 'NOT FOUND'}`)
     console.log(`  - Admin user ID: ${admin.id}`)
     console.log(
       `  - All members:`,
-      adminRoleCheck.data.data.userOrganizationMembers.map((m: any) => ({
+      adminRoleCheck.data.data.userOrganizationMembers.map(m => ({
         userId: m.userId,
         role: m.role.name,
       })),
@@ -357,7 +378,9 @@ describe('CRITICAL: Permission Enforcement', () => {
           }
         }
       `
-      const response = await TestHelpers.authenticatedGraphql(updateMutation, owner, {
+      const response = await TestHelpers.authenticatedGraphql<{
+        userUpdateOrganization: Organization
+      }>(updateMutation, owner, {
         input: { name: 'Updated Permission Test Org' },
       })
       expect(response.data.errors).toBeUndefined()
@@ -370,7 +393,7 @@ describe('CRITICAL: Permission Enforcement', () => {
         }
       `
       const newMemberEmail = TestHelpers.generateTestEmail('new-member')
-      const response = await TestHelpers.authenticatedGraphql(inviteMutation, owner, {
+      const response = await TestHelpers.authenticatedGraphql<Invitation>(inviteMutation, owner, {
         input: {
           email: newMemberEmail,
           organizationId: owner.organizationId,
@@ -384,7 +407,7 @@ describe('CRITICAL: Permission Enforcement', () => {
       // Create a temporary member to change their role (to avoid breaking other tests)
       const tempMemberEmail = TestHelpers.generateTestEmail('temp-role-change')
       // Owner invites a new temp member
-      const inviteResponse = await TestHelpers.authenticatedGraphql(
+      const inviteResponse = await TestHelpers.authenticatedGraphql<Invitation>(
         `mutation CreateInvitation($input: CreateInvitationInput!) {
           createOrganizationInvitation(input: $input)
         }`,
@@ -398,7 +421,7 @@ describe('CRITICAL: Permission Enforcement', () => {
         },
       )
       // Register the temp user
-      const tempUserReg = await TestHelpers.graphql(
+      const tempUserReg = await TestHelpers.graphql<Registered<'id'>>(
         `
         mutation Register($input: RegisterInput!) {
           register(input: $input) {
@@ -428,7 +451,7 @@ describe('CRITICAL: Permission Enforcement', () => {
         `mutation AcceptInvitation($input: AcceptInvitationInput!) {
           acceptOrganizationInvitation(input: $input) { id }
         }`,
-        tempUser as any,
+        tempUser as TestUser,
         { input: { token: tempToken } },
       )
       // Now change the temp user's role from Member to Admin
@@ -454,7 +477,7 @@ describe('CRITICAL: Permission Enforcement', () => {
         firstName: 'Temp',
         lastName: 'Owner',
       }
-      const regResponse = await TestHelpers.graphql(
+      const regResponse = await TestHelpers.graphql<Registered<'id' | 'emails'>>(
         `
         mutation Register($input: RegisterInput!) {
           register(input: $input) {
@@ -474,14 +497,16 @@ describe('CRITICAL: Permission Enforcement', () => {
       const tempOwner = {
         id: regResponse.data.data.register.user.id,
         email:
-          regResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
+          regResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
           tempOwnerData.email,
         firstName: tempOwnerData.firstName,
         lastName: tempOwnerData.lastName,
         tokens: { accessToken: regResponse.data.data.register.token },
       }
       // Create an organization to delete
-      const createOrgResponse = await TestHelpers.authenticatedGraphql(
+      const createOrgResponse = await TestHelpers.authenticatedGraphql<{
+        userCreateOrganization: { id: string }
+      }>(
         `
         mutation UserCreateOrganization($input: UserCreateOrganizationInput!) {
           userCreateOrganization(input: $input) {
@@ -499,11 +524,9 @@ describe('CRITICAL: Permission Enforcement', () => {
           userDeleteOrganization(organizationId: $organizationId)
         }
       `
-      const deleteResponse = await TestHelpers.authenticatedGraphql(
-        deleteMutation,
-        tempOwner as TestUser,
-        { organizationId: tempOrgId },
-      )
+      const deleteResponse = await TestHelpers.authenticatedGraphql<{
+        userDeleteOrganization: boolean
+      }>(deleteMutation, tempOwner as TestUser, { organizationId: tempOrgId })
       expect(deleteResponse.data.errors).toBeUndefined()
       expect(deleteResponse.data.data.userDeleteOrganization).toBe(true)
     })
@@ -553,7 +576,7 @@ describe('CRITICAL: Permission Enforcement', () => {
         }
       `
       const newMemberEmail = TestHelpers.generateTestEmail('admin-invited')
-      const response = await TestHelpers.authenticatedGraphql(inviteMutation, admin, {
+      const response = await TestHelpers.authenticatedGraphql<Invitation>(inviteMutation, admin, {
         input: {
           email: newMemberEmail,
           organizationId: owner.organizationId,
@@ -573,11 +596,13 @@ describe('CRITICAL: Permission Enforcement', () => {
           }
         }
       `
-      const membersResponse = await TestHelpers.authenticatedGraphql(membersQuery, admin, {
+      const membersResponse = await TestHelpers.authenticatedGraphql<{
+        userOrganizationMembers: { id: string; userId: string }[]
+      }>(membersQuery, admin, {
         organizationId: owner.organizationId,
       })
       const members = membersResponse.data.data.userOrganizationMembers
-      const targetMember = members.find((m: any) => m.userId === member.id)
+      const targetMember = members.find(m => m.userId === member.id)
       if (targetMember) {
         const updateRoleMutation = `
           mutation UpdateMemberRole($input: UpdateMemberRoleInput!) {
@@ -670,12 +695,15 @@ describe('CRITICAL: Permission Enforcement', () => {
           }
         }
       `
-      const response = await TestHelpers.authenticatedGraphql(orgQuery, member)
+      const response = await TestHelpers.authenticatedGraphql<{ myOrganizations: Organization[] }>(
+        orgQuery,
+        member,
+      )
       // Should succeed - members can view org info
       expect(response.data.errors).toBeUndefined()
       const orgs = response.data.data.myOrganizations
       expect(orgs).toBeDefined()
-      expect(orgs.some((o: any) => o.id === owner.organizationId)).toBe(true)
+      expect(orgs.some(o => o.id === owner.organizationId)).toBe(true)
     })
     it('member can view other members', async () => {
       const membersQuery = `
@@ -686,7 +714,9 @@ describe('CRITICAL: Permission Enforcement', () => {
           }
         }
       `
-      const response = await TestHelpers.authenticatedGraphql(membersQuery, member, {
+      const response = await TestHelpers.authenticatedGraphql<{
+        userOrganizationMembers: { id: string; userId: string }[]
+      }>(membersQuery, member, {
         organizationId: owner.organizationId,
       })
       // Should succeed - members can view other members

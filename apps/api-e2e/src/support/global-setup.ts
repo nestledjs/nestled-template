@@ -2,6 +2,14 @@ import { waitForPortOpen } from '@nx/node/utils'
 import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createConnection, type Socket } from 'node:net'
 import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
+import {
+  ALLOW_NON_DISPOSABLE_DB,
+  assertDisposableTestDatabase,
+  databaseProbe,
+  describeDatabase,
+  isDisposableTestDatabase,
+  psqlEnvironment,
+} from './database-guards'
 import globalTeardown from './global-teardown'
 import { runSql, testDatabaseUrl } from './test-db'
 
@@ -14,9 +22,18 @@ type E2EGlobalState = typeof globalThis & {
 const e2eGlobal = globalThis as E2EGlobalState
 
 /**
- * Check if database is accessible
+ * Check if database is accessible: `SELECT 1` through the pg runner, or through psql from PATH when
+ * E2E_DATABASE_PROBE=psql (see databaseProbe).
  */
 function isDatabaseAccessible(databaseUrl: string): boolean {
+  if (databaseProbe() === 'psql') {
+    const probe = spawnSync('psql', ['-At', '-c', 'SELECT 1'], {
+      env: { ...process.env, ...psqlEnvironment(databaseUrl) },
+      stdio: 'ignore',
+      timeout: 10000,
+    })
+    return probe.status === 0
+  }
   try {
     runSql(databaseUrl, 'SELECT 1', {}, 10000)
     return true
@@ -48,23 +65,6 @@ async function isPortInUse(port: number, host = 'localhost'): Promise<boolean> {
   })
 }
 
-const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
-
-/**
- * Whether a URL names a database this suite may wipe: on this machine (the same rule
- * prisma.config.ts applies to `migrate reset`), and named as a test database
- * (`nestled_template_test` by default).
- */
-function isDisposableTestDatabase(databaseUrl: string): boolean {
-  try {
-    const url = new URL(databaseUrl)
-    const database = decodeURIComponent(url.pathname.slice(1))
-    return LOCAL_DATABASE_HOSTS.has(url.hostname) && /(^|[_-])test([_-]|$)/i.test(database)
-  } catch {
-    return false
-  }
-}
-
 function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
   const result = spawnSync('pnpm', ['prisma', 'migrate', 'deploy'], {
     cwd: projectRoot,
@@ -85,8 +85,8 @@ function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
 function resetTestDatabase(testDatabaseUrl: string) {
   if (!isDisposableTestDatabase(testDatabaseUrl)) {
     throw new Error(
-      `Refusing to reset ${testDatabaseUrl}: only a local database whose name marks it as a test ` +
-        'database (e.g. nestled_template_test) is reset by the e2e setup.',
+      `Refusing to reset ${describeDatabase(testDatabaseUrl)}: only a local database named *_test ` +
+        `(e.g. nestled_template_test) is reset by the e2e setup, ${ALLOW_NON_DISPOSABLE_DB} or not.`,
     )
   }
   runSql(testDatabaseUrl, 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;')
@@ -225,7 +225,15 @@ module.exports = async function globalSetup() {
   e2eGlobal.__API_PROCESS__ = null
   e2eGlobal.__WE_STARTED_API__ = false
 
-  console.log(`📊 Using test database: ${testDatabaseUrl}`)
+  console.log(`📊 Using test database: ${describeDatabase(testDatabaseUrl)}`)
+
+  // Before any connection: setup migrates, pushes and seeds this database.
+  if (assertDisposableTestDatabase(testDatabaseUrl) === 'allowed') {
+    console.log(
+      `⚠️  ${ALLOW_NON_DISPOSABLE_DB}=1: running setup against a database that is not local or not ` +
+        'named *_test.',
+    )
+  }
 
   // Check if database is accessible
   const dbAccessible = isDatabaseAccessible(testDatabaseUrl)
@@ -233,7 +241,7 @@ module.exports = async function globalSetup() {
   if (!dbAccessible) {
     console.error('❌ Test database is not accessible')
     console.error('   Please ensure PostgreSQL is running and the test database exists')
-    console.error(`   Database URL: ${testDatabaseUrl}`)
+    console.error(`   Database: ${describeDatabase(testDatabaseUrl)}`)
     throw new Error('Test database not accessible')
   }
 

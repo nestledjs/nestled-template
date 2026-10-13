@@ -16,7 +16,15 @@ export default defineConfig({
       reportsDirectory: '../../coverage/libs/web',
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],
-      exclude: ['node_modules/', '**/*.spec.{ts,tsx}', '**/*.test.{ts,tsx}', '**/index.ts'],
+      exclude: [
+        'node_modules/',
+        '**/*.spec.{ts,tsx}',
+        '**/*.test.{ts,tsx}',
+        '**/index.ts',
+        // Test scaffolding, not product code: it would count as uncovered source.
+        'src/__mocks__/**',
+        'src/test-setup.ts',
+      ],
     },
   },
 })

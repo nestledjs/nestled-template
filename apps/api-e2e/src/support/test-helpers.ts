@@ -14,14 +14,60 @@ export interface TestUser {
   tokens?: AuthTokens
 }
 
+/** One entry of a GraphQL response's `errors` array. */
+export interface GraphQLErrorResponse {
+  message: string
+  extensions?: Record<string, unknown>
+  path?: readonly (string | number)[]
+}
+
+/** The body of a GraphQL response: `data` shaped like the operation's selection set. */
+export interface GraphQLResponse<TData> {
+  data: TData
+  errors?: GraphQLErrorResponse[]
+}
+
+export type GraphQLVariables = Record<string, unknown>
+
+export interface UserEmail {
+  email: string
+  primary: boolean
+}
+
+export interface AuthUser {
+  id: string
+  firstName: string
+  lastName: string
+  emails?: UserEmail[]
+  emailValidated: boolean
+}
+
+export interface AuthPayload {
+  token: string
+  user: AuthUser
+}
+
+export interface VerifiedEmail {
+  id: string
+  emailValidated: boolean
+}
+
+export interface ResetPasswordResult {
+  id: string
+  email: string
+}
+
+export type CurrentUser = AuthUser & { email: string | undefined }
+
 export class TestHelpers {
   private static readonly baseURL = axios.defaults.baseURL || 'http://localhost:3000'
 
   // GraphQL helper
-  static async graphql<T = any>(
+  // Pass the operation's data type: graphql<{ me: { id: string } }>(query).
+  static async graphql<TData = unknown>(
     query: string,
-    variables?: any,
-  ): Promise<AxiosResponse<{ data: T; errors?: any[] }>> {
+    variables?: GraphQLVariables,
+  ): Promise<AxiosResponse<GraphQLResponse<TData>>> {
     return axios.post(
       '/graphql',
       {
@@ -58,7 +104,7 @@ export class TestHelpers {
       }
     `
 
-    const response = await this.graphql(registerMutation, {
+    const response = await this.graphql<{ register: AuthPayload }>(registerMutation, {
       input: {
         firstName: user.firstName,
         lastName: user.lastName,
@@ -73,7 +119,7 @@ export class TestHelpers {
     }
 
     const result = response.data.data.register
-    const primaryEmail = result.user.emails?.find((e: any) => e.primary)?.email || user.email
+    const primaryEmail = result.user.emails?.find(e => e.primary)?.email || user.email
     return {
       id: result.user.id,
       email: primaryEmail,
@@ -104,7 +150,7 @@ export class TestHelpers {
       }
     `
 
-    const response = await this.graphql(loginMutation, {
+    const response = await this.graphql<{ login: AuthPayload }>(loginMutation, {
       input: { email, password },
     })
 
@@ -113,7 +159,7 @@ export class TestHelpers {
     }
 
     const result = response.data.data.login
-    const primaryEmail = result.user.emails?.find((e: any) => e.primary)?.email || email
+    const primaryEmail = result.user.emails?.find(e => e.primary)?.email || email
     return {
       id: result.user.id,
       email: primaryEmail,
@@ -125,7 +171,7 @@ export class TestHelpers {
     }
   }
 
-  static async verifyEmail(token: string): Promise<any> {
+  static async verifyEmail(token: string): Promise<VerifiedEmail> {
     const verifyMutation = `
       mutation VerifyEmail($input: VerifyEmailInput!) {
         verifyEmail(input: $input) {
@@ -135,7 +181,7 @@ export class TestHelpers {
       }
     `
 
-    const response = await this.graphql(verifyMutation, {
+    const response = await this.graphql<{ verifyEmail: VerifiedEmail }>(verifyMutation, {
       input: { token },
     })
 
@@ -153,7 +199,7 @@ export class TestHelpers {
       }
     `
 
-    const response = await this.graphql(forgotPasswordMutation, {
+    const response = await this.graphql<{ forgotPassword: boolean }>(forgotPasswordMutation, {
       input: { email },
     })
 
@@ -164,7 +210,7 @@ export class TestHelpers {
     return response.data.data.forgotPassword
   }
 
-  static async resetPassword(token: string, newPassword: string): Promise<any> {
+  static async resetPassword(token: string, newPassword: string): Promise<ResetPasswordResult> {
     const resetPasswordMutation = `
       mutation ResetPassword($input: ResetPasswordInput!) {
         resetPassword(input: $input) {
@@ -174,9 +220,12 @@ export class TestHelpers {
       }
     `
 
-    const response = await this.graphql(resetPasswordMutation, {
-      input: { token, password: newPassword },
-    })
+    const response = await this.graphql<{ resetPassword: ResetPasswordResult }>(
+      resetPasswordMutation,
+      {
+        input: { token, password: newPassword },
+      },
+    )
 
     if (response.data.errors) {
       throw new Error(`Password reset failed: ${JSON.stringify(response.data.errors)}`)
@@ -186,11 +235,11 @@ export class TestHelpers {
   }
 
   // Authenticated requests helper
-  static async authenticatedGraphql<T = any>(
+  static async authenticatedGraphql<TData = unknown>(
     query: string,
     user: TestUser,
-    variables?: any,
-  ): Promise<AxiosResponse<{ data: T; errors?: any[] }>> {
+    variables?: GraphQLVariables,
+  ): Promise<AxiosResponse<GraphQLResponse<TData>>> {
     return axios.post(
       '/graphql',
       {
@@ -206,7 +255,7 @@ export class TestHelpers {
     )
   }
 
-  static async getCurrentUser(user: TestUser): Promise<any> {
+  static async getCurrentUser(user: TestUser): Promise<CurrentUser> {
     const meQuery = `
       query Me {
         me {
@@ -222,14 +271,14 @@ export class TestHelpers {
       }
     `
 
-    const response = await this.authenticatedGraphql(meQuery, user)
+    const response = await this.authenticatedGraphql<{ me: AuthUser }>(meQuery, user)
 
     if (response.data.errors) {
       throw new Error(`Get current user failed: ${JSON.stringify(response.data.errors)}`)
     }
 
     const result = response.data.data.me
-    const primaryEmail = result.emails?.find((e: any) => e.primary)?.email
+    const primaryEmail = result.emails?.find(e => e.primary)?.email
 
     return {
       ...result,
