@@ -102,3 +102,19 @@ export function psqlEnvironment(databaseUrl: string): Record<string, string> {
   if (sslMode) environment.PGSSLMODE = sslMode
   return environment
 }
+
+/**
+ * The whole environment for the psql probe: the caller's environment without any inherited libpq
+ * variable (PGHOSTADDR, PGSERVICE, PGPASSFILE, a stale PGPASSWORD...), which could send psql
+ * somewhere other than the URL or log in with other credentials, plus the URL's own variables.
+ */
+export function psqlProcessEnvironment(
+  databaseUrl: string,
+  inherited: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(inherited)) {
+    if (!/^PG/i.test(key)) environment[key] = value
+  }
+  return { ...environment, ...psqlEnvironment(databaseUrl) }
+}
