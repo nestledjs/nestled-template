@@ -6,6 +6,7 @@ import {
   describeDatabase,
   isDisposableTestDatabase,
   psqlEnvironment,
+  psqlProcessEnvironment,
 } from './database-guards'
 
 describe('test database guards', () => {
@@ -72,6 +73,25 @@ describe('test database guards', () => {
       PGHOST: 'localhost',
       PGPORT: '5432',
       PGDATABASE: 'app_test',
+    })
+  })
+
+  it('drops inherited libpq variables from the psql environment and keeps the rest', () => {
+    const environment = psqlProcessEnvironment('postgresql://u:p@localhost:5433/app_test', {
+      PATH: '/usr/bin',
+      PGHOSTADDR: '10.0.0.5',
+      PGSERVICE: 'production',
+      PGPASSFILE: '/home/me/.pgpass',
+      PGPASSWORD: 'stale',
+      PGOPTIONS: '-c search_path=other',
+    })
+    expect(environment).toEqual({
+      PATH: '/usr/bin',
+      PGHOST: 'localhost',
+      PGPORT: '5433',
+      PGDATABASE: 'app_test',
+      PGUSER: 'u',
+      PGPASSWORD: 'p',
     })
   })
 })

@@ -8,7 +8,7 @@ import {
   databaseProbe,
   describeDatabase,
   isDisposableTestDatabase,
-  psqlEnvironment,
+  psqlProcessEnvironment,
 } from './database-guards'
 import globalTeardown from './global-teardown'
 import { runSql, testDatabaseUrl } from './test-db'
@@ -28,7 +28,7 @@ const e2eGlobal = globalThis as E2EGlobalState
 function isDatabaseAccessible(databaseUrl: string): boolean {
   if (databaseProbe() === 'psql') {
     const probe = spawnSync('psql', ['-At', '-c', 'SELECT 1'], {
-      env: { ...process.env, ...psqlEnvironment(databaseUrl) },
+      env: psqlProcessEnvironment(databaseUrl),
       stdio: 'ignore',
       timeout: 10000,
     })

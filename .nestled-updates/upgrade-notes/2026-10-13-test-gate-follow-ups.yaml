@@ -90,7 +90,8 @@ intent: >
   Database probe. Global setup's readiness probe is the pg runner by default and needs no psql.
   `E2E_DATABASE_PROBE=psql` runs `psql -At -c 'SELECT 1'` from PATH instead, with the URL passed
   as PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE (and PGSSLMODE) so the password never reaches a
-  command line. This is for a repo whose lifecycle tests stand in for the database with a stub
+  command line. Inherited libpq variables (PGHOSTADDR, PGSERVICE, PGPASSFILE, a stale PGPASSWORD)
+  are dropped from psql's environment first, so the probe reaches only the URL's database. This is for a repo whose lifecycle tests stand in for the database with a stub
   psql.
 
   SQL splitter. apps/api-e2e/src/support/sql-runner.mjs keeps a backslash-escaped quote inside an
