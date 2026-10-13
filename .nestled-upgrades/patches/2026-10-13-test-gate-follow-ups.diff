@@ -1,0 +1,2641 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 3fdafe5..b1b5e37 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -146,8 +146,23 @@ jobs:
+       # scoped list silently stops covering new projects as they are added.
+       - run: pnpm exec nx run-many -t typecheck
+ 
++      # The workspace root's own TypeScript (scripts/, tools/) belongs to no Nx project; each folder's
++      # tsconfig.json is checked by the same runner, uncovered-file check included.
++      - run: pnpm typecheck:workspace
++
++      # Unit and component tests only: api-e2e's `test` target is its support suite, so this never
++      # starts the API e2e run or a test database.
+       - name: Run tests with coverage
+         run: pnpm test:coverage
++        env:
++          REDIS_URL: redis://127.0.0.1:6379
++          NODE_ENV: test
++          JWT_SECRET: test-jwt-secret-for-ci-only-not-production
++          EMAIL_PROVIDER: mock
++
++      # The API e2e suite, against the service containers above, through its PASSED-checking wrapper.
++      - name: Run API e2e with coverage
++        run: pnpm exec nx run api-e2e:e2e -- --coverage
+         env:
+           TEST_DATABASE_URL: postgresql://prisma:prisma@localhost:5432/nestled_template_test
+           REDIS_URL: redis://127.0.0.1:6379
+diff --git a/.nestled-updates/upgrade-notes/2026-10-13-test-gate-follow-ups.yaml b/.nestled-updates/upgrade-notes/2026-10-13-test-gate-follow-ups.yaml
+new file mode 100644
+index 0000000..3ba61ce
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-13-test-gate-follow-ups.yaml
+@@ -0,0 +1,246 @@
++id: 2026-10-13-test-gate-follow-ups
++title: Test and typecheck gate follow-ups, and a unit-test run that never starts the e2e suite
++priority: normal
++area: infra
++type: correctness
++delivery: code-patch
++intent: >
++  Follow up the 2026-10-10 and 2026-10-12 test and typecheck gate notes with the gaps that adopting
++  them exposed.
++
++  Typecheck cache. Every typecheck target (the one tools/nx-plugins/typecheck.js gives each project,
++  and the ones written in apps/api/project.json and apps/web/project.json) lists
++  `{workspaceRoot}/pnpm-lock.yaml` among its inputs. The plugin exports typecheckTarget, and the
++  runner spec checks all three carry the lockfile.
++
++  Declaration files. scripts/typecheck-project.mjs no longer skips every .d.ts when it looks for
++  uncovered files. A tracked, hand-written declaration file (a global augmentation, a `declare
++  module` shim) that no checked config includes is reported like any other uncovered source.
++  Declarations under build output and typegen folders (dist, build, out, out-tsc, coverage,
++  node_modules, .react-router, +types) are still skipped as generated. apps/web/app-load-context.d.ts
++  surfaced this way; apps/web/tsconfig.app.json and tsconfig.spec.json now include it.
++
++  Workspace root typecheck. scripts/ and tools/ each get a tsconfig.json (strict, Node types,
++  bundler resolution, `**/*.ts`), checked by the same runner through a new root script
++  `pnpm typecheck:workspace` (`node scripts/typecheck-project.mjs scripts && node
++  scripts/typecheck-project.mjs tools`). `pnpm typecheck` runs it after `nx run-many -t typecheck`,
++  and CI runs it as its own step. Neither folder becomes an Nx project, so no lint, test or build
++  target appears for them. tools/fragment-to-select.ts imported a module that no longer exists in
++  the repo (../scripts/doctor-sdk-contract-analysis); that analysis ships in @nestledjs/doctor, which
++  exports buildPrismaSelectFromFragments and its types, so the tool imports it from there.
++
++  Windows spawn options. ownedProcessOptions() in apps/api-e2e/src/support/api-process.ts takes
++  `{ shell }`, default true. With no argument it behaves as before (detached on POSIX, a shell on
++  Windows for pnpm's .cmd shim). `ownedProcessOptions({ shell: false })` is for spawning an
++  executable directly, such as process.execPath. Through cmd.exe, an unquoted path containing a
++  space is split there and the spawn fails. The native spec runs every cleanup case for both
++  launches, pnpm-style through a shell and node directly.
++
++  Unit-test runs no longer start the e2e suite. The api-e2e `test` target was the e2e wrapper, so
++  `nx run-many -t test` (and `pnpm test`, and CI's `pnpm test:coverage`) started the real API e2e
++  and, when the database was unreachable, the Docker Compose test database. `api-e2e:e2e` is now the
++  only target that runs the suite. `api-e2e:test` is an `nx:noop` that depends on
++  `api-e2e:test-support`, the database-free support suite. scripts/run-e2e-tests.sh calls
++  `api-e2e:e2e`. CI runs unit tests (`pnpm test:coverage`) and then the e2e suite as its own step,
++  `pnpm exec nx run api-e2e:e2e -- --coverage`, with TEST_DATABASE_URL on that step only.
++
++  Dead Jest files. Remove apps/api-e2e/jest.config.ts and jest.config.simple.ts (the suite runs on
++  Vitest), drop them from apps/api-e2e/tsconfig.spec.json, and replace its `"types": ["jest",
++  "node"]` with `["node"]`. The specs import describe/it/expect from vitest.
++
++  run-tests.sh. When the caller supplied TEST_DATABASE_URL and that database is unreachable, the
++  wrapper fails with a message instead of starting the repo's Docker Compose test database, which
++  would not be at that URL and would replace a stopped container the developer owns. It starts its
++  own test database only when no URL was supplied. scripts/run-e2e-tests.sh (`pnpm test:e2e`)
++  likewise neither starts nor stops the repo's test container when TEST_DATABASE_URL is supplied,
++  and forwards every argument to `api-e2e:e2e` (it used to forward only the first, dropping e.g.
++  `--coverage` after a file filter). The
++  wrapper runs under `set -euo pipefail`. The Vitest run is bracketed by `set +e`
++  / `set -e` so its status is still captured from PIPESTATUS. The summary match uses a here-string
++  rather than `echo | grep -q`, because under pipefail the writer's SIGPIPE would turn a found
++  failure into "no match". The passed-count pipeline ends in `|| true` so no match is a count of
++  zero. Cleanup no longer swallows a failure to stop a test database the wrapper started: it prints
++  a warning on stderr and leaves the result unchanged. scripts/run-e2e-tests.sh does the same, and
++  its comment no longer describes the removed exit-code adjustment.
++
++  Coverage. libs/web's Vitest coverage excludes src/__mocks__/** and src/test-setup.ts.
++
++  Generated route types in specs. apps/web/tsconfig.spec.json includes `.react-router/types/**/*`
++  and sets `rootDirs: [".", "./.react-router/types"]`, as tsconfig.app.json does, so a spec that
++  imports a route using `./+types/...` typechecks.
++
++  Typed e2e GraphQL helpers. TestHelpers.graphql and authenticatedGraphql in
++  apps/api-e2e/src/support/test-helpers.ts are `<TData = unknown>` and return
++  `AxiosResponse<GraphQLResponse<TData>>`, with GraphQLResponse, GraphQLErrorResponse and
++  GraphQLVariables exported. Callers pass the type of the selection they read, so `.data.data` is
++  no longer `any`. The helpers' own register/login/verify/reset/me calls are typed the same way, as
++  is the local gql helper in organization-billing.spec.ts. The specs pass their response types.
++
++  Disposable test database. Global setup refuses, before it connects, a TEST_DATABASE_URL that is
++  not disposable: the host must be localhost, 127.0.0.1 or ::1, and the database name must end in
++  `_test`. `E2E_ALLOW_NON_DISPOSABLE_DB=1` lets a run through anyway, with a warning. The
++  from-scratch reset (taken when migrate deploy reports P3005) requires a disposable database
++  regardless of the opt-out, and now uses the same rule, so a name like `test_data` is no longer
++  reset. The checks live in the new, side-effect-free
++  apps/api-e2e/src/support/database-guards.ts with its own spec in the support suite. Setup logs
++  the database by host and name rather than its full URL.
++
++  Database probe. Global setup's readiness probe is the pg runner by default and needs no psql.
++  `E2E_DATABASE_PROBE=psql` runs `psql -At -c 'SELECT 1'` from PATH instead, with the URL passed
++  as PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE (and PGSSLMODE) so the password never reaches a
++  command line. This is for a repo whose lifecycle tests stand in for the database with a stub
++  psql.
++
++  SQL splitter. apps/api-e2e/src/support/sql-runner.mjs keeps a backslash-escaped quote inside an
++  escape string (E'it\'s'), and no longer opens a dollar quote at a `$` inside an identifier
++  (price$usd$), including after a non-ASCII identifier character (café$usd$), which `\w` does not
++  match. Nested block comments are still not tracked; its doc comment says so.
++why: >
++  Each of these left a gate reporting green, or a run doing more than it said. A dependency upgrade
++  that changed types replayed a cached typecheck, because the inputs named only typescript. An
++  uncovered hand-written .d.ts passed silently, since the runner skipped all declarations. The root
++  scripts and tools were never typechecked at all, which is how a broken import in
++  tools/fragment-to-select.ts went unnoticed. `nx run-many -t test`, the normal unit-test command,
++  started the API e2e suite and a Docker database, so a unit-test run on a laptop or a CI job
++  without Docker could hang or fail for reasons that had nothing to do with unit tests.
++
++  Global setup migrated, pushed and seeded whatever TEST_DATABASE_URL named. A URL copied from
++  DATABASE_URL would have had its schema rewritten. Spawning node directly with the Windows shell
++  option failed for any Node install path containing a space. Under the wrapper's old `set +e`, an
++  unexpected command failure went unnoticed, and a test database the wrapper could not stop was
++  never mentioned. Specs that import routes could not typecheck once routes used generated types.
++  The e2e GraphQL helpers returned `any`, so a spec could read a field the query never selected and
++  still compile.
++affectedPaths:
++  - tools/nx-plugins/typecheck.js
++  - apps/api/project.json
++  - apps/web/project.json
++  - scripts/typecheck-project.mjs
++  - scripts/typecheck-project.spec.mjs
++  - scripts/tsconfig.json
++  - tools/tsconfig.json
++  - tools/fragment-to-select.ts
++  - package.json
++  - .github/workflows/ci.yml
++  - AGENTS.md
++  - apps/web/tsconfig.app.json
++  - apps/web/tsconfig.spec.json
++  - libs/web/vitest.config.mts
++  - apps/api-e2e/project.json
++  - apps/api-e2e/README.md
++  - apps/api-e2e/run-tests.sh
++  - apps/api-e2e/jest.config.ts
++  - apps/api-e2e/jest.config.simple.ts
++  - apps/api-e2e/tsconfig.spec.json
++  - apps/api-e2e/tsconfig.support.json
++  - apps/api-e2e/vitest.config.mts
++  - apps/api-e2e/vitest.support.config.mts
++  - apps/api-e2e/src/support/api-process.ts
++  - apps/api-e2e/src/support/api-process.spec.ts
++  - apps/api-e2e/src/support/api-process.native.spec.ts
++  - apps/api-e2e/src/support/database-guards.ts
++  - apps/api-e2e/src/support/database-guards.spec.ts
++  - apps/api-e2e/src/support/global-setup.ts
++  - apps/api-e2e/src/support/e2e-runner.spec.ts
++  - apps/api-e2e/src/support/sql-runner.mjs
++  - apps/api-e2e/src/support/sql-runner.spec.ts
++  - apps/api-e2e/src/support/test-helpers.ts
++  - apps/api-e2e/src/**/*.spec.ts
++  - scripts/run-e2e-tests.sh
++verification:
++  - node --test scripts/typecheck-project.spec.mjs
++  - pnpm exec nx run-many -t typecheck --parallel=1 --skip-nx-cache
++  - pnpm typecheck:workspace
++  - pnpm exec nx run-many -t lint --parallel=1
++  - pnpm exec nx run-many -t test --parallel=1
++  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
++  - pnpm exec nx run api-e2e:e2e
++  - pnpm run nestled-doctor
++agentHints:
++  - >
++    Migrating the api-e2e targets: if project.json has a `test` target that runs the e2e wrapper (or
++    the Vitest executor against the e2e config), make `e2e` the only target that runs the suite and
++    turn `test` into `{"executor": "nx:noop", "dependsOn": ["test-support"]}`. Then change every
++    caller of `api-e2e:test` that means the e2e suite (scripts/run-e2e-tests.sh, package.json
++    scripts, CI, docs) to `api-e2e:e2e`. If CI got its e2e run from `pnpm test`/`pnpm test:coverage`,
++    add an explicit `nx run api-e2e:e2e -- --coverage` step with TEST_DATABASE_URL and the service
++    containers, or the e2e suite silently stops running in CI. Never run `run-many -t test` in a
++    way that starts e2e. Check with `nx run-many -t test` that no `api-e2e:e2e` runs and no
++    container starts.
++  - >
++    Disposable-database guard: global setup now refuses a TEST_DATABASE_URL that is not on
++    localhost/127.0.0.1/::1 or whose name does not end in `_test`. If CI reaches its database by a
++    service hostname (container jobs) or the test database has another name, rename it to *_test
++    where you can; otherwise set E2E_ALLOW_NON_DISPOSABLE_DB=1 on that job only. Lifecycle or
++    support tests that run global setup with fixture URLs must use a local *_test URL or set the
++    opt-out in their env. The from-scratch reset is stricter than before (it needs `_test` at the
++    end of the name), so a database named like `test_app` must be renamed or recreated by hand.
++  - >
++    If the project's lifecycle tests stand in for the database with a stub psql on PATH, set
++    E2E_DATABASE_PROBE=psql in those tests rather than restoring a psql-only probe. Otherwise keep
++    the pg-runner default. The wrapper's own probe (run-tests.sh) always uses the pg runner.
++  - >
++    Custom lib typecheck targets: a project.json `typecheck` that is a plain `tsc -p tsconfig.lib.json
++    && tsc -p tsconfig.spec.json` with no dependsOn should be deleted, and the plugin's target
++    replaces it. A target that has dependsOn (for example a prisma generate) or needs an explicit
++    config list becomes `node scripts/typecheck-project.mjs <projectRoot> [configs...]`, keeps its
++    dependsOn, and adds `{workspaceRoot}/pnpm-lock.yaml` and
++    `{workspaceRoot}/scripts/typecheck-project.mjs` to its inputs.
++  - >
++    `api:build` in dependsOn: if the project's global setup starts the built API from dist rather
++    than `nx serve api`, keep `api:build` in the e2e target's dependsOn (alongside test-support).
++    Without it, the e2e run tests a stale build.
++  - >
++    Duplicate Vite: to check for a second Vite after removing app-level @react-router/dev or
++    @types/node, look in pnpm-lock.yaml (for example `grep -E "^  vite@" pnpm-lock.yaml`), not in
++    node_modules/.pnpm. That folder keeps stale entries until it is pruned, so it can show two
++    versions after the lock has one.
++  - >
++    The PASSED rule is runner-neutral: an e2e run passes only when tests ran, none failed and at
++    least one passed. It is never a cached result and never passWithNoTests. A repo whose e2e
++    runs on Jest implements it from Jest's JSON output (`--json --outputFile`): numFailedTests == 0,
++    numFailedTestSuites == 0, numPassedTests > 0, and a zero exit, with Jest's passWithNoTests off
++    and the target uncached.
++  - >
++    @types/pg: if the lockfile already resolves @types/pg transitively, add that exact version to
++    devDependencies. Never downgrade it, and avoid a caret range that would bump it on the next
++    install.
++  - >
++    Common typecheck fixes seen when adopting the runner. A lib that compiles another lib's .tsx
++    through path mapping needs `jsx` set (TS6142). Spec configs need `target: es2022` (or later)
++    for top-level await. TS2308 `export *` name collisions need explicit re-exports of the
++    conflicting names. Storybook stories typed from the meta (`StoryObj<typeof meta>`) break on
++    union props, so type them from the component (`StoryObj<typeof Component>`).
++  - >
++    SonarCloud: where sonar.sources includes scripts/, add `node --test
++    --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=<file>
++    scripts/typecheck-project.spec.mjs` (or equivalent) to CI's coverage collection, list that lcov
++    in sonar.javascript.lcov.reportPaths, and treat `**/*.spec.mjs` as tests (sonar.tests /
++    sonar.test.inclusions). Otherwise the runner counts as uncovered new code and the new-code
++    coverage gate fails.
++  - >
++    A repo already at 0 uncovered files after the earlier notes should expect no new typecheck
++    errors from the runner change itself. The only new reports are hand-written .d.ts files that no
++    config includes (add each to the config whose code it types, as apps/web did with
++    app-load-context.d.ts), plus whatever scripts/ and tools/ contain once typecheck:workspace
++    checks them.
++  - >
++    scripts/ and tools/ typecheck: copy the two tsconfig.json files and the `typecheck:workspace`
++    script (package.json is not mirrored by template promotion, so add the script and the
++    `pnpm typecheck` chaining by hand). If a script imports generated code (the Prisma client), run
++    it after the Nx typecheck, which generates first. A script that is dead or broken may be
++    deleted instead of fixed. If tools/fragment-to-select.ts still imports
++    ../scripts/doctor-sdk-contract-analysis, import from '@nestledjs/doctor' instead.
++  - >
++    Typed GraphQL helpers: after the default becomes `unknown`, every spec reading `.data.data`
++    from TestHelpers.graphql/authenticatedGraphql fails typecheck until it passes a type matching
++    its selection set. Add small local types per spec. Do not pass `any`. Calls that only read
++    `errors` need no type argument.
++  - >
++    Code that spawns process.execPath (or another executable that is not a .cmd shim) with
++    ownedProcessOptions() should pass `{ shell: false }`. Leave pnpm/npx spawns on the default.
++  - >
++    If the project's run-tests.sh differs from the template's, adopt `set -euo pipefail` with care.
++    Wrap the test run in `set +e`/`set -e`, use here-strings for `grep -q` on captured output, and
++    add `|| true` to count pipelines that may match nothing. Run the wrapper spec (e2e-runner.spec.ts)
++    and confirm a broken test and a zero-test run still fail.
+diff --git a/AGENTS.md b/AGENTS.md
+index b90ace4..fd292a4 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -80,7 +80,7 @@ pnpm nx build <project-name>
+ ### Testing
+ 
+ ```bash
+-pnpm test                          # run Nx test targets
++pnpm test                          # run Nx test targets (unit/component; never the API e2e)
+ pnpm test:e2e                      # scripted end-to-end tests
+ pnpm nx test <project-name>        # focused project test
+ pnpm nx e2e api-e2e                # API e2e tests
+@@ -98,7 +98,8 @@ pnpm test:db:stop
+ pnpm lint               # run workspace and project linting
+ pnpm format             # write Nx formatting
+ pnpm format:check       # check formatting
+-pnpm typecheck          # generate React Router types + TypeScript checks for apps/web
++pnpm typecheck          # every project: app/lib, spec and storybook configs (scripts/typecheck-project.mjs),
++                        # then scripts/ and tools/ (pnpm typecheck:workspace)
+ ```
+ 
+ ### Prisma Operations
+@@ -138,7 +139,7 @@ TypeScript is the default language. Follow `.editorconfig`: UTF-8, two-space ind
+ 
+ ## Testing Guidelines
+ 
+-Unit and component tests use Jest and Vitest through Nx project targets. Place tests next to the source they cover when practical, or in existing folders such as `apps/web/tests` and `apps/api-e2e/src`. Run focused checks with Nx, e.g. `pnpm nx test web-ui` or `pnpm nx e2e api-e2e`.
++Unit and component tests use Jest and Vitest through Nx project targets. Place tests next to the source they cover when practical, or in existing folders such as `apps/web/tests` and `apps/api-e2e/src`. Run focused checks with Nx, e.g. `pnpm nx test web-ui` or `pnpm nx e2e api-e2e`. The API e2e suite runs only through `api-e2e:e2e`; `api-e2e:test` is its database-free support suite, so `nx run-many -t test` never starts the e2e run or a test database.
+ 
+ ## Commit & Pull Request Guidelines
+ 
+diff --git a/apps/api-e2e/README.md b/apps/api-e2e/README.md
+index d9a5bff..1a37e57 100644
+--- a/apps/api-e2e/README.md
++++ b/apps/api-e2e/README.md
+@@ -13,21 +13,26 @@ database and exercise it over HTTP.
+ ## Running E2E Tests
+ 
+ ```bash
+-pnpm test:e2e               # starts the test database container, runs the suite, stops it
+-pnpm nx e2e api-e2e         # runs the suite; starts the container only if the database is unreachable
++pnpm test:e2e               # starts the test database container, runs the suite, stops it (with TEST_DATABASE_URL set, uses that database and manages no container)
++pnpm nx e2e api-e2e         # runs the suite; starts the container only if no TEST_DATABASE_URL is set and the database is unreachable
+ pnpm nx e2e api-e2e -- src/auth/auth-generation.spec.ts   # one file
+ ```
+ 
+-`api-e2e:e2e` and `api-e2e:test` run the same wrapper, `run-tests.sh`, and are never cached: every
+-green result comes from a run that just happened. The wrapper prints every test by name and reports
++`api-e2e:e2e` runs the wrapper, `run-tests.sh`, and is never cached: every green result comes from a
++run that just happened. `api-e2e:test` is only the suite's own support tests (`api-e2e:test-support`:
++the wrapper, the process cleanup, the SQL runner and the database guards), which need no database, so
++`nx run-many -t test` never starts the e2e run or a test database. The wrapper prints every test by name and reports
+ PASSED, with the number of tests that passed, only when Vitest's summary has no failure and at least
+ one test passed. A filter that matches nothing, or a run in which every test is skipped, fails.
+ 
+ ## How It Works
+ 
+ 1. **Wrapper** (`run-tests.sh`): resolves the test database URL, probes it with its own
+-   credentials, starts the test container if it is unreachable, runs Vitest and checks the summary.
++   credentials, and if it is unreachable either fails (a caller-supplied `TEST_DATABASE_URL`) or
++   starts the repo's test container (no URL supplied). It then runs Vitest and checks the summary.
+ 2. **Global setup** (`src/support/global-setup.ts`):
++   - refuses a test database that is not disposable (on this machine and named `*_test`) before it
++     connects, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set
+    - applies migrations with `prisma migrate deploy`. A local test database built by `db push` alone
+      has no migration history; it is emptied and migrated from scratch.
+    - runs `prisma db push` and the seed
+@@ -48,11 +53,17 @@ one test passed. A filter that matches nothing, or a run in which every test is
+ - `HOST`: the API host (default `localhost`).
+ - `E2E_ALLOW_EXISTING_API`: set to `1` only when you started an API on `E2E_API_PORT` against the
+   test database yourself.
++- `E2E_ALLOW_NON_DISPOSABLE_DB`: set to `1` only when the test database is disposable but not local
++  or not named `*_test` (a CI service container reached by its service name, for example). Setup
++  migrates, pushes and seeds it; the from-scratch reset still requires a local `*_test` database.
++- `E2E_DATABASE_PROBE`: how global setup checks the database answers. `pg` (default) uses the pg
++  runner; `psql` runs `psql` from PATH, for a repo whose lifecycle tests stub psql.
+ 
+ ## CI
+ 
+-CI runs `pnpm test:coverage`, which includes `api-e2e:test`, against PostgreSQL and Redis service
+-containers. `TEST_DATABASE_URL` points at the service database with its own credentials.
++CI runs `pnpm exec nx run api-e2e:e2e -- --coverage` against PostgreSQL and Redis service
++containers, as its own step after the unit tests. `TEST_DATABASE_URL` points at the service database
++with its own credentials.
+ 
+ ## Test Structure
+ 
+@@ -68,6 +79,10 @@ src/
+ 
+ - **"Refusing to run e2e against an API this suite did not start"**: something already listens on
+   `E2E_API_PORT`. Stop it or choose another port.
++- **"Refusing to run e2e setup against ..."**: `TEST_DATABASE_URL` is not a local `*_test`
++  database. Point it at one, or set `E2E_ALLOW_NON_DISPOSABLE_DB=1` if it is disposable anyway.
+ - **"Test database not accessible"**: check `TEST_DATABASE_URL`, or start the container with
+   `pnpm test:db:start`.
+ - **"no test passed"**: the file filter matched nothing, or every test was skipped.
++- **"could not stop it"**: the wrapper started the test database and `scripts/test-db.sh stop`
++  failed. Stop it by hand before the next run.
+diff --git a/apps/api-e2e/jest.config.simple.ts b/apps/api-e2e/jest.config.simple.ts
+deleted file mode 100644
+index dab423c..0000000
+--- a/apps/api-e2e/jest.config.simple.ts
++++ /dev/null
+@@ -1,25 +0,0 @@
+-export default {
+-  displayName: 'api-e2e-simple',
+-  preset: '../../jest.preset.js',
+-  // No global setup/teardown for simple tests
+-  testEnvironment: 'node',
+-  extensionsToTreatAsEsm: ['.ts'],
+-  globals: {
+-    'ts-jest': {
+-      useESM: true,
+-    },
+-  },
+-  transform: {
+-    '^.+\\.[tj]s$': [
+-      'ts-jest',
+-      {
+-        tsconfig: '<rootDir>/tsconfig.spec.json',
+-        useESM: true,
+-      },
+-    ],
+-  },
+-  transformIgnorePatterns: ['node_modules/(?!(@faker-js/faker)/)'],
+-  moduleFileExtensions: ['ts', 'js', 'html'],
+-  coverageDirectory: '../../coverage/api-e2e-simple',
+-  testMatch: ['<rootDir>/src/basic-validation.spec.ts'],
+-}
+diff --git a/apps/api-e2e/jest.config.ts b/apps/api-e2e/jest.config.ts
+deleted file mode 100644
+index 04f62a9..0000000
+--- a/apps/api-e2e/jest.config.ts
++++ /dev/null
+@@ -1,20 +0,0 @@
+-export default {
+-  displayName: 'api-e2e',
+-  preset: '../../jest.preset.js',
+-  globalSetup: '<rootDir>/src/support/global-setup.ts',
+-  globalTeardown: '<rootDir>/src/support/global-teardown.ts',
+-  setupFiles: ['<rootDir>/src/support/test-setup.ts'],
+-  testEnvironment: 'node',
+-  transform: {
+-    '^.+\\.[tj]s$': [
+-      'ts-jest',
+-      {
+-        tsconfig: '<rootDir>/tsconfig.spec.json',
+-      },
+-    ],
+-  },
+-  moduleFileExtensions: ['ts', 'js', 'html', 'json'],
+-  coverageDirectory: '../../coverage/api-e2e',
+-  testTimeout: 30000,
+-  maxWorkers: 1,
+-}
+diff --git a/apps/api-e2e/project.json b/apps/api-e2e/project.json
+index 11b35a7..ee87dfb 100644
+--- a/apps/api-e2e/project.json
++++ b/apps/api-e2e/project.json
+@@ -19,17 +19,7 @@
+       "dependsOn": ["test-support"]
+     },
+     "test": {
+-      "executor": "nx:run-commands",
+-      "cache": false,
+-      "parallelism": false,
+-      "outputs": [
+-        "{workspaceRoot}/coverage/{projectRoot}",
+-        "{workspaceRoot}/test-results/{projectRoot}"
+-      ],
+-      "options": {
+-        "command": "bash apps/api-e2e/run-tests.sh",
+-        "cwd": "{workspaceRoot}"
+-      },
++      "executor": "nx:noop",
+       "dependsOn": ["test-support"]
+     },
+     "test-support": {
+diff --git a/apps/api-e2e/run-tests.sh b/apps/api-e2e/run-tests.sh
+index 9ad26f2..9b3885b 100755
+--- a/apps/api-e2e/run-tests.sh
++++ b/apps/api-e2e/run-tests.sh
+@@ -2,12 +2,17 @@
+ # Runs the API e2e suite against the test database and reports PASSED only when Vitest exited 0, its
+ # summary counts no failure, and at least one test passed.
+ 
+-set +e  # Don't exit on error
++# Fail on any unexpected error, unset variable or failed pipeline stage. The Vitest run and the
++# summary parsing below handle their own non-zero statuses explicitly.
++set -euo pipefail
+ 
+ # Use tee to show output in real-time AND capture it
+ TMPFILE=$(mktemp)
++# A caller-supplied URL names a database this script does not manage: if it is unreachable the run
++# fails, rather than starting the repo's Compose test database, which would not be at that URL.
++SUPPLIED_TEST_DATABASE_URL="${TEST_DATABASE_URL:-}"
+ # Resolve the test DB URL the way scripts/test-db.sh does (it reads POSTGRES_TEST_PORT from the
+-# repo-root .env), so a direct `api-e2e:test` run doesn't probe/migrate the wrong port.
++# repo-root .env), so a direct `api-e2e:e2e` run doesn't probe/migrate the wrong port.
+ export TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(./scripts/test-db.sh url)}"
+ export DATABASE_URL="$TEST_DATABASE_URL"
+ # prisma.config.ts prefers DIRECT_URL — pin it to the test DB too, or Prisma reaches the dev DB.
+@@ -27,19 +32,28 @@ probe_test_database() {
+ TEST_DB_STARTED=false
+ 
+ cleanup() {
+-  if [[ "$TEST_DB_STARTED" = true ]]; then
+-    ./scripts/test-db.sh stop >/dev/null 2>&1 || true
++  if [[ "$TEST_DB_STARTED" = true ]] && ! ./scripts/test-db.sh stop >/dev/null 2>&1; then
++    # Not fatal for the result, which is already decided, but a test database left running holds
++    # its port and its data into the next run.
++    echo "" >&2
++    echo "⚠️  WARNING: this run started the test database and could not stop it." >&2
++    echo "   Stop it with ./scripts/test-db.sh stop before the next run." >&2
+   fi
++  rm -f "${TMPFILE:-}"
+   return 0
+ }
+ 
+ trap cleanup EXIT
+ 
+ if ! probe_test_database; then
++  if [[ -n "$SUPPLIED_TEST_DATABASE_URL" ]]; then
++    echo "❌ TEST_DATABASE_URL is set but that database is not accessible"
++    echo "   Start it, or unset TEST_DATABASE_URL to use the repo's own test database"
++    exit 1
++  fi
+   if ! docker info >/dev/null 2>&1; then
+     echo "❌ Test database is not accessible and Docker is not running"
+     echo "   Start Docker or set TEST_DATABASE_URL to an accessible test database"
+-    rm -f "$TMPFILE"
+     exit 1
+   fi
+ 
+@@ -49,8 +63,11 @@ fi
+ 
+ # Call vitest directly to avoid infinite loop (since NX now calls this script)
+ # "$@" passes through any extra flags from the caller (e.g. --coverage)
++# errexit is off for the run itself: a failing Vitest is a result to report, not a script error.
++set +e
+ npx vitest run --config apps/api-e2e/vitest.config.mts "$@" 2>&1 | tee "$TMPFILE"
+ EXIT_CODE=${PIPESTATUS[0]}
++set -e
+ 
+ # Read the captured output, without colour codes, so the summary lines can be matched reliably
+ OUTPUT=$(sed -E 's/\x1b\[[0-9;]*m//g' "$TMPFILE")
+@@ -59,14 +76,17 @@ rm -f "$TMPFILE"
+ # Vitest's summary reads e.g. "Test Files  1 failed | 28 passed (29)". Any failed count there means
+ # the run failed, whatever else was printed.
+ SUMMARY_HAS_FAILURES=false
+-if echo "$OUTPUT" | grep -qE '^[[:space:]]*(Test Files|Tests)[[:space:]].*[0-9]+ failed'; then
++# A here-string, not `echo | grep -q`: grep -q stops reading at the first match, and under pipefail
++# the writer's SIGPIPE would turn a found failure into "no match".
++if grep -qE '^[[:space:]]*(Test Files|Tests)[[:space:]].*[0-9]+ failed' <<<"$OUTPUT"; then
+   SUMMARY_HAS_FAILURES=true
+ fi
+ 
+ # How many tests passed, from the summary line "Tests  3 failed | 125 passed (128)". A run in which
+ # no test passed — no test matched, or every test was skipped — proves nothing, so it never reports
+ # PASSED, whatever the exit code.
+-PASSED_COUNT=$(echo "$OUTPUT" | grep -E '^[[:space:]]*Tests[[:space:]]' | tail -1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
++# grep exits 1 when nothing matches; under pipefail that is a count of zero, not an error.
++PASSED_COUNT=$(grep -E '^[[:space:]]*Tests[[:space:]]' <<<"$OUTPUT" | tail -1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || true)
+ PASSED_COUNT=${PASSED_COUNT:-0}
+ 
+ SEPARATOR="════════════════════════════════════════════════════════════"
+diff --git a/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts b/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+index 8109c8c..38b10b5 100644
+--- a/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
++++ b/apps/api-e2e/src/auth/auth-crud-invariants.spec.ts
+@@ -8,6 +8,11 @@ const primaryId = (user: TestUser) =>
+ const validated = (user: TestUser) =>
+   sql(`SELECT "emailValidated" FROM "User" WHERE id = :'userId';`, { userId: user.id })
+ 
++type Named = { name: string }
++type InputType = { inputFields: Named[] }
++type ObjectType = { fields: Named[] }
++type EmailRecord = { id: string; email: string; verified: boolean; primary: boolean }
++
+ describe('Administrative authentication records', () => {
+   let admin: TestUser
+   beforeAll(async () => {
+@@ -17,13 +22,18 @@ describe('Administrative authentication records', () => {
+ 
+   it('keeps explicit session viewing available to the owner and permitted administrators', async () => {
+     const user = await TestHelpers.registerUser()
+-    const own = await TestHelpers.authenticatedGraphql(`query { getUserSessions { id } }`, user)
++    const own = await TestHelpers.authenticatedGraphql<{ getUserSessions: { id: string }[] }>(
++      `query { getUserSessions { id } }`,
++      user,
++    )
+     expect(own.data.errors).toBeUndefined()
+     expect(own.data.data.getUserSessions.length).toBeGreaterThan(0)
+     const query = `query($userId: String!) {
+       adminUserDetails(userId: $userId) { id activeSessions { id isValid lastActiveAt } }
+     }`
+-    const allowed = await TestHelpers.authenticatedGraphql(query, admin, { userId: user.id })
++    const allowed = await TestHelpers.authenticatedGraphql<{
++      adminUserDetails: { id: string; activeSessions: { id: string }[] }
++    }>(query, admin, { userId: user.id })
+     expect(allowed.data.errors).toBeUndefined()
+     expect(allowed.data.data.adminUserDetails.activeSessions.length).toBeGreaterThan(0)
+     const denied = await TestHelpers.authenticatedGraphql(query, user, { userId: admin.id })
+@@ -32,7 +42,7 @@ describe('Administrative authentication records', () => {
+ 
+   it('creates ordinary email records with unverified, non-primary defaults', async () => {
+     const user = await TestHelpers.registerUser()
+-    const response = await TestHelpers.authenticatedGraphql(
++    const response = await TestHelpers.authenticatedGraphql<{ createEmail: EmailRecord }>(
+       `mutation($input: CreateEmailInput!) {
+       createEmail(input: $input) { id email verified primary }
+     }`,
+@@ -44,7 +54,15 @@ describe('Administrative authentication records', () => {
+   })
+ 
+   it('keeps account and email flags readable but removes them from both write inputs', async () => {
+-    const response = await TestHelpers.authenticatedGraphql(
++    const response = await TestHelpers.authenticatedGraphql<{
++      createEmail: InputType
++      updateEmail: InputType
++      createUser: InputType
++      updateUser: InputType
++      email: ObjectType
++      user: ObjectType
++      mutation: ObjectType
++    }>(
+       `query {
+       createEmail: __type(name: "CreateEmailInput") { inputFields { name } }
+       updateEmail: __type(name: "UpdateEmailInput") { inputFields { name } }
+@@ -58,14 +76,14 @@ describe('Administrative authentication records', () => {
+     )
+     expect(response.data.errors).toBeUndefined()
+     const data = response.data.data
+-    for (const operation of ['createEmail', 'updateEmail']) {
++    for (const operation of ['createEmail', 'updateEmail'] as const) {
+       const names = data[operation].inputFields.map((field: { name: string }) => field.name)
+       expect(names).not.toEqual(expect.arrayContaining(['verified']))
+       expect(names).not.toEqual(expect.arrayContaining(['primary']))
+       expect(names).not.toContain('verifyExpires')
+       expect(names).toContain('email')
+     }
+-    for (const operation of ['createUser', 'updateUser']) {
++    for (const operation of ['createUser', 'updateUser'] as const) {
+       const names = data[operation].inputFields.map((field: { name: string }) => field.name)
+       expect(names).not.toContain('emailValidated')
+       expect(names).not.toContain('isSuperAdmin')
+@@ -101,7 +119,7 @@ describe('Administrative authentication records', () => {
+       userId: user.id,
+     })
+     expect(validated(user)).toBe('t')
+-    const response = await TestHelpers.authenticatedGraphql(
++    const response = await TestHelpers.authenticatedGraphql<{ updateEmail: EmailRecord }>(
+       `mutation($id: String!, $input: UpdateEmailInput!) {
+       updateEmail(emailId: $id, input: $input) { id email verified primary }
+     }`,
+diff --git a/apps/api-e2e/src/auth/auth-email-guards.spec.ts b/apps/api-e2e/src/auth/auth-email-guards.spec.ts
+index c08db80..adcc525 100644
+--- a/apps/api-e2e/src/auth/auth-email-guards.spec.ts
++++ b/apps/api-e2e/src/auth/auth-email-guards.spec.ts
+@@ -24,7 +24,9 @@ describe('Authentication: staff email edits', () => {
+     ).split('\n')[0]
+ 
+     const staffUpdate = (emailId: string, input: Record<string, unknown>) =>
+-      TestHelpers.authenticatedGraphql(
++      TestHelpers.authenticatedGraphql<{
++        staffUpdateEmail: { id: string; email: string; verified: boolean; primary: boolean }
++      }>(
+         `mutation StaffUpdateEmail($emailId: String!, $input: StaffUpdateEmailInput!) {
+           staffUpdateEmail(emailId: $emailId, input: $input) { id email verified primary }
+         }`,
+@@ -58,7 +60,7 @@ describe('Authentication: rejected two-factor codes', () => {
+   it('are recorded as a security event on the account, not an audit entry', async () => {
+     const userData = UserFactory.create()
+     const user = await TestHelpers.registerUser(userData)
+-    const setup = await TestHelpers.authenticatedGraphql(
++    const setup = await TestHelpers.authenticatedGraphql<{ setup2FA: { secret: string } }>(
+       `mutation Setup2FA { setup2FA { secret } }`,
+       user,
+     )
+@@ -70,7 +72,7 @@ describe('Authentication: rejected two-factor codes', () => {
+     )
+     expect(enable.data.errors).toBeUndefined()
+ 
+-    const login = await TestHelpers.graphql(
++    const login = await TestHelpers.graphql<{ login: { tempToken: string } }>(
+       `mutation Login($input: LoginInput!) { login(input: $input) { tempToken } }`,
+       { input: { email: userData.email, password: userData.password } },
+     )
+diff --git a/apps/api-e2e/src/auth/auth-generation.spec.ts b/apps/api-e2e/src/auth/auth-generation.spec.ts
+index ec684ab..6082c96 100644
+--- a/apps/api-e2e/src/auth/auth-generation.spec.ts
++++ b/apps/api-e2e/src/auth/auth-generation.spec.ts
+@@ -29,7 +29,7 @@ async function resetPassword(token: string, password: string) {
+ }
+ 
+ async function me(user: TestUser) {
+-  return TestHelpers.authenticatedGraphql(`query Me { me { id } }`, user)
++  return TestHelpers.authenticatedGraphql<{ me: { id: string } }>(`query Me { me { id } }`, user)
+ }
+ 
+ describe('Authentication: password reset retires earlier credentials', () => {
+@@ -57,7 +57,9 @@ describe('Authentication: password reset retires earlier credentials', () => {
+   it('refuses an API token issued before the reset', async () => {
+     const user = await TestHelpers.registerUser(UserFactory.create())
+ 
+-    const generated = await TestHelpers.authenticatedGraphql(
++    const generated = await TestHelpers.authenticatedGraphql<{
++      generateApiToken: { token: string }
++    }>(
+       `mutation GenerateApiToken($input: GenerateApiTokenInput!) {
+         generateApiToken(input: $input) { token }
+       }`,
+@@ -85,7 +87,7 @@ describe('Authentication: password reset retires earlier credentials', () => {
+     const userData = UserFactory.create()
+     const user = await TestHelpers.registerUser(userData)
+ 
+-    const setup = await TestHelpers.authenticatedGraphql(
++    const setup = await TestHelpers.authenticatedGraphql<{ setup2FA: { secret: string } }>(
+       `mutation Setup2FA { setup2FA { secret } }`,
+       user,
+     )
+@@ -100,7 +102,9 @@ describe('Authentication: password reset retires earlier credentials', () => {
+     )
+     expect(enable.data.errors).toBeUndefined()
+ 
+-    const login = await TestHelpers.graphql(
++    const login = await TestHelpers.graphql<{
++      login: { requires2FA: boolean; tempToken: string; token: string }
++    }>(
+       `mutation Login($input: LoginInput!) { login(input: $input) { requires2FA tempToken token } }`,
+       { input: { email: userData.email, password: userData.password } },
+     )
+@@ -110,7 +114,7 @@ describe('Authentication: password reset retires earlier credentials', () => {
+ 
+     await resetPassword(issueResetToken(user.id), 'ResetPassword123!')
+ 
+-    const complete = await TestHelpers.graphql(
++    const complete = await TestHelpers.graphql<{ complete2FALogin: { token: string } }>(
+       `mutation Complete2FA($tempToken: String!, $code: String!) {
+         complete2FALogin(tempToken: $tempToken, code: $code) { token }
+       }`,
+@@ -132,7 +136,9 @@ describe('Authentication: a change of isActive retires earlier credentials', ()
+     const before = generationOf()
+ 
+     const setActive = async (isActive: boolean) => {
+-      const response = await TestHelpers.authenticatedGraphql(
++      const response = await TestHelpers.authenticatedGraphql<{
++        updateUser: { id: string; isActive: boolean }
++      }>(
+         `mutation UpdateUser($userId: String!, $input: UpdateUserInput!) {
+           updateUser(userId: $userId, input: $input) { id isActive }
+         }`,
+@@ -181,7 +187,7 @@ describe('Authentication: a revoked session stays revoked', () => {
+     ).toThrow(/expiry cannot be extended/i)
+ 
+     // Revoking is allowed.
+-    const revoked = await TestHelpers.authenticatedGraphql(
++    const revoked = await TestHelpers.authenticatedGraphql<{ invalidateSession: boolean }>(
+       `mutation($sessionId: String!) { invalidateSession(sessionId: $sessionId) }`,
+       user,
+       { sessionId },
+diff --git a/apps/api-e2e/src/auth/organization-billing.spec.ts b/apps/api-e2e/src/auth/organization-billing.spec.ts
+index 27a5d7a..bd26070 100644
+--- a/apps/api-e2e/src/auth/organization-billing.spec.ts
++++ b/apps/api-e2e/src/auth/organization-billing.spec.ts
+@@ -1,6 +1,11 @@
+ import { describe, it, expect } from 'vitest'
+ import axios from 'axios'
+-import { TestHelpers, type TestUser } from '../support/test-helpers'
++import {
++  TestHelpers,
++  type GraphQLResponse,
++  type GraphQLVariables,
++  type TestUser,
++} from '../support/test-helpers'
+ import { UserFactory } from '../support/factories/user.factory'
+ import { sql } from '../support/test-db'
+ 
+@@ -8,8 +13,13 @@ import { sql } from '../support/test-db'
+  * Authorization hardening: billing operations need billing permissions in a current membership.
+  */
+ 
+-const gql = (user: TestUser, query: string, variables?: object, organizationId?: string) =>
+-  axios.post(
++const gql = <TData = unknown>(
++  user: TestUser,
++  query: string,
++  variables?: GraphQLVariables,
++  organizationId?: string,
++) =>
++  axios.post<GraphQLResponse<TData>>(
+     '/graphql',
+     { query, variables },
+     {
+@@ -26,6 +36,9 @@ const CANCEL_SUBSCRIPTION = `mutation { cancelSubscription { id } }`
+ const CURRENT_PLAN = `query { currentPlan { id features } }`
+ const CURRENT_SUBSCRIPTION_ACTIVE = `query { currentSubscriptionActive }`
+ 
++type SubscriptionActive = { currentSubscriptionActive: boolean }
++type CurrentPlan = { currentPlan: { id: string; features: string[] } | null }
++
+ const forbidden = (response: { data: { errors?: { message: string }[] } }) =>
+   expect(response.data.errors?.[0]?.message).toMatch(/permission|organization context/i)
+ 
+@@ -58,7 +71,7 @@ describe('Authorization: organization billing', () => {
+     forbidden(await gql(member, CANCEL_SUBSCRIPTION, undefined, organizationId))
+     // Any member may still read the plan, and whether the subscription is active.
+     expect((await gql(member, CURRENT_PLAN)).data.errors).toBeUndefined()
+-    const inactive = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
++    const inactive = await gql<SubscriptionActive>(member, CURRENT_SUBSCRIPTION_ACTIVE)
+     expect(inactive.data.errors).toBeUndefined()
+     expect(inactive.data.data.currentSubscriptionActive).toBe(false)
+ 
+@@ -73,10 +86,10 @@ describe('Authorization: organization billing', () => {
+        FROM "Plan" p WHERE p.name = :'planName';`,
+       { orgId: organizationId, planName },
+     )
+-    const active = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
++    const active = await gql<SubscriptionActive>(member, CURRENT_SUBSCRIPTION_ACTIVE)
+     expect(active.data.errors).toBeUndefined()
+     expect(active.data.data.currentSubscriptionActive).toBe(true)
+-    const memberPlan = await gql(member, CURRENT_PLAN)
++    const memberPlan = await gql<CurrentPlan>(member, CURRENT_PLAN)
+     expect(memberPlan.data.data.currentPlan.features).toEqual(['reports'])
+     forbidden(await gql(member, CURRENT_SUBSCRIPTION))
+ 
+@@ -84,7 +97,8 @@ describe('Authorization: organization billing', () => {
+       orgId: organizationId,
+     })
+     expect(
+-      (await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)).data.data.currentSubscriptionActive,
++      (await gql<SubscriptionActive>(member, CURRENT_SUBSCRIPTION_ACTIVE)).data.data
++        .currentSubscriptionActive,
+     ).toBe(false)
+     sql(`UPDATE "Subscription" SET status = 'ACTIVE' WHERE "organizationId" = :'orgId';`, {
+       orgId: organizationId,
+@@ -112,7 +126,7 @@ describe('Authorization: organization billing', () => {
+     forbidden(await gql(member, CANCEL_SUBSCRIPTION))
+     forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE))
+     forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE, undefined, organizationId))
+-    const plan = await gql(member, CURRENT_PLAN)
++    const plan = await gql<CurrentPlan>(member, CURRENT_PLAN)
+     expect(plan.data.errors).toBeUndefined()
+     expect(plan.data.data.currentPlan).toBeNull()
+   })
+diff --git a/apps/api-e2e/src/security/auth-security.spec.ts b/apps/api-e2e/src/security/auth-security.spec.ts
+index b05978e..4343196 100644
+--- a/apps/api-e2e/src/security/auth-security.spec.ts
++++ b/apps/api-e2e/src/security/auth-security.spec.ts
+@@ -178,7 +178,7 @@ describe('CRITICAL: Authentication Security', () => {
+           }
+         }
+       `
+-      const response = await TestHelpers.authenticatedGraphql(meQuery, user)
++      const response = await TestHelpers.authenticatedGraphql<{ me: { id: string } }>(meQuery, user)
+       expect(response.data.errors).toBeUndefined()
+       expect(response.data.data.me.id).toBe(user.id)
+     })
+@@ -410,7 +410,7 @@ describe('CRITICAL: Authentication Security', () => {
+           }
+         }
+       `
+-      const response = await TestHelpers.authenticatedGraphql(meQuery, user)
++      const response = await TestHelpers.authenticatedGraphql<{ me: { id: string } }>(meQuery, user)
+       expect(response.data.errors).toBeUndefined()
+       expect(response.data.data.me.id).toBe(user.id)
+     })
+@@ -436,7 +436,14 @@ describe('CRITICAL: Authentication Security', () => {
+           }
+         }
+       `
+-      const response = await TestHelpers.authenticatedGraphql(sessionsQuery, user)
++      const response = await TestHelpers.authenticatedGraphql<{
++        getUserSessions: {
++          id: string
++          deviceInfo: unknown
++          ipAddress: string | null
++          lastActiveAt: string
++        }[]
++      }>(sessionsQuery, user)
+       if (response.data.errors) {
+         // Query might not be implemented yet
+         console.log('Session tracking not fully implemented')
+diff --git a/apps/api-e2e/src/security/data-isolation.spec.ts b/apps/api-e2e/src/security/data-isolation.spec.ts
+index 239cc3c..2bedda6 100644
+--- a/apps/api-e2e/src/security/data-isolation.spec.ts
++++ b/apps/api-e2e/src/security/data-isolation.spec.ts
+@@ -1,5 +1,13 @@
+ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+-import { TestHelpers, TestUser } from '../support/test-helpers'
++import { TestHelpers, TestUser, type AuthUser } from '../support/test-helpers'
++
++// Only the fields the register documents below select.
++type Registered = {
++  register: { token: string; user: Pick<AuthUser, 'id' | 'emails' | 'firstName' | 'lastName'> }
++}
++type Organization = { id: string; name: string }
++type Member = { id: string; userId: string }
++type Preference = { id: string; key: string; value: string }
+ /**
+  * CRITICAL SECURITY TESTS: Multi-Tenant Data Isolation
+  *
+@@ -54,10 +62,10 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         }
+       }
+     `
+-    const response1 = await TestHelpers.graphql(registerMutation, {
++    const response1 = await TestHelpers.graphql<Registered>(registerMutation, {
+       input: user1Data,
+     })
+-    const response2 = await TestHelpers.graphql(registerMutation, {
++    const response2 = await TestHelpers.graphql<Registered>(registerMutation, {
+       input: user2Data,
+     })
+     if (response1.data.errors) {
+@@ -69,11 +77,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+       throw new Error(`Failed to register user 2: ${JSON.stringify(response2.data.errors)}`)
+     }
+     const user1Email =
+-      response1.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
+-      user1Data.email
++      response1.data.data.register.user.emails?.find(e => e.primary)?.email || user1Data.email
+     const user2Email =
+-      response2.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
+-      user2Data.email
++      response2.data.data.register.user.emails?.find(e => e.primary)?.email || user2Data.email
+     org1User = {
+       id: response1.data.data.register.user.id,
+       email: user1Email,
+@@ -99,10 +105,14 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         }
+       }
+     `
+-    const org1Response = await TestHelpers.authenticatedGraphql(createOrgMutation, org1User, {
++    const org1Response = await TestHelpers.authenticatedGraphql<{
++      userCreateOrganization: Organization
++    }>(createOrgMutation, org1User, {
+       input: { name: 'Organization One' },
+     })
+-    const org2Response = await TestHelpers.authenticatedGraphql(createOrgMutation, org2User, {
++    const org2Response = await TestHelpers.authenticatedGraphql<{
++      userCreateOrganization: Organization
++    }>(createOrgMutation, org2User, {
+       input: { name: 'Organization Two' },
+     })
+     if (org1Response.data.errors) {
+@@ -124,10 +134,14 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         }
+       }
+     `
+-    const org1MembersResponse = await TestHelpers.authenticatedGraphql(membersQuery, org1User, {
++    const org1MembersResponse = await TestHelpers.authenticatedGraphql<{
++      userOrganizationMembers: Member[]
++    }>(membersQuery, org1User, {
+       organizationId: org1User.organizationId,
+     })
+-    const org2MembersResponse = await TestHelpers.authenticatedGraphql(membersQuery, org2User, {
++    const org2MembersResponse = await TestHelpers.authenticatedGraphql<{
++      userOrganizationMembers: Member[]
++    }>(membersQuery, org2User, {
+       organizationId: org2User.organizationId,
+     })
+     org1MemberId = org1MembersResponse.data.data.userOrganizationMembers[0].id
+@@ -147,18 +161,24 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         }
+       `
+       // User 1 queries their organizations
+-      const response1 = await TestHelpers.authenticatedGraphql(orgQuery, org1User)
++      const response1 = await TestHelpers.authenticatedGraphql<{ myOrganizations: Organization[] }>(
++        orgQuery,
++        org1User,
++      )
+       expect(response1.data.errors).toBeUndefined()
+       expect(response1.data.data.myOrganizations).toHaveLength(2) // Auto-created + explicitly created
+       // Verify User 1's org is in their list
+-      const user1OrgIds = response1.data.data.myOrganizations.map((o: any) => o.id)
++      const user1OrgIds = response1.data.data.myOrganizations.map(o => o.id)
+       expect(user1OrgIds).toContain(org1User.organizationId)
+       // User 2 queries their organizations
+-      const response2 = await TestHelpers.authenticatedGraphql(orgQuery, org2User)
++      const response2 = await TestHelpers.authenticatedGraphql<{ myOrganizations: Organization[] }>(
++        orgQuery,
++        org2User,
++      )
+       expect(response2.data.errors).toBeUndefined()
+       expect(response2.data.data.myOrganizations).toHaveLength(2) // Auto-created + explicitly created
+       // Verify User 2's org is in their list
+-      const user2OrgIds = response2.data.data.myOrganizations.map((o: any) => o.id)
++      const user2OrgIds = response2.data.data.myOrganizations.map(o => o.id)
+       expect(user2OrgIds).toContain(org2User.organizationId)
+       // Verify they don't see each other's organizations
+       expect(user1OrgIds).not.toContain(org2User.organizationId)
+@@ -174,7 +194,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         }
+       `
+       // User 1 tries to query User 2's organization members
+-      const response = await TestHelpers.authenticatedGraphql(membersQuery, org1User, {
++      const response = await TestHelpers.authenticatedGraphql<{
++        userOrganizationMembers: Member[]
++      }>(membersQuery, org1User, {
+         organizationId: org2User.organizationId,
+       })
+       // Should either return error or empty array (depending on implementation)
+@@ -199,7 +221,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+       `
+       try {
+         // User 1 tries to query User 2's organization
+-        const response = await TestHelpers.authenticatedGraphql(orgByIdQuery, org1User, {
++        const response = await TestHelpers.authenticatedGraphql<{
++          organization: Organization | null
++        }>(orgByIdQuery, org1User, {
+           id: org2User.organizationId,
+         })
+         // Should return error or null
+@@ -319,7 +343,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         lastName: 'Org',
+         organizationName: 'Initial Org',
+       }
+-      const registerResponse = await TestHelpers.graphql(
++      const registerResponse = await TestHelpers.graphql<{
++        register: { token: string; user: Pick<AuthUser, 'id' | 'emails'> }
++      }>(
+         `
+         mutation Register($input: RegisterInput!) {
+           register(input: $input) {
+@@ -339,14 +365,16 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+       const multiOrgUser = {
+         id: registerResponse.data.data.register.user.id,
+         email:
+-          registerResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
++          registerResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
+           invitedUserData.email,
+         firstName: invitedUserData.firstName,
+         lastName: invitedUserData.lastName,
+         tokens: { accessToken: registerResponse.data.data.register.token },
+       }
+       // Get Member role ID from org1
+-      const rolesResponse = await TestHelpers.authenticatedGraphql(
++      const rolesResponse = await TestHelpers.authenticatedGraphql<{
++        organizationRoles: { id: string; name: string }[]
++      }>(
+         `
+         query OrganizationRoles($organizationId: String!) {
+           organizationRoles(organizationId: $organizationId) {
+@@ -358,9 +386,7 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         org1User,
+         { organizationId: org1User.organizationId },
+       )
+-      const memberRole = rolesResponse.data.data.organizationRoles.find(
+-        (r: any) => r.name === 'Member',
+-      )
++      const memberRole = rolesResponse.data.data.organizationRoles.find(r => r.name === 'Member')
+       // Invite user to org1
+       await TestHelpers.authenticatedGraphql(
+         `
+@@ -380,7 +406,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+       // User accepts invitation and joins org1
+       // (Implementation would require getting the invitation token)
+       // When user queries organizations, they should see both
+-      const orgsResponse = await TestHelpers.authenticatedGraphql(
++      const orgsResponse = await TestHelpers.authenticatedGraphql<{
++        myOrganizations: Organization[]
++      }>(
+         `
+         query MyOrganizations {
+           myOrganizations {
+@@ -410,7 +438,9 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+         }
+       `
+       // User 1 creates a preference (should be in their org only)
+-      const response = await TestHelpers.authenticatedGraphql(createPrefMutation, org1User, {
++      const response = await TestHelpers.authenticatedGraphql<{
++        userCreateUserPreference: Preference
++      }>(createPrefMutation, org1User, {
+         input: { key: 'test-key', value: 'test-value' },
+       })
+       // Should succeed
+@@ -426,9 +456,11 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
+           }
+         }
+       `
+-      const user2PrefsResponse = await TestHelpers.authenticatedGraphql(prefsQuery, org2User)
++      const user2PrefsResponse = await TestHelpers.authenticatedGraphql<{
++        userGetUserPreferences: Preference[]
++      }>(prefsQuery, org2User)
+       const user2Prefs = user2PrefsResponse.data.data.userGetUserPreferences
+-      const hasStolenPref = user2Prefs.some((p: any) => p.key === 'test-key')
++      const hasStolenPref = user2Prefs.some(p => p.key === 'test-key')
+       expect(hasStolenPref).toBe(false)
+     })
+   })
+diff --git a/apps/api-e2e/src/security/permissions.spec.ts b/apps/api-e2e/src/security/permissions.spec.ts
+index 69edc5c..94ba638 100644
+--- a/apps/api-e2e/src/security/permissions.spec.ts
++++ b/apps/api-e2e/src/security/permissions.spec.ts
+@@ -1,5 +1,18 @@
+ import { describe, it, expect, beforeAll } from 'vitest'
+-import { TestHelpers, TestUser } from '../support/test-helpers'
++import { TestHelpers, TestUser, type AuthUser } from '../support/test-helpers'
++
++// Each type names only the fields its register document selects.
++type Registered<Field extends keyof AuthUser = 'id' | 'emails' | 'firstName' | 'lastName'> = {
++  register: { token: string; user: Pick<AuthUser, Field> }
++}
++type Organization = { id: string; name: string }
++type Role = {
++  id: string
++  name: string
++  permissions: { id: string; subject: string; action: string }[]
++}
++type MemberWithRole = { id: string; userId: string; role: { id: string; name: string } }
++type Invitation = { createOrganizationInvitation: string }
+ /**
+  * CRITICAL SECURITY TESTS: Permission Enforcement
+  *
+@@ -40,7 +53,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+       firstName: 'Test',
+       lastName: 'Owner',
+     }
+-    const registerResponse = await TestHelpers.graphql(
++    const registerResponse = await TestHelpers.graphql<Registered>(
+       `
+       mutation Register($input: RegisterInput!) {
+         register(input: $input) {
+@@ -62,7 +75,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+     owner = {
+       id: registerResponse.data.data.register.user.id,
+       email:
+-        registerResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
++        registerResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
+         ownerData.email,
+       firstName: registerResponse.data.data.register.user.firstName,
+       lastName: registerResponse.data.data.register.user.lastName,
+@@ -79,12 +92,14 @@ describe('CRITICAL: Permission Enforcement', () => {
+         }
+       }
+     `
+-    const orgResponse = await TestHelpers.authenticatedGraphql(createOrgMutation, owner, {
++    const orgResponse = await TestHelpers.authenticatedGraphql<{
++      userCreateOrganization: Organization
++    }>(createOrgMutation, owner, {
+       input: { name: 'Permission Test Org' },
+     })
+     owner.organizationId = orgResponse.data.data.userCreateOrganization.id
+     // Get role IDs with permissions
+-    const rolesResponse = await TestHelpers.authenticatedGraphql(
++    const rolesResponse = await TestHelpers.authenticatedGraphql<{ organizationRoles: Role[] }>(
+       `
+       query OrganizationRoles($organizationId: String!) {
+         organizationRoles(organizationId: $organizationId) {
+@@ -104,9 +119,9 @@ describe('CRITICAL: Permission Enforcement', () => {
+     const roles = rolesResponse.data.data.organizationRoles
+     console.log('Available roles:', JSON.stringify(roles, null, 2))
+     roleIds = {
+-      owner: roles.find((r: any) => r.name === 'Owner')?.id || '',
+-      admin: roles.find((r: any) => r.name === 'Admin')?.id || '',
+-      member: roles.find((r: any) => r.name === 'Member')?.id || '',
++      owner: roles.find(r => r.name === 'Owner')?.id || '',
++      admin: roles.find(r => r.name === 'Admin')?.id || '',
++      member: roles.find(r => r.name === 'Member')?.id || '',
+     }
+     console.log('Role IDs:', roleIds)
+     owner.roleId = roleIds.owner
+@@ -123,7 +138,9 @@ describe('CRITICAL: Permission Enforcement', () => {
+         }
+       }
+     `
+-    const membershipResponse = await TestHelpers.authenticatedGraphql(ownerMembershipQuery, owner, {
++    const membershipResponse = await TestHelpers.authenticatedGraphql<{
++      userOrganizationMembers: MemberWithRole[]
++    }>(ownerMembershipQuery, owner, {
+       organizationId: owner.organizationId,
+     })
+     console.log('Owner membership:', JSON.stringify(membershipResponse.data.data, null, 2))
+@@ -134,7 +151,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+       firstName: 'Test',
+       lastName: 'Admin',
+     }
+-    const adminRegResponse = await TestHelpers.graphql(
++    const adminRegResponse = await TestHelpers.graphql<Registered>(
+       `
+       mutation Register($input: RegisterInput!) {
+         register(input: $input) {
+@@ -156,7 +173,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+     admin = {
+       id: adminRegResponse.data.data.register.user.id,
+       email:
+-        adminRegResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
++        adminRegResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
+         adminData.email,
+       firstName: adminRegResponse.data.data.register.user.firstName,
+       lastName: adminRegResponse.data.data.register.user.lastName,
+@@ -171,7 +188,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+       firstName: 'Test',
+       lastName: 'Member',
+     }
+-    const memberRegResponse = await TestHelpers.graphql(
++    const memberRegResponse = await TestHelpers.graphql<Registered>(
+       `
+       mutation Register($input: RegisterInput!) {
+         register(input: $input) {
+@@ -193,7 +210,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+     member = {
+       id: memberRegResponse.data.data.register.user.id,
+       email:
+-        memberRegResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
++        memberRegResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
+         memberData.email,
+       firstName: memberRegResponse.data.data.register.user.firstName,
+       lastName: memberRegResponse.data.data.register.user.lastName,
+@@ -208,7 +225,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+         createOrganizationInvitation(input: $input)
+       }
+     `
+-    const adminInviteResponse = await TestHelpers.authenticatedGraphql(
++    const adminInviteResponse = await TestHelpers.authenticatedGraphql<Invitation>(
+       createInvitationMutation,
+       owner,
+       {
+@@ -225,7 +242,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+         `Failed to create admin invitation: ${JSON.stringify(adminInviteResponse.data.errors)}`,
+       )
+     }
+-    const memberInviteResponse = await TestHelpers.authenticatedGraphql(
++    const memberInviteResponse = await TestHelpers.authenticatedGraphql<Invitation>(
+       createInvitationMutation,
+       owner,
+       {
+@@ -259,7 +276,9 @@ describe('CRITICAL: Permission Enforcement', () => {
+         }
+       }
+     `
+-    const adminInviteDetails = await TestHelpers.graphql(adminInviteDetailsQuery, {
++    const adminInviteDetails = await TestHelpers.graphql<{
++      getInvitationDetails: { email: string; roleName: string; organizationName: string }
++    }>(adminInviteDetailsQuery, {
+       token: adminToken,
+     })
+     console.log(
+@@ -297,17 +316,19 @@ describe('CRITICAL: Permission Enforcement', () => {
+         }
+       }
+     `
+-    const adminRoleCheck = await TestHelpers.authenticatedGraphql(adminRoleCheckQuery, owner, {
++    const adminRoleCheck = await TestHelpers.authenticatedGraphql<{
++      userOrganizationMembers: { userId: string; role: { name: string } }[]
++    }>(adminRoleCheckQuery, owner, {
+       organizationId: owner.organizationId,
+     })
+     const adminMembership = adminRoleCheck.data.data.userOrganizationMembers.find(
+-      (m: any) => m.userId === admin.id,
++      m => m.userId === admin.id,
+     )
+     console.log(`\n🔍 Admin role after acceptance: ${adminMembership?.role?.name || 'NOT FOUND'}`)
+     console.log(`  - Admin user ID: ${admin.id}`)
+     console.log(
+       `  - All members:`,
+-      adminRoleCheck.data.data.userOrganizationMembers.map((m: any) => ({
++      adminRoleCheck.data.data.userOrganizationMembers.map(m => ({
+         userId: m.userId,
+         role: m.role.name,
+       })),
+@@ -357,7 +378,9 @@ describe('CRITICAL: Permission Enforcement', () => {
+           }
+         }
+       `
+-      const response = await TestHelpers.authenticatedGraphql(updateMutation, owner, {
++      const response = await TestHelpers.authenticatedGraphql<{
++        userUpdateOrganization: Organization
++      }>(updateMutation, owner, {
+         input: { name: 'Updated Permission Test Org' },
+       })
+       expect(response.data.errors).toBeUndefined()
+@@ -370,7 +393,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+         }
+       `
+       const newMemberEmail = TestHelpers.generateTestEmail('new-member')
+-      const response = await TestHelpers.authenticatedGraphql(inviteMutation, owner, {
++      const response = await TestHelpers.authenticatedGraphql<Invitation>(inviteMutation, owner, {
+         input: {
+           email: newMemberEmail,
+           organizationId: owner.organizationId,
+@@ -384,7 +407,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+       // Create a temporary member to change their role (to avoid breaking other tests)
+       const tempMemberEmail = TestHelpers.generateTestEmail('temp-role-change')
+       // Owner invites a new temp member
+-      const inviteResponse = await TestHelpers.authenticatedGraphql(
++      const inviteResponse = await TestHelpers.authenticatedGraphql<Invitation>(
+         `mutation CreateInvitation($input: CreateInvitationInput!) {
+           createOrganizationInvitation(input: $input)
+         }`,
+@@ -398,7 +421,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+         },
+       )
+       // Register the temp user
+-      const tempUserReg = await TestHelpers.graphql(
++      const tempUserReg = await TestHelpers.graphql<Registered<'id'>>(
+         `
+         mutation Register($input: RegisterInput!) {
+           register(input: $input) {
+@@ -428,7 +451,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+         `mutation AcceptInvitation($input: AcceptInvitationInput!) {
+           acceptOrganizationInvitation(input: $input) { id }
+         }`,
+-        tempUser as any,
++        tempUser as TestUser,
+         { input: { token: tempToken } },
+       )
+       // Now change the temp user's role from Member to Admin
+@@ -454,7 +477,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+         firstName: 'Temp',
+         lastName: 'Owner',
+       }
+-      const regResponse = await TestHelpers.graphql(
++      const regResponse = await TestHelpers.graphql<Registered<'id' | 'emails'>>(
+         `
+         mutation Register($input: RegisterInput!) {
+           register(input: $input) {
+@@ -474,14 +497,16 @@ describe('CRITICAL: Permission Enforcement', () => {
+       const tempOwner = {
+         id: regResponse.data.data.register.user.id,
+         email:
+-          regResponse.data.data.register.user.emails?.find((e: any) => e.primary)?.email ||
++          regResponse.data.data.register.user.emails?.find(e => e.primary)?.email ||
+           tempOwnerData.email,
+         firstName: tempOwnerData.firstName,
+         lastName: tempOwnerData.lastName,
+         tokens: { accessToken: regResponse.data.data.register.token },
+       }
+       // Create an organization to delete
+-      const createOrgResponse = await TestHelpers.authenticatedGraphql(
++      const createOrgResponse = await TestHelpers.authenticatedGraphql<{
++        userCreateOrganization: { id: string }
++      }>(
+         `
+         mutation UserCreateOrganization($input: UserCreateOrganizationInput!) {
+           userCreateOrganization(input: $input) {
+@@ -499,11 +524,9 @@ describe('CRITICAL: Permission Enforcement', () => {
+           userDeleteOrganization(organizationId: $organizationId)
+         }
+       `
+-      const deleteResponse = await TestHelpers.authenticatedGraphql(
+-        deleteMutation,
+-        tempOwner as TestUser,
+-        { organizationId: tempOrgId },
+-      )
++      const deleteResponse = await TestHelpers.authenticatedGraphql<{
++        userDeleteOrganization: boolean
++      }>(deleteMutation, tempOwner as TestUser, { organizationId: tempOrgId })
+       expect(deleteResponse.data.errors).toBeUndefined()
+       expect(deleteResponse.data.data.userDeleteOrganization).toBe(true)
+     })
+@@ -553,7 +576,7 @@ describe('CRITICAL: Permission Enforcement', () => {
+         }
+       `
+       const newMemberEmail = TestHelpers.generateTestEmail('admin-invited')
+-      const response = await TestHelpers.authenticatedGraphql(inviteMutation, admin, {
++      const response = await TestHelpers.authenticatedGraphql<Invitation>(inviteMutation, admin, {
+         input: {
+           email: newMemberEmail,
+           organizationId: owner.organizationId,
+@@ -573,11 +596,13 @@ describe('CRITICAL: Permission Enforcement', () => {
+           }
+         }
+       `
+-      const membersResponse = await TestHelpers.authenticatedGraphql(membersQuery, admin, {
++      const membersResponse = await TestHelpers.authenticatedGraphql<{
++        userOrganizationMembers: { id: string; userId: string }[]
++      }>(membersQuery, admin, {
+         organizationId: owner.organizationId,
+       })
+       const members = membersResponse.data.data.userOrganizationMembers
+-      const targetMember = members.find((m: any) => m.userId === member.id)
++      const targetMember = members.find(m => m.userId === member.id)
+       if (targetMember) {
+         const updateRoleMutation = `
+           mutation UpdateMemberRole($input: UpdateMemberRoleInput!) {
+@@ -670,12 +695,15 @@ describe('CRITICAL: Permission Enforcement', () => {
+           }
+         }
+       `
+-      const response = await TestHelpers.authenticatedGraphql(orgQuery, member)
++      const response = await TestHelpers.authenticatedGraphql<{ myOrganizations: Organization[] }>(
++        orgQuery,
++        member,
++      )
+       // Should succeed - members can view org info
+       expect(response.data.errors).toBeUndefined()
+       const orgs = response.data.data.myOrganizations
+       expect(orgs).toBeDefined()
+-      expect(orgs.some((o: any) => o.id === owner.organizationId)).toBe(true)
++      expect(orgs.some(o => o.id === owner.organizationId)).toBe(true)
+     })
+     it('member can view other members', async () => {
+       const membersQuery = `
+@@ -686,7 +714,9 @@ describe('CRITICAL: Permission Enforcement', () => {
+           }
+         }
+       `
+-      const response = await TestHelpers.authenticatedGraphql(membersQuery, member, {
++      const response = await TestHelpers.authenticatedGraphql<{
++        userOrganizationMembers: { id: string; userId: string }[]
++      }>(membersQuery, member, {
+         organizationId: owner.organizationId,
+       })
+       // Should succeed - members can view other members
+diff --git a/apps/api-e2e/src/support/api-process.native.spec.ts b/apps/api-e2e/src/support/api-process.native.spec.ts
+index c9acff4..efd8d3d 100644
+--- a/apps/api-e2e/src/support/api-process.native.spec.ts
++++ b/apps/api-e2e/src/support/api-process.native.spec.ts
+@@ -27,11 +27,15 @@ async function waitUntilStopped(pids: number[]) {
+   return pids.filter(isRunning)
+ }
+ 
+-async function startTree() {
+-  // Spawned with global setup's own options. On Windows that means through a shell, so the
+-  // launcher's PID is cmd.exe's and the fixture runs below it, as pnpm's .cmd shim does. The command
+-  // is one quoted string there, so paths with spaces survive the shell.
+-  const options = ownedProcessOptions()
++type Launch = 'pnpm-style' | 'direct'
++
++async function startTree(launch: Launch) {
++  // Spawned with global setup's own options. 'pnpm-style' is how setup starts `pnpm nx serve api`:
++  // on Windows through a shell, so the launcher's PID is cmd.exe's and the fixture runs below it,
++  // as pnpm's .cmd shim does; the command is one quoted string there, so paths with spaces survive
++  // the shell. 'direct' spawns process.execPath itself with `{ shell: false }`, as a caller that
++  // starts node (or the built API) without pnpm does.
++  const options = ownedProcessOptions({ shell: launch === 'pnpm-style' })
+   const stdio: ['ignore', 'pipe', 'inherit'] = ['ignore', 'pipe', 'inherit']
+   const launcher = options.shell
+     ? spawn(`"${process.execPath}" "${fixture}"`, { stdio, ...options })
+@@ -54,11 +58,11 @@ afterEach(() => {
+   for (const pid of started.splice(0).filter(isRunning)) process.kill(pid, 'SIGKILL')
+ })
+ 
+-describe('API process tree cleanup on this platform', () => {
++describe.each<Launch>(['pnpm-style', 'direct'])('API process tree cleanup (%s launch)', launch => {
+   const expected = process.platform === 'win32' ? 'tree' : 'group'
+ 
+   it('stops the launcher and its descendant during ordinary teardown', async () => {
+-    const { launcher, pids } = await startTree()
++    const { launcher, pids } = await startTree(launch)
+     expect(killApiProcessTree(launcher)).toBe(expected)
+     expect(await waitUntilStopped(pids)).toEqual([])
+   })
+@@ -67,7 +71,7 @@ describe('API process tree cleanup on this platform', () => {
+     ['SIGINT', 130],
+     ['SIGTERM', 143],
+   ] as const)('stops both on %s cancellation', async (signal, code) => {
+-    const { launcher, pids } = await startTree()
++    const { launcher, pids } = await startTree(launch)
+     const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+     const before = process.listeners(signal)
+     disposers.push(registerApiProcessCleanup(launcher))
+@@ -78,7 +82,7 @@ describe('API process tree cleanup on this platform', () => {
+   })
+ 
+   it('stops both from the exit fallback when teardown never ran', async () => {
+-    const { launcher, pids } = await startTree()
++    const { launcher, pids } = await startTree(launch)
+     const before = process.listeners('exit')
+     disposers.push(registerApiProcessCleanup(launcher))
+     process.listeners('exit').find(item => !before.includes(item))?.(0)
+@@ -88,7 +92,7 @@ describe('API process tree cleanup on this platform', () => {
+   it.runIf(process.platform === 'win32')(
+     'reports a taskkill failure and leaves the exit fallback to retry',
+     async () => {
+-      const { launcher, pids } = await startTree()
++      const { launcher, pids } = await startTree(launch)
+       const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+       const originalExitCode = process.exitCode
+       const before = process.listeners('exit')
+diff --git a/apps/api-e2e/src/support/api-process.spec.ts b/apps/api-e2e/src/support/api-process.spec.ts
+index 9432758..084eb52 100644
+--- a/apps/api-e2e/src/support/api-process.spec.ts
++++ b/apps/api-e2e/src/support/api-process.spec.ts
+@@ -84,8 +84,12 @@ describe('API process cleanup', () => {
+   it('spawns the launcher so its whole tree can be stopped', () => {
+     setPlatform('darwin')
+     expect(ownedProcessOptions()).toEqual({ detached: true, shell: false })
++    expect(ownedProcessOptions({ shell: false })).toEqual({ detached: true, shell: false })
+     setPlatform('win32')
+     expect(ownedProcessOptions()).toEqual({ detached: false, shell: true })
++    // An executable spawned directly (process.execPath) must not go through cmd.exe, which splits an
++    // unquoted path at its spaces.
++    expect(ownedProcessOptions({ shell: false })).toEqual({ detached: false, shell: false })
+   })
+ 
+   it('stops the launcher and its descendants with taskkill on Windows', () => {
+diff --git a/apps/api-e2e/src/support/api-process.ts b/apps/api-e2e/src/support/api-process.ts
+index 9696329..dc6b13f 100644
+--- a/apps/api-e2e/src/support/api-process.ts
++++ b/apps/api-e2e/src/support/api-process.ts
+@@ -6,12 +6,16 @@ export type ApiStopResult = 'group' | 'tree' | 'process' | 'already-stopped'
+ /**
+  * Spawn options that let killApiProcessTree reach every descendant. On POSIX the launcher leads its
+  * own process group. On Windows there are no process groups to signal; the launcher's PID is the
+- * root of the tree taskkill walks, so it stays attached. pnpm is a .cmd shim there, which Node only
+- * runs through a shell.
++ * root of the tree taskkill walks, so it stays attached.
++ *
++ * `shell` matters only on Windows. pnpm (and npx) are .cmd shims there, which Node only runs through
++ * a shell, so the default is a shell. Spawning an executable directly, such as `process.execPath`,
++ * needs `{ shell: false }`: through cmd.exe an unquoted path with a space in it (C:\Program
++ * Files\nodejs\node.exe) is split at the space and the spawn fails.
+  */
+-export function ownedProcessOptions() {
++export function ownedProcessOptions({ shell = true }: { shell?: boolean } = {}) {
+   const windows = process.platform === 'win32'
+-  return { detached: !windows, shell: windows }
++  return { detached: !windows, shell: windows && shell }
+ }
+ 
+ // taskkill's exit status when the PID no longer exists.
+diff --git a/apps/api-e2e/src/support/database-guards.spec.ts b/apps/api-e2e/src/support/database-guards.spec.ts
+new file mode 100644
+index 0000000..b37b7d7
+--- /dev/null
++++ b/apps/api-e2e/src/support/database-guards.spec.ts
+@@ -0,0 +1,69 @@
++import { describe, expect, it } from 'vitest'
++import {
++  assertDisposableTestDatabase,
++  databaseProbe,
++  describeDatabase,
++  isDisposableTestDatabase,
++  psqlEnvironment,
++} from './database-guards'
++
++describe('test database guards', () => {
++  it.each([
++    'postgresql://prisma:prisma@localhost:5432/nestled_template_test',
++    'postgresql://u:p@127.0.0.1:55460/app_test?schema=public',
++    'postgresql://u:p@[::1]:5433/APP_TEST',
++  ])('treats %s as disposable', url => {
++    expect(isDisposableTestDatabase(url)).toBe(true)
++    expect(assertDisposableTestDatabase(url, {})).toBe('disposable')
++  })
++
++  it.each([
++    'postgresql://u:p@localhost:5432/nestled_template',
++    'postgresql://u:p@localhost:5432/test_data',
++    'postgresql://u:p@db.example.com:5432/app_test',
++    'postgresql://u:p@postgres:5432/app_test',
++    'not a url',
++  ])('refuses %s before setup touches it, naming no password', url => {
++    expect(isDisposableTestDatabase(url)).toBe(false)
++    expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
++    expect(() => assertDisposableTestDatabase(url, {})).not.toThrow(/u:p@/)
++  })
++
++  it('lets an explicit opt-out through, and only the value 1', () => {
++    const url = 'postgresql://u:p@postgres:5432/app_test'
++    expect(assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe('allowed')
++    expect(() =>
++      assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: 'true' }),
++    ).toThrow()
++  })
++
++  it('describes a database by host and name only', () => {
++    expect(describeDatabase('postgresql://u:secret@localhost:5433/app_test')).toBe(
++      'localhost:5433/app_test',
++    )
++  })
++
++  it('probes with the pg runner unless psql is asked for', () => {
++    expect(databaseProbe({})).toBe('pg')
++    expect(databaseProbe({ E2E_DATABASE_PROBE: 'psql' })).toBe('psql')
++    expect(() => databaseProbe({ E2E_DATABASE_PROBE: 'pg_isready' })).toThrow(/"pg" or "psql"/)
++  })
++
++  it('hands psql the URL as libpq variables, keeping the password off its command line', () => {
++    expect(
++      psqlEnvironment('postgresql://us%40r:p%3Ass@[::1]:55460/app_test?sslmode=disable'),
++    ).toEqual({
++      PGHOST: '::1',
++      PGPORT: '55460',
++      PGDATABASE: 'app_test',
++      PGUSER: 'us@r',
++      PGPASSWORD: 'p:ss',
++      PGSSLMODE: 'disable',
++    })
++    expect(psqlEnvironment('postgresql://localhost/app_test')).toEqual({
++      PGHOST: 'localhost',
++      PGPORT: '5432',
++      PGDATABASE: 'app_test',
++    })
++  })
++})
+diff --git a/apps/api-e2e/src/support/database-guards.ts b/apps/api-e2e/src/support/database-guards.ts
+new file mode 100644
+index 0000000..421dd00
+--- /dev/null
++++ b/apps/api-e2e/src/support/database-guards.ts
+@@ -0,0 +1,88 @@
++// Checks global setup makes on the test database URL before it touches the database. Side-effect
++// free (unlike test-db.ts, which resolves the URL on import), so the support suite tests them alone.
++
++const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
++
++/** The opt-out for a test database that does not look disposable. */
++export const ALLOW_NON_DISPOSABLE_DB = 'E2E_ALLOW_NON_DISPOSABLE_DB'
++
++/** A URL's host and database name, without its credentials, for messages and logs. */
++export function describeDatabase(databaseUrl: string): string {
++  try {
++    const url = new URL(databaseUrl)
++    return `${url.host}/${decodeURIComponent(url.pathname.slice(1))}`
++  } catch {
++    return '(an unparseable URL)'
++  }
++}
++
++/**
++ * Whether a URL names a database this suite may migrate, push, seed and wipe: on this machine (the
++ * rule prisma.config.ts applies to `migrate reset`), and named as a test database, ending in `_test`
++ * (`nestled_template_test` by default).
++ */
++export function isDisposableTestDatabase(databaseUrl: string): boolean {
++  try {
++    const url = new URL(databaseUrl)
++    const database = decodeURIComponent(url.pathname.slice(1))
++    return LOCAL_DATABASE_HOSTS.has(url.hostname) && /_test$/i.test(database)
++  } catch {
++    return false
++  }
++}
++
++/**
++ * Refuse a test database that is not disposable before global setup migrates, pushes and seeds it.
++ * A TEST_DATABASE_URL copied from DATABASE_URL, or one pointing at a shared host, would otherwise
++ * have its schema rewritten and its data seeded over. `E2E_ALLOW_NON_DISPOSABLE_DB=1` is the opt-out
++ * for a database you know is disposable under another name or host (a CI service container reached
++ * by its service name, for example). Even then, setup only empties a schema that passes the rule.
++ */
++export function assertDisposableTestDatabase(
++  databaseUrl: string,
++  env: NodeJS.ProcessEnv = process.env,
++): 'disposable' | 'allowed' {
++  if (isDisposableTestDatabase(databaseUrl)) return 'disposable'
++  if (env[ALLOW_NON_DISPOSABLE_DB] === '1') return 'allowed'
++  throw new Error(
++    [
++      `Refusing to run e2e setup against ${describeDatabase(databaseUrl)}.`,
++      `Setup migrates, pushes the schema to and seeds the test database, so it must be disposable:`,
++      `on this machine (localhost, 127.0.0.1 or ::1) and named *_test.`,
++      ``,
++      `Point TEST_DATABASE_URL at a disposable database, or, if this one is disposable under another`,
++      `name or host, say so explicitly:  ${ALLOW_NON_DISPOSABLE_DB}=1`,
++    ].join('\n'),
++  )
++}
++
++export type DatabaseProbe = 'pg' | 'psql'
++
++/**
++ * How global setup checks that the test database answers. `pg` (the default) runs `SELECT 1`
++ * through the suite's pg runner and needs no psql binary. `E2E_DATABASE_PROBE=psql` runs psql from
++ * PATH instead, for a repo whose own lifecycle tests stand in for the database with a stub psql.
++ */
++export function databaseProbe(env: NodeJS.ProcessEnv = process.env): DatabaseProbe {
++  const probe = env.E2E_DATABASE_PROBE || 'pg'
++  if (probe === 'pg' || probe === 'psql') return probe
++  throw new Error(`E2E_DATABASE_PROBE must be "pg" or "psql"; got "${probe}"`)
++}
++
++/**
++ * The libpq environment for a URL, so psql connects without the URL (and its password) on its
++ * command line, where any process listing would show it.
++ */
++export function psqlEnvironment(databaseUrl: string): Record<string, string> {
++  const url = new URL(databaseUrl)
++  const environment: Record<string, string> = {
++    PGHOST: url.hostname.replace(/^\[(.*)\]$/, '$1'),
++    PGPORT: url.port || '5432',
++    PGDATABASE: decodeURIComponent(url.pathname.slice(1)),
++  }
++  if (url.username) environment.PGUSER = decodeURIComponent(url.username)
++  if (url.password) environment.PGPASSWORD = decodeURIComponent(url.password)
++  const sslMode = url.searchParams.get('sslmode')
++  if (sslMode) environment.PGSSLMODE = sslMode
++  return environment
++}
+diff --git a/apps/api-e2e/src/support/e2e-runner.spec.ts b/apps/api-e2e/src/support/e2e-runner.spec.ts
+index d3647a5..622dc75 100644
+--- a/apps/api-e2e/src/support/e2e-runner.spec.ts
++++ b/apps/api-e2e/src/support/e2e-runner.spec.ts
+@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
+ const roots: string[] = []
+ afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })))
+ 
+-const run = (exitCode: number, suppliedUrl?: string) => {
++const run = (exitCode: number, suppliedUrl?: string, args: string[] = []) => {
+   const root = mkdtempSync(join(tmpdir(), 'e2e-shell-runner-'))
+   roots.push(root)
+   mkdirSync(join(root, 'scripts'))
+@@ -18,7 +18,7 @@ const run = (exitCode: number, suppliedUrl?: string) => {
+   )
+   writeFileSync(
+     join(root, 'scripts/test-db.sh'),
+-    '#!/bin/bash\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
++    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
+     { mode: 0o755 },
+   )
+   writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
+@@ -27,7 +27,7 @@ const run = (exitCode: number, suppliedUrl?: string) => {
+     '#!/bin/bash\nprintf "%s\\n" "$*" "$TEST_DATABASE_URL" "$DATABASE_URL" "$DIRECT_URL" >> calls\nexit "$FAKE_EXIT"\n',
+     { mode: 0o755 },
+   )
+-  const result = spawnSync('bash', ['scripts/run-e2e-tests.sh'], {
++  const result = spawnSync('bash', ['scripts/run-e2e-tests.sh', ...args], {
+     cwd: root,
+     env: {
+       ...process.env,
+@@ -37,19 +37,36 @@ const run = (exitCode: number, suppliedUrl?: string) => {
+     },
+     encoding: 'utf8',
+   })
+-  return { result, calls: readFileSync(join(root, 'calls'), 'utf8').trim().split('\n') }
++  const dbCalls = (() => {
++    try {
++      return readFileSync(join(root, 'db-calls'), 'utf8')
++    } catch {
++      return ''
++    }
++  })()
++  return { result, calls: readFileSync(join(root, 'calls'), 'utf8').trim().split('\n'), dbCalls }
+ }
+ 
+ describe('e2e shell runner', () => {
+   it('delegates migrations to global setup and pins all URLs to the test database', () => {
+     const { result, calls } = run(0)
+     expect(result.status).toBe(0)
+-    expect(calls).toEqual(['nx run api-e2e:test', ...Array(3).fill('postgresql://local/test')])
++    expect(calls).toEqual(['nx run api-e2e:e2e', ...Array(3).fill('postgresql://local/test')])
+   })
+-  it('preserves a caller-provided isolated database URL', () => {
+-    expect(run(0, 'postgresql://local/isolated_test').calls.slice(1)).toEqual(
+-      Array(3).fill('postgresql://local/isolated_test'),
+-    )
++  it('starts and stops the repo test database when no URL is supplied', () => {
++    const { dbCalls } = run(0)
++    expect(dbCalls).toContain('start')
++    expect(dbCalls).toContain('stop')
++  })
++  it('preserves a caller-provided isolated database URL without managing a container', () => {
++    const { calls, dbCalls } = run(0, 'postgresql://local/isolated_test')
++    expect(calls.slice(1)).toEqual(Array(3).fill('postgresql://local/isolated_test'))
++    expect(dbCalls).not.toContain('start')
++    expect(dbCalls).not.toContain('stop')
++  })
++  it('forwards every argument to the e2e target', () => {
++    const { calls } = run(0, undefined, ['src/auth/auth-generation.spec.ts', '--coverage'])
++    expect(calls[0]).toBe('nx run api-e2e:e2e -- src/auth/auth-generation.spec.ts --coverage')
+   })
+   it('propagates a failing test target instead of reporting success', () => {
+     const { result } = run(7)
+@@ -59,7 +76,15 @@ describe('e2e shell runner', () => {
+   })
+ })
+ 
+-const runWrapper = (vitestOutput: string, vitestExit: number, probeExit = 0) => {
++const SUPPLIED_URL = 'postgresql://prisma:secret@db.local:5599/app_test'
++
++const runWrapper = (
++  vitestOutput: string,
++  vitestExit: number,
++  probeExit = 0,
++  stopExit = 0,
++  suppliedUrl = SUPPLIED_URL,
++) => {
+   const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
+   roots.push(root)
+   mkdirSync(join(root, 'scripts'))
+@@ -68,7 +93,8 @@ const runWrapper = (vitestOutput: string, vitestExit: number, probeExit = 0) =>
+   copyFileSync(resolve(__dirname, '../../run-tests.sh'), join(root, 'apps/api-e2e/run-tests.sh'))
+   writeFileSync(
+     join(root, 'scripts/test-db.sh'),
+-    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
++    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n' +
++      `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n`,
+     { mode: 0o755 },
+   )
+   // Stands in for the pg runner: records the probe request and answers with the probe's result.
+@@ -87,7 +113,7 @@ const runWrapper = (vitestOutput: string, vitestExit: number, probeExit = 0) =>
+     env: {
+       ...process.env,
+       PATH: `${root}/bin:${process.env.PATH}`,
+-      TEST_DATABASE_URL: 'postgresql://prisma:secret@db.local:5599/app_test',
++      TEST_DATABASE_URL: suppliedUrl,
+     },
+     encoding: 'utf8',
+   })
+@@ -144,7 +170,28 @@ describe('api-e2e test wrapper', () => {
+     })
+     expect(dbCalls).not.toContain('start')
+   })
+-  it('starts the test database when the probe fails', () => {
+-    expect(runWrapper(summary('5 passed (5)'), 0, 1).dbCalls).toContain('start')
++  it('starts its own test database when no URL was supplied and the probe fails', () => {
++    expect(runWrapper(summary('5 passed (5)'), 0, 1, 0, '').dbCalls).toContain('start')
++  })
++  it('fails without starting a container when a supplied URL is unreachable', () => {
++    const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1)
++    expect(result.status).toBe(1)
++    expect(result.stdout).toContain('TEST_DATABASE_URL is set but that database is not accessible')
++    expect(dbCalls).not.toContain('start')
++    expect(result.stdout).not.toContain('PASSED')
++  })
++  it('stops the test database it started, and warns when that fails without changing the result', () => {
++    const stopped = runWrapper(summary('5 passed (5)'), 0, 1, 0, '')
++    expect(stopped.dbCalls).toContain('stop')
++    expect(stopped.result.stderr).not.toContain('could not stop')
++    const stuck = runWrapper(summary('5 passed (5)'), 0, 1, 1, '')
++    expect(stuck.result.status).toBe(0)
++    expect(stuck.result.stderr).toContain('could not stop it')
++  })
++  it('finds a failure in the summary of a long log', () => {
++    const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`
++    const { result } = runWrapper(log, 0)
++    expect(result.status).toBe(1)
++    expect(result.stdout).toContain('the summary counts a failure')
+   })
+ })
+diff --git a/apps/api-e2e/src/support/global-setup.ts b/apps/api-e2e/src/support/global-setup.ts
+index d5da4c4..ab72646 100644
+--- a/apps/api-e2e/src/support/global-setup.ts
++++ b/apps/api-e2e/src/support/global-setup.ts
+@@ -2,6 +2,14 @@ import { waitForPortOpen } from '@nx/node/utils'
+ import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+ import { createConnection, type Socket } from 'node:net'
+ import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
++import {
++  ALLOW_NON_DISPOSABLE_DB,
++  assertDisposableTestDatabase,
++  databaseProbe,
++  describeDatabase,
++  isDisposableTestDatabase,
++  psqlEnvironment,
++} from './database-guards'
+ import globalTeardown from './global-teardown'
+ import { runSql, testDatabaseUrl } from './test-db'
+ 
+@@ -14,9 +22,18 @@ type E2EGlobalState = typeof globalThis & {
+ const e2eGlobal = globalThis as E2EGlobalState
+ 
+ /**
+- * Check if database is accessible
++ * Check if database is accessible: `SELECT 1` through the pg runner, or through psql from PATH when
++ * E2E_DATABASE_PROBE=psql (see databaseProbe).
+  */
+ function isDatabaseAccessible(databaseUrl: string): boolean {
++  if (databaseProbe() === 'psql') {
++    const probe = spawnSync('psql', ['-At', '-c', 'SELECT 1'], {
++      env: { ...process.env, ...psqlEnvironment(databaseUrl) },
++      stdio: 'ignore',
++      timeout: 10000,
++    })
++    return probe.status === 0
++  }
+   try {
+     runSql(databaseUrl, 'SELECT 1', {}, 10000)
+     return true
+@@ -48,23 +65,6 @@ async function isPortInUse(port: number, host = 'localhost'): Promise<boolean> {
+   })
+ }
+ 
+-const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
+-
+-/**
+- * Whether a URL names a database this suite may wipe: on this machine (the same rule
+- * prisma.config.ts applies to `migrate reset`), and named as a test database
+- * (`nestled_template_test` by default).
+- */
+-function isDisposableTestDatabase(databaseUrl: string): boolean {
+-  try {
+-    const url = new URL(databaseUrl)
+-    const database = decodeURIComponent(url.pathname.slice(1))
+-    return LOCAL_DATABASE_HOSTS.has(url.hostname) && /(^|[_-])test([_-]|$)/i.test(database)
+-  } catch {
+-    return false
+-  }
+-}
+-
+ function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
+   const result = spawnSync('pnpm', ['prisma', 'migrate', 'deploy'], {
+     cwd: projectRoot,
+@@ -85,8 +85,8 @@ function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
+ function resetTestDatabase(testDatabaseUrl: string) {
+   if (!isDisposableTestDatabase(testDatabaseUrl)) {
+     throw new Error(
+-      `Refusing to reset ${testDatabaseUrl}: only a local database whose name marks it as a test ` +
+-        'database (e.g. nestled_template_test) is reset by the e2e setup.',
++      `Refusing to reset ${describeDatabase(testDatabaseUrl)}: only a local database named *_test ` +
++        `(e.g. nestled_template_test) is reset by the e2e setup, ${ALLOW_NON_DISPOSABLE_DB} or not.`,
+     )
+   }
+   runSql(testDatabaseUrl, 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;')
+@@ -225,7 +225,15 @@ module.exports = async function globalSetup() {
+   e2eGlobal.__API_PROCESS__ = null
+   e2eGlobal.__WE_STARTED_API__ = false
+ 
+-  console.log(`📊 Using test database: ${testDatabaseUrl}`)
++  console.log(`📊 Using test database: ${describeDatabase(testDatabaseUrl)}`)
++
++  // Before any connection: setup migrates, pushes and seeds this database.
++  if (assertDisposableTestDatabase(testDatabaseUrl) === 'allowed') {
++    console.log(
++      `⚠️  ${ALLOW_NON_DISPOSABLE_DB}=1: running setup against a database that is not local or not ` +
++        'named *_test.',
++    )
++  }
+ 
+   // Check if database is accessible
+   const dbAccessible = isDatabaseAccessible(testDatabaseUrl)
+@@ -233,7 +241,7 @@ module.exports = async function globalSetup() {
+   if (!dbAccessible) {
+     console.error('❌ Test database is not accessible')
+     console.error('   Please ensure PostgreSQL is running and the test database exists')
+-    console.error(`   Database URL: ${testDatabaseUrl}`)
++    console.error(`   Database: ${describeDatabase(testDatabaseUrl)}`)
+     throw new Error('Test database not accessible')
+   }
+ 
+diff --git a/apps/api-e2e/src/support/sql-runner.mjs b/apps/api-e2e/src/support/sql-runner.mjs
+index c461634..142de48 100644
+--- a/apps/api-e2e/src/support/sql-runner.mjs
++++ b/apps/api-e2e/src/support/sql-runner.mjs
+@@ -13,8 +13,11 @@ import { readFileSync } from 'node:fs'
+ import { pathToFileURL } from 'node:url'
+ 
+ /**
+- * Split a script into statements, replacing `:'name'` with `quote(variables[name])`. Quoted strings,
+- * quoted identifiers, dollar-quoted bodies and comments are copied untouched.
++ * Split a script into statements, replacing `:'name'` with `quote(variables[name])`. Quoted strings
++ * (escape strings E'...' included), quoted identifiers, dollar-quoted bodies and comments are copied
++ * untouched, and a `$` inside an identifier does not open a dollar quote. Nested block comments, which
++ * PostgreSQL allows, are not tracked: one ends at its first closing marker, so keep them out of e2e
++ * SQL.
+  *
+  * @param {string} script
+  * @param {Record<string, string>} variables
+@@ -22,6 +25,9 @@ import { pathToFileURL } from 'node:url'
+  * @returns {string[]}
+  */
+ export function prepareStatements(script, variables, quote) {
++  // PostgreSQL identifiers may also contain any non-ASCII character, which `\w` does not match.
++  const isWordChar = (/** @type {string | undefined} */ char) =>
++    char !== undefined && /[\w$\u0080-\uFFFF]/.test(char)
+   const statements = []
+   let current = ''
+   let i = 0
+@@ -38,8 +44,15 @@ export function prepareStatements(script, variables, quote) {
+       const end = script.indexOf('*/', i + 2)
+       copyUntil(end === -1 ? script.length : end + 2)
+     } else if (rest[0] === "'" || rest[0] === '"') {
++      // In an escape string (E'...'), a backslash escapes the next character, \' included.
++      const escapes =
++        rest[0] === "'" && /[Ee]/.test(script[i - 1] ?? '') && !isWordChar(script[i - 2])
+       let end = i + 1
+       while (end < script.length) {
++        if (escapes && script[end] === '\\') {
++          end += 2
++          continue
++        }
+         if (script[end] === rest[0]) {
+           if (script[end + 1] !== rest[0]) break
+           end++
+@@ -47,7 +60,8 @@ export function prepareStatements(script, variables, quote) {
+         end++
+       }
+       copyUntil(Math.min(end + 1, script.length))
+-    } else if (/^\$([A-Za-z_]\w*)?\$/.test(rest)) {
++    } else if (!isWordChar(script[i - 1]) && /^\$([A-Za-z_]\w*)?\$/.test(rest)) {
++      // A `$` inside an identifier (a$b$c) is part of the name, not the start of a dollar quote.
+       const tag = /^\$([A-Za-z_]\w*)?\$/.exec(rest)?.[0] ?? '$$'
+       const end = script.indexOf(tag, i + tag.length)
+       copyUntil(end === -1 ? script.length : end + tag.length)
+diff --git a/apps/api-e2e/src/support/sql-runner.spec.ts b/apps/api-e2e/src/support/sql-runner.spec.ts
+index ff5c756..8207afe 100644
+--- a/apps/api-e2e/src/support/sql-runner.spec.ts
++++ b/apps/api-e2e/src/support/sql-runner.spec.ts
+@@ -39,6 +39,25 @@ describe('sql runner', () => {
+     ])
+   })
+ 
++  it('keeps a backslash-escaped quote inside an escape string', () => {
++    expect(prepareStatements(`SELECT E'it\\'s; fine', e'a\\\\'; SELECT 'b\\';`, {}, quote)).toEqual(
++      [`SELECT E'it\\'s; fine', e'a\\\\'`, `SELECT 'b\\'`],
++    )
++  })
++
++  it('does not open a dollar quote at a $ inside an identifier', () => {
++    expect(
++      prepareStatements('SELECT price$usd$ FROM t; SELECT $$ a; b $$, $1 FROM u;', {}, quote),
++    ).toEqual(['SELECT price$usd$ FROM t', 'SELECT $$ a; b $$, $1 FROM u'])
++  })
++
++  it('treats a $ after a non-ASCII identifier character as part of the identifier', () => {
++    expect(prepareStatements('SELECT café$usd$ FROM t; SELECT 1;', {}, quote)).toEqual([
++      'SELECT café$usd$ FROM t',
++      'SELECT 1',
++    ])
++  })
++
+   it('refuses a variable that was not supplied', () => {
+     expect(() => prepareStatements(`SELECT :'missing'`, {}, quote)).toThrow(/:'missing'/)
+   })
+diff --git a/apps/api-e2e/src/support/test-helpers.ts b/apps/api-e2e/src/support/test-helpers.ts
+index 1624fbb..42724b3 100644
+--- a/apps/api-e2e/src/support/test-helpers.ts
++++ b/apps/api-e2e/src/support/test-helpers.ts
+@@ -14,14 +14,60 @@ export interface TestUser {
+   tokens?: AuthTokens
+ }
+ 
++/** One entry of a GraphQL response's `errors` array. */
++export interface GraphQLErrorResponse {
++  message: string
++  extensions?: Record<string, unknown>
++  path?: readonly (string | number)[]
++}
++
++/** The body of a GraphQL response: `data` shaped like the operation's selection set. */
++export interface GraphQLResponse<TData> {
++  data: TData
++  errors?: GraphQLErrorResponse[]
++}
++
++export type GraphQLVariables = Record<string, unknown>
++
++export interface UserEmail {
++  email: string
++  primary: boolean
++}
++
++export interface AuthUser {
++  id: string
++  firstName: string
++  lastName: string
++  emails?: UserEmail[]
++  emailValidated: boolean
++}
++
++export interface AuthPayload {
++  token: string
++  user: AuthUser
++}
++
++export interface VerifiedEmail {
++  id: string
++  emailValidated: boolean
++}
++
++export interface ResetPasswordResult {
++  id: string
++  email: string
++}
++
++export type CurrentUser = AuthUser & { email: string | undefined }
++
+ export class TestHelpers {
+   private static readonly baseURL = axios.defaults.baseURL || 'http://localhost:3000'
+ 
+   // GraphQL helper
+-  static async graphql<T = any>(
++  // Pass the operation's data type: graphql<{ me: { id: string } }>(query).
++  static async graphql<TData = unknown>(
+     query: string,
+-    variables?: any,
+-  ): Promise<AxiosResponse<{ data: T; errors?: any[] }>> {
++    variables?: GraphQLVariables,
++  ): Promise<AxiosResponse<GraphQLResponse<TData>>> {
+     return axios.post(
+       '/graphql',
+       {
+@@ -58,7 +104,7 @@ export class TestHelpers {
+       }
+     `
+ 
+-    const response = await this.graphql(registerMutation, {
++    const response = await this.graphql<{ register: AuthPayload }>(registerMutation, {
+       input: {
+         firstName: user.firstName,
+         lastName: user.lastName,
+@@ -73,7 +119,7 @@ export class TestHelpers {
+     }
+ 
+     const result = response.data.data.register
+-    const primaryEmail = result.user.emails?.find((e: any) => e.primary)?.email || user.email
++    const primaryEmail = result.user.emails?.find(e => e.primary)?.email || user.email
+     return {
+       id: result.user.id,
+       email: primaryEmail,
+@@ -104,7 +150,7 @@ export class TestHelpers {
+       }
+     `
+ 
+-    const response = await this.graphql(loginMutation, {
++    const response = await this.graphql<{ login: AuthPayload }>(loginMutation, {
+       input: { email, password },
+     })
+ 
+@@ -113,7 +159,7 @@ export class TestHelpers {
+     }
+ 
+     const result = response.data.data.login
+-    const primaryEmail = result.user.emails?.find((e: any) => e.primary)?.email || email
++    const primaryEmail = result.user.emails?.find(e => e.primary)?.email || email
+     return {
+       id: result.user.id,
+       email: primaryEmail,
+@@ -125,7 +171,7 @@ export class TestHelpers {
+     }
+   }
+ 
+-  static async verifyEmail(token: string): Promise<any> {
++  static async verifyEmail(token: string): Promise<VerifiedEmail> {
+     const verifyMutation = `
+       mutation VerifyEmail($input: VerifyEmailInput!) {
+         verifyEmail(input: $input) {
+@@ -135,7 +181,7 @@ export class TestHelpers {
+       }
+     `
+ 
+-    const response = await this.graphql(verifyMutation, {
++    const response = await this.graphql<{ verifyEmail: VerifiedEmail }>(verifyMutation, {
+       input: { token },
+     })
+ 
+@@ -153,7 +199,7 @@ export class TestHelpers {
+       }
+     `
+ 
+-    const response = await this.graphql(forgotPasswordMutation, {
++    const response = await this.graphql<{ forgotPassword: boolean }>(forgotPasswordMutation, {
+       input: { email },
+     })
+ 
+@@ -164,7 +210,7 @@ export class TestHelpers {
+     return response.data.data.forgotPassword
+   }
+ 
+-  static async resetPassword(token: string, newPassword: string): Promise<any> {
++  static async resetPassword(token: string, newPassword: string): Promise<ResetPasswordResult> {
+     const resetPasswordMutation = `
+       mutation ResetPassword($input: ResetPasswordInput!) {
+         resetPassword(input: $input) {
+@@ -174,9 +220,12 @@ export class TestHelpers {
+       }
+     `
+ 
+-    const response = await this.graphql(resetPasswordMutation, {
+-      input: { token, password: newPassword },
+-    })
++    const response = await this.graphql<{ resetPassword: ResetPasswordResult }>(
++      resetPasswordMutation,
++      {
++        input: { token, password: newPassword },
++      },
++    )
+ 
+     if (response.data.errors) {
+       throw new Error(`Password reset failed: ${JSON.stringify(response.data.errors)}`)
+@@ -186,11 +235,11 @@ export class TestHelpers {
+   }
+ 
+   // Authenticated requests helper
+-  static async authenticatedGraphql<T = any>(
++  static async authenticatedGraphql<TData = unknown>(
+     query: string,
+     user: TestUser,
+-    variables?: any,
+-  ): Promise<AxiosResponse<{ data: T; errors?: any[] }>> {
++    variables?: GraphQLVariables,
++  ): Promise<AxiosResponse<GraphQLResponse<TData>>> {
+     return axios.post(
+       '/graphql',
+       {
+@@ -206,7 +255,7 @@ export class TestHelpers {
+     )
+   }
+ 
+-  static async getCurrentUser(user: TestUser): Promise<any> {
++  static async getCurrentUser(user: TestUser): Promise<CurrentUser> {
+     const meQuery = `
+       query Me {
+         me {
+@@ -222,14 +271,14 @@ export class TestHelpers {
+       }
+     `
+ 
+-    const response = await this.authenticatedGraphql(meQuery, user)
++    const response = await this.authenticatedGraphql<{ me: AuthUser }>(meQuery, user)
+ 
+     if (response.data.errors) {
+       throw new Error(`Get current user failed: ${JSON.stringify(response.data.errors)}`)
+     }
+ 
+     const result = response.data.data.me
+-    const primaryEmail = result.emails?.find((e: any) => e.primary)?.email
++    const primaryEmail = result.emails?.find(e => e.primary)?.email
+ 
+     return {
+       ...result,
+diff --git a/apps/api-e2e/tsconfig.spec.json b/apps/api-e2e/tsconfig.spec.json
+index 7ceab36..f2410ee 100644
+--- a/apps/api-e2e/tsconfig.spec.json
++++ b/apps/api-e2e/tsconfig.spec.json
+@@ -3,15 +3,9 @@
+   "compilerOptions": {
+     "outDir": "../../dist/out-tsc",
+     "module": "commonjs",
+-    "types": ["jest", "node"]
++    "types": ["node"]
+   },
+-  "include": [
+-    "jest.config.ts",
+-    "jest.config.simple.ts",
+-    "vitest.config.mts",
+-    "vitest.support.config.mts",
+-    "src/**/*.ts"
+-  ],
++  "include": ["vitest.config.mts", "vitest.support.config.mts", "src/**/*.ts"],
+   "exclude": [
+     "node_modules",
+     "src/support/api-process.native.spec.ts",
+diff --git a/apps/api-e2e/tsconfig.support.json b/apps/api-e2e/tsconfig.support.json
+index fbbd6c5..786ea4c 100644
+--- a/apps/api-e2e/tsconfig.support.json
++++ b/apps/api-e2e/tsconfig.support.json
+@@ -12,6 +12,8 @@
+     "src/support/api-process.ts",
+     "src/support/api-process.spec.ts",
+     "src/support/api-process.native.spec.ts",
++    "src/support/database-guards.ts",
++    "src/support/database-guards.spec.ts",
+     "src/support/e2e-runner.spec.ts",
+     "src/support/process-tree-fixture.mjs",
+     "src/support/sql-runner.mjs",
+diff --git a/apps/api-e2e/vitest.config.mts b/apps/api-e2e/vitest.config.mts
+index 81b6819..69ca02d 100644
+--- a/apps/api-e2e/vitest.config.mts
++++ b/apps/api-e2e/vitest.config.mts
+@@ -24,6 +24,7 @@ export default defineConfig({
+     exclude: [
+       '**/support/api-process.spec.ts',
+       '**/support/api-process.native.spec.ts',
++      '**/support/database-guards.spec.ts',
+       '**/support/e2e-runner.spec.ts',
+       '**/support/sql-runner.spec.ts',
+     ],
+diff --git a/apps/api-e2e/vitest.support.config.mts b/apps/api-e2e/vitest.support.config.mts
+index a389ce4..f16ec91 100644
+--- a/apps/api-e2e/vitest.support.config.mts
++++ b/apps/api-e2e/vitest.support.config.mts
+@@ -9,6 +9,7 @@ export default defineConfig({
+     include: [
+       'src/support/api-process.spec.ts',
+       'src/support/api-process.native.spec.ts',
++      'src/support/database-guards.spec.ts',
+       'src/support/e2e-runner.spec.ts',
+       'src/support/sql-runner.spec.ts',
+     ],
+diff --git a/apps/api/project.json b/apps/api/project.json
+index b846373..2ec2d1d 100644
+--- a/apps/api/project.json
++++ b/apps/api/project.json
+@@ -25,6 +25,7 @@
+         "^production",
+         "{workspaceRoot}/tsconfig.base.json",
+         "{workspaceRoot}/scripts/typecheck-project.mjs",
++        "{workspaceRoot}/pnpm-lock.yaml",
+         {
+           "externalDependencies": ["typescript", "prisma", "@prisma/client"]
+         }
+diff --git a/apps/web/project.json b/apps/web/project.json
+index 8829903..275c06d 100644
+--- a/apps/web/project.json
++++ b/apps/web/project.json
+@@ -24,6 +24,7 @@
+         "^production",
+         "{workspaceRoot}/tsconfig.base.json",
+         "{workspaceRoot}/scripts/typecheck-project.mjs",
++        "{workspaceRoot}/pnpm-lock.yaml",
+         {
+           "externalDependencies": [
+             "typescript",
+diff --git a/apps/web/tsconfig.app.json b/apps/web/tsconfig.app.json
+index 3a6d021..95c014b 100644
+--- a/apps/web/tsconfig.app.json
++++ b/apps/web/tsconfig.app.json
+@@ -11,7 +11,8 @@
+     "**/.client/**/*.tsx",
+     ".react-router/types/**/*",
+     "./public/**/*",
+-    "../../vite-env.d.ts"
++    "../../vite-env.d.ts",
++    "app-load-context.d.ts"
+   ],
+   "exclude": [
+     "tests/**/*.spec.ts",
+diff --git a/apps/web/tsconfig.spec.json b/apps/web/tsconfig.spec.json
+index 28cf9ac..6c6e21b 100644
+--- a/apps/web/tsconfig.spec.json
++++ b/apps/web/tsconfig.spec.json
+@@ -10,7 +10,8 @@
+       "vitest",
+       "@nx/react/typings/cssmodule.d.ts",
+       "@nx/react/typings/image.d.ts"
+-    ]
++    ],
++    "rootDirs": [".", "./.react-router/types"]
+   },
+   "include": [
+     "vite.config.ts",
+@@ -25,7 +26,9 @@
+     "src/**/*.spec.jsx",
+     "src/**/*.d.ts",
+     "tests/**/*.ts",
+-    "tests/**/*.tsx"
++    "tests/**/*.tsx",
++    ".react-router/types/**/*",
++    "app-load-context.d.ts"
+   ],
+   "exclude": ["node_modules"]
+ }
+diff --git a/libs/web/vitest.config.mts b/libs/web/vitest.config.mts
+index b9b9f93..f289461 100644
+--- a/libs/web/vitest.config.mts
++++ b/libs/web/vitest.config.mts
+@@ -16,7 +16,15 @@ export default defineConfig({
+       reportsDirectory: '../../coverage/libs/web',
+       provider: 'v8',
+       reporter: ['text', 'json', 'html', 'lcov'],
+-      exclude: ['node_modules/', '**/*.spec.{ts,tsx}', '**/*.test.{ts,tsx}', '**/index.ts'],
++      exclude: [
++        'node_modules/',
++        '**/*.spec.{ts,tsx}',
++        '**/*.test.{ts,tsx}',
++        '**/index.ts',
++        // Test scaffolding, not product code: it would count as uncovered source.
++        'src/__mocks__/**',
++        'src/test-setup.ts',
++      ],
+     },
+   },
+ })
+diff --git a/package.json b/package.json
+index f1efd27..85551bc 100644
+--- a/package.json
++++ b/package.json
+@@ -72,7 +72,8 @@
+     "sdk": "graphql-codegen --config libs/shared/sdk/src/codegen.yml",
+     "sdk:watch": "pnpm sdk --watch",
+     "dev:web": "nx serve web",
+-    "typecheck": "pnpm nx run-many -t typecheck",
++    "typecheck": "pnpm nx run-many -t typecheck && pnpm typecheck:workspace",
++    "typecheck:workspace": "node scripts/typecheck-project.mjs scripts && node scripts/typecheck-project.mjs tools",
+     "typecheck:watch": "cd apps/web && react-router typegen --watch",
+     "storybook:web-ui": "nx storybook web-ui",
+     "sdk:update-contract-baseline": "nestled-doctor --update-sdk-contract-baseline",
+diff --git a/scripts/run-e2e-tests.sh b/scripts/run-e2e-tests.sh
+index fce7650..97f610e 100755
+--- a/scripts/run-e2e-tests.sh
++++ b/scripts/run-e2e-tests.sh
+@@ -1,7 +1,9 @@
+ #!/bin/bash
+ 
+ # E2E Test Runner
+-# Automatically starts test database, runs tests, and cleans up
++# Starts the repo's test database, runs tests, and cleans up. With a caller-supplied
++# TEST_DATABASE_URL it uses that database as is: it neither starts nor stops the repo's own test
++# container, and the run fails if the supplied database is unreachable.
+ 
+ set -e
+ 
+@@ -15,25 +17,40 @@ YELLOW='\033[1;33m'
+ BLUE='\033[0;34m'
+ NC='\033[0m' # No Color
+ 
++# A caller-supplied URL names a database this script does not manage.
++MANAGE_TEST_DB=true
++if [[ -n "${TEST_DATABASE_URL:-}" ]]; then
++  MANAGE_TEST_DB=false
++fi
++
+ # Cleanup function
+ cleanup() {
++  if [[ "$MANAGE_TEST_DB" != true ]]; then
++    return 0
++  fi
+   echo -e "\n${YELLOW}🧹 Cleaning up...${NC}"
+-  ./scripts/test-db.sh stop 2>/dev/null || true
++  if ! ./scripts/test-db.sh stop 2>/dev/null; then
++    echo -e "${RED}⚠️  Could not stop the test database. Stop it with ./scripts/test-db.sh stop.${NC}" >&2
++  fi
+   return 0
+ }
+ 
+ # Set up cleanup trap
+ trap cleanup EXIT
+ 
+-# Check if Docker is running
+-if ! docker info > /dev/null 2>&1; then
+-  echo -e "${RED}❌ Docker is not running. Please start Docker first.${NC}"
+-  exit 1
+-fi
++if [[ "$MANAGE_TEST_DB" = true ]]; then
++  # Check if Docker is running
++  if ! docker info > /dev/null 2>&1; then
++    echo -e "${RED}❌ Docker is not running. Please start Docker first.${NC}"
++    exit 1
++  fi
+ 
+-# Start test database
+-echo -e "${BLUE}1. Starting test database...${NC}"
+-./scripts/test-db.sh start
++  # Start test database
++  echo -e "${BLUE}1. Starting test database...${NC}"
++  ./scripts/test-db.sh start
++else
++  echo -e "${BLUE}1. Using the supplied TEST_DATABASE_URL; not starting the repo's test database${NC}"
++fi
+ 
+ # Configure the database used by the e2e setup
+ echo -e "${BLUE}2. Configuring test database...${NC}"
+@@ -53,21 +70,21 @@ export DIRECT_URL="$TEST_DATABASE_URL"
+ # Run the tests
+ echo -e "${BLUE}3. Running E2E tests...${NC}"
+ 
+-# Route through api-e2e:test (the run-tests.sh wrapper), not api-e2e:e2e. The wrapper runs vitest
+-# with tee'd output and adjusts the SIGKILL exit code, so a failure surfaces the actual Vitest
+-# assertion details; api-e2e:e2e goes through the Nx executor and can exit with only Nx's failure
+-# summary. Extra args after `--` reach the wrapper's "$@" and become a vitest file-path filter.
+-# Option 1: Run specific test file
++# api-e2e:e2e runs the run-tests.sh wrapper, which tees Vitest's output and reports PASSED only when
++# Vitest exited 0, its summary counts no failure and at least one test passed. Extra args after `--`
++# reach the wrapper's "$@" and become a Vitest file-path filter. (api-e2e:test is the support suite
++# only, so `nx run-many -t test` never starts this e2e run or its database.)
++# Option 1: Run with the caller's arguments (a file filter, --coverage, ...)
+ # set +e so a failing target doesn't abort under `set -e` before we capture its code — otherwise the
+ # `$?` check below is unreachable on failure and the run reports success.
+ set +e
+-if [[ "$1" != "" ]]; then
+-  echo -e "${YELLOW}Running specific test: $1${NC}"
+-  pnpm nx run api-e2e:test -- "$1"
++if [[ $# -gt 0 ]]; then
++  echo -e "${YELLOW}Running with arguments: $*${NC}"
++  pnpm nx run api-e2e:e2e -- "$@"
+ # Option 2: Run all tests
+ else
+   echo -e "${YELLOW}Running all E2E tests...${NC}"
+-  pnpm nx run api-e2e:test
++  pnpm nx run api-e2e:e2e
+ fi
+ E2E_EXIT=$?
+ set -e
+diff --git a/scripts/tsconfig.json b/scripts/tsconfig.json
+new file mode 100644
+index 0000000..55500d1
+--- /dev/null
++++ b/scripts/tsconfig.json
+@@ -0,0 +1,14 @@
++{
++  "extends": "../tsconfig.base.json",
++  "compilerOptions": {
++    "noEmit": true,
++    "strict": true,
++    "target": "es2022",
++    "lib": ["es2022"],
++    "module": "esnext",
++    "moduleResolution": "bundler",
++    "types": ["node"]
++  },
++  "include": ["**/*.ts"],
++  "exclude": ["node_modules"]
++}
+diff --git a/scripts/typecheck-project.mjs b/scripts/typecheck-project.mjs
+index 97a1548..bef4d23 100644
+--- a/scripts/typecheck-project.mjs
++++ b/scripts/typecheck-project.mjs
+@@ -147,9 +147,33 @@ export function gitExecutable(env = process.env) {
+   return executable
+ }
+ 
+-// Tracked TypeScript sources under the project that none of its checked configs compile. A test
+-// folder no config includes (apps/web/tests) is otherwise invisible to every typecheck. A tracked
+-// file deleted from the working tree is not a source any more, staged or not.
++// Directories whose declaration files a build or code generator writes. A tracked .d.ts under one of
++// them is output (committed by accident or on purpose), not a source a config has to own; React
++// Router's typegen writes route types to .react-router/types and +types folders.
++const generatedDirectories = new Set([
++  'dist',
++  'build',
++  'out',
++  'out-tsc',
++  'coverage',
++  'node_modules',
++  '.react-router',
++  '+types',
++])
++
++// A hand-written declaration file (a global augmentation, a `declare module` shim) types the code
++// that sees it, so one that no config includes is unchecked and does nothing. Only generated
++// declarations are skipped.
++export function isGeneratedDeclaration(projectRoot, file) {
++  if (!/\.d\.[cm]?ts$/.test(file)) return false
++  const segments = relative(projectRoot, dirname(file)).split(sep)
++  return segments.some(segment => generatedDirectories.has(segment))
++}
++
++// Tracked TypeScript sources under the project that none of its checked configs compile,
++// hand-written declaration files included. A test folder no config includes (apps/web/tests) is
++// otherwise invisible to every typecheck. A tracked file deleted from the working tree is not a
++// source any more, staged or not.
+ export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
+   const listed = spawnSync(
+     gitExecutable(),
+@@ -175,7 +199,7 @@ export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
+   }
+   return files
+     .map(file => resolve(workspaceRoot, file))
+-    .filter(file => /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file))
++    .filter(file => /\.[cm]?tsx?$/.test(file) && !isGeneratedDeclaration(projectRoot, file))
+     .filter(file => !covered.has(file) && existsSync(file))
+     .filter(file => ![...nestedProjects].some(nested => isInside(nested, file)))
+ }
+diff --git a/scripts/typecheck-project.spec.mjs b/scripts/typecheck-project.spec.mjs
+index ee8a8c5..890596c 100644
+--- a/scripts/typecheck-project.spec.mjs
++++ b/scripts/typecheck-project.spec.mjs
+@@ -3,11 +3,13 @@ import { spawnSync } from 'node:child_process'
+ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { dirname, join } from 'node:path'
++import { createRequire } from 'node:module'
+ import { afterEach, describe, it } from 'node:test'
+ import { fileURLToPath } from 'node:url'
+ import {
+   gitExecutable,
+   inspectConfigs,
++  isGeneratedDeclaration,
+   loadTypeScript,
+   main,
+   resolveProjectConfigs,
+@@ -15,6 +17,7 @@ import {
+ } from './typecheck-project.mjs'
+ 
+ const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
++const require = createRequire(import.meta.url)
+ const ts = loadTypeScript(workspaceRoot)
+ const fixtures = []
+ 
+@@ -171,6 +174,49 @@ void describe('typecheck-project', () => {
+     assert.ok(error.mock.calls.some(call => String(call.arguments[0]).includes('libs/a/loose.ts')))
+   })
+ 
++  void it('reports a hand-written declaration file no config includes, not generated ones', () => {
++    const root = fixture({
++      'tsconfig.base.json': base,
++      'apps/w/tsconfig.json': { ...solution, references: [{ path: './tsconfig.lib.json' }] },
++      'apps/w/tsconfig.lib.json': { ...lib, include: ['src/**/*.ts'] },
++      'apps/w/src/main.ts': 'export const main = 1\n',
++      'apps/w/src/covered.d.ts': 'declare const covered: number\n',
++      'apps/w/load-context.d.ts': 'export {}\ndeclare global { const loose: number }\n',
++      'apps/w/types/shim.d.mts': 'export {}\n',
++      'apps/w/dist/main.d.ts': 'export declare const main = 1\n',
++      'apps/w/build/out-tsc/main.d.ts': 'export declare const main = 1\n',
++      'apps/w/.react-router/types/app/+types/root.d.ts': 'export {}\n',
++      'apps/w/app/routes/+types/home.d.ts': 'export {}\n',
++    })
++    const projectRoot = join(root, 'apps/w')
++    const inspected = inspectConfigs(ts, resolveProjectConfigs(ts, projectRoot))
++    assert.deepEqual(uncoveredFiles(root, projectRoot, inspected), [
++      join(projectRoot, 'load-context.d.ts'),
++      join(projectRoot, 'types/shim.d.mts'),
++    ])
++  })
++
++  void it('treats only declarations under build output and typegen folders as generated', () => {
++    const project = join(workspaceRoot, 'apps/w')
++    assert.equal(isGeneratedDeclaration(project, join(project, 'dist/a.d.ts')), true)
++    assert.equal(isGeneratedDeclaration(project, join(project, '.react-router/types/a.d.ts')), true)
++    assert.equal(isGeneratedDeclaration(project, join(project, 'app/+types/a.d.ts')), true)
++    assert.equal(isGeneratedDeclaration(project, join(project, 'env.d.ts')), false)
++    assert.equal(isGeneratedDeclaration(project, join(project, 'src/types/a.d.cts')), false)
++    // Only declarations: a source file under dist/ is still a source.
++    assert.equal(isGeneratedDeclaration(project, join(project, 'dist/a.ts')), false)
++  })
++
++  void it('invalidates every typecheck target on a lockfile change', () => {
++    const { typecheckTarget } = require('../tools/nx-plugins/typecheck.js')
++    const lockfile = '{workspaceRoot}/pnpm-lock.yaml'
++    assert.ok(typecheckTarget('libs/a').inputs.includes(lockfile))
++    for (const project of ['apps/api', 'apps/web']) {
++      const { targets } = require(join(workspaceRoot, project, 'project.json'))
++      assert.ok(targets.typecheck.inputs.includes(lockfile), `${project} typecheck inputs`)
++    }
++  })
++
+   void it('spawns git from GIT_EXECUTABLE only when it is an absolute path to a file', () => {
+     const git = gitExecutable()
+     assert.equal(gitExecutable({ GIT_EXECUTABLE: git }), git)
+diff --git a/tools/fragment-to-select.ts b/tools/fragment-to-select.ts
+index 0707cc4..01f9e5d 100644
+--- a/tools/fragment-to-select.ts
++++ b/tools/fragment-to-select.ts
+@@ -7,7 +7,7 @@ import {
+   type DatabaseModelMetadata,
+   type GraphqlSource,
+   type PrismaSelect,
+-} from '../scripts/doctor-sdk-contract-analysis'
++} from '@nestledjs/doctor'
+ 
+ const usage = `Usage:
+   pnpm exec tsx tools/fragment-to-select.ts <repo> <model-folder> [SELECT_NAME]
+diff --git a/tools/nx-plugins/typecheck.js b/tools/nx-plugins/typecheck.js
+index c1d9739..f268fa1 100644
+--- a/tools/nx-plugins/typecheck.js
++++ b/tools/nx-plugins/typecheck.js
+@@ -24,12 +24,18 @@ function typecheckTarget(projectRoot) {
+       '^production',
+       '{workspaceRoot}/tsconfig.base.json',
+       `{workspaceRoot}/${runner}`,
++      // externalDependencies hashes only the packages it names, so a dependency upgrade (a new
++      // @types package, a library whose types changed) would otherwise replay a cached green
++      // typecheck. The lockfile changes with every resolved version.
++      '{workspaceRoot}/pnpm-lock.yaml',
+       { externalDependencies: ['typescript'] },
+     ],
+     outputs: [],
+   }
+ }
+ 
++exports.typecheckTarget = typecheckTarget
++
+ exports.createNodesV2 = [
+   '**/project.json',
+   async (projectFiles, _options, context) =>
+diff --git a/tools/tsconfig.json b/tools/tsconfig.json
+new file mode 100644
+index 0000000..55500d1
+--- /dev/null
++++ b/tools/tsconfig.json
+@@ -0,0 +1,14 @@
++{
++  "extends": "../tsconfig.base.json",
++  "compilerOptions": {
++    "noEmit": true,
++    "strict": true,
++    "target": "es2022",
++    "lib": ["es2022"],
++    "module": "esnext",
++    "moduleResolution": "bundler",
++    "types": ["node"]
++  },
++  "include": ["**/*.ts"],
++  "exclude": ["node_modules"]
++}
