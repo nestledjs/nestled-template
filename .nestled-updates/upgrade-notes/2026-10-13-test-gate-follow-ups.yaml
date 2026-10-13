@@ -52,7 +52,9 @@ intent: >
   wrapper fails with a message instead of starting the repo's Docker Compose test database, which
   would not be at that URL and would replace a stopped container the developer owns. It starts its
   own test database only when no URL was supplied. scripts/run-e2e-tests.sh (`pnpm test:e2e`)
-  likewise neither starts nor stops the repo's test container when TEST_DATABASE_URL is supplied. The
+  likewise neither starts nor stops the repo's test container when TEST_DATABASE_URL is supplied,
+  and forwards every argument to `api-e2e:e2e` (it used to forward only the first, dropping e.g.
+  `--coverage` after a file filter). The
   wrapper runs under `set -euo pipefail`. The Vitest run is bracketed by `set +e`
   / `set -e` so its status is still captured from PIPESTATUS. The summary match uses a here-string
   rather than `echo | grep -q`, because under pipefail the writer's SIGPIPE would turn a found
@@ -91,7 +93,8 @@ intent: >
 
   SQL splitter. apps/api-e2e/src/support/sql-runner.mjs keeps a backslash-escaped quote inside an
   escape string (E'it\'s'), and no longer opens a dollar quote at a `$` inside an identifier
-  (price$usd$). Nested block comments are still not tracked; its doc comment says so.
+  (price$usd$), including after a non-ASCII identifier character (café$usd$), which `\w` does not
+  match. Nested block comments are still not tracked; its doc comment says so.
 why: >
   Each of these left a gate reporting green, or a run doing more than it said. A dependency upgrade
   that changed types replayed a cached typecheck, because the inputs named only typescript. An

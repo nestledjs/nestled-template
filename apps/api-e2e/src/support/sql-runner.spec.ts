@@ -51,6 +51,13 @@ describe('sql runner', () => {
     ).toEqual(['SELECT price$usd$ FROM t', 'SELECT $$ a; b $$, $1 FROM u'])
   })
 
+  it('treats a $ after a non-ASCII identifier character as part of the identifier', () => {
+    expect(prepareStatements('SELECT café$usd$ FROM t; SELECT 1;', {}, quote)).toEqual([
+      'SELECT café$usd$ FROM t',
+      'SELECT 1',
+    ])
+  })
+
   it('refuses a variable that was not supplied', () => {
     expect(() => prepareStatements(`SELECT :'missing'`, {}, quote)).toThrow(/:'missing'/)
   })

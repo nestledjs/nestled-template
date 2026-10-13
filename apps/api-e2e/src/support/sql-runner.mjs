@@ -25,8 +25,9 @@ import { pathToFileURL } from 'node:url'
  * @returns {string[]}
  */
 export function prepareStatements(script, variables, quote) {
+  // PostgreSQL identifiers may also contain any non-ASCII character, which `\w` does not match.
   const isWordChar = (/** @type {string | undefined} */ char) =>
-    char !== undefined && /[\w$]/.test(char)
+    char !== undefined && /[\w$\u0080-\uFFFF]/.test(char)
   const statements = []
   let current = ''
   let i = 0

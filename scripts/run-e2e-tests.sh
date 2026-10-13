@@ -74,13 +74,13 @@ echo -e "${BLUE}3. Running E2E tests...${NC}"
 # Vitest exited 0, its summary counts no failure and at least one test passed. Extra args after `--`
 # reach the wrapper's "$@" and become a Vitest file-path filter. (api-e2e:test is the support suite
 # only, so `nx run-many -t test` never starts this e2e run or its database.)
-# Option 1: Run specific test file
+# Option 1: Run with the caller's arguments (a file filter, --coverage, ...)
 # set +e so a failing target doesn't abort under `set -e` before we capture its code — otherwise the
 # `$?` check below is unreachable on failure and the run reports success.
 set +e
-if [[ "$1" != "" ]]; then
-  echo -e "${YELLOW}Running specific test: $1${NC}"
-  pnpm nx run api-e2e:e2e -- "$1"
+if [[ $# -gt 0 ]]; then
+  echo -e "${YELLOW}Running with arguments: $*${NC}"
+  pnpm nx run api-e2e:e2e -- "$@"
 # Option 2: Run all tests
 else
   echo -e "${YELLOW}Running all E2E tests...${NC}"

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })))
 
-const run = (exitCode: number, suppliedUrl?: string) => {
+const run = (exitCode: number, suppliedUrl?: string, args: string[] = []) => {
   const root = mkdtempSync(join(tmpdir(), 'e2e-shell-runner-'))
   roots.push(root)
   mkdirSync(join(root, 'scripts'))
@@ -27,7 +27,7 @@ const run = (exitCode: number, suppliedUrl?: string) => {
     '#!/bin/bash\nprintf "%s\\n" "$*" "$TEST_DATABASE_URL" "$DATABASE_URL" "$DIRECT_URL" >> calls\nexit "$FAKE_EXIT"\n',
     { mode: 0o755 },
   )
-  const result = spawnSync('bash', ['scripts/run-e2e-tests.sh'], {
+  const result = spawnSync('bash', ['scripts/run-e2e-tests.sh', ...args], {
     cwd: root,
     env: {
       ...process.env,
@@ -63,6 +63,10 @@ describe('e2e shell runner', () => {
     expect(calls.slice(1)).toEqual(Array(3).fill('postgresql://local/isolated_test'))
     expect(dbCalls).not.toContain('start')
     expect(dbCalls).not.toContain('stop')
+  })
+  it('forwards every argument to the e2e target', () => {
+    const { calls } = run(0, undefined, ['src/auth/auth-generation.spec.ts', '--coverage'])
+    expect(calls[0]).toBe('nx run api-e2e:e2e -- src/auth/auth-generation.spec.ts --coverage')
   })
   it('propagates a failing test target instead of reporting success', () => {
     const { result } = run(7)
