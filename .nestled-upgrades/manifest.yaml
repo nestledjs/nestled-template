@@ -2,7 +2,7 @@ schemaVersion: 1
 generatedAt: 2026-10-13
 channels:
   canary: 2026.10.12
-  stable: 2026.10.8
+  stable: 2026.10.12
 releases:
   - id: 2026.08.0
     date: 2026-08-27
