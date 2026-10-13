@@ -81,7 +81,7 @@ describe('test database guards', () => {
       PATH: '/usr/bin',
       PGHOSTADDR: '10.0.0.5',
       PGSERVICE: 'production',
-      PGPASSFILE: '/home/me/.pgpass',
+      PGPASSFILE: 'other.pgpass',
       PGPASSWORD: 'stale',
       PGOPTIONS: '-c search_path=other',
     })
