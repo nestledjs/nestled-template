@@ -3,6 +3,19 @@
 
 const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 
+// Query parameters that pg and libpq read as the connection's destination, overriding the URL's
+// host, port or path. A URL carrying one could pass the host and name check and still connect
+// elsewhere.
+export const DESTINATION_OVERRIDES = [
+  'host',
+  'hostaddr',
+  'port',
+  'database',
+  'dbname',
+  'db',
+  'service',
+] as const
+
 /** The opt-out for a test database that does not look disposable. */
 export const ALLOW_NON_DISPOSABLE_DB = 'E2E_ALLOW_NON_DISPOSABLE_DB'
 
@@ -19,12 +32,15 @@ export function describeDatabase(databaseUrl: string): string {
 /**
  * Whether a URL names a database this suite may migrate, push, seed and wipe: on this machine (the
  * rule prisma.config.ts applies to `migrate reset`), and named as a test database, ending in `_test`
- * (`nestled_template_test` by default).
+ * (`nestled_template_test` by default). A URL whose query parameters override the destination
+ * (`?host=`, `?port=`, `?dbname=` and the like) is never disposable, since pg would connect there.
  */
 export function isDisposableTestDatabase(databaseUrl: string): boolean {
   try {
     const url = new URL(databaseUrl)
     const database = decodeURIComponent(url.pathname.slice(1))
+    const params = [...url.searchParams.keys()].map(key => key.toLowerCase())
+    if (params.some(key => (DESTINATION_OVERRIDES as readonly string[]).includes(key))) return false
     return LOCAL_DATABASE_HOSTS.has(url.hostname) && /_test$/i.test(database)
   } catch {
     return false

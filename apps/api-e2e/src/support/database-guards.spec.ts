@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DESTINATION_OVERRIDES,
   assertDisposableTestDatabase,
   databaseProbe,
   describeDatabase,
@@ -27,6 +28,13 @@ describe('test database guards', () => {
     expect(isDisposableTestDatabase(url)).toBe(false)
     expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
     expect(() => assertDisposableTestDatabase(url, {})).not.toThrow(/u:p@/)
+  })
+
+  it.each(DESTINATION_OVERRIDES)('refuses a URL whose %s parameter overrides the destination', key => {
+    const url = `postgresql://u:p@localhost:5432/app_test?${key}=elsewhere`
+    expect(isDisposableTestDatabase(url)).toBe(false)
+    expect(isDisposableTestDatabase(url.replace(`?${key}=`, `?${key.toUpperCase()}=`))).toBe(false)
+    expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
   })
 
   it('lets an explicit opt-out through, and only the value 1', () => {
