@@ -29,7 +29,7 @@ async function resetPassword(token: string, password: string) {
 }
 
 async function me(user: TestUser) {
-  return TestHelpers.authenticatedGraphql(`query Me { me { id } }`, user)
+  return TestHelpers.authenticatedGraphql<{ me: { id: string } }>(`query Me { me { id } }`, user)
 }
 
 describe('Authentication: password reset retires earlier credentials', () => {
@@ -57,7 +57,9 @@ describe('Authentication: password reset retires earlier credentials', () => {
   it('refuses an API token issued before the reset', async () => {
     const user = await TestHelpers.registerUser(UserFactory.create())
 
-    const generated = await TestHelpers.authenticatedGraphql(
+    const generated = await TestHelpers.authenticatedGraphql<{
+      generateApiToken: { token: string }
+    }>(
       `mutation GenerateApiToken($input: GenerateApiTokenInput!) {
         generateApiToken(input: $input) { token }
       }`,
@@ -85,7 +87,7 @@ describe('Authentication: password reset retires earlier credentials', () => {
     const userData = UserFactory.create()
     const user = await TestHelpers.registerUser(userData)
 
-    const setup = await TestHelpers.authenticatedGraphql(
+    const setup = await TestHelpers.authenticatedGraphql<{ setup2FA: { secret: string } }>(
       `mutation Setup2FA { setup2FA { secret } }`,
       user,
     )
@@ -100,7 +102,9 @@ describe('Authentication: password reset retires earlier credentials', () => {
     )
     expect(enable.data.errors).toBeUndefined()
 
-    const login = await TestHelpers.graphql(
+    const login = await TestHelpers.graphql<{
+      login: { requires2FA: boolean; tempToken: string; token: string }
+    }>(
       `mutation Login($input: LoginInput!) { login(input: $input) { requires2FA tempToken token } }`,
       { input: { email: userData.email, password: userData.password } },
     )
@@ -110,7 +114,7 @@ describe('Authentication: password reset retires earlier credentials', () => {
 
     await resetPassword(issueResetToken(user.id), 'ResetPassword123!')
 
-    const complete = await TestHelpers.graphql(
+    const complete = await TestHelpers.graphql<{ complete2FALogin: { token: string } }>(
       `mutation Complete2FA($tempToken: String!, $code: String!) {
         complete2FALogin(tempToken: $tempToken, code: $code) { token }
       }`,
@@ -132,7 +136,9 @@ describe('Authentication: a change of isActive retires earlier credentials', () 
     const before = generationOf()
 
     const setActive = async (isActive: boolean) => {
-      const response = await TestHelpers.authenticatedGraphql(
+      const response = await TestHelpers.authenticatedGraphql<{
+        updateUser: { id: string; isActive: boolean }
+      }>(
         `mutation UpdateUser($userId: String!, $input: UpdateUserInput!) {
           updateUser(userId: $userId, input: $input) { id isActive }
         }`,
@@ -181,7 +187,7 @@ describe('Authentication: a revoked session stays revoked', () => {
     ).toThrow(/expiry cannot be extended/i)
 
     // Revoking is allowed.
-    const revoked = await TestHelpers.authenticatedGraphql(
+    const revoked = await TestHelpers.authenticatedGraphql<{ invalidateSession: boolean }>(
       `mutation($sessionId: String!) { invalidateSession(sessionId: $sessionId) }`,
       user,
       { sessionId },

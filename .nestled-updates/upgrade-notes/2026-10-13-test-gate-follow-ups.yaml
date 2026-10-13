@@ -1,0 +1,243 @@
+id: 2026-10-13-test-gate-follow-ups
+title: Test and typecheck gate follow-ups, and a unit-test run that never starts the e2e suite
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  Follow up the 2026-10-10 and 2026-10-12 test and typecheck gate notes with the gaps that adopting
+  them exposed.
+
+  Typecheck cache. Every typecheck target (the one tools/nx-plugins/typecheck.js gives each project,
+  and the ones written in apps/api/project.json and apps/web/project.json) lists
+  `{workspaceRoot}/pnpm-lock.yaml` among its inputs. The plugin exports typecheckTarget, and the
+  runner spec checks all three carry the lockfile.
+
+  Declaration files. scripts/typecheck-project.mjs no longer skips every .d.ts when it looks for
+  uncovered files. A tracked, hand-written declaration file (a global augmentation, a `declare
+  module` shim) that no checked config includes is reported like any other uncovered source.
+  Declarations under build output and typegen folders (dist, build, out, out-tsc, coverage,
+  node_modules, .react-router, +types) are still skipped as generated. apps/web/app-load-context.d.ts
+  surfaced this way; apps/web/tsconfig.app.json and tsconfig.spec.json now include it.
+
+  Workspace root typecheck. scripts/ and tools/ each get a tsconfig.json (strict, Node types,
+  bundler resolution, `**/*.ts`), checked by the same runner through a new root script
+  `pnpm typecheck:workspace` (`node scripts/typecheck-project.mjs scripts && node
+  scripts/typecheck-project.mjs tools`). `pnpm typecheck` runs it after `nx run-many -t typecheck`,
+  and CI runs it as its own step. Neither folder becomes an Nx project, so no lint, test or build
+  target appears for them. tools/fragment-to-select.ts imported a module that no longer exists in
+  the repo (../scripts/doctor-sdk-contract-analysis); that analysis ships in @nestledjs/doctor, which
+  exports buildPrismaSelectFromFragments and its types, so the tool imports it from there.
+
+  Windows spawn options. ownedProcessOptions() in apps/api-e2e/src/support/api-process.ts takes
+  `{ shell }`, default true. With no argument it behaves as before (detached on POSIX, a shell on
+  Windows for pnpm's .cmd shim). `ownedProcessOptions({ shell: false })` is for spawning an
+  executable directly, such as process.execPath. Through cmd.exe, an unquoted path containing a
+  space is split there and the spawn fails. The native spec runs every cleanup case for both
+  launches, pnpm-style through a shell and node directly.
+
+  Unit-test runs no longer start the e2e suite. The api-e2e `test` target was the e2e wrapper, so
+  `nx run-many -t test` (and `pnpm test`, and CI's `pnpm test:coverage`) started the real API e2e
+  and, when the database was unreachable, the Docker Compose test database. `api-e2e:e2e` is now the
+  only target that runs the suite. `api-e2e:test` is an `nx:noop` that depends on
+  `api-e2e:test-support`, the database-free support suite. scripts/run-e2e-tests.sh calls
+  `api-e2e:e2e`. CI runs unit tests (`pnpm test:coverage`) and then the e2e suite as its own step,
+  `pnpm exec nx run api-e2e:e2e -- --coverage`, with TEST_DATABASE_URL on that step only.
+
+  Dead Jest files. Remove apps/api-e2e/jest.config.ts and jest.config.simple.ts (the suite runs on
+  Vitest), drop them from apps/api-e2e/tsconfig.spec.json, and replace its `"types": ["jest",
+  "node"]` with `["node"]`. The specs import describe/it/expect from vitest.
+
+  run-tests.sh. When the caller supplied TEST_DATABASE_URL and that database is unreachable, the
+  wrapper fails with a message instead of starting the repo's Docker Compose test database, which
+  would not be at that URL and would replace a stopped container the developer owns. It starts its
+  own test database only when no URL was supplied. scripts/run-e2e-tests.sh (`pnpm test:e2e`)
+  likewise neither starts nor stops the repo's test container when TEST_DATABASE_URL is supplied. The
+  wrapper runs under `set -euo pipefail`. The Vitest run is bracketed by `set +e`
+  / `set -e` so its status is still captured from PIPESTATUS. The summary match uses a here-string
+  rather than `echo | grep -q`, because under pipefail the writer's SIGPIPE would turn a found
+  failure into "no match". The passed-count pipeline ends in `|| true` so no match is a count of
+  zero. Cleanup no longer swallows a failure to stop a test database the wrapper started: it prints
+  a warning on stderr and leaves the result unchanged. scripts/run-e2e-tests.sh does the same, and
+  its comment no longer describes the removed exit-code adjustment.
+
+  Coverage. libs/web's Vitest coverage excludes src/__mocks__/** and src/test-setup.ts.
+
+  Generated route types in specs. apps/web/tsconfig.spec.json includes `.react-router/types/**/*`
+  and sets `rootDirs: [".", "./.react-router/types"]`, as tsconfig.app.json does, so a spec that
+  imports a route using `./+types/...` typechecks.
+
+  Typed e2e GraphQL helpers. TestHelpers.graphql and authenticatedGraphql in
+  apps/api-e2e/src/support/test-helpers.ts are `<TData = unknown>` and return
+  `AxiosResponse<GraphQLResponse<TData>>`, with GraphQLResponse, GraphQLErrorResponse and
+  GraphQLVariables exported. Callers pass the type of the selection they read, so `.data.data` is
+  no longer `any`. The helpers' own register/login/verify/reset/me calls are typed the same way, as
+  is the local gql helper in organization-billing.spec.ts. The specs pass their response types.
+
+  Disposable test database. Global setup refuses, before it connects, a TEST_DATABASE_URL that is
+  not disposable: the host must be localhost, 127.0.0.1 or ::1, and the database name must end in
+  `_test`. `E2E_ALLOW_NON_DISPOSABLE_DB=1` lets a run through anyway, with a warning. The
+  from-scratch reset (taken when migrate deploy reports P3005) requires a disposable database
+  regardless of the opt-out, and now uses the same rule, so a name like `test_data` is no longer
+  reset. The checks live in the new, side-effect-free
+  apps/api-e2e/src/support/database-guards.ts with its own spec in the support suite. Setup logs
+  the database by host and name rather than its full URL.
+
+  Database probe. Global setup's readiness probe is the pg runner by default and needs no psql.
+  `E2E_DATABASE_PROBE=psql` runs `psql -At -c 'SELECT 1'` from PATH instead, with the URL passed
+  as PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE (and PGSSLMODE) so the password never reaches a
+  command line. This is for a repo whose lifecycle tests stand in for the database with a stub
+  psql.
+
+  SQL splitter. apps/api-e2e/src/support/sql-runner.mjs keeps a backslash-escaped quote inside an
+  escape string (E'it\'s'), and no longer opens a dollar quote at a `$` inside an identifier
+  (price$usd$). Nested block comments are still not tracked; its doc comment says so.
+why: >
+  Each of these left a gate reporting green, or a run doing more than it said. A dependency upgrade
+  that changed types replayed a cached typecheck, because the inputs named only typescript. An
+  uncovered hand-written .d.ts passed silently, since the runner skipped all declarations. The root
+  scripts and tools were never typechecked at all, which is how a broken import in
+  tools/fragment-to-select.ts went unnoticed. `nx run-many -t test`, the normal unit-test command,
+  started the API e2e suite and a Docker database, so a unit-test run on a laptop or a CI job
+  without Docker could hang or fail for reasons that had nothing to do with unit tests.
+
+  Global setup migrated, pushed and seeded whatever TEST_DATABASE_URL named. A URL copied from
+  DATABASE_URL would have had its schema rewritten. Spawning node directly with the Windows shell
+  option failed for any Node install path containing a space. Under the wrapper's old `set +e`, an
+  unexpected command failure went unnoticed, and a test database the wrapper could not stop was
+  never mentioned. Specs that import routes could not typecheck once routes used generated types.
+  The e2e GraphQL helpers returned `any`, so a spec could read a field the query never selected and
+  still compile.
+affectedPaths:
+  - tools/nx-plugins/typecheck.js
+  - apps/api/project.json
+  - apps/web/project.json
+  - scripts/typecheck-project.mjs
+  - scripts/typecheck-project.spec.mjs
+  - scripts/tsconfig.json
+  - tools/tsconfig.json
+  - tools/fragment-to-select.ts
+  - package.json
+  - .github/workflows/ci.yml
+  - AGENTS.md
+  - apps/web/tsconfig.app.json
+  - apps/web/tsconfig.spec.json
+  - libs/web/vitest.config.mts
+  - apps/api-e2e/project.json
+  - apps/api-e2e/README.md
+  - apps/api-e2e/run-tests.sh
+  - apps/api-e2e/jest.config.ts
+  - apps/api-e2e/jest.config.simple.ts
+  - apps/api-e2e/tsconfig.spec.json
+  - apps/api-e2e/tsconfig.support.json
+  - apps/api-e2e/vitest.config.mts
+  - apps/api-e2e/vitest.support.config.mts
+  - apps/api-e2e/src/support/api-process.ts
+  - apps/api-e2e/src/support/api-process.spec.ts
+  - apps/api-e2e/src/support/api-process.native.spec.ts
+  - apps/api-e2e/src/support/database-guards.ts
+  - apps/api-e2e/src/support/database-guards.spec.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - apps/api-e2e/src/support/sql-runner.mjs
+  - apps/api-e2e/src/support/sql-runner.spec.ts
+  - apps/api-e2e/src/support/test-helpers.ts
+  - apps/api-e2e/src/**/*.spec.ts
+  - scripts/run-e2e-tests.sh
+verification:
+  - node --test scripts/typecheck-project.spec.mjs
+  - pnpm exec nx run-many -t typecheck --parallel=1 --skip-nx-cache
+  - pnpm typecheck:workspace
+  - pnpm exec nx run-many -t lint --parallel=1
+  - pnpm exec nx run-many -t test --parallel=1
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx run api-e2e:e2e
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    Migrating the api-e2e targets: if project.json has a `test` target that runs the e2e wrapper (or
+    the Vitest executor against the e2e config), make `e2e` the only target that runs the suite and
+    turn `test` into `{"executor": "nx:noop", "dependsOn": ["test-support"]}`. Then change every
+    caller of `api-e2e:test` that means the e2e suite (scripts/run-e2e-tests.sh, package.json
+    scripts, CI, docs) to `api-e2e:e2e`. If CI got its e2e run from `pnpm test`/`pnpm test:coverage`,
+    add an explicit `nx run api-e2e:e2e -- --coverage` step with TEST_DATABASE_URL and the service
+    containers, or the e2e suite silently stops running in CI. Never run `run-many -t test` in a
+    way that starts e2e. Check with `nx run-many -t test` that no `api-e2e:e2e` runs and no
+    container starts.
+  - >
+    Disposable-database guard: global setup now refuses a TEST_DATABASE_URL that is not on
+    localhost/127.0.0.1/::1 or whose name does not end in `_test`. If CI reaches its database by a
+    service hostname (container jobs) or the test database has another name, rename it to *_test
+    where you can; otherwise set E2E_ALLOW_NON_DISPOSABLE_DB=1 on that job only. Lifecycle or
+    support tests that run global setup with fixture URLs must use a local *_test URL or set the
+    opt-out in their env. The from-scratch reset is stricter than before (it needs `_test` at the
+    end of the name), so a database named like `test_app` must be renamed or recreated by hand.
+  - >
+    If the project's lifecycle tests stand in for the database with a stub psql on PATH, set
+    E2E_DATABASE_PROBE=psql in those tests rather than restoring a psql-only probe. Otherwise keep
+    the pg-runner default. The wrapper's own probe (run-tests.sh) always uses the pg runner.
+  - >
+    Custom lib typecheck targets: a project.json `typecheck` that is a plain `tsc -p tsconfig.lib.json
+    && tsc -p tsconfig.spec.json` with no dependsOn should be deleted, and the plugin's target
+    replaces it. A target that has dependsOn (for example a prisma generate) or needs an explicit
+    config list becomes `node scripts/typecheck-project.mjs <projectRoot> [configs...]`, keeps its
+    dependsOn, and adds `{workspaceRoot}/pnpm-lock.yaml` and
+    `{workspaceRoot}/scripts/typecheck-project.mjs` to its inputs.
+  - >
+    `api:build` in dependsOn: if the project's global setup starts the built API from dist rather
+    than `nx serve api`, keep `api:build` in the e2e target's dependsOn (alongside test-support).
+    Without it, the e2e run tests a stale build.
+  - >
+    Duplicate Vite: to check for a second Vite after removing app-level @react-router/dev or
+    @types/node, look in pnpm-lock.yaml (for example `grep -E "^  vite@" pnpm-lock.yaml`), not in
+    node_modules/.pnpm. That folder keeps stale entries until it is pruned, so it can show two
+    versions after the lock has one.
+  - >
+    The PASSED rule is runner-neutral: an e2e run passes only when tests ran, none failed and at
+    least one passed. It is never a cached result and never passWithNoTests. A repo whose e2e
+    runs on Jest implements it from Jest's JSON output (`--json --outputFile`): numFailedTests == 0,
+    numFailedTestSuites == 0, numPassedTests > 0, and a zero exit, with Jest's passWithNoTests off
+    and the target uncached.
+  - >
+    @types/pg: if the lockfile already resolves @types/pg transitively, add that exact version to
+    devDependencies. Never downgrade it, and avoid a caret range that would bump it on the next
+    install.
+  - >
+    Common typecheck fixes seen when adopting the runner. A lib that compiles another lib's .tsx
+    through path mapping needs `jsx` set (TS6142). Spec configs need `target: es2022` (or later)
+    for top-level await. TS2308 `export *` name collisions need explicit re-exports of the
+    conflicting names. Storybook stories typed from the meta (`StoryObj<typeof meta>`) break on
+    union props, so type them from the component (`StoryObj<typeof Component>`).
+  - >
+    SonarCloud: where sonar.sources includes scripts/, add `node --test
+    --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=<file>
+    scripts/typecheck-project.spec.mjs` (or equivalent) to CI's coverage collection, list that lcov
+    in sonar.javascript.lcov.reportPaths, and treat `**/*.spec.mjs` as tests (sonar.tests /
+    sonar.test.inclusions). Otherwise the runner counts as uncovered new code and the new-code
+    coverage gate fails.
+  - >
+    A repo already at 0 uncovered files after the earlier notes should expect no new typecheck
+    errors from the runner change itself. The only new reports are hand-written .d.ts files that no
+    config includes (add each to the config whose code it types, as apps/web did with
+    app-load-context.d.ts), plus whatever scripts/ and tools/ contain once typecheck:workspace
+    checks them.
+  - >
+    scripts/ and tools/ typecheck: copy the two tsconfig.json files and the `typecheck:workspace`
+    script (package.json is not mirrored by template promotion, so add the script and the
+    `pnpm typecheck` chaining by hand). If a script imports generated code (the Prisma client), run
+    it after the Nx typecheck, which generates first. A script that is dead or broken may be
+    deleted instead of fixed. If tools/fragment-to-select.ts still imports
+    ../scripts/doctor-sdk-contract-analysis, import from '@nestledjs/doctor' instead.
+  - >
+    Typed GraphQL helpers: after the default becomes `unknown`, every spec reading `.data.data`
+    from TestHelpers.graphql/authenticatedGraphql fails typecheck until it passes a type matching
+    its selection set. Add small local types per spec. Do not pass `any`. Calls that only read
+    `errors` need no type argument.
+  - >
+    Code that spawns process.execPath (or another executable that is not a .cmd shim) with
+    ownedProcessOptions() should pass `{ shell: false }`. Leave pnpm/npx spawns on the default.
+  - >
+    If the project's run-tests.sh differs from the template's, adopt `set -euo pipefail` with care.
+    Wrap the test run in `set +e`/`set -e`, use here-strings for `grep -q` on captured output, and
+    add `|| true` to count pipelines that may match nothing. Run the wrapper spec (e2e-runner.spec.ts)
+    and confirm a broken test and a zero-test run still fail.

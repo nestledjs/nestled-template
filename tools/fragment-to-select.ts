@@ -7,7 +7,7 @@ import {
   type DatabaseModelMetadata,
   type GraphqlSource,
   type PrismaSelect,
-} from '../scripts/doctor-sdk-contract-analysis'
+} from '@nestledjs/doctor'
 
 const usage = `Usage:
   pnpm exec tsx tools/fragment-to-select.ts <repo> <model-folder> [SELECT_NAME]

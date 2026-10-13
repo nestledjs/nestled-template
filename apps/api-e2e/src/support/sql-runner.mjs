@@ -13,8 +13,11 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 /**
- * Split a script into statements, replacing `:'name'` with `quote(variables[name])`. Quoted strings,
- * quoted identifiers, dollar-quoted bodies and comments are copied untouched.
+ * Split a script into statements, replacing `:'name'` with `quote(variables[name])`. Quoted strings
+ * (escape strings E'...' included), quoted identifiers, dollar-quoted bodies and comments are copied
+ * untouched, and a `$` inside an identifier does not open a dollar quote. Nested block comments, which
+ * PostgreSQL allows, are not tracked: one ends at its first closing marker, so keep them out of e2e
+ * SQL.
  *
  * @param {string} script
  * @param {Record<string, string>} variables
@@ -22,6 +25,8 @@ import { pathToFileURL } from 'node:url'
  * @returns {string[]}
  */
 export function prepareStatements(script, variables, quote) {
+  const isWordChar = (/** @type {string | undefined} */ char) =>
+    char !== undefined && /[\w$]/.test(char)
   const statements = []
   let current = ''
   let i = 0
@@ -38,8 +43,15 @@ export function prepareStatements(script, variables, quote) {
       const end = script.indexOf('*/', i + 2)
       copyUntil(end === -1 ? script.length : end + 2)
     } else if (rest[0] === "'" || rest[0] === '"') {
+      // In an escape string (E'...'), a backslash escapes the next character, \' included.
+      const escapes =
+        rest[0] === "'" && /[Ee]/.test(script[i - 1] ?? '') && !isWordChar(script[i - 2])
       let end = i + 1
       while (end < script.length) {
+        if (escapes && script[end] === '\\') {
+          end += 2
+          continue
+        }
         if (script[end] === rest[0]) {
           if (script[end + 1] !== rest[0]) break
           end++
@@ -47,7 +59,8 @@ export function prepareStatements(script, variables, quote) {
         end++
       }
       copyUntil(Math.min(end + 1, script.length))
-    } else if (/^\$([A-Za-z_]\w*)?\$/.test(rest)) {
+    } else if (!isWordChar(script[i - 1]) && /^\$([A-Za-z_]\w*)?\$/.test(rest)) {
+      // A `$` inside an identifier (a$b$c) is part of the name, not the start of a dollar quote.
       const tag = /^\$([A-Za-z_]\w*)?\$/.exec(rest)?.[0] ?? '$$'
       const end = script.indexOf(tag, i + tag.length)
       copyUntil(end === -1 ? script.length : end + tag.length)

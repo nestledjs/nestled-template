@@ -3,15 +3,9 @@
   "compilerOptions": {
     "outDir": "../../dist/out-tsc",
     "module": "commonjs",
-    "types": ["jest", "node"]
+    "types": ["node"]
   },
-  "include": [
-    "jest.config.ts",
-    "jest.config.simple.ts",
-    "vitest.config.mts",
-    "vitest.support.config.mts",
-    "src/**/*.ts"
-  ],
+  "include": ["vitest.config.mts", "vitest.support.config.mts", "src/**/*.ts"],
   "exclude": [
     "node_modules",
     "src/support/api-process.native.spec.ts",

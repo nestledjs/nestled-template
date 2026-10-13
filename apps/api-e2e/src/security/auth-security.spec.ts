@@ -178,7 +178,7 @@ describe('CRITICAL: Authentication Security', () => {
           }
         }
       `
-      const response = await TestHelpers.authenticatedGraphql(meQuery, user)
+      const response = await TestHelpers.authenticatedGraphql<{ me: { id: string } }>(meQuery, user)
       expect(response.data.errors).toBeUndefined()
       expect(response.data.data.me.id).toBe(user.id)
     })
@@ -410,7 +410,7 @@ describe('CRITICAL: Authentication Security', () => {
           }
         }
       `
-      const response = await TestHelpers.authenticatedGraphql(meQuery, user)
+      const response = await TestHelpers.authenticatedGraphql<{ me: { id: string } }>(meQuery, user)
       expect(response.data.errors).toBeUndefined()
       expect(response.data.data.me.id).toBe(user.id)
     })
@@ -436,7 +436,14 @@ describe('CRITICAL: Authentication Security', () => {
           }
         }
       `
-      const response = await TestHelpers.authenticatedGraphql(sessionsQuery, user)
+      const response = await TestHelpers.authenticatedGraphql<{
+        getUserSessions: {
+          id: string
+          deviceInfo: unknown
+          ipAddress: string | null
+          lastActiveAt: string
+        }[]
+      }>(sessionsQuery, user)
       if (response.data.errors) {
         // Query might not be implemented yet
         console.log('Session tracking not fully implemented')

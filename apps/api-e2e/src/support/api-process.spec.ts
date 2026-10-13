@@ -84,8 +84,12 @@ describe('API process cleanup', () => {
   it('spawns the launcher so its whole tree can be stopped', () => {
     setPlatform('darwin')
     expect(ownedProcessOptions()).toEqual({ detached: true, shell: false })
+    expect(ownedProcessOptions({ shell: false })).toEqual({ detached: true, shell: false })
     setPlatform('win32')
     expect(ownedProcessOptions()).toEqual({ detached: false, shell: true })
+    // An executable spawned directly (process.execPath) must not go through cmd.exe, which splits an
+    // unquoted path at its spaces.
+    expect(ownedProcessOptions({ shell: false })).toEqual({ detached: false, shell: false })
   })
 
   it('stops the launcher and its descendants with taskkill on Windows', () => {

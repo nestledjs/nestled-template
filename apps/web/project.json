@@ -24,6 +24,7 @@
         "^production",
         "{workspaceRoot}/tsconfig.base.json",
         "{workspaceRoot}/scripts/typecheck-project.mjs",
+        "{workspaceRoot}/pnpm-lock.yaml",
         {
           "externalDependencies": [
             "typescript",

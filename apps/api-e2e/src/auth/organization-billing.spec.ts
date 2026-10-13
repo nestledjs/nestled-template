@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import axios from 'axios'
-import { TestHelpers, type TestUser } from '../support/test-helpers'
+import {
+  TestHelpers,
+  type GraphQLResponse,
+  type GraphQLVariables,
+  type TestUser,
+} from '../support/test-helpers'
 import { UserFactory } from '../support/factories/user.factory'
 import { sql } from '../support/test-db'
 
@@ -8,8 +13,13 @@ import { sql } from '../support/test-db'
  * Authorization hardening: billing operations need billing permissions in a current membership.
  */
 
-const gql = (user: TestUser, query: string, variables?: object, organizationId?: string) =>
-  axios.post(
+const gql = <TData = unknown>(
+  user: TestUser,
+  query: string,
+  variables?: GraphQLVariables,
+  organizationId?: string,
+) =>
+  axios.post<GraphQLResponse<TData>>(
     '/graphql',
     { query, variables },
     {
@@ -25,6 +35,9 @@ const CURRENT_SUBSCRIPTION = `query { currentSubscription { id } }`
 const CANCEL_SUBSCRIPTION = `mutation { cancelSubscription { id } }`
 const CURRENT_PLAN = `query { currentPlan { id features } }`
 const CURRENT_SUBSCRIPTION_ACTIVE = `query { currentSubscriptionActive }`
+
+type SubscriptionActive = { currentSubscriptionActive: boolean }
+type CurrentPlan = { currentPlan: { id: string; features: string[] } | null }
 
 const forbidden = (response: { data: { errors?: { message: string }[] } }) =>
   expect(response.data.errors?.[0]?.message).toMatch(/permission|organization context/i)
@@ -58,7 +71,7 @@ describe('Authorization: organization billing', () => {
     forbidden(await gql(member, CANCEL_SUBSCRIPTION, undefined, organizationId))
     // Any member may still read the plan, and whether the subscription is active.
     expect((await gql(member, CURRENT_PLAN)).data.errors).toBeUndefined()
-    const inactive = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
+    const inactive = await gql<SubscriptionActive>(member, CURRENT_SUBSCRIPTION_ACTIVE)
     expect(inactive.data.errors).toBeUndefined()
     expect(inactive.data.data.currentSubscriptionActive).toBe(false)
 
@@ -73,10 +86,10 @@ describe('Authorization: organization billing', () => {
        FROM "Plan" p WHERE p.name = :'planName';`,
       { orgId: organizationId, planName },
     )
-    const active = await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)
+    const active = await gql<SubscriptionActive>(member, CURRENT_SUBSCRIPTION_ACTIVE)
     expect(active.data.errors).toBeUndefined()
     expect(active.data.data.currentSubscriptionActive).toBe(true)
-    const memberPlan = await gql(member, CURRENT_PLAN)
+    const memberPlan = await gql<CurrentPlan>(member, CURRENT_PLAN)
     expect(memberPlan.data.data.currentPlan.features).toEqual(['reports'])
     forbidden(await gql(member, CURRENT_SUBSCRIPTION))
 
@@ -84,7 +97,8 @@ describe('Authorization: organization billing', () => {
       orgId: organizationId,
     })
     expect(
-      (await gql(member, CURRENT_SUBSCRIPTION_ACTIVE)).data.data.currentSubscriptionActive,
+      (await gql<SubscriptionActive>(member, CURRENT_SUBSCRIPTION_ACTIVE)).data.data
+        .currentSubscriptionActive,
     ).toBe(false)
     sql(`UPDATE "Subscription" SET status = 'ACTIVE' WHERE "organizationId" = :'orgId';`, {
       orgId: organizationId,
@@ -112,7 +126,7 @@ describe('Authorization: organization billing', () => {
     forbidden(await gql(member, CANCEL_SUBSCRIPTION))
     forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE))
     forbidden(await gql(member, CURRENT_SUBSCRIPTION_ACTIVE, undefined, organizationId))
-    const plan = await gql(member, CURRENT_PLAN)
+    const plan = await gql<CurrentPlan>(member, CURRENT_PLAN)
     expect(plan.data.errors).toBeUndefined()
     expect(plan.data.data.currentPlan).toBeNull()
   })

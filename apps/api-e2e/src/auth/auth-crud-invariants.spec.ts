@@ -8,6 +8,11 @@ const primaryId = (user: TestUser) =>
 const validated = (user: TestUser) =>
   sql(`SELECT "emailValidated" FROM "User" WHERE id = :'userId';`, { userId: user.id })
 
+type Named = { name: string }
+type InputType = { inputFields: Named[] }
+type ObjectType = { fields: Named[] }
+type EmailRecord = { id: string; email: string; verified: boolean; primary: boolean }
+
 describe('Administrative authentication records', () => {
   let admin: TestUser
   beforeAll(async () => {
@@ -17,13 +22,18 @@ describe('Administrative authentication records', () => {
 
   it('keeps explicit session viewing available to the owner and permitted administrators', async () => {
     const user = await TestHelpers.registerUser()
-    const own = await TestHelpers.authenticatedGraphql(`query { getUserSessions { id } }`, user)
+    const own = await TestHelpers.authenticatedGraphql<{ getUserSessions: { id: string }[] }>(
+      `query { getUserSessions { id } }`,
+      user,
+    )
     expect(own.data.errors).toBeUndefined()
     expect(own.data.data.getUserSessions.length).toBeGreaterThan(0)
     const query = `query($userId: String!) {
       adminUserDetails(userId: $userId) { id activeSessions { id isValid lastActiveAt } }
     }`
-    const allowed = await TestHelpers.authenticatedGraphql(query, admin, { userId: user.id })
+    const allowed = await TestHelpers.authenticatedGraphql<{
+      adminUserDetails: { id: string; activeSessions: { id: string }[] }
+    }>(query, admin, { userId: user.id })
     expect(allowed.data.errors).toBeUndefined()
     expect(allowed.data.data.adminUserDetails.activeSessions.length).toBeGreaterThan(0)
     const denied = await TestHelpers.authenticatedGraphql(query, user, { userId: admin.id })
@@ -32,7 +42,7 @@ describe('Administrative authentication records', () => {
 
   it('creates ordinary email records with unverified, non-primary defaults', async () => {
     const user = await TestHelpers.registerUser()
-    const response = await TestHelpers.authenticatedGraphql(
+    const response = await TestHelpers.authenticatedGraphql<{ createEmail: EmailRecord }>(
       `mutation($input: CreateEmailInput!) {
       createEmail(input: $input) { id email verified primary }
     }`,
@@ -44,7 +54,15 @@ describe('Administrative authentication records', () => {
   })
 
   it('keeps account and email flags readable but removes them from both write inputs', async () => {
-    const response = await TestHelpers.authenticatedGraphql(
+    const response = await TestHelpers.authenticatedGraphql<{
+      createEmail: InputType
+      updateEmail: InputType
+      createUser: InputType
+      updateUser: InputType
+      email: ObjectType
+      user: ObjectType
+      mutation: ObjectType
+    }>(
       `query {
       createEmail: __type(name: "CreateEmailInput") { inputFields { name } }
       updateEmail: __type(name: "UpdateEmailInput") { inputFields { name } }
@@ -58,14 +76,14 @@ describe('Administrative authentication records', () => {
     )
     expect(response.data.errors).toBeUndefined()
     const data = response.data.data
-    for (const operation of ['createEmail', 'updateEmail']) {
+    for (const operation of ['createEmail', 'updateEmail'] as const) {
       const names = data[operation].inputFields.map((field: { name: string }) => field.name)
       expect(names).not.toEqual(expect.arrayContaining(['verified']))
       expect(names).not.toEqual(expect.arrayContaining(['primary']))
       expect(names).not.toContain('verifyExpires')
       expect(names).toContain('email')
     }
-    for (const operation of ['createUser', 'updateUser']) {
+    for (const operation of ['createUser', 'updateUser'] as const) {
       const names = data[operation].inputFields.map((field: { name: string }) => field.name)
       expect(names).not.toContain('emailValidated')
       expect(names).not.toContain('isSuperAdmin')
@@ -101,7 +119,7 @@ describe('Administrative authentication records', () => {
       userId: user.id,
     })
     expect(validated(user)).toBe('t')
-    const response = await TestHelpers.authenticatedGraphql(
+    const response = await TestHelpers.authenticatedGraphql<{ updateEmail: EmailRecord }>(
       `mutation($id: String!, $input: UpdateEmailInput!) {
       updateEmail(emailId: $id, input: $input) { id email verified primary }
     }`,

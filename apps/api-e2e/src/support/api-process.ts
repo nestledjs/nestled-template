@@ -6,12 +6,16 @@ export type ApiStopResult = 'group' | 'tree' | 'process' | 'already-stopped'
 /**
  * Spawn options that let killApiProcessTree reach every descendant. On POSIX the launcher leads its
  * own process group. On Windows there are no process groups to signal; the launcher's PID is the
- * root of the tree taskkill walks, so it stays attached. pnpm is a .cmd shim there, which Node only
- * runs through a shell.
+ * root of the tree taskkill walks, so it stays attached.
+ *
+ * `shell` matters only on Windows. pnpm (and npx) are .cmd shims there, which Node only runs through
+ * a shell, so the default is a shell. Spawning an executable directly, such as `process.execPath`,
+ * needs `{ shell: false }`: through cmd.exe an unquoted path with a space in it (C:\Program
+ * Files\nodejs\node.exe) is split at the space and the spawn fails.
  */
-export function ownedProcessOptions() {
+export function ownedProcessOptions({ shell = true }: { shell?: boolean } = {}) {
   const windows = process.platform === 'win32'
-  return { detached: !windows, shell: windows }
+  return { detached: !windows, shell: windows && shell }
 }
 
 // taskkill's exit status when the PID no longer exists.

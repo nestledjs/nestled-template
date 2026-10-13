@@ -39,6 +39,18 @@ describe('sql runner', () => {
     ])
   })
 
+  it('keeps a backslash-escaped quote inside an escape string', () => {
+    expect(prepareStatements(`SELECT E'it\\'s; fine', e'a\\\\'; SELECT 'b\\';`, {}, quote)).toEqual(
+      [`SELECT E'it\\'s; fine', e'a\\\\'`, `SELECT 'b\\'`],
+    )
+  })
+
+  it('does not open a dollar quote at a $ inside an identifier', () => {
+    expect(
+      prepareStatements('SELECT price$usd$ FROM t; SELECT $$ a; b $$, $1 FROM u;', {}, quote),
+    ).toEqual(['SELECT price$usd$ FROM t', 'SELECT $$ a; b $$, $1 FROM u'])
+  })
+
   it('refuses a variable that was not supplied', () => {
     expect(() => prepareStatements(`SELECT :'missing'`, {}, quote)).toThrow(/:'missing'/)
   })

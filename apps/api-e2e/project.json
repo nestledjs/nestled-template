@@ -19,17 +19,7 @@
       "dependsOn": ["test-support"]
     },
     "test": {
-      "executor": "nx:run-commands",
-      "cache": false,
-      "parallelism": false,
-      "outputs": [
-        "{workspaceRoot}/coverage/{projectRoot}",
-        "{workspaceRoot}/test-results/{projectRoot}"
-      ],
-      "options": {
-        "command": "bash apps/api-e2e/run-tests.sh",
-        "cwd": "{workspaceRoot}"
-      },
+      "executor": "nx:noop",
       "dependsOn": ["test-support"]
     },
     "test-support": {

@@ -24,7 +24,9 @@ describe('Authentication: staff email edits', () => {
     ).split('\n')[0]
 
     const staffUpdate = (emailId: string, input: Record<string, unknown>) =>
-      TestHelpers.authenticatedGraphql(
+      TestHelpers.authenticatedGraphql<{
+        staffUpdateEmail: { id: string; email: string; verified: boolean; primary: boolean }
+      }>(
         `mutation StaffUpdateEmail($emailId: String!, $input: StaffUpdateEmailInput!) {
           staffUpdateEmail(emailId: $emailId, input: $input) { id email verified primary }
         }`,
@@ -58,7 +60,7 @@ describe('Authentication: rejected two-factor codes', () => {
   it('are recorded as a security event on the account, not an audit entry', async () => {
     const userData = UserFactory.create()
     const user = await TestHelpers.registerUser(userData)
-    const setup = await TestHelpers.authenticatedGraphql(
+    const setup = await TestHelpers.authenticatedGraphql<{ setup2FA: { secret: string } }>(
       `mutation Setup2FA { setup2FA { secret } }`,
       user,
     )
@@ -70,7 +72,7 @@ describe('Authentication: rejected two-factor codes', () => {
     )
     expect(enable.data.errors).toBeUndefined()
 
-    const login = await TestHelpers.graphql(
+    const login = await TestHelpers.graphql<{ login: { tempToken: string } }>(
       `mutation Login($input: LoginInput!) { login(input: $input) { tempToken } }`,
       { input: { email: userData.email, password: userData.password } },
     )

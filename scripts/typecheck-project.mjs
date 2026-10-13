@@ -147,9 +147,33 @@ export function gitExecutable(env = process.env) {
   return executable
 }
 
-// Tracked TypeScript sources under the project that none of its checked configs compile. A test
-// folder no config includes (apps/web/tests) is otherwise invisible to every typecheck. A tracked
-// file deleted from the working tree is not a source any more, staged or not.
+// Directories whose declaration files a build or code generator writes. A tracked .d.ts under one of
+// them is output (committed by accident or on purpose), not a source a config has to own; React
+// Router's typegen writes route types to .react-router/types and +types folders.
+const generatedDirectories = new Set([
+  'dist',
+  'build',
+  'out',
+  'out-tsc',
+  'coverage',
+  'node_modules',
+  '.react-router',
+  '+types',
+])
+
+// A hand-written declaration file (a global augmentation, a `declare module` shim) types the code
+// that sees it, so one that no config includes is unchecked and does nothing. Only generated
+// declarations are skipped.
+export function isGeneratedDeclaration(projectRoot, file) {
+  if (!/\.d\.[cm]?ts$/.test(file)) return false
+  const segments = relative(projectRoot, dirname(file)).split(sep)
+  return segments.some(segment => generatedDirectories.has(segment))
+}
+
+// Tracked TypeScript sources under the project that none of its checked configs compile,
+// hand-written declaration files included. A test folder no config includes (apps/web/tests) is
+// otherwise invisible to every typecheck. A tracked file deleted from the working tree is not a
+// source any more, staged or not.
 export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
   const listed = spawnSync(
     gitExecutable(),
@@ -175,7 +199,7 @@ export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
   }
   return files
     .map(file => resolve(workspaceRoot, file))
-    .filter(file => /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file))
+    .filter(file => /\.[cm]?tsx?$/.test(file) && !isGeneratedDeclaration(projectRoot, file))
     .filter(file => !covered.has(file) && existsSync(file))
     .filter(file => ![...nestedProjects].some(nested => isInside(nested, file)))
 }

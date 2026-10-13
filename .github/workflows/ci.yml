@@ -146,8 +146,23 @@ jobs:
       # scoped list silently stops covering new projects as they are added.
       - run: pnpm exec nx run-many -t typecheck
 
+      # The workspace root's own TypeScript (scripts/, tools/) belongs to no Nx project; each folder's
+      # tsconfig.json is checked by the same runner, uncovered-file check included.
+      - run: pnpm typecheck:workspace
+
+      # Unit and component tests only: api-e2e's `test` target is its support suite, so this never
+      # starts the API e2e run or a test database.
       - name: Run tests with coverage
         run: pnpm test:coverage
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+          NODE_ENV: test
+          JWT_SECRET: test-jwt-secret-for-ci-only-not-production
+          EMAIL_PROVIDER: mock
+
+      # The API e2e suite, against the service containers above, through its PASSED-checking wrapper.
+      - name: Run API e2e with coverage
+        run: pnpm exec nx run api-e2e:e2e -- --coverage
         env:
           TEST_DATABASE_URL: postgresql://prisma:prisma@localhost:5432/nestled_template_test
           REDIS_URL: redis://127.0.0.1:6379

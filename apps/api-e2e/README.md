@@ -13,21 +13,26 @@ database and exercise it over HTTP.
 ## Running E2E Tests
 
 ```bash
-pnpm test:e2e               # starts the test database container, runs the suite, stops it
-pnpm nx e2e api-e2e         # runs the suite; starts the container only if the database is unreachable
+pnpm test:e2e               # starts the test database container, runs the suite, stops it (with TEST_DATABASE_URL set, uses that database and manages no container)
+pnpm nx e2e api-e2e         # runs the suite; starts the container only if no TEST_DATABASE_URL is set and the database is unreachable
 pnpm nx e2e api-e2e -- src/auth/auth-generation.spec.ts   # one file
 ```
 
-`api-e2e:e2e` and `api-e2e:test` run the same wrapper, `run-tests.sh`, and are never cached: every
-green result comes from a run that just happened. The wrapper prints every test by name and reports
+`api-e2e:e2e` runs the wrapper, `run-tests.sh`, and is never cached: every green result comes from a
+run that just happened. `api-e2e:test` is only the suite's own support tests (`api-e2e:test-support`:
+the wrapper, the process cleanup, the SQL runner and the database guards), which need no database, so
+`nx run-many -t test` never starts the e2e run or a test database. The wrapper prints every test by name and reports
 PASSED, with the number of tests that passed, only when Vitest's summary has no failure and at least
 one test passed. A filter that matches nothing, or a run in which every test is skipped, fails.
 
 ## How It Works
 
 1. **Wrapper** (`run-tests.sh`): resolves the test database URL, probes it with its own
-   credentials, starts the test container if it is unreachable, runs Vitest and checks the summary.
+   credentials, and if it is unreachable either fails (a caller-supplied `TEST_DATABASE_URL`) or
+   starts the repo's test container (no URL supplied). It then runs Vitest and checks the summary.
 2. **Global setup** (`src/support/global-setup.ts`):
+   - refuses a test database that is not disposable (on this machine and named `*_test`) before it
+     connects, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set
    - applies migrations with `prisma migrate deploy`. A local test database built by `db push` alone
      has no migration history; it is emptied and migrated from scratch.
    - runs `prisma db push` and the seed
@@ -48,11 +53,17 @@ one test passed. A filter that matches nothing, or a run in which every test is 
 - `HOST`: the API host (default `localhost`).
 - `E2E_ALLOW_EXISTING_API`: set to `1` only when you started an API on `E2E_API_PORT` against the
   test database yourself.
+- `E2E_ALLOW_NON_DISPOSABLE_DB`: set to `1` only when the test database is disposable but not local
+  or not named `*_test` (a CI service container reached by its service name, for example). Setup
+  migrates, pushes and seeds it; the from-scratch reset still requires a local `*_test` database.
+- `E2E_DATABASE_PROBE`: how global setup checks the database answers. `pg` (default) uses the pg
+  runner; `psql` runs `psql` from PATH, for a repo whose lifecycle tests stub psql.
 
 ## CI
 
-CI runs `pnpm test:coverage`, which includes `api-e2e:test`, against PostgreSQL and Redis service
-containers. `TEST_DATABASE_URL` points at the service database with its own credentials.
+CI runs `pnpm exec nx run api-e2e:e2e -- --coverage` against PostgreSQL and Redis service
+containers, as its own step after the unit tests. `TEST_DATABASE_URL` points at the service database
+with its own credentials.
 
 ## Test Structure
 
@@ -68,6 +79,10 @@ src/
 
 - **"Refusing to run e2e against an API this suite did not start"**: something already listens on
   `E2E_API_PORT`. Stop it or choose another port.
+- **"Refusing to run e2e setup against ..."**: `TEST_DATABASE_URL` is not a local `*_test`
+  database. Point it at one, or set `E2E_ALLOW_NON_DISPOSABLE_DB=1` if it is disposable anyway.
 - **"Test database not accessible"**: check `TEST_DATABASE_URL`, or start the container with
   `pnpm test:db:start`.
 - **"no test passed"**: the file filter matched nothing, or every test was skipped.
+- **"could not stop it"**: the wrapper started the test database and `scripts/test-db.sh stop`
+  failed. Stop it by hand before the next run.

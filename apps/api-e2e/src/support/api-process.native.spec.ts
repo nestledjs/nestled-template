@@ -27,11 +27,15 @@ async function waitUntilStopped(pids: number[]) {
   return pids.filter(isRunning)
 }
 
-async function startTree() {
-  // Spawned with global setup's own options. On Windows that means through a shell, so the
-  // launcher's PID is cmd.exe's and the fixture runs below it, as pnpm's .cmd shim does. The command
-  // is one quoted string there, so paths with spaces survive the shell.
-  const options = ownedProcessOptions()
+type Launch = 'pnpm-style' | 'direct'
+
+async function startTree(launch: Launch) {
+  // Spawned with global setup's own options. 'pnpm-style' is how setup starts `pnpm nx serve api`:
+  // on Windows through a shell, so the launcher's PID is cmd.exe's and the fixture runs below it,
+  // as pnpm's .cmd shim does; the command is one quoted string there, so paths with spaces survive
+  // the shell. 'direct' spawns process.execPath itself with `{ shell: false }`, as a caller that
+  // starts node (or the built API) without pnpm does.
+  const options = ownedProcessOptions({ shell: launch === 'pnpm-style' })
   const stdio: ['ignore', 'pipe', 'inherit'] = ['ignore', 'pipe', 'inherit']
   const launcher = options.shell
     ? spawn(`"${process.execPath}" "${fixture}"`, { stdio, ...options })
@@ -54,11 +58,11 @@ afterEach(() => {
   for (const pid of started.splice(0).filter(isRunning)) process.kill(pid, 'SIGKILL')
 })
 
-describe('API process tree cleanup on this platform', () => {
+describe.each<Launch>(['pnpm-style', 'direct'])('API process tree cleanup (%s launch)', launch => {
   const expected = process.platform === 'win32' ? 'tree' : 'group'
 
   it('stops the launcher and its descendant during ordinary teardown', async () => {
-    const { launcher, pids } = await startTree()
+    const { launcher, pids } = await startTree(launch)
     expect(killApiProcessTree(launcher)).toBe(expected)
     expect(await waitUntilStopped(pids)).toEqual([])
   })
@@ -67,7 +71,7 @@ describe('API process tree cleanup on this platform', () => {
     ['SIGINT', 130],
     ['SIGTERM', 143],
   ] as const)('stops both on %s cancellation', async (signal, code) => {
-    const { launcher, pids } = await startTree()
+    const { launcher, pids } = await startTree(launch)
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
     const before = process.listeners(signal)
     disposers.push(registerApiProcessCleanup(launcher))
@@ -78,7 +82,7 @@ describe('API process tree cleanup on this platform', () => {
   })
 
   it('stops both from the exit fallback when teardown never ran', async () => {
-    const { launcher, pids } = await startTree()
+    const { launcher, pids } = await startTree(launch)
     const before = process.listeners('exit')
     disposers.push(registerApiProcessCleanup(launcher))
     process.listeners('exit').find(item => !before.includes(item))?.(0)
@@ -88,7 +92,7 @@ describe('API process tree cleanup on this platform', () => {
   it.runIf(process.platform === 'win32')(
     'reports a taskkill failure and leaves the exit fallback to retry',
     async () => {
-      const { launcher, pids } = await startTree()
+      const { launcher, pids } = await startTree(launch)
       const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
       const originalExitCode = process.exitCode
       const before = process.listeners('exit')
