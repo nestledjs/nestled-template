@@ -13,7 +13,8 @@ intent: >
   password included, and `scripts/test-db.sh start` printed it as the connection string. Test setup
   now logs `describeDatabase()` (host, port and database name), and test-db.sh prints the URL
   reduced to scheme, host, port and database, since a connection URI can carry credentials in its
-  user-info and in query parameters (`test-db.sh url` still prints the real URL for callers that
+  user-info and in query parameters; a value whose parts do not validate is shown as a fixed
+  placeholder rather than echoed (`test-db.sh url` still prints the real URL for callers that
   connect with it). The new support spec test-setup.spec.ts checks that a password, in either
   place, never reaches either output.
 

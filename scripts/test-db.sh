@@ -63,7 +63,13 @@ TEST_DB_DISPLAY_PORT="${TEST_DB_DISPLAY_PORT:-$TEST_DB_PORT}"
 # CI logs, and a connection URI can carry credentials in the user-info and in query parameters
 # (password, sslpassword, passfile ...), so both are dropped rather than masked field by field.
 # `url` below still prints the real URL, for the callers that connect with it.
-TEST_DB_DISPLAY_URL="$(printf '%s' "$TEST_DB_URL" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)([^@/?#]*@)?([^/?#]*)([^?#]*).*#\1\3\4#')"
+# Fails closed: only parts that validate as a host, a port and a database name are shown; any other
+# value gets a fixed placeholder, so nothing from an unexpected value is ever echoed.
+TEST_DB_DISPLAY_URL="<unrecognised TEST_DATABASE_URL>"
+TEST_DB_DISPLAY_PATTERN='^(postgres|postgresql)://([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?/([A-Za-z0-9_-]+)([?#].*)?$'
+if [[ "$TEST_DB_URL" =~ $TEST_DB_DISPLAY_PATTERN ]]; then
+  TEST_DB_DISPLAY_URL="${BASH_REMATCH[1]}://${BASH_REMATCH[3]}${BASH_REMATCH[4]}/${BASH_REMATCH[5]}"
+fi
 TEST_DB_CONTAINER="nestled-template_postgres_test"
 # Bind mount backing postgres-test (see the `volumes:` entry in .dev/docker-compose.yml). Compose
 # `down` removes named volumes only with -v, and never touches a bind mount — so recreating the
