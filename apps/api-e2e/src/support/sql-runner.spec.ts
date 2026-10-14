@@ -58,6 +58,22 @@ describe('sql runner', () => {
     ])
   })
 
+  it('keeps a dollar-quoted body whose tag has non-ASCII letters in one statement', () => {
+    expect(
+      prepareStatements(
+        'DO $café$ BEGIN PERFORM 1; PERFORM 2; END $café$; SELECT $ü1$ a; b $ü1$;',
+        {},
+        quote,
+      ),
+    ).toEqual(['DO $café$ BEGIN PERFORM 1; PERFORM 2; END $café$', 'SELECT $ü1$ a; b $ü1$'])
+  })
+
+  it('ends a nested block comment at the marker that balances its opener', () => {
+    expect(
+      prepareStatements(`SELECT 1 /* a /* b; :'x' */ c; */; SELECT 2 /* open`, {}, quote),
+    ).toEqual([`SELECT 1 /* a /* b; :'x' */ c; */`, 'SELECT 2 /* open'])
+  })
+
   it('refuses a variable that was not supplied', () => {
     expect(() => prepareStatements(`SELECT :'missing'`, {}, quote)).toThrow(/:'missing'/)
   })

@@ -1,5 +1,5 @@
 id: 2026-08-11-converge-02-conformance-tooling
-title: "Convergence step 2 of 4: install the checks that generate the rest of the work"
+title: 'Convergence step 2 of 4: install the checks that generate the rest of the work'
 priority: high
 area: api
 type: correctness

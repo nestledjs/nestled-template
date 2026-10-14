@@ -8,6 +8,13 @@ on:
     branches:
       - develop
 
+# One run per ref: a newer push or PR update cancels the run still in progress for the same ref.
+# Overlapping develop runs let an older commit's SonarCloud analysis publish after a newer one's,
+# so the long-lived branch showed stale results. Release and publish workflows must not copy this.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   actions: read
   contents: read
@@ -46,9 +53,12 @@ jobs:
       # Surfaced at job scope so the SonarCloud steps below can gate on its presence.
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
+    # Service images come from Google's Docker Hub mirror (same official images, same tags and
+    # digests). Hosted runners share IP addresses, so anonymous pulls from Docker Hub
+    # (`toomanyrequests`) and public.ecr.aws (`Data limit exceeded`) fail intermittently.
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: prisma
           POSTGRES_PASSWORD: prisma
@@ -62,7 +72,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7-alpine
+        image: mirror.gcr.io/library/redis:7-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -102,13 +112,12 @@ jobs:
       - name: Install Playwright Browsers
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
+      # On a develop push, the Nx base is the commit of the last successful CI run on develop, not
+      # the previous push: with cancel-in-progress (above), a superseded push never completes, so
+      # basing on it would leave the projects it changed out of every completed affected run.
       - uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4
-
-      - name: Use pushed commit range as Nx base
-        if: ${{ github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' }}
-        run: |
-          echo "NX_BASE=${{ github.event.before }}" >> "$GITHUB_ENV"
-          echo "NX_HEAD=${{ github.sha }}" >> "$GITHUB_ENV"
+        with:
+          main-branch-name: develop
 
       - run: pnpm template:validate-upgrade-notes
 
@@ -118,9 +127,10 @@ jobs:
 
       # Formatting is checked in CI or it is not checked at all: `nx format:check --base=<ref>`
       # only inspects files a branch CHANGED, so anything already on the default branch is invisible
-      # to a local run. Two unformatted files reached develop that way.
+      # to a local run. Two unformatted files reached develop that way. The whole repository, with
+      # the pinned prettier: a scoped glob let two dozen unformatted files elsewhere through.
       - name: Check formatting
-        run: pnpm exec prettier --check "scripts/**/*.ts" "tools/**/*.ts"
+        run: pnpm exec prettier --check .
 
       - run: pnpm verify:select-coverage
 
@@ -133,8 +143,8 @@ jobs:
       # to be inferred as `eslint:lint`, so this step and `pnpm lint` reached one project.
       - run: pnpm exec nx affected -t lint build
 
-      - name: Test the typecheck runner
-        run: node --test scripts/typecheck-project.spec.mjs
+      - name: Test the workspace scripts (typecheck runner, dev checkout resolution)
+        run: node --test scripts/*.spec.mjs
 
       # run-many, not `nx run web:typecheck`: `nx affected -t build` above compiles the API through
       # webpack, which does not enforce strict. A passing build was never a passing typecheck, and

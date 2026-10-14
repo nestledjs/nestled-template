@@ -10,9 +10,6 @@ function formatLimitValue(value: unknown): string | number {
   return JSON.stringify(value)
 }
 
-
-
-
 export default function AdminBillingPlans() {
   const { data, loading, error } = useQuery(AdminBillingPlansDocument)
 

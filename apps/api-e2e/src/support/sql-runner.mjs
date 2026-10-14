@@ -12,12 +12,41 @@ import pg from 'pg'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
+// A dollar-quote tag follows identifier rules without `$`: a letter, `_` or any non-ASCII character,
+// then those or digits ($body$, $café$). `\w` alone would stop at the é and miss the tag.
+const dollarTag = /^\$(?:[A-Za-z_\u0080-\uFFFF][\w\u0080-\uFFFF]*)?\$/
+
+/**
+ * The index just past the block comment opening at `start`. PostgreSQL nests block comments
+ * (`/* a /* b *\/ c *\/`), so the comment ends at the closing marker that balances its opener.
+ *
+ * @param {string} script
+ * @param {number} start
+ * @returns {number}
+ */
+function blockCommentEnd(script, start) {
+  let depth = 0
+  let i = start
+  while (i < script.length) {
+    if (script.startsWith('/*', i)) {
+      depth++
+      i += 2
+    } else if (script.startsWith('*/', i)) {
+      depth--
+      i += 2
+      if (depth === 0) return i
+    } else {
+      i++
+    }
+  }
+  return script.length
+}
+
 /**
  * Split a script into statements, replacing `:'name'` with `quote(variables[name])`. Quoted strings
  * (escape strings E'...' included), quoted identifiers, dollar-quoted bodies and comments are copied
- * untouched, and a `$` inside an identifier does not open a dollar quote. Nested block comments, which
- * PostgreSQL allows, are not tracked: one ends at its first closing marker, so keep them out of e2e
- * SQL.
+ * untouched, and a `$` inside an identifier does not open a dollar quote. Dollar-quote tags may use
+ * non-ASCII letters, and nested block comments end where PostgreSQL ends them.
  *
  * @param {string} script
  * @param {Record<string, string>} variables
@@ -41,8 +70,7 @@ export function prepareStatements(script, variables, quote) {
       const end = script.indexOf('\n', i)
       copyUntil(end === -1 ? script.length : end)
     } else if (rest.startsWith('/*')) {
-      const end = script.indexOf('*/', i + 2)
-      copyUntil(end === -1 ? script.length : end + 2)
+      copyUntil(blockCommentEnd(script, i))
     } else if (rest[0] === "'" || rest[0] === '"') {
       // In an escape string (E'...'), a backslash escapes the next character, \' included.
       const escapes =
@@ -60,9 +88,9 @@ export function prepareStatements(script, variables, quote) {
         end++
       }
       copyUntil(Math.min(end + 1, script.length))
-    } else if (!isWordChar(script[i - 1]) && /^\$([A-Za-z_]\w*)?\$/.test(rest)) {
+    } else if (!isWordChar(script[i - 1]) && dollarTag.test(rest)) {
       // A `$` inside an identifier (a$b$c) is part of the name, not the start of a dollar quote.
-      const tag = /^\$([A-Za-z_]\w*)?\$/.exec(rest)?.[0] ?? '$$'
+      const tag = dollarTag.exec(rest)?.[0] ?? '$$'
       const end = script.indexOf(tag, i + tag.length)
       copyUntil(end === -1 ? script.length : end + tag.length)
     } else if (rest.startsWith('::')) {

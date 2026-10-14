@@ -58,7 +58,10 @@ echo -e "${BLUE}2. Configuring test database...${NC}"
 # which resolved the port from .env when it started the container above — pnpm runs this script
 # with a plain shell that never loads .env, so deriving the URL here would pin it to 5433 while
 # the container came up on whatever port block this repo claimed.
-export TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(./scripts/test-db.sh url)}"
+# Assigned, then exported: `export X="$(cmd)"` returns export's status, so under `set -e` a failing
+# `test-db.sh url` would go unnoticed and the tests would run with an empty URL.
+TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(./scripts/test-db.sh url)}"
+export TEST_DATABASE_URL
 export DATABASE_URL="$TEST_DATABASE_URL"
 # prisma.config.ts prefers DIRECT_URL || DATABASE_URL — pin DIRECT_URL to the test DB too, or a repo
 # .env DIRECT_URL wins and `migrate deploy` runs against the dev database. Quoted so a `?schema=`

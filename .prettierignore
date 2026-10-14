@@ -9,3 +9,6 @@ apps/web/.react-router/
 
 .nx/self-healing
 .yalc/
+
+# Release feed data written by the upgrade tooling in the published template (manifest, patches)
+.nestled-upgrades/

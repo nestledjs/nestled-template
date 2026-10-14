@@ -7,6 +7,9 @@ name: nestled-template
 # Container-side ports never change.
 # The vars only reach compose through scripts/dev-docker.sh, which passes the root .env with
 # --env-file; compose on its own would read .dev/.env instead.
+# Data lives in NESTLED_DEV_DATA_DIR, by default ./tmp beside this file. From a git worktree,
+# scripts/dev-docker.sh and pnpm db-update point it at the main checkout's .dev/tmp, so the shared
+# containers keep their data when the worktree is removed.
 services:
   postgres:
     image: postgres:16
@@ -18,7 +21,7 @@ services:
       POSTGRES_USER: prisma
       POSTGRES_PASSWORD: prisma
     volumes:
-      - ./tmp/postgres:/var/lib/postgresql/data
+      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
       interval: 10s
@@ -36,7 +39,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes:
-      - ./tmp/postgres-test:/var/lib/postgresql/data
+      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres-test:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
       interval: 10s
@@ -51,7 +54,7 @@ services:
     ports:
       - '${REDIS_PORT:-6379}:6379'
     volumes:
-      - ./tmp/redis:/data
+      - ${NESTLED_DEV_DATA_DIR:-./tmp}/redis:/data
 
   mailhog:
     image: mailhog/mailhog

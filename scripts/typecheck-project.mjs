@@ -6,14 +6,23 @@
 // project owns, refuses any that resolve no files, and runs `tsc --noEmit` on each in turn.
 //
 // Usage: node scripts/typecheck-project.mjs <projectRoot> [tsconfig ...]
+//        node scripts/typecheck-project.mjs --workspace <folder> [folder ...]
 // With no tsconfig arguments, the project's own references from <projectRoot>/tsconfig.json are
 // used (references into other projects are theirs to check), or tsconfig.json itself when it has
 // none. Configs run one at a time so a project never holds more than one compiler in memory.
+//
+// --workspace checks folders at the workspace root that belong to no Nx project (scripts/, tools/)
+// through their tsconfig.json, and skips a folder that holds no TypeScript of its own rather than
+// failing on a config that matches nothing.
+//
+// A nested Nx project (a directory under the checked root with its own project.json and
+// tsconfig.json) is checked by its own typecheck target, so its files are left out here even when a
+// broad include such as `**/*.ts` matches them.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const require = createRequire(import.meta.url)
@@ -91,7 +100,7 @@ export function resolveProjectConfigs(ts, projectRoot, explicitConfigs = []) {
   return owned.length > 0 ? owned : [solution]
 }
 
-export function inspectConfigs(ts, configPaths) {
+export function inspectConfigs(ts, configPaths, nestedProjects = []) {
   return configPaths.map(configPath => {
     if (!existsSync(configPath)) {
       return { configPath, problem: 'does not exist' }
@@ -100,21 +109,31 @@ export function inspectConfigs(ts, configPaths) {
     if (config.error) {
       return { configPath, problem: config.error }
     }
-    if (config.inheritedExclusions.length > 0) {
-      const examples = config.inheritedExclusions
+    // A nested project's files (its specs included) are its own target's to check.
+    const inheritedExclusions = config.inheritedExclusions.filter(
+      file => !insideAny(nestedProjects, resolve(file)),
+    )
+    if (inheritedExclusions.length > 0) {
+      const examples = inheritedExclusions
         .slice(0, 3)
         .map(file => relative(dirname(configPath), file))
       return {
         configPath,
         problem:
-          `an exclude inherited through "extends" removes ${config.inheritedExclusions.length} ` +
+          `an exclude inherited through "extends" removes ${inheritedExclusions.length} ` +
           `file(s) its own include asks for (${examples.join(', ')}). Declare "exclude" in this config.`,
       }
     }
-    if (config.fileNames.length === 0) {
+    const fileNames = config.fileNames.filter(file => !insideAny(nestedProjects, resolve(file)))
+    if (fileNames.length === 0) {
       return { configPath, problem: 'matches no files, so it checks nothing' }
     }
-    return { configPath, fileCount: config.fileNames.length, fileNames: config.fileNames }
+    return {
+      configPath,
+      fileCount: fileNames.length,
+      fileNames,
+      nestedFileCount: config.fileNames.length - fileNames.length,
+    }
   })
 }
 
@@ -170,38 +189,77 @@ export function isGeneratedDeclaration(projectRoot, file) {
   return segments.some(segment => generatedDirectories.has(segment))
 }
 
-// Tracked TypeScript sources under the project that none of its checked configs compile,
-// hand-written declaration files included. A test folder no config includes (apps/web/tests) is
-// otherwise invisible to every typecheck. A tracked file deleted from the working tree is not a
-// source any more, staged or not.
-export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
+function trackedFiles(workspaceRoot, projectRoot) {
   const listed = spawnSync(
     gitExecutable(),
-    ['ls-files', '-z', '--', relative(workspaceRoot, projectRoot)],
+    ['ls-files', '-z', '--', relative(workspaceRoot, projectRoot) || '.'],
     { cwd: workspaceRoot, encoding: 'utf8' },
   )
   if (listed.status !== 0) {
     throw new Error(`git ls-files failed: ${listed.stderr || listed.error?.message}`)
   }
-  const covered = new Set(inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)))
-  // A nested project checks its own files only when the typecheck plugin gives it a target: a root
-  // with both project.json and tsconfig.json. Either file alone gets no target, so its files would
-  // otherwise be checked nowhere.
-  const files = listed.stdout.split('\0').filter(Boolean)
+  return listed.stdout.split('\0').filter(Boolean)
+}
+
+// A nested project checks its own files only when the typecheck plugin gives it a target: a root
+// with both project.json and tsconfig.json. Either file alone gets no target, so its files are
+// checked nowhere else.
+export function nestedProjectRoots(
+  workspaceRoot,
+  projectRoot,
+  files = trackedFiles(workspaceRoot, projectRoot),
+) {
   const tracked = new Set(files)
-  const nestedProjects = new Set()
+  const nested = new Set()
   for (const file of files) {
     const directory = dirname(resolve(workspaceRoot, file))
     const sibling = join(dirname(file), 'tsconfig.json').split(sep).join('/')
-    if (file.endsWith('/project.json') && directory !== projectRoot && tracked.has(sibling)) {
-      nestedProjects.add(directory)
+    if (basename(file) === 'project.json' && directory !== projectRoot && tracked.has(sibling)) {
+      nested.add(directory)
     }
   }
+  return [...nested]
+}
+
+const insideAny = (roots, file) => roots.some(root => isInside(root, file))
+
+const isTypeScriptSource = file => /\.[cm]?tsx?$/.test(file)
+
+// TypeScript's include matching keeps one file per name: of a.ts, a.tsx and a.d.ts in one folder it
+// takes a.ts, and a.tsx before a.d.ts (likewise a.mts before a.d.mts). The other file is dropped
+// without a word, so it can never be checked under that name.
+const shadowingExtensions = [
+  ['.ts', '.tsx', '.d.ts'],
+  ['.mts', '.d.mts'],
+  ['.cts', '.d.cts'],
+]
+
+export function shadowingTwin(file, covered) {
+  for (const group of shadowingExtensions) {
+    const extension = [...group].sort((a, b) => b.length - a.length).find(e => file.endsWith(e))
+    if (!extension) continue
+    const stem = file.slice(0, -extension.length)
+    for (const preferred of group.slice(0, group.indexOf(extension))) {
+      if (covered.has(stem + preferred)) return stem + preferred
+    }
+    return undefined
+  }
+  return undefined
+}
+
+// Tracked TypeScript sources under the project that none of its checked configs compile,
+// hand-written declaration files included. A test folder no config includes (apps/web/tests) is
+// otherwise invisible to every typecheck. A tracked file deleted from the working tree is not a
+// source any more, staged or not.
+export function uncoveredFiles(workspaceRoot, projectRoot, inspected) {
+  const files = trackedFiles(workspaceRoot, projectRoot)
+  const covered = new Set(inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)))
+  const nestedProjects = nestedProjectRoots(workspaceRoot, projectRoot, files)
   return files
     .map(file => resolve(workspaceRoot, file))
-    .filter(file => /\.[cm]?tsx?$/.test(file) && !isGeneratedDeclaration(projectRoot, file))
+    .filter(file => isTypeScriptSource(file) && !isGeneratedDeclaration(projectRoot, file))
     .filter(file => !covered.has(file) && existsSync(file))
-    .filter(file => ![...nestedProjects].some(nested => isInside(nested, file)))
+    .filter(file => !insideAny(nestedProjects, file))
 }
 
 function runTsc(workspaceRoot, configPath) {
@@ -217,16 +275,44 @@ function runTsc(workspaceRoot, configPath) {
   return result.status ?? 1
 }
 
+// tsc cannot take -p together with a file list, so a config whose matches had nested-project files
+// removed is compiled here, in process, with the config's own options.
+function compileFiles(ts, workspaceRoot, configPath, fileNames) {
+  const read = ts.readConfigFile(configPath, ts.sys.readFile)
+  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(configPath))
+  const program = ts.createProgram({
+    rootNames: fileNames,
+    options: { ...parsed.options, noEmit: true },
+    projectReferences: parsed.projectReferences,
+  })
+  const diagnostics = ts.getPreEmitDiagnostics(program)
+  if (diagnostics.length > 0) {
+    const host = {
+      getCanonicalFileName: fileName => fileName,
+      getCurrentDirectory: () => workspaceRoot,
+      getNewLine: () => '\n',
+    }
+    const format = process.stdout.isTTY
+      ? ts.formatDiagnosticsWithColorAndContext
+      : ts.formatDiagnostics
+    console.error(format(diagnostics, host))
+  }
+  return diagnostics.length > 0 ? 1 : 0
+}
+
 export function main(argv, workspaceRoot = process.cwd()) {
+  if (argv[0] === '--workspace') return workspaceMain(argv.slice(1), workspaceRoot)
   const [projectArgument, ...explicitConfigs] = argv
   if (!projectArgument) {
     console.error('Usage: node scripts/typecheck-project.mjs <projectRoot> [tsconfig ...]')
+    console.error('       node scripts/typecheck-project.mjs --workspace <folder> [folder ...]')
     return 2
   }
   const ts = loadTypeScript(workspaceRoot)
   const projectRoot = resolve(workspaceRoot, projectArgument)
   const configs = resolveProjectConfigs(ts, projectRoot, explicitConfigs)
-  const inspected = inspectConfigs(ts, configs)
+  const nestedProjects = nestedProjectRoots(workspaceRoot, projectRoot)
+  const inspected = inspectConfigs(ts, configs, nestedProjects)
   const display = path => relative(workspaceRoot, path).split(sep).join('/')
 
   const broken = inspected.filter(config => config.problem)
@@ -241,21 +327,59 @@ export function main(argv, workspaceRoot = process.cwd()) {
   const uncovered = uncoveredFiles(workspaceRoot, projectRoot, inspected)
   let failed = 0
   for (const config of inspected) {
-    console.log(`→ ${display(config.configPath)} (${config.fileCount} files)`)
-    if (runTsc(workspaceRoot, config.configPath) !== 0) {
+    const nested = config.nestedFileCount
+      ? `, ${config.nestedFileCount} in nested projects left to them`
+      : ''
+    console.log(`→ ${display(config.configPath)} (${config.fileCount} files${nested})`)
+    const status = config.nestedFileCount
+      ? compileFiles(ts, workspaceRoot, config.configPath, config.fileNames)
+      : runTsc(workspaceRoot, config.configPath)
+    if (status !== 0) {
       failed += 1
     }
   }
   if (uncovered.length > 0) {
+    const covered = new Set(
+      inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)),
+    )
     console.error(
       `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
     )
     for (const file of uncovered) {
-      console.error(`    ${display(file)}`)
+      const twin = shadowingTwin(file, covered)
+      const reason = twin
+        ? ` (shadowed by ${basename(twin)}: include matching keeps one file per name; rename one)`
+        : ''
+      console.error(`    ${display(file)}${reason}`)
     }
     console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
   }
   return failed > 0 || uncovered.length > 0 ? 1 : 0
+}
+
+// Folders at the workspace root that belong to no Nx project. A folder with no TypeScript of its own
+// (outside nested projects) is skipped, so an empty tools/ does not fail on a config that matches
+// nothing.
+function workspaceMain(folders, workspaceRoot) {
+  if (folders.length === 0) {
+    console.error('Usage: node scripts/typecheck-project.mjs --workspace <folder> [folder ...]')
+    return 2
+  }
+  let status = 0
+  for (const folder of folders) {
+    const root = resolve(workspaceRoot, folder)
+    const files = trackedFiles(workspaceRoot, root)
+    const nested = nestedProjectRoots(workspaceRoot, root, files)
+    const own = files
+      .map(file => resolve(workspaceRoot, file))
+      .filter(file => isTypeScriptSource(file) && existsSync(file) && !insideAny(nested, file))
+    if (own.length === 0) {
+      console.log(`· ${folder}: no TypeScript of its own, nothing to check`)
+      continue
+    }
+    status = Math.max(status, main([folder], workspaceRoot))
+  }
+  return status
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

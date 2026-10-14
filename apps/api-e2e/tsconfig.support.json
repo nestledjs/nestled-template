@@ -17,7 +17,10 @@
     "src/support/e2e-runner.spec.ts",
     "src/support/process-tree-fixture.mjs",
     "src/support/sql-runner.mjs",
-    "src/support/sql-runner.spec.ts"
+    "src/support/sql-runner.spec.ts",
+    "src/support/test-db.ts",
+    "src/support/test-setup.ts",
+    "src/support/test-setup.spec.ts"
   ],
   "exclude": []
 }

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })))
 
-const run = (exitCode: number, suppliedUrl?: string, args: string[] = []) => {
+const run = (exitCode: number, suppliedUrl?: string, args: string[] = [], urlExit = 0) => {
   const root = mkdtempSync(join(tmpdir(), 'e2e-shell-runner-'))
   roots.push(root)
   mkdirSync(join(root, 'scripts'))
@@ -18,7 +18,8 @@ const run = (exitCode: number, suppliedUrl?: string, args: string[] = []) => {
   )
   writeFileSync(
     join(root, 'scripts/test-db.sh'),
-    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n',
+    '#!/bin/bash\necho "$1" >> db-calls\n' +
+      `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n`,
     { mode: 0o755 },
   )
   writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
@@ -37,14 +38,14 @@ const run = (exitCode: number, suppliedUrl?: string, args: string[] = []) => {
     },
     encoding: 'utf8',
   })
-  const dbCalls = (() => {
+  const read = (file: string) => {
     try {
-      return readFileSync(join(root, 'db-calls'), 'utf8')
+      return readFileSync(join(root, file), 'utf8')
     } catch {
       return ''
     }
-  })()
-  return { result, calls: readFileSync(join(root, 'calls'), 'utf8').trim().split('\n'), dbCalls }
+  }
+  return { result, calls: read('calls').trim().split('\n'), dbCalls: read('db-calls') }
 }
 
 describe('e2e shell runner', () => {
@@ -68,6 +69,13 @@ describe('e2e shell runner', () => {
     const { calls } = run(0, undefined, ['src/auth/auth-generation.spec.ts', '--coverage'])
     expect(calls[0]).toBe('nx run api-e2e:e2e -- src/auth/auth-generation.spec.ts --coverage')
   })
+  it('fails, running no test, when test-db.sh cannot resolve the URL', () => {
+    const { result, calls, dbCalls } = run(0, undefined, [], 3)
+    expect(dbCalls).toContain('url')
+    expect(result.status).toBe(3)
+    expect(calls).toEqual([''])
+    expect(result.stdout).not.toContain('All tests passed')
+  })
   it('propagates a failing test target instead of reporting success', () => {
     const { result } = run(7)
     expect(result.status).toBe(7)
@@ -84,6 +92,7 @@ const runWrapper = (
   probeExit = 0,
   stopExit = 0,
   suppliedUrl = SUPPLIED_URL,
+  urlExit = 0,
 ) => {
   const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
   roots.push(root)
@@ -93,7 +102,8 @@ const runWrapper = (
   copyFileSync(resolve(__dirname, '../../run-tests.sh'), join(root, 'apps/api-e2e/run-tests.sh'))
   writeFileSync(
     join(root, 'scripts/test-db.sh'),
-    '#!/bin/bash\necho "$1" >> db-calls\nif [[ "$1" == url ]]; then echo postgresql://local/test; fi\n' +
+    '#!/bin/bash\necho "$1" >> db-calls\n' +
+      `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n` +
       `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n`,
     { mode: 0o755 },
   )
@@ -105,9 +115,11 @@ const runWrapper = (
   )
   writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
   writeFileSync(join(root, 'vitest-output'), vitestOutput)
-  writeFileSync(join(root, 'bin/npx'), `#!/bin/bash\ncat vitest-output\nexit ${vitestExit}\n`, {
-    mode: 0o755,
-  })
+  writeFileSync(
+    join(root, 'bin/npx'),
+    `#!/bin/bash\necho ran >> npx-calls\ncat vitest-output\nexit ${vitestExit}\n`,
+    { mode: 0o755 },
+  )
   const result = spawnSync('bash', ['apps/api-e2e/run-tests.sh'], {
     cwd: root,
     env: {
@@ -124,7 +136,7 @@ const runWrapper = (
       return ''
     }
   }
-  return { result, probe: read('probe'), dbCalls: read('db-calls') }
+  return { result, probe: read('probe'), dbCalls: read('db-calls'), npxCalls: read('npx-calls') }
 }
 
 const summary = (tests: string) => `\n Test Files  2 passed (2)\n      Tests  ${tests}\n`
@@ -187,6 +199,14 @@ describe('api-e2e test wrapper', () => {
     const stuck = runWrapper(summary('5 passed (5)'), 0, 1, 1, '')
     expect(stuck.result.status).toBe(0)
     expect(stuck.result.stderr).toContain('could not stop it')
+  })
+  it('fails before probing or testing when test-db.sh cannot resolve the URL', () => {
+    const { result, probe, dbCalls, npxCalls } = runWrapper(summary('5 passed (5)'), 0, 0, 0, '', 4)
+    expect(dbCalls).toContain('url')
+    expect(result.status).toBe(4)
+    expect(probe).toBe('')
+    expect(npxCalls).toBe('')
+    expect(result.stdout).not.toContain('PASSED')
   })
   it('finds a failure in the summary of a long log', () => {
     const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`

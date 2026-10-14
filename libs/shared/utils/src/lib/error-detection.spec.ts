@@ -43,7 +43,9 @@ describe('error detection utilities', () => {
       // to the access-denied panel depending on which shape it arrived in.
       expect(
         isAuthError({
-          graphQLErrors: [{ message: 'You must be logged in', extensions: { code: 'UNAUTHORIZED' } }],
+          graphQLErrors: [
+            { message: 'You must be logged in', extensions: { code: 'UNAUTHORIZED' } },
+          ],
         }),
       ).toMatchObject({ isAuth: true, type: 'unauthenticated' })
       expect(
@@ -81,7 +83,10 @@ describe('error detection utilities', () => {
     })
 
     it('reports non-auth and non-object errors as not auth', () => {
-      expect(isAuthError(new Error('database timeout'))).toMatchObject({ isAuth: false, type: null })
+      expect(isAuthError(new Error('database timeout'))).toMatchObject({
+        isAuth: false,
+        type: null,
+      })
       expect(isAuthError(null)).toMatchObject({ isAuth: false, type: null })
       expect(isAuthError('unauthorized')).toMatchObject({ isAuth: false, type: null })
     })

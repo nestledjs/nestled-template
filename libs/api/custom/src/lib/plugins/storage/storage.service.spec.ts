@@ -449,7 +449,9 @@ describe('StorageService', () => {
     })
     it('should throw NotFoundException when file does not exist', async () => {
       mockPrisma.storedFile.findUnique.mockResolvedValue(null)
-      await expect(service.getSignedUrl('non-existent', 'user-1')).rejects.toThrow(NotFoundException)
+      await expect(service.getSignedUrl('non-existent', 'user-1')).rejects.toThrow(
+        NotFoundException,
+      )
       await expect(service.getSignedUrl('non-existent', 'user-1')).rejects.toThrow(
         'Upload not found: non-existent',
       )

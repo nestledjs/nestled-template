@@ -14,21 +14,11 @@ import {
 } from '@heroicons/react/24/outline'
 import { useState } from 'react'
 
-
-
-
 function getSubscriptionStatusClass(status: string): string {
   if (status === 'ACTIVE') return 'bg-green-100 text-green-800'
   if (status === 'TRIALING') return 'bg-blue-100 text-blue-800'
   return 'bg-red-100 text-red-800'
 }
-
-
-
-
-
-
-
 
 export default function AdminBillingOverview() {
   const [syncing, setSyncing] = useState(false)

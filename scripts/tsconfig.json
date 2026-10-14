@@ -1,12 +1,17 @@
 {
   "extends": "../tsconfig.base.json",
+  // Module resolution comes from tsconfig.base.json, as for the libs: "bundler" cannot resolve the
+  // deep package imports some libs make (stripe/cjs/..., prisma-graphql-type-decimal). es2023 for
+  // toSorted and friends. useDefineForClassFields is off, as the API's es2021 target implies, so
+  // DTOs that redeclare decorated fields compile (TS2612). A script that imports a lib whose types
+  // rely on declaration shims (libs/**/src/types/*.d.ts) must add those shims to "include".
   "compilerOptions": {
     "noEmit": true,
     "strict": true,
     "target": "es2022",
-    "lib": ["es2022"],
+    "lib": ["es2023"],
     "module": "esnext",
-    "moduleResolution": "bundler",
+    "useDefineForClassFields": false,
     "types": ["node"]
   },
   "include": ["**/*.ts"],

@@ -1,5 +1,5 @@
 id: 2026-08-11-converge-03-security-substrate
-title: "Convergence step 3 of 4: scoped RBAC substrate, schema and the tenancy standard"
+title: 'Convergence step 3 of 4: scoped RBAC substrate, schema and the tenancy standard'
 priority: high
 area: auth
 type: security

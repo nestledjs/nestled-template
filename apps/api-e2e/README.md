@@ -31,8 +31,10 @@ one test passed. A filter that matches nothing, or a run in which every test is 
    credentials, and if it is unreachable either fails (a caller-supplied `TEST_DATABASE_URL`) or
    starts the repo's test container (no URL supplied). It then runs Vitest and checks the summary.
 2. **Global setup** (`src/support/global-setup.ts`):
-   - refuses a test database that is not disposable (on this machine and named `*_test`) before it
-     connects, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set
+   - refuses a test database that is not disposable (a `postgresql:` URL on this machine, named
+     `*_test`, with no `?schema=`, fragment or destination-override parameter) before anything is
+     reset, migrated, pushed or seeded, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set. The wrapper's
+     read-only `SELECT 1` probe has already connected by then; nothing writes before this check.
    - applies migrations with `prisma migrate deploy`. A local test database built by `db push` alone
      has no migration history; it is emptied and migrated from scratch.
    - runs `prisma db push` and the seed
@@ -53,11 +55,16 @@ one test passed. A filter that matches nothing, or a run in which every test is 
 - `HOST`: the API host (default `localhost`).
 - `E2E_ALLOW_EXISTING_API`: set to `1` only when you started an API on `E2E_API_PORT` against the
   test database yourself.
-- `E2E_ALLOW_NON_DISPOSABLE_DB`: set to `1` only when the test database is disposable but not local
-  or not named `*_test` (a CI service container reached by its service name, for example). Setup
-  migrates, pushes and seeds it; the from-scratch reset still requires a local `*_test` database.
-- `E2E_DATABASE_PROBE`: how global setup checks the database answers. `pg` (default) uses the pg
-  runner; `psql` runs `psql` from PATH, for a repo whose lifecycle tests stub psql.
+- `E2E_ALLOW_NON_DISPOSABLE_DB`: set to `1` only when the test database is disposable but not local,
+  not named `*_test` or given a `?schema=` (a CI service container reached by its service name, for
+  example). Setup migrates, pushes and seeds it; the from-scratch reset still requires a disposable
+  database. It never lets through a URL that could connect somewhere other than it appears to: a
+  query parameter that overrides the destination (`?host=`, `?port=`, `?dbname=`...), a fragment,
+  or a protocol other than `postgresql:`. A setup that empties the schema on every run gains nothing
+  from it and should not offer it.
+- `E2E_DATABASE_PROBE`: the client global setup's own SQL (the `SELECT 1` probe and the
+  from-scratch reset) runs through. `pg` (default) uses the pg runner; `psql` runs `psql` from PATH,
+  for a repo whose lifecycle tests stub psql.
 
 ## CI
 
@@ -79,8 +86,9 @@ src/
 
 - **"Refusing to run e2e against an API this suite did not start"**: something already listens on
   `E2E_API_PORT`. Stop it or choose another port.
-- **"Refusing to run e2e setup against ..."**: `TEST_DATABASE_URL` is not a local `*_test`
-  database. Point it at one, or set `E2E_ALLOW_NON_DISPOSABLE_DB=1` if it is disposable anyway.
+- **"Refusing to run e2e setup against ..."**: `TEST_DATABASE_URL` is not a disposable database; the
+  message says why. Point it at one, or, when the message allows it, set
+  `E2E_ALLOW_NON_DISPOSABLE_DB=1` if it is disposable anyway.
 - **"Test database not accessible"**: check `TEST_DATABASE_URL`, or start the container with
   `pnpm test:db:start`.
 - **"no test passed"**: the file filter matched nothing, or every test was skipped.

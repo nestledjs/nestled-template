@@ -27,6 +27,7 @@ export default defineConfig({
       '**/support/database-guards.spec.ts',
       '**/support/e2e-runner.spec.ts',
       '**/support/sql-runner.spec.ts',
+      '**/support/test-setup.spec.ts',
     ],
     // Name every test and its result. Under Nx and in CI the output is not a TTY, and the default
     // reporter then prints only the summary, so a log could not show which tests ran.
