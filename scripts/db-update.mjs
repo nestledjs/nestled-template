@@ -32,9 +32,12 @@ const sdkSourceDirectories = [
   join(root, 'libs', 'shared', 'sdk', 'src', 'graphql'),
   join(root, 'libs', 'shared', 'sdk', 'src', '__admin'),
 ]
+// Keyed by the main checkout, not this tree: every worktree shares the main checkout's compose
+// stack, so two worktrees running at once could each see a service stopped, start it, and have the
+// first to finish stop it under the other.
 const lockFile = join(
   tmpdir(),
-  `nestled-db-update-${createHash('sha256').update(root).digest('hex').slice(0, 16)}.lock`,
+  `nestled-db-update-${createHash('sha256').update(devDocker.mainCheckout).digest('hex').slice(0, 16)}.lock`,
 )
 const generatedCommand = ['run', 'db-update:generate']
 const composeEnvironmentArgs = workspaceEnvironmentFile
