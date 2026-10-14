@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-13
+generatedAt: 2026-10-14
 channels:
-  canary: 2026.10.12
+  canary: 2026.10.13
   stable: 2026.10.12
 releases:
   - id: 2026.08.0
@@ -558,3 +558,66 @@ releases:
           - "pnpm exec nx run api-e2e:e2e"
           - pnpm run nestled-doctor
         patch: patches/2026-10-13-test-gate-follow-ups.diff
+  - id: 2026.10.13
+    date: 2026-10-14
+    title: Test gate follow-ups 2 and worktree-safe dev tooling
+    templateCommit: c3380fa
+    notes:
+      - id: 2026-10-14-test-gate-follow-ups-2
+        title: "Test gate follow-ups 2: no password in test logs, a stricter test-database guard, workspace typecheck fixes, and a worktree-safe dev Docker stack"
+        delivery: code-patch
+        intent: "Follow up 2026-10-13-test-gate-follow-ups with the gaps adopting it exposed. Passwords in test logs. apps/api-e2e/src/support/test-setup.ts logged the full TEST_DATABASE_URL, password included, and `scripts/test-db.sh start` printed it as the connection string. Test setup now logs `describeDatabase()` (host, port and database name), and test-db.sh prints the URL reduced to scheme, host, port and database, since a connection URI can carry credentials in its user-info and in query parameters (`test-db.sh url` still prints the real URL for callers that connect with it). The new support spec test-setup.spec.ts checks that a password, in either place, never reaches either output. scripts/ and tools/ tsconfig.json. They no longer set `moduleResolution: bundler`, which cannot resolve deep package imports a lib makes (stripe/cjs/..., prisma-graphql-type-decimal); they inherit the base config's resolution. `lib` is es2023 (`toSorted`), and `useDefineForClassFields` is false, so DTOs that redeclare decorated fields compile (TS2612). Workspace typecheck. `pnpm typecheck:workspace` is now `node scripts/typecheck-project.mjs --workspace scripts tools`. Workspace mode skips a folder with no TypeScript of its own, where it used to fail with \"matches no files\". In every mode, files inside a nested Nx project (a directory with its own project.json and tsconfig.json, such as tools/workspace-plugin) are left to that project's typecheck even when a broad include such as `**/*.ts` matches them. A tracked file that include matching drops because a same-named twin wins (a.spec.tsx beside a.spec.ts, a.d.ts beside a.ts) is reported as \"shadowed by\" that twin instead of only \"in no checked config\". SonarCloud. sonar-project.properties sets `sonar.typescript.tsconfigPaths` to the app, lib and spec configs plus scripts/tsconfig.json. Discovery built one program per tsconfig*.json in the tree, and a full analysis of a larger clone ran out of heap once scripts/tsconfig.json was added. SQL splitter. apps/api-e2e/src/support/sql-runner.mjs recognises dollar-quote tags with non-ASCII letters ($café$ ... $café$), which used to split at the body's inner semicolons, and ends a nested block comment at the marker that balances its opener, as PostgreSQL does. Wrapper exit codes. apps/api-e2e/run-tests.sh and scripts/run-e2e-tests.sh assign TEST_DATABASE_URL and then export it. `export X=\"${X:-$(cmd)}\"` returns export's status, so under `set -e` a failing `test-db.sh url` went unnoticed. The wrapper specs check that it now fails the run before any probe or test. run-e2e-tests.sh ends with a newline. Test-database guard (apps/api-e2e/src/support/database-guards.ts). A URL is disposable only when it is postgresql: (or postgres:), local, named *_test, and has no `?schema=` and no fragment. The new `nonDisposableReason()` says why a URL was refused, and the error carries the reason. E2E_ALLOW_NON_DISPOSABLE_DB=1 still lets through another host, another name or a `?schema=`, but never a URL that could connect somewhere other than it appears to (a destination-override query parameter, a fragment, another protocol, an unparseable URL). The guard's wording says it runs before any reset, migrate, push or seed, not \"before it connects\": the wrapper's read-only probe has connected by then. `E2E_DATABASE_PROBE=psql` now selects the client for the from-scratch reset (taken on P3005) as well as for the probe, through the new `runOnTestDatabase()`, so the psql helpers are used for both. README.md documents all of this. GraphQLResponse.data stays non-null; a comment at the type says why: the helpers throw on GraphQL errors, and a spec reading a field of a null `data` fails at runtime, which a test wants. scripts/delete-user.ts and its `user:delete` package script are removed. CI. .github/workflows/ci.yml cancels a superseded run on the same ref (`concurrency: ci-${{ github.ref }}`, cancel-in-progress). Because a cancelled run never completes, a develop push now takes its Nx affected base from nx-set-shas (`main-branch-name: develop`, the last successful CI run) rather than from the previous push. CI also runs every `scripts/*.spec.mjs`, and checks formatting on the whole repository (`prettier --check .`), not only scripts/ and tools/. Files that did not match the pinned prettier were reformatted. The CI service containers are pulled through Google's Docker Hub mirror, with the same official images and tags: `mirror.gcr.io/library/postgres:16` and `mirror.gcr.io/library/redis:7-alpine`. Worktree-safe dev Docker stack. scripts/dev-docker.sh and scripts/test-db.sh (through the new scripts/dev-checkout.sh) resolve the main checkout with `git rev-parse --git-common-dir`; pnpm db-update (through the new scripts/dev-checkout.mjs) reads it from disk (the worktree's `.git` file, then `commondir`) without spawning git. From a worktree, compose gets the main checkout's .env when the worktree has none, and NESTLED_DEV_DATA_DIR defaults to the main checkout's .dev/tmp unless the environment or that .env sets it (an empty value counts as unset, and an inherited empty value is dropped before compose runs, since it would outrank the .env). .dev/docker-compose.yml mounts `${NESTLED_DEV_DATA_DIR:-./tmp}/<service>`, so a single checkout behaves exactly as before. test-db.sh reads ports from the same .env and resets the same data directory, reading `export` lines and quoted values followed by a comment as compose does. db-update runs `up` only for the services that are not already running, so it reuses a running stack instead of re-applying its config. .env.example documents the override; scripts/dev-checkout.spec.mjs covers a main checkout, a worktree and a folder outside git."
+        area: infra
+        affectedPaths:
+          - apps/api-e2e/README.md
+          - apps/api-e2e/run-tests.sh
+          - apps/api-e2e/tsconfig.support.json
+          - apps/api-e2e/vitest.config.mts
+          - apps/api-e2e/vitest.support.config.mts
+          - apps/api-e2e/src/support/database-guards.ts
+          - apps/api-e2e/src/support/database-guards.spec.ts
+          - apps/api-e2e/src/support/e2e-runner.spec.ts
+          - apps/api-e2e/src/support/global-setup.ts
+          - apps/api-e2e/src/support/sql-runner.mjs
+          - apps/api-e2e/src/support/sql-runner.spec.ts
+          - apps/api-e2e/src/support/test-helpers.ts
+          - apps/api-e2e/src/support/test-setup.ts
+          - apps/api-e2e/src/support/test-setup.spec.ts
+          - scripts/db-update.mjs
+          - scripts/delete-user.ts
+          - scripts/dev-checkout.mjs
+          - scripts/dev-checkout.sh
+          - scripts/dev-checkout.spec.mjs
+          - scripts/dev-docker.sh
+          - scripts/run-e2e-tests.sh
+          - scripts/test-db.sh
+          - scripts/tsconfig.json
+          - scripts/typecheck-project.mjs
+          - scripts/typecheck-project.spec.mjs
+          - tools/tsconfig.json
+          - .dev/docker-compose.yml
+          - .env.example
+          - .github/workflows/ci.yml
+          - package.json
+          - sonar-project.properties
+        verification:
+          - node --test scripts/*.spec.mjs
+          - pnpm exec nx run-many -t typecheck --parallel=1 --skip-nx-cache
+          - "pnpm typecheck:workspace"
+          - pnpm exec nx run-many -t lint --parallel=1
+          - pnpm exec nx run-many -t test --parallel=1
+          - "pnpm exec nx run api-e2e:test-support --skip-nx-cache"
+          - "pnpm exec nx run api-e2e:e2e"
+          - pnpm exec prettier --check .
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-14-test-gate-follow-ups-2.diff
+      - id: 2026-10-14-worktree-safe-branch-steps
+        title: AGENTS.md branch steps work inside a git worktree
+        delivery: code-patch
+        intent: The PR and release snippets in AGENTS.md branch from origin/develop (`git fetch origin develop` then `git switch -c <branch> origin/develop`) instead of `git checkout develop && git pull`, and the publish build runs on a detached origin/develop. A one-line note under the PR rule says why.
+        area: docs
+        affectedPaths:
+          - AGENTS.md
+        verification:
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-14-worktree-safe-branch-steps.diff
