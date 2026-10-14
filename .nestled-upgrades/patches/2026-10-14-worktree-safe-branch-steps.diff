@@ -1,0 +1,42 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 40cc4d7..0f7e932 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -160,13 +160,15 @@ Unit and component tests use Jest and Vitest through Nx project targets. Place t
+ Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
+ 
+ **All changes land through a pull request against `develop`. Never push directly to `develop`.**
++Branch from `origin/develop` rather than checking `develop` out: agents run in per-task git
++worktrees, and `git checkout develop` fails there while the main checkout holds it.
+ The branch rule requiring PRs can be bypassed by maintainer permissions — a direct push succeeds
+ and only prints `remote: Bypassed rule violations for refs/heads/develop`. Treat that message as a
+ mistake that needs undoing, not as a normal outcome.
+ 
+ ```bash
+-git checkout develop && git pull
+-git checkout -b fix/short-slug
++git fetch origin develop
++git switch -c fix/short-slug origin/develop
+ # ... commit work ...
+ git push -u origin fix/short-slug
+ gh pr create --base develop
+@@ -201,8 +203,8 @@ Applies to the published packages `@nestledjs/data-browser` (`libs/data-browser`
+ ### Phase 1 — version bump, via PR
+ 
+ ```bash
+-git checkout develop && git pull
+-git checkout -b release/<project>-<version>
++git fetch origin develop
++git switch -c release/<project>-<version> origin/develop
+ pnpm nx release version -p <project> --specifier <patch|minor|major> --git-commit --no-git-tag
+ git push -u origin release/<project>-<version>
+ gh pr create --base develop
+@@ -215,7 +217,7 @@ unsure.
+ ### Phase 2 — publish, after the PR merges
+ 
+ ```bash
+-git checkout develop && git pull
++git fetch origin develop && git switch --detach origin/develop
+ pnpm nx run <project>:build --skip-nx-cache
+ node -p "require('./dist/libs/<project>/package.json').version"   # sanity-check the built artifact
+ cd dist/libs/<project> && npm pack --dry-run                      # inspect what will ship
