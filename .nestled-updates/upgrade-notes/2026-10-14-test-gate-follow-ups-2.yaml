@@ -32,7 +32,8 @@ intent: >
   a.ts) is reported as "shadowed by" that twin instead of only "in no checked config".
 
   SonarCloud. sonar-project.properties sets `sonar.typescript.tsconfigPaths` to the app, lib and
-  spec configs plus scripts/tsconfig.json. Discovery built one program per tsconfig*.json in the
+  spec configs, any other config that is the only one including a test or source file (the
+  api-e2e support config), plus scripts/tsconfig.json. Discovery built one program per tsconfig*.json in the
   tree, and a full analysis of a larger clone ran out of heap once scripts/tsconfig.json was added.
 
   SQL splitter. apps/api-e2e/src/support/sql-runner.mjs recognises dollar-quote tags with non-ASCII
@@ -81,7 +82,8 @@ intent: >
   test-db.sh reads ports from the same .env and resets the same data directory, reading `export`
   lines and quoted values followed by a comment as compose does. db-update runs `up`
   only for the services that are not already running, so it reuses a running stack instead of
-  re-applying its config. .env.example documents the override; scripts/dev-checkout.spec.mjs covers
+  re-applying its config, and its lock is keyed by the main checkout, so two worktrees cannot both
+  start the shared stack and have the first to finish stop it under the other. .env.example documents the override; scripts/dev-checkout.spec.mjs covers
   a main checkout, a worktree and a folder outside git.
 why: >
   Test setup wrote the test database's password into every e2e log, CI logs included. The scripts
