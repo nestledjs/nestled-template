@@ -61,10 +61,14 @@ function checkouts() {
   mkdirSync(bin)
   writeFileSync(
     join(bin, 'docker'),
-    '#!/bin/bash\nprintf "args=%s\\n" "$*"\nprintf "data=%s\\n" "${NESTLED_DEV_DATA_DIR:-}"\n',
+    '#!/bin/bash\nprintf "args=%s\\n" "$*"\nprintf "data=%s\\n" "${NESTLED_DEV_DATA_DIR:-}"\nprintf "exported=%s\\n" "${NESTLED_DEV_DATA_DIR+yes}"\n',
     { mode: 0o755 },
   )
   return { main, worktree, outside, bin }
+}
+
+function withoutExported({ args, data }) {
+  return { args, data }
 }
 
 function devDocker(root, bin, env = {}) {
@@ -74,8 +78,12 @@ function devDocker(root, bin, env = {}) {
     encoding: 'utf8',
   })
   assert.equal(result.status, 0, result.stderr)
-  const [args, data] = result.stdout.trim().split('\n')
-  return { args: args.replace(/^args=/, ''), data: data.replace(/^data=/, '') }
+  const [args, data, exported] = result.stdout.trim().split('\n')
+  return {
+    args: args.replace(/^args=/, ''),
+    data: data.replace(/^data=/, ''),
+    exported: exported.replace(/^exported=/, '') === 'yes',
+  }
 }
 
 void describe('dev checkout resolution (node)', () => {
@@ -138,7 +146,7 @@ void describe('dev checkout resolution (node)', () => {
 void describe('dev checkout resolution (scripts/dev-docker.sh)', () => {
   void it('runs a single checkout exactly as before', () => {
     const { main, bin } = checkouts()
-    assert.deepEqual(devDocker(main, bin), {
+    assert.deepEqual(withoutExported(devDocker(main, bin)), {
       args: `compose -f ${main}/.dev/docker-compose.yml config`,
       data: '',
     })
@@ -152,7 +160,7 @@ void describe('dev checkout resolution (scripts/dev-docker.sh)', () => {
   void it('points a worktree at the main checkout .env and data directory', () => {
     const { main, worktree, bin } = checkouts()
     writeFileSync(join(main, '.env'), 'POSTGRES_PORT=55432\n')
-    assert.deepEqual(devDocker(worktree, bin), {
+    assert.deepEqual(withoutExported(devDocker(worktree, bin)), {
       args: `compose --env-file ${main}/.env -f ${worktree}/.dev/docker-compose.yml config`,
       data: `${main}/.dev/tmp`,
     })
@@ -171,6 +179,15 @@ void describe('dev checkout resolution (scripts/dev-docker.sh)', () => {
     }
     writeFileSync(join(main, '.env'), 'export NESTLED_DEV_DATA_DIR=/elsewhere\n')
     assert.equal(devDocker(worktree, bin).data, '')
+  })
+
+  void it('drops an inherited empty value, so the .env decides the data directory', () => {
+    const { main, worktree, bin } = checkouts()
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR=/elsewhere\n')
+    // devDocker exports NESTLED_DEV_DATA_DIR='' by default: compose must not see that empty value,
+    // since an exported variable outranks --env-file and would mask /elsewhere.
+    assert.equal(devDocker(worktree, bin).exported, false)
+    assert.equal(devDocker(main, bin).exported, false)
   })
 
   void it('test-db.sh resets the data directory an `export` line in .env configures', () => {
@@ -206,7 +223,7 @@ void describe('dev checkout resolution (scripts/dev-docker.sh)', () => {
 
   void it('treats a folder outside git as its own checkout', () => {
     const { outside, bin } = checkouts()
-    assert.deepEqual(devDocker(outside, bin), {
+    assert.deepEqual(withoutExported(devDocker(outside, bin)), {
       args: `compose -f ${outside}/.dev/docker-compose.yml config`,
       data: '',
     })

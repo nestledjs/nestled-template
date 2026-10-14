@@ -11,10 +11,11 @@ intent: >
 
   Passwords in test logs. apps/api-e2e/src/support/test-setup.ts logged the full TEST_DATABASE_URL,
   password included, and `scripts/test-db.sh start` printed it as the connection string. Test setup
-  now logs `describeDatabase()` (host, port and database name), and test-db.sh prints the URL with
-  its password replaced by `****` (`test-db.sh url` still prints the real URL for callers that
-  connect with it). The new support spec test-setup.spec.ts checks that a URL with a password never
-  reaches either output.
+  now logs `describeDatabase()` (host, port and database name), and test-db.sh prints the URL
+  reduced to scheme, host, port and database, since a connection URI can carry credentials in its
+  user-info and in query parameters (`test-db.sh url` still prints the real URL for callers that
+  connect with it). The new support spec test-setup.spec.ts checks that a password, in either
+  place, never reaches either output.
 
   scripts/ and tools/ tsconfig.json. They no longer set `moduleResolution: bundler`, which cannot
   resolve deep package imports a lib makes (stripe/cjs/..., prisma-graphql-type-decimal); they
@@ -72,7 +73,8 @@ intent: >
   db-update (through the new scripts/dev-checkout.mjs) reads it from disk (the worktree's `.git`
   file, then `commondir`) without spawning git. From a worktree, compose gets the main checkout's
   .env when the worktree has none, and NESTLED_DEV_DATA_DIR defaults to the main checkout's
-  .dev/tmp unless the environment or that .env sets it (an empty value counts as unset).
+  .dev/tmp unless the environment or that .env sets it (an empty value counts as unset, and an
+  inherited empty value is dropped before compose runs, since it would outrank the .env).
   .dev/docker-compose.yml mounts `${NESTLED_DEV_DATA_DIR:-./tmp}/<service>`, so a single checkout
   behaves exactly as before.
   test-db.sh reads ports from the same .env and resets the same data directory, reading `export`

@@ -41,6 +41,8 @@ const composeEnvironmentArgs = workspaceEnvironmentFile
   ? ['--env-file', workspaceEnvironmentFile]
   : []
 const composeEnvironment = { ...process.env, ...devDocker.composeVariables }
+// An inherited empty value outranks --env-file in compose and would mask the .env's data directory.
+if (!composeEnvironment.NESTLED_DEV_DATA_DIR) delete composeEnvironment.NESTLED_DEV_DATA_DIR
 const environmentFileVariableNames = workspaceEnvironmentFile
   ? await readEnvironmentVariableNames(workspaceEnvironmentFile)
   : []

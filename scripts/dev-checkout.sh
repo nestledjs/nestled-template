@@ -32,6 +32,9 @@ NESTLED_DEV_DATA_DIR_SET='^[[:space:]]*(export[[:space:]]+)?NESTLED_DEV_DATA_DIR
 nestled_dev_checkout() {
   local root
   root="$(cd "$1" && pwd -P)"
+  # An exported-but-empty value would still reach compose and outrank --env-file, so the .env's real
+  # data directory would be masked and ${NESTLED_DEV_DATA_DIR:-./tmp} would fall back to this tree.
+  [[ -n "${NESTLED_DEV_DATA_DIR:-}" ]] || unset NESTLED_DEV_DATA_DIR
   NESTLED_MAIN_CHECKOUT="$(nestled_main_checkout "$root")"
   NESTLED_DEV_ENV_FILE=""
   if [[ -f "$root/.env" ]]; then
