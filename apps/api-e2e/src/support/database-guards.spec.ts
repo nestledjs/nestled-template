@@ -7,12 +7,15 @@ import {
   isDisposableTestDatabase,
   psqlEnvironment,
   psqlProcessEnvironment,
+  runOnTestDatabase,
+  type DatabaseClients,
 } from './database-guards'
 
 describe('test database guards', () => {
   it.each([
     'postgresql://prisma:prisma@localhost:5432/nestled_template_test',
-    'postgresql://u:p@127.0.0.1:55460/app_test?schema=public',
+    'postgresql://u:p@127.0.0.1:55460/app_test?sslmode=disable',
+    'postgres://u:p@localhost/app_test',
     'postgresql://u:p@[::1]:5433/APP_TEST',
   ])('treats %s as disposable', url => {
     expect(isDisposableTestDatabase(url)).toBe(true)
@@ -24,6 +27,9 @@ describe('test database guards', () => {
     'postgresql://u:p@localhost:5432/test_data',
     'postgresql://u:p@db.example.com:5432/app_test',
     'postgresql://u:p@postgres:5432/app_test',
+    'postgresql://u:p@localhost:5432/app_test?schema=other',
+    'postgresql://u:p@localhost:5432/app_test#fragment',
+    'mysql://u:p@localhost:5432/app_test',
     'not a url',
   ])('refuses %s before setup touches it, naming no password', url => {
     expect(isDisposableTestDatabase(url)).toBe(false)
@@ -31,12 +37,17 @@ describe('test database guards', () => {
     expect(() => assertDisposableTestDatabase(url, {})).not.toThrow(/u:p@/)
   })
 
-  it.each(DESTINATION_OVERRIDES)('refuses a URL whose %s parameter overrides the destination', key => {
-    const url = `postgresql://u:p@localhost:5432/app_test?${key}=elsewhere`
-    expect(isDisposableTestDatabase(url)).toBe(false)
-    expect(isDisposableTestDatabase(url.replace(`?${key}=`, `?${key.toUpperCase()}=`))).toBe(false)
-    expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
-  })
+  it.each(DESTINATION_OVERRIDES)(
+    'refuses a URL whose %s parameter overrides the destination',
+    key => {
+      const url = `postgresql://u:p@localhost:5432/app_test?${key}=elsewhere`
+      expect(isDisposableTestDatabase(url)).toBe(false)
+      expect(isDisposableTestDatabase(url.replace(`?${key}=`, `?${key.toUpperCase()}=`))).toBe(
+        false,
+      )
+      expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
+    },
+  )
 
   it('lets an explicit opt-out through, and only the value 1', () => {
     const url = 'postgresql://u:p@postgres:5432/app_test'
@@ -44,6 +55,44 @@ describe('test database guards', () => {
     expect(() =>
       assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: 'true' }),
     ).toThrow()
+  })
+
+  it.each([
+    'postgresql://u:p@localhost:5432/app',
+    'postgresql://u:p@db.example.com:5432/app_test',
+    'postgresql://u:p@localhost:5432/app_test?schema=other',
+  ])('lets the opt-out through for %s, a choice of name, host or schema', url => {
+    expect(assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe('allowed')
+  })
+
+  it.each([
+    ...DESTINATION_OVERRIDES.map(key => `postgresql://u:p@postgres:5432/app_test?${key}=elsewhere`),
+    'postgresql://u:p@localhost:5432/app_test#elsewhere',
+    'mysql://u:p@localhost:5432/app_test',
+    'postgresql://u:p@localhost:5432/app%ZZ_test',
+    'not a url',
+  ])('refuses %s even with the opt-out, since it could connect elsewhere', url => {
+    expect(() => assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toThrow(
+      /does not apply to a URL that could connect somewhere other/,
+    )
+  })
+
+  it('says why a database was refused', () => {
+    const refusal = (url: string) => {
+      try {
+        assertDisposableTestDatabase(url, {})
+      } catch (error) {
+        return (error as Error).message
+      }
+      return ''
+    }
+    expect(refusal('postgresql://u:p@localhost/app')).toContain('does not end in _test')
+    expect(refusal('postgresql://u:p@db.example.com/app_test')).toContain('host is not localhost')
+    expect(refusal('postgresql://u:p@localhost/app_test?schema=x')).toContain('?schema=')
+    expect(refusal('postgresql://u:p@localhost/app_test?PORT=1')).toContain('?port=')
+    expect(refusal('postgresql://u:p@localhost/app_test#x')).toContain('fragment')
+    expect(refusal('mysql://u:p@localhost/app_test')).toContain('mysql:')
+    expect(refusal('postgresql://u:p@localhost/app%ZZ_test')).toContain('percent-encoding')
   })
 
   it('describes a database by host and name only', () => {
@@ -93,5 +142,50 @@ describe('test database guards', () => {
       PGUSER: 'u',
       PGPASSWORD: 'p',
     })
+  })
+})
+
+describe('runOnTestDatabase', () => {
+  const url = 'postgresql://u:secret@localhost:5433/app_test'
+  const clients = (psqlStatus: number | null = 0) => {
+    const calls: { client: string; args: unknown[] }[] = []
+    const fake: DatabaseClients = {
+      pg: (...args) => {
+        calls.push({ client: 'pg', args })
+      },
+      psql: (...args) => {
+        calls.push({ client: 'psql', args })
+        return { status: psqlStatus }
+      },
+    }
+    return { calls, fake }
+  }
+
+  it('runs the statement through the pg runner by default', () => {
+    const { calls, fake } = clients()
+    runOnTestDatabase(url, 'SELECT 1', fake, { env: {}, timeout: 10000 })
+    expect(calls).toEqual([{ client: 'pg', args: [url, 'SELECT 1', 10000] }])
+  })
+
+  it('runs the probe and the reset through psql when E2E_DATABASE_PROBE=psql', () => {
+    const { calls, fake } = clients()
+    const env = { E2E_DATABASE_PROBE: 'psql', PATH: '/usr/bin', PGSERVICE: 'production' }
+    const reset = 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;'
+    runOnTestDatabase(url, 'SELECT 1', fake, { env })
+    runOnTestDatabase(url, reset, fake, { env })
+    expect(calls.map(call => call.client)).toEqual(['psql', 'psql'])
+    const [args, psqlEnv] = calls[1].args as [string[], NodeJS.ProcessEnv]
+    expect(args).toEqual(['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At', '-c', reset])
+    // The URL reaches psql through its environment only, never its arguments.
+    expect(args.join(' ')).not.toContain('secret')
+    expect(psqlEnv).toMatchObject({ PATH: '/usr/bin', PGPASSWORD: 'secret', PGPORT: '5433' })
+    expect(psqlEnv.PGSERVICE).toBeUndefined()
+  })
+
+  it('throws when psql fails, naming the database without its password', () => {
+    const { fake } = clients(3)
+    expect(() =>
+      runOnTestDatabase(url, 'SELECT 1', fake, { env: { E2E_DATABASE_PROBE: 'psql' } }),
+    ).toThrow('psql failed against localhost:5433/app_test (exit 3)')
   })
 })

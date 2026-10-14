@@ -1,0 +1,24 @@
+id: 2026-10-14-worktree-safe-branch-steps
+title: AGENTS.md branch steps work inside a git worktree
+priority: low
+area: docs
+type: docs
+delivery: code-patch
+intent: >
+  The PR and release snippets in AGENTS.md branch from origin/develop (`git fetch origin develop`
+  then `git switch -c <branch> origin/develop`) instead of `git checkout develop && git pull`, and
+  the publish build runs on a detached origin/develop. A one-line note under the PR rule says why.
+why: >
+  Coding agents that run each task in its own git worktree cannot check out develop while the main
+  checkout holds it ("develop is already checked out"), so following the old snippets failed the
+  agent's turn. Branching from origin/develop works the same in a plain checkout and in a worktree.
+affectedPaths:
+  - AGENTS.md
+skipIf:
+  - The project's AGENTS.md has no snippet that checks out the base branch.
+verification:
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    Search agent-facing docs (AGENTS.md, CLAUDE.md, agents/**) for `git checkout <base>` or
+    `git switch <base>` and replace each with a branch or detached switch from origin/<base>.

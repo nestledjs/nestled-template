@@ -8,6 +8,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE="$SCRIPT_DIR/dev-docker.sh"
+# The .env and data directory dev-docker.sh uses: from a git worktree, the main checkout's.
+# shellcheck source=scripts/dev-checkout.sh
+source "$SCRIPT_DIR/dev-checkout.sh"
+nestled_dev_checkout "$ROOT"
 
 # Read a single key from the repo-root .env. Deliberately NOT `source` — that would execute the
 # file as shell. Returns empty (never non-zero) when the file or the key is absent, so `set -e`
@@ -15,21 +19,25 @@ COMPOSE="$SCRIPT_DIR/dev-docker.sh"
 #
 # MUST STAY IN STEP with readEnvValue() in scripts/doctor.ts — the two parse the same file, and a
 # disagreement means the doctor blesses a .env this script then misreads. Same rules as there:
-# strip quotes only when they wrap the WHOLE value (keeping it verbatim), otherwise drop a
-# dotenv-style inline ` # comment` and trim. A blanket quote-strip would also eat quotes from
+# a quoted value is kept verbatim up to its closing quote (a trailing ` # comment` after it is
+# dropped), otherwise drop a dotenv-style inline ` # comment` and trim. A blanket quote-strip would also eat quotes from
 # inside a value, and leaving the comment in produced URLs like `localhost:5443 # block 1/db`.
 read_env() {
-  [[ -f "$ROOT/.env" ]] || return 0
+  [[ -n "$NESTLED_DEV_ENV_FILE" ]] || return 0
 
   local key="$1"
   local raw
-  raw="$(grep -m1 "^$key=" "$ROOT/.env" | cut -d= -f2-)"
+  # An optional `export ` prefix and spaces around the key are accepted, as dotenv and compose do.
+  raw="$(grep -m1 -E "^[[:space:]]*(export[[:space:]]+)?$key[[:space:]]*=" "$NESTLED_DEV_ENV_FILE" | cut -d= -f2-)"
   raw="${raw#"${raw%%[![:space:]]*}"}"
   raw="${raw%"${raw##*[![:space:]]}"}"
 
-  local first="${raw:0:1}" last="${raw: -1}"
-  if [[ ${#raw} -ge 2 && "$first" == "$last" && ( "$first" == '"' || "$first" == "'" ) ]]; then
-    printf '%s\n' "${raw:1:${#raw}-2}"
+  # A quoted value runs to its closing quote and is kept verbatim (a `#` inside it included);
+  # anything after the closing quote, such as a ` # comment`, is dropped, as dotenv and compose do.
+  local first="${raw:0:1}"
+  if [[ ( "$first" == '"' || "$first" == "'" ) && "${raw:1}" == *"$first"* ]]; then
+    local quoted="${raw:1}"
+    printf '%s\n' "${quoted%%"$first"*}"
     return 0
   fi
 
@@ -51,11 +59,19 @@ TEST_DB_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${TES
 # out of the URL for display; fall back to TEST_DB_PORT if the URL carries no explicit port.
 TEST_DB_DISPLAY_PORT="$(printf '%s' "$TEST_DB_URL" | sed -nE 's#^[^/]+://[^/]+:([0-9]+)/.*#\1#p')"
 TEST_DB_DISPLAY_PORT="${TEST_DB_DISPLAY_PORT:-$TEST_DB_PORT}"
+# The URL for messages: its password replaced, since this output reaches terminals and CI logs.
+# `url` below still prints the real URL, for the callers that connect with it.
+TEST_DB_DISPLAY_URL="$(printf '%s' "$TEST_DB_URL" | sed -E 's#^([^:/]+://[^:/@]*):[^/]*@#\1:****@#')"
 TEST_DB_CONTAINER="nestled-template_postgres_test"
 # Bind mount backing postgres-test (see the `volumes:` entry in .dev/docker-compose.yml). Compose
 # `down` removes named volumes only with -v, and never touches a bind mount — so recreating the
-# container alone does NOT clear the data and `reset` has to delete this explicitly.
-TEST_DB_DATA_DIR="$ROOT/.dev/tmp/postgres-test"
+# container alone does NOT clear the data and `reset` has to delete this explicitly. Resolved as
+# compose resolves it: NESTLED_DEV_DATA_DIR from the environment or .env (relative to .dev/), else
+# .dev/tmp.
+DEV_DATA_DIR="${NESTLED_DEV_DATA_DIR:-$(read_env NESTLED_DEV_DATA_DIR)}"
+DEV_DATA_DIR="${DEV_DATA_DIR:-./tmp}"
+[[ "$DEV_DATA_DIR" == /* ]] || DEV_DATA_DIR="$ROOT/.dev/$DEV_DATA_DIR"
+TEST_DB_DATA_DIR="$DEV_DATA_DIR/postgres-test"
 
 wait_for_db() {
   echo "⏳ Waiting for test database to be ready..."
@@ -78,7 +94,7 @@ case "$1" in
     wait_for_db
 
     echo "✅ Test database is ready on port $TEST_DB_DISPLAY_PORT"
-    echo "📄 Connection string: $TEST_DB_URL"
+    echo "📄 Connection string: $TEST_DB_DISPLAY_URL"
     ;;
     
   "stop")
@@ -137,6 +153,6 @@ case "$1" in
     echo "  migrate - Run Prisma migrations on test database"
     echo "  url     - Print the resolved test database URL"
     echo ""
-    echo "Test DB URL: $TEST_DB_URL"
+    echo "Test DB URL: $TEST_DB_DISPLAY_URL"
     ;;
 esac

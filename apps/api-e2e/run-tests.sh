@@ -13,7 +13,10 @@ TMPFILE=$(mktemp)
 SUPPLIED_TEST_DATABASE_URL="${TEST_DATABASE_URL:-}"
 # Resolve the test DB URL the way scripts/test-db.sh does (it reads POSTGRES_TEST_PORT from the
 # repo-root .env), so a direct `api-e2e:e2e` run doesn't probe/migrate the wrong port.
-export TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(./scripts/test-db.sh url)}"
+# Assigned, then exported: `export X="$(cmd)"` returns export's status, so under `set -e` a failing
+# `test-db.sh url` would go unnoticed and the run would continue with an empty URL.
+TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(./scripts/test-db.sh url)}"
+export TEST_DATABASE_URL
 export DATABASE_URL="$TEST_DATABASE_URL"
 # prisma.config.ts prefers DIRECT_URL — pin it to the test DB too, or Prisma reaches the dev DB.
 export DIRECT_URL="$TEST_DATABASE_URL"

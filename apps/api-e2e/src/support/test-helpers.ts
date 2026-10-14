@@ -23,6 +23,8 @@ export interface GraphQLErrorResponse {
 
 /** The body of a GraphQL response: `data` shaped like the operation's selection set. */
 export interface GraphQLResponse<TData> {
+  // Non-null on purpose: on a GraphQL error the helpers throw, and a spec reading a field of a null
+  // `data` fails at runtime, which is the outcome a test wants.
   data: TData
   errors?: GraphQLErrorResponse[]
 }

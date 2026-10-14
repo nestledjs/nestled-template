@@ -41,7 +41,7 @@ export function isWildcardBindHost(host: string): boolean {
   // digit, so "nothing but zeroes and colons" identifies the wildcard without enumerating
   // spellings — an enumerated set silently missed the unpadded expanded form.
   if (!normalized.includes(':')) return false
-  return [...normalized].every((char) => char === '0' || char === ':')
+  return [...normalized].every(char => char === '0' || char === ':')
 }
 
 /**

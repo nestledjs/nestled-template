@@ -1,5 +1,5 @@
 id: 2026-08-11-converge-04-conformance-and-sessions
-title: "Convergence step 4 of 4: bring custom code into conformance, and fix session handling"
+title: 'Convergence step 4 of 4: bring custom code into conformance, and fix session handling'
 priority: high
 area: auth
 type: security

@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { Agent as HttpAgent } from 'node:http'
 import { Agent as HttpsAgent } from 'node:https'
+import { describeDatabase } from './database-guards'
 import { testDatabaseUrl } from './test-db'
 
 type E2EGlobalState = typeof globalThis & {
@@ -46,4 +47,5 @@ process.env.NODE_ENV = 'test'
 
 // The API server is started against this database by global-setup — never the dev database.
 console.log(`Test setup: axios base URL set to ${axios.defaults.baseURL}`)
-console.log(`Test setup: Using TEST database - ${testDatabaseUrl}`)
+// Host, port and database name only: the URL carries the password, and this line reaches CI logs.
+console.log(`Test setup: Using TEST database - ${describeDatabase(testDatabaseUrl)}`)

@@ -18,12 +18,12 @@ and never describe an unfixed vulnerability. Describe defects in template terms:
 
 ## Where things go
 
-| What | Where |
-|---|---|
-| Template bugs and requests | Issues on nestled-dev-template, against a template release, with a reproduction on a fresh clone where possible. `nestled-template` doesn't take issues. |
-| Package, upgrader, forms and website problems | Issues on that repository |
-| Security problems | [Private vulnerability reporting](https://github.com/nestledjs/nestled-dev-template/security/advisories/new) (or the affected package repository's), never an issue |
-| Installation-specific detail: which site, which client, local workarounds, ledgers, run logs | The operator's own private repository or notes, never here |
+| What                                                                                         | Where                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Template bugs and requests                                                                   | Issues on nestled-dev-template, against a template release, with a reproduction on a fresh clone where possible. `nestled-template` doesn't take issues.            |
+| Package, upgrader, forms and website problems                                                | Issues on that repository                                                                                                                                           |
+| Security problems                                                                            | [Private vulnerability reporting](https://github.com/nestledjs/nestled-dev-template/security/advisories/new) (or the affected package repository's), never an issue |
+| Installation-specific detail: which site, which client, local workarounds, ledgers, run logs | The operator's own private repository or notes, never here                                                                                                          |
 
 Maintainers and agents can file issues without the issue forms, and don't need to supply a
 reproduction. The content rule still applies. `nestled-upgrader report-upstream` drafts a

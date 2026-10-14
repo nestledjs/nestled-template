@@ -4,12 +4,7 @@ import { cn } from '@nestled-template/shared/utils'
 
 function getButtonStyles(
   buttonType:
-    | 'Primary'
-    | 'Secondary'
-    | 'SecondaryDark'
-    | 'Soft'
-    | 'Transparent'
-    | 'TransparentLight',
+    'Primary' | 'Secondary' | 'SecondaryDark' | 'Soft' | 'Transparent' | 'TransparentLight',
   disabled: boolean,
 ): string {
   const disabledClass = 'opacity-50 cursor-not-allowed'
@@ -35,12 +30,7 @@ function getButtonStyles(
 
 interface WebUiButtonProps {
   buttonType?:
-    | 'Primary'
-    | 'Secondary'
-    | 'SecondaryDark'
-    | 'Soft'
-    | 'Transparent'
-    | 'TransparentLight'
+    'Primary' | 'Secondary' | 'SecondaryDark' | 'Soft' | 'Transparent' | 'TransparentLight'
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
   rounded?: boolean
   icon?: ReactElement<any> | null

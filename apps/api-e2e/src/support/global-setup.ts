@@ -5,10 +5,10 @@ import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } fr
 import {
   ALLOW_NON_DISPOSABLE_DB,
   assertDisposableTestDatabase,
-  databaseProbe,
   describeDatabase,
   isDisposableTestDatabase,
-  psqlProcessEnvironment,
+  runOnTestDatabase,
+  type DatabaseClients,
 } from './database-guards'
 import globalTeardown from './global-teardown'
 import { runSql, testDatabaseUrl } from './test-db'
@@ -21,21 +21,18 @@ type E2EGlobalState = typeof globalThis & {
 
 const e2eGlobal = globalThis as E2EGlobalState
 
-/**
- * Check if database is accessible: `SELECT 1` through the pg runner, or through psql from PATH when
- * E2E_DATABASE_PROBE=psql (see databaseProbe).
- */
+// The clients global setup's own SQL runs through; E2E_DATABASE_PROBE picks one (see databaseProbe).
+const databaseClients: DatabaseClients = {
+  pg: (databaseUrl, statement, timeout) => {
+    runSql(databaseUrl, statement, {}, timeout)
+  },
+  psql: (args, env, timeout) => spawnSync('psql', args, { env, stdio: 'ignore', timeout }),
+}
+
+/** Check that the database answers `SELECT 1`, with the client E2E_DATABASE_PROBE selects. */
 function isDatabaseAccessible(databaseUrl: string): boolean {
-  if (databaseProbe() === 'psql') {
-    const probe = spawnSync('psql', ['-At', '-c', 'SELECT 1'], {
-      env: psqlProcessEnvironment(databaseUrl),
-      stdio: 'ignore',
-      timeout: 10000,
-    })
-    return probe.status === 0
-  }
   try {
-    runSql(databaseUrl, 'SELECT 1', {}, 10000)
+    runOnTestDatabase(databaseUrl, 'SELECT 1', databaseClients, { timeout: 10000 })
     return true
   } catch {
     return false
@@ -79,8 +76,9 @@ function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
 }
 
 /**
- * Empty the test database's schema, so migrations can build it from scratch. Only for a local
- * database named as a test database; anything else is refused before a connection is made.
+ * Empty the test database's schema, so migrations can build it from scratch. Only for a disposable
+ * database (local, named *_test); anything else is refused before the reset runs, whatever
+ * E2E_ALLOW_NON_DISPOSABLE_DB says.
  */
 function resetTestDatabase(testDatabaseUrl: string) {
   if (!isDisposableTestDatabase(testDatabaseUrl)) {
@@ -89,7 +87,11 @@ function resetTestDatabase(testDatabaseUrl: string) {
         `(e.g. nestled_template_test) is reset by the e2e setup, ${ALLOW_NON_DISPOSABLE_DB} or not.`,
     )
   }
-  runSql(testDatabaseUrl, 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;')
+  runOnTestDatabase(
+    testDatabaseUrl,
+    'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;',
+    databaseClients,
+  )
 }
 
 /**
@@ -227,11 +229,11 @@ module.exports = async function globalSetup() {
 
   console.log(`📊 Using test database: ${describeDatabase(testDatabaseUrl)}`)
 
-  // Before any connection: setup migrates, pushes and seeds this database.
+  // Before anything writes to it: setup resets, migrates, pushes and seeds this database.
   if (assertDisposableTestDatabase(testDatabaseUrl) === 'allowed') {
     console.log(
-      `⚠️  ${ALLOW_NON_DISPOSABLE_DB}=1: running setup against a database that is not local or not ` +
-        'named *_test.',
+      `⚠️  ${ALLOW_NON_DISPOSABLE_DB}=1: running setup against a database that does not look ` +
+        'disposable. A from-scratch reset, if migrations need one, is still refused.',
     )
   }
 

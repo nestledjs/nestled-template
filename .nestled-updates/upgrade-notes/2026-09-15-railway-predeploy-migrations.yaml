@@ -55,9 +55,9 @@ skipIf:
     the setting onto the service before 2026-12-01.
 
 verification:
-  - "railway config plan   # only importer noise on managed Postgres/Redis images, nothing on api"
-  - "pnpm prisma migrate status"
-  - "Railway deploy log for the api service shows `prisma migrate deploy` before start and the health check succeeding"
+  - 'railway config plan   # only importer noise on managed Postgres/Redis images, nothing on api'
+  - 'pnpm prisma migrate status'
+  - 'Railway deploy log for the api service shows `prisma migrate deploy` before start and the health check succeeding'
 
 agentHints:
   - >

@@ -1,0 +1,218 @@
+id: 2026-10-14-test-gate-follow-ups-2
+title: >-
+  Test gate follow-ups 2: no password in test logs, a stricter test-database guard, workspace
+  typecheck fixes, and a worktree-safe dev Docker stack
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  Follow up 2026-10-13-test-gate-follow-ups with the gaps adopting it exposed.
+
+  Passwords in test logs. apps/api-e2e/src/support/test-setup.ts logged the full TEST_DATABASE_URL,
+  password included, and `scripts/test-db.sh start` printed it as the connection string. Test setup
+  now logs `describeDatabase()` (host, port and database name), and test-db.sh prints the URL with
+  its password replaced by `****` (`test-db.sh url` still prints the real URL for callers that
+  connect with it). The new support spec test-setup.spec.ts checks that a URL with a password never
+  reaches either output.
+
+  scripts/ and tools/ tsconfig.json. They no longer set `moduleResolution: bundler`, which cannot
+  resolve deep package imports a lib makes (stripe/cjs/..., prisma-graphql-type-decimal); they
+  inherit the base config's resolution. `lib` is es2023 (`toSorted`), and `useDefineForClassFields`
+  is false, so DTOs that redeclare decorated fields compile (TS2612).
+
+  Workspace typecheck. `pnpm typecheck:workspace` is now `node scripts/typecheck-project.mjs
+  --workspace scripts tools`. Workspace mode skips a folder with no TypeScript of its own, where it
+  used to fail with "matches no files". In every mode, files inside a nested Nx project (a directory
+  with its own project.json and tsconfig.json, such as tools/workspace-plugin) are left to that
+  project's typecheck even when a broad include such as `**/*.ts` matches them. A tracked file that
+  include matching drops because a same-named twin wins (a.spec.tsx beside a.spec.ts, a.d.ts beside
+  a.ts) is reported as "shadowed by" that twin instead of only "in no checked config".
+
+  SonarCloud. sonar-project.properties sets `sonar.typescript.tsconfigPaths` to the app, lib and
+  spec configs plus scripts/tsconfig.json. Discovery built one program per tsconfig*.json in the
+  tree, and a full analysis of a larger clone ran out of heap once scripts/tsconfig.json was added.
+
+  SQL splitter. apps/api-e2e/src/support/sql-runner.mjs recognises dollar-quote tags with non-ASCII
+  letters ($café$ ... $café$), which used to split at the body's inner semicolons, and ends a nested
+  block comment at the marker that balances its opener, as PostgreSQL does.
+
+  Wrapper exit codes. apps/api-e2e/run-tests.sh and scripts/run-e2e-tests.sh assign
+  TEST_DATABASE_URL and then export it. `export X="${X:-$(cmd)}"` returns export's status, so under
+  `set -e` a failing `test-db.sh url` went unnoticed. The wrapper specs check that it now fails the
+  run before any probe or test. run-e2e-tests.sh ends with a newline.
+
+  Test-database guard (apps/api-e2e/src/support/database-guards.ts). A URL is disposable only when
+  it is postgresql: (or postgres:), local, named *_test, and has no `?schema=` and no fragment. The
+  new `nonDisposableReason()` says why a URL was refused, and the error carries the reason.
+  E2E_ALLOW_NON_DISPOSABLE_DB=1 still lets through another host, another name or a `?schema=`, but
+  never a URL that could connect somewhere other than it appears to (a destination-override query
+  parameter, a fragment, another protocol, an unparseable URL). The guard's wording says it runs
+  before any reset, migrate, push or seed, not "before it connects": the wrapper's read-only probe
+  has connected by then. `E2E_DATABASE_PROBE=psql` now selects the client for the from-scratch
+  reset (taken on P3005) as well as for the probe, through the new `runOnTestDatabase()`, so the
+  psql helpers are used for both. README.md documents all of this.
+
+  GraphQLResponse.data stays non-null; a comment at the type says why: the helpers throw on GraphQL
+  errors, and a spec reading a field of a null `data` fails at runtime, which a test wants.
+
+  scripts/delete-user.ts and its `user:delete` package script are removed.
+
+  CI. .github/workflows/ci.yml cancels a superseded run on the same ref (`concurrency: ci-${{
+  github.ref }}`, cancel-in-progress). Because a cancelled run never completes, a develop push now
+  takes its Nx affected base from nx-set-shas (`main-branch-name: develop`, the last successful CI
+  run) rather than from the previous push. CI also runs every `scripts/*.spec.mjs`, and checks
+  formatting on the whole repository (`prettier --check .`), not only scripts/ and tools/. Files
+  that did not match the pinned prettier were reformatted. The CI service containers are pulled
+  through Google's Docker Hub mirror, with the same official images and tags:
+  `mirror.gcr.io/library/postgres:16` and `mirror.gcr.io/library/redis:7-alpine`.
+
+  Worktree-safe dev Docker stack. scripts/dev-docker.sh and scripts/test-db.sh (through the new
+  scripts/dev-checkout.sh) resolve the main checkout with `git rev-parse --git-common-dir`; pnpm
+  db-update (through the new scripts/dev-checkout.mjs) reads it from disk (the worktree's `.git`
+  file, then `commondir`) without spawning git. From a worktree, compose gets the main checkout's
+  .env when the worktree has none, and NESTLED_DEV_DATA_DIR defaults to the main checkout's
+  .dev/tmp unless the environment or that .env sets it (an empty value counts as unset).
+  .dev/docker-compose.yml mounts `${NESTLED_DEV_DATA_DIR:-./tmp}/<service>`, so a single checkout
+  behaves exactly as before.
+  test-db.sh reads ports from the same .env and resets the same data directory, reading `export`
+  lines and quoted values followed by a comment as compose does. db-update runs `up`
+  only for the services that are not already running, so it reuses a running stack instead of
+  re-applying its config. .env.example documents the override; scripts/dev-checkout.spec.mjs covers
+  a main checkout, a worktree and a folder outside git.
+why: >
+  Test setup wrote the test database's password into every e2e log, CI logs included. The scripts
+  typecheck could not compile scripts that import libs. typecheck:workspace failed on an empty
+  tools/ and checked nested projects with the wrong config. SonarCloud's full analysis could run
+  out of memory, which no PR analysis shows. A dollar-quoted body with a non-ASCII tag ran as
+  broken statements. A failing `test-db.sh url` let the e2e run continue with no database URL. The
+  guard's opt-out could let through a URL whose query parameters send the connection elsewhere,
+  and its wording claimed a check order the wrapper does not keep. scripts/delete-user.ts cleared
+  only some of the relations that block a user delete, outside a transaction, so it could leave a
+  half-deleted account; account deletion in the app and a database reset cover its uses.
+  Overlapping develop CI runs let an older commit's Sonar analysis publish after a newer one's.
+  Hosted runners share IP addresses, so anonymous pulls of the CI service images failed
+  intermittently: Docker Hub answers `toomanyrequests`, and public.ecr.aws, the usual workaround,
+  now answers `toomanyrequests: Data limit exceeded`; mirror.gcr.io serves the same manifests. And
+  `docker compose` or `pnpm db-update` run from a git worktree recreated the repo's shared dev
+  containers, on default ports when the worktree had no .env, with their data inside the worktree,
+  which is deleted along with it.
+affectedPaths:
+  - apps/api-e2e/README.md
+  - apps/api-e2e/run-tests.sh
+  - apps/api-e2e/tsconfig.support.json
+  - apps/api-e2e/vitest.config.mts
+  - apps/api-e2e/vitest.support.config.mts
+  - apps/api-e2e/src/support/database-guards.ts
+  - apps/api-e2e/src/support/database-guards.spec.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/sql-runner.mjs
+  - apps/api-e2e/src/support/sql-runner.spec.ts
+  - apps/api-e2e/src/support/test-helpers.ts
+  - apps/api-e2e/src/support/test-setup.ts
+  - apps/api-e2e/src/support/test-setup.spec.ts
+  - scripts/db-update.mjs
+  - scripts/delete-user.ts
+  - scripts/dev-checkout.mjs
+  - scripts/dev-checkout.sh
+  - scripts/dev-checkout.spec.mjs
+  - scripts/dev-docker.sh
+  - scripts/run-e2e-tests.sh
+  - scripts/test-db.sh
+  - scripts/tsconfig.json
+  - scripts/typecheck-project.mjs
+  - scripts/typecheck-project.spec.mjs
+  - tools/tsconfig.json
+  - .dev/docker-compose.yml
+  - .env.example
+  - .github/workflows/ci.yml
+  - package.json
+  - sonar-project.properties
+verification:
+  - node --test scripts/*.spec.mjs
+  - pnpm exec nx run-many -t typecheck --parallel=1 --skip-nx-cache
+  - pnpm typecheck:workspace
+  - pnpm exec nx run-many -t lint --parallel=1
+  - pnpm exec nx run-many -t test --parallel=1
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx run api-e2e:e2e
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    A project that already fixed the password log line (U1) or the dollar-quote splitter (U5) on
+    its own records `adapted` for this note and takes the rest. Check every place test support
+    prints a database URL, not only test-setup.ts: the test-db script's start message is the other
+    one.
+  - >
+    scripts/delete-user.ts is removed: delete the project's copy and its `user:delete` script (or a
+    differently named one pointing at it), and record `not-applicable` for that part if it is
+    already gone. Do not repair it instead; use the app's account deletion or a database reset.
+  - >
+    SonarCloud: changing `sonar.typescript.tsconfigPaths` changes which type information each file
+    is analysed with, which can re-baseline existing issues on the long-lived branch (some close,
+    some open) on the first analysis after the change. List the project's own app, lib and spec
+    configs that cover sonar.sources and sonar.tests, plus scripts/tsconfig.json when scripts/ is a
+    source. Do not use a `libs/**` glob: pnpm workspaces keep node_modules under libs. Only a full
+    analysis of the long-lived branch shows whether the heap is enough; a PR analysis cannot.
+    sonar-project.properties is not mirrored by template promotion, so add the property by hand.
+  - >
+    scripts/ and tools/ tsconfig.json: if a script imports a lib whose types depend on declaration
+    shims (for example libs/**/src/types/*.d.ts), add those shims to the folder's `include`. Update
+    the `typecheck:workspace` script in package.json by hand (package.json is not mirrored).
+  - >
+    Shell-wrapper specs that run a wrapper under `set -o pipefail`: a fake probe, fake pnpm or fake
+    sql runner that sits at the end of a pipe must read its stdin before exiting (for example
+    `cat >/dev/null` or `readFileSync(0)`). Exiting without reading lets the writer die of SIGPIPE,
+    and pipefail turns that into a failure the spec did not mean to test.
+  - >
+    A wrapper that builds an argument array and expands it under `set -u` must guard the empty case
+    (`${ARGS[@]+"${ARGS[@]}"}`, or only expand when `${#ARGS[@]} -gt 0`): macOS ships bash 3.2,
+    which treats an empty array as unset and fails with "unbound variable".
+  - >
+    Typecheck diagnostics: TS4053 and other declaration-emit errors ("Return type of exported
+    function has or is using name ... from external module") appear only once the semantic errors
+    are fixed, so expect a second round after a config change clears the first. A file reported as
+    "shadowed by" its twin is dropped by include matching; rename one of the two (a.spec.tsx and
+    a.spec.ts cannot both be compiled under one config).
+  - >
+    Test-database guard: a TEST_DATABASE_URL with `?schema=public` is now refused; drop the
+    parameter (public is the default). In a setup that empties the schema on every run, the reset
+    requires a disposable database, so E2E_ALLOW_NON_DISPOSABLE_DB changes nothing there: remove the
+    opt-out from such a setup and its docs rather than keep a switch that cannot work. If global
+    setup has its own pg probe and never calls psql, either route its SQL through
+    runOnTestDatabase() or delete the unused psql helpers; do not keep both.
+  - >
+    CI concurrency: if the workflow overrides NX_BASE with `github.event.before` on push, remove
+    that override when adding cancel-in-progress and let nx-set-shas pick the last successful run
+    (`main-branch-name` set to the default branch). Otherwise a cancelled push's projects drop out
+    of every completed affected lint and build.
+  - >
+    Worktree-safe dev stack: keep the project's own compose project name, container names and
+    ports; take only the main-checkout resolution, the NESTLED_DEV_DATA_DIR mounts (use that neutral
+    name, never one carrying the project's name), the .env fallback, and db-update starting only
+    the services that are stopped. A project that already has an equivalent fix records `adapted`
+    (different mechanism, same outcome) or `superseded` (its fix covers this one). Check the result
+    with `docker compose ... config --hash '*'` from a worktree without a .env: the hashes must
+    equal the main checkout's. Never run `up` against the shared stack to test it.
+  - >
+    Repair is separate from the patch and is an operator task: if a dev container is already
+    mounted into a worktree (`docker inspect <container> --format '{{range .Mounts}}{{.Source}}
+    {{end}}'` shows a path inside a worktree), copy that data back into the main checkout's
+    .dev/tmp/<service>, then recreate the container from the main checkout. Do this before the
+    worktree is removed, or its data goes with it.
+  - >
+    CI service and job images: change only the registry prefix and keep the project's own image
+    tags and versions. Both plain Docker Hub names and `public.ecr.aws/docker/library/...` become
+    `mirror.gcr.io/library/...`, so `postgres:15` becomes `mirror.gcr.io/library/postgres:15`. A
+    non-library image such as `pgvector/pgvector:<tag>` becomes
+    `mirror.gcr.io/pgvector/pgvector:<tag>`, but first check that the mirror has it with a manifest
+    HEAD request (`curl -sI -H 'Accept: application/vnd.oci.image.index.v1+json,
+    application/vnd.docker.distribution.manifest.list.v2+json'
+    https://mirror.gcr.io/v2/<repo>/manifests/<tag>`, expecting 200), and keep the original image
+    if it does not resolve. Apply it to every workflow with `services:` or `container:`.
+  - >
+    Formatting: run `pnpm exec prettier --check .` with the project's pinned prettier and reformat
+    what it reports; a file formatted by a newer prettier fails the older one. Widen CI's format
+    check to the whole repository if it still lists folders.

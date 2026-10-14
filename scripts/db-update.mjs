@@ -6,9 +6,13 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
+import { devDockerSettings } from './dev-checkout.mjs'
 
 const root = await realpath(process.cwd())
-const workspaceEnvironmentFile = join(root, '.env')
+// From a git worktree, compose uses the main checkout's .env (when the worktree has none) and data
+// directory, so the shared dev containers are reused as they are, not recreated for the worktree.
+const devDocker = devDockerSettings(root)
+const workspaceEnvironmentFile = devDocker.envFile
 const composeFile = join(root, '.dev', 'docker-compose.yml')
 const schemaFile = join(root, 'api-schema.graphql')
 const apiMainFile = join(root, 'apps', 'api', 'src', 'main.ts')
@@ -33,10 +37,13 @@ const lockFile = join(
   `nestled-db-update-${createHash('sha256').update(root).digest('hex').slice(0, 16)}.lock`,
 )
 const generatedCommand = ['run', 'db-update:generate']
-const composeEnvironmentArgs = existsSync(workspaceEnvironmentFile)
+const composeEnvironmentArgs = workspaceEnvironmentFile
   ? ['--env-file', workspaceEnvironmentFile]
   : []
-const environmentFileVariableNames = await readEnvironmentVariableNames(workspaceEnvironmentFile)
+const composeEnvironment = { ...process.env, ...devDocker.composeVariables }
+const environmentFileVariableNames = workspaceEnvironmentFile
+  ? await readEnvironmentVariableNames(workspaceEnvironmentFile)
+  : []
 const apiWatchTimeoutMs = 5 * 60 * 1000
 const sdkWatchTimeoutMs = 60 * 1000
 const schemaRefreshTimeoutMs = 5 * 60 * 1000
@@ -255,7 +262,10 @@ function composeArgs(...args) {
 }
 
 function runningServiceContainer(service) {
-  return run('docker', composeArgs('ps', '--status', 'running', '-q', service), { capture: true })
+  return run('docker', composeArgs('ps', '--status', 'running', '-q', service), {
+    capture: true,
+    env: composeEnvironment,
+  })
 }
 
 function publishedPort(container, containerPort) {
@@ -400,7 +410,7 @@ async function refreshWithIsolatedApi() {
     services.map(service => [service, Boolean(runningServiceContainer(service))]),
   )
   const startedServices = services.filter(service => !previouslyRunning.get(service))
-  const composeEnv = { ...process.env }
+  const composeEnv = { ...composeEnvironment }
   if (!previouslyRunning.get('postgres')) composeEnv.POSTGRES_PORT = '0'
   if (!previouslyRunning.get('redis')) composeEnv.REDIS_PORT = '0'
   let postgresContainer
@@ -408,7 +418,11 @@ async function refreshWithIsolatedApi() {
   let apiChild
 
   try {
-    run('docker', composeArgs('up', '-d', ...services), { env: composeEnv })
+    // Only the services that are not running: `up` on a running one re-applies its config, which
+    // recreates it whenever this invocation resolves anything differently (another .env, ports).
+    if (startedServices.length > 0) {
+      run('docker', composeArgs('up', '-d', ...startedServices), { env: composeEnv })
+    }
     postgresContainer = runningServiceContainer('postgres')
     const redisContainer = runningServiceContainer('redis')
     if (!postgresContainer || !redisContainer) {

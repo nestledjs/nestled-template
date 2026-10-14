@@ -13,6 +13,7 @@ import {
   loadTypeScript,
   main,
   resolveProjectConfigs,
+  shadowingTwin,
   uncoveredFiles,
 } from './typecheck-project.mjs'
 
@@ -205,6 +206,108 @@ void describe('typecheck-project', () => {
     assert.equal(isGeneratedDeclaration(project, join(project, 'src/types/a.d.cts')), false)
     // Only declarations: a source file under dist/ is still a source.
     assert.equal(isGeneratedDeclaration(project, join(project, 'dist/a.ts')), false)
+  })
+
+  void it('skips a workspace folder with no TypeScript instead of failing on its config', t => {
+    const workspaceConfig = { extends: '../tsconfig.base.json', include: ['**/*.ts'] }
+    const root = fixture({
+      'tsconfig.base.json': base,
+      'scripts/tsconfig.json': workspaceConfig,
+      'scripts/a.ts': 'export const a: number = 1\n',
+      'tools/tsconfig.json': workspaceConfig,
+      'tools/plugin.js': 'module.exports = {}\n',
+    })
+    const log = t.mock.method(console, 'log', () => undefined)
+    t.mock.method(console, 'error', () => undefined)
+    // Run on its own, the empty folder's config is still refused: it checks nothing.
+    assert.equal(main(['tools'], root), 1)
+    assert.equal(main(['--workspace', 'scripts', 'tools'], root), 0)
+    assert.ok(log.mock.calls.some(call => /tools: no TypeScript/.test(call.arguments[0])))
+  })
+
+  void it('leaves a nested Nx project to its own typecheck in a broad include', t => {
+    const workspaceConfig = { extends: '../tsconfig.base.json', include: ['**/*.ts'] }
+    const files = {
+      'tsconfig.base.json': base,
+      'tools/tsconfig.json': workspaceConfig,
+      'tools/a.ts': 'export const a: number = 1\n',
+      'tools/workspace-plugin/project.json': {},
+      'tools/workspace-plugin/tsconfig.json': { files: [] },
+      // Broken, and checked only by the nested project's own target.
+      'tools/workspace-plugin/src/index.ts': 'export const broken: number = "text"\n',
+      'other/tsconfig.json': workspaceConfig,
+      'other/plugin/project.json': {},
+      'other/plugin/tsconfig.json': { files: [] },
+      'other/plugin/index.ts': 'export const nested = 1\n',
+    }
+    const root = fixture(files)
+    const log = t.mock.method(console, 'log', () => undefined)
+    t.mock.method(console, 'error', () => undefined)
+    const [inspected] = inspectConfigs(
+      ts,
+      [join(root, 'tools/tsconfig.json')],
+      [join(root, 'tools/workspace-plugin')],
+    )
+    assert.deepEqual(inspected.fileNames, [join(root, 'tools/a.ts')])
+    assert.equal(inspected.nestedFileCount, 1)
+    assert.equal(main(['--workspace', 'tools'], root), 0)
+    assert.ok(log.mock.calls.some(call => /1 in nested projects/.test(call.arguments[0])))
+    // A nested spec that the base config's inherited exclude drops is the nested project's concern.
+    const withSpec = fixture({
+      ...files,
+      'tools/tsconfig.json': { extends: '../tsconfig.base.json', include: ['**/*.ts'] },
+      'tools/workspace-plugin/src/index.spec.ts': 'export const spec = 1\n',
+    })
+    assert.equal(main(['--workspace', 'tools'], withSpec), 0)
+    const [withSpecInspected] = inspectConfigs(
+      ts,
+      [join(withSpec, 'tools/tsconfig.json')],
+      [join(withSpec, 'tools/workspace-plugin')],
+    )
+    assert.equal(withSpecInspected.problem, undefined)
+    // A folder whose only TypeScript is a nested project's has nothing of its own to check.
+    assert.equal(main(['--workspace', 'other'], root), 0)
+    // The kept files are still compiled: a type error in one fails the run.
+    const broken = fixture({ ...files, 'tools/a.ts': 'export const a: number = "text"\n' })
+    assert.equal(main(['--workspace', 'tools'], broken), 1)
+  })
+
+  void it('reports a file that a same-named twin shadows from include matching', t => {
+    const root = fixture({
+      'tsconfig.base.json': base,
+      'libs/a/tsconfig.json': { ...solution, references: [{ path: './tsconfig.spec.json' }] },
+      'libs/a/tsconfig.spec.json': {
+        extends: './tsconfig.json',
+        compilerOptions: { jsx: 'react-jsx' },
+        include: ['src/**/*.spec.ts', 'src/**/*.spec.tsx'],
+        exclude: ['node_modules'],
+      },
+      'libs/a/src/a.spec.ts': 'export const a = 1\n',
+      'libs/a/src/a.spec.tsx': 'export const b = 2\n',
+    })
+    const projectRoot = join(root, 'libs/a')
+    const inspected = inspectConfigs(ts, resolveProjectConfigs(ts, projectRoot))
+    assert.deepEqual(uncoveredFiles(root, projectRoot, inspected), [
+      join(projectRoot, 'src/a.spec.tsx'),
+    ])
+    const error = t.mock.method(console, 'error', () => undefined)
+    t.mock.method(console, 'log', () => undefined)
+    assert.equal(main(['libs/a'], root), 1)
+    assert.ok(
+      error.mock.calls.some(call =>
+        /libs\/a\/src\/a\.spec\.tsx \(shadowed by a\.spec\.ts/.test(call.arguments[0]),
+      ),
+    )
+  })
+
+  void it('names the twin TypeScript prefers for each extension pair', () => {
+    const covered = new Set(['/p/a.ts', '/p/b.tsx', '/p/c.mts'])
+    assert.equal(shadowingTwin('/p/a.tsx', covered), '/p/a.ts')
+    assert.equal(shadowingTwin('/p/a.d.ts', covered), '/p/a.ts')
+    assert.equal(shadowingTwin('/p/b.d.ts', covered), '/p/b.tsx')
+    assert.equal(shadowingTwin('/p/c.d.mts', covered), '/p/c.mts')
+    assert.equal(shadowingTwin('/p/a.ts', covered), undefined)
+    assert.equal(shadowingTwin('/p/d.tsx', covered), undefined)
   })
 
   void it('invalidates every typecheck target on a lockfile change', () => {

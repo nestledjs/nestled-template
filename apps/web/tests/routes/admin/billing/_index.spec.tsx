@@ -87,51 +87,51 @@ describe('Admin Billing Overview Page', () => {
     adminBillingSubscriptions: {
       total: 3,
       subscriptions: [
-      {
-        id: 'sub-1',
-        status: 'ACTIVE',
-        organizationId: 'org-1',
-        organization: {
-          id: 'org-1',
-          name: 'Acme Corporation',
+        {
+          id: 'sub-1',
+          status: 'ACTIVE',
+          organizationId: 'org-1',
+          organization: {
+            id: 'org-1',
+            name: 'Acme Corporation',
+          },
+          plan: {
+            id: 'plan-1',
+            name: 'Pro Plan',
+            price: '49.99',
+          },
+          stripeCurrentPeriodEnd: '2024-02-15T00:00:00Z',
         },
-        plan: {
-          id: 'plan-1',
-          name: 'Pro Plan',
-          price: '49.99',
+        {
+          id: 'sub-2',
+          status: 'TRIALING',
+          organizationId: 'org-2',
+          organization: {
+            id: 'org-2',
+            name: 'TechStart Inc',
+          },
+          plan: {
+            id: 'plan-2',
+            name: 'Enterprise Plan',
+            price: '199.99',
+          },
+          stripeCurrentPeriodEnd: '2024-02-20T00:00:00Z',
         },
-        stripeCurrentPeriodEnd: '2024-02-15T00:00:00Z',
-      },
-      {
-        id: 'sub-2',
-        status: 'TRIALING',
-        organizationId: 'org-2',
-        organization: {
-          id: 'org-2',
-          name: 'TechStart Inc',
+        {
+          id: 'sub-3',
+          status: 'CANCELED',
+          organizationId: 'org-3',
+          organization: {
+            id: 'org-3',
+            name: 'Startup Co',
+          },
+          plan: {
+            id: 'plan-1',
+            name: 'Pro Plan',
+            price: '49.99',
+          },
+          stripeCurrentPeriodEnd: '2024-01-01T00:00:00Z',
         },
-        plan: {
-          id: 'plan-2',
-          name: 'Enterprise Plan',
-          price: '199.99',
-        },
-        stripeCurrentPeriodEnd: '2024-02-20T00:00:00Z',
-      },
-      {
-        id: 'sub-3',
-        status: 'CANCELED',
-        organizationId: 'org-3',
-        organization: {
-          id: 'org-3',
-          name: 'Startup Co',
-        },
-        plan: {
-          id: 'plan-1',
-          name: 'Pro Plan',
-          price: '49.99',
-        },
-        stripeCurrentPeriodEnd: '2024-01-01T00:00:00Z',
-      },
       ],
     },
   }

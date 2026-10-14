@@ -3,9 +3,6 @@ import { useQuery } from '@apollo/client/react'
 import { AdminBillingSubscriptions as AdminBillingSubscriptionsDocument } from '@nestled-template/shared/sdk'
 import { useState } from 'react'
 
-
-
-
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: 'bg-green-100 text-green-800',
   TRIALING: 'bg-blue-100 text-blue-800',

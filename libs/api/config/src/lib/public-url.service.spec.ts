@@ -35,7 +35,11 @@ describe('PublicUrlService', () => {
 
   describe('tier 2 — proxy-forwarded request origin', () => {
     it('recovers the real public origin when API_URL is a bind address (production case)', async () => {
-      const service = await serviceWith({ apiUrl: 'http://0.0.0.0:8080', host: '0.0.0.0', port: 8080 })
+      const service = await serviceWith({
+        apiUrl: 'http://0.0.0.0:8080',
+        host: '0.0.0.0',
+        port: 8080,
+      })
 
       const origin = service.origin(
         request({ 'x-forwarded-proto': 'https', 'x-forwarded-host': 'api.example.com' }),
@@ -50,7 +54,11 @@ describe('PublicUrlService', () => {
       // bind host to localhost, so config.apiUrl is `http://localhost:8080`, not `http://0.0.0.0:8080`.
       // If a loopback config counted as "configured", the proxy fallback would never fire and a
       // member would still be handed an unreachable URL — just a different one.
-      const service = await serviceWith({ apiUrl: 'http://localhost:8080', host: '0.0.0.0', port: 8080 })
+      const service = await serviceWith({
+        apiUrl: 'http://localhost:8080',
+        host: '0.0.0.0',
+        port: 8080,
+      })
 
       const origin = service.origin(
         request({ 'x-forwarded-proto': 'https', 'x-forwarded-host': 'api.example.com' }),
@@ -102,7 +110,11 @@ describe('PublicUrlService', () => {
 
   describe('tier 4 — localhost', () => {
     it('never emits a bind address when there is no config and no request', async () => {
-      const service = await serviceWith({ apiUrl: 'http://0.0.0.0:8080', host: '0.0.0.0', port: 8080 })
+      const service = await serviceWith({
+        apiUrl: 'http://0.0.0.0:8080',
+        host: '0.0.0.0',
+        port: 8080,
+      })
 
       const origin = service.origin()
 

@@ -12,6 +12,7 @@ export default defineConfig({
       'src/support/database-guards.spec.ts',
       'src/support/e2e-runner.spec.ts',
       'src/support/sql-runner.spec.ts',
+      'src/support/test-setup.spec.ts',
     ],
     passWithNoTests: false,
   },
