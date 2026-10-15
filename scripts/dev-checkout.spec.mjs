@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -13,10 +15,41 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { devDockerSettings, mainCheckoutRoot } from './dev-checkout.mjs'
+import {
+  definesVariable,
+  devDockerSettings,
+  lastAssignment,
+  mainCheckoutRoot,
+} from './dev-checkout.mjs'
 import { gitExecutable } from './typecheck-project.mjs'
 
 const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+const scriptsDir = join(workspaceRoot, 'scripts')
+
+// The scripts under test and every helper they source (`source "$X/<name>.sh"`), followed through
+// the helpers, so a new helper is copied into the fixtures without editing this list.
+function scriptsWithHelpers(entryPoints) {
+  const scripts = new Set()
+  const pending = [...entryPoints]
+  while (pending.length > 0) {
+    const script = pending.pop()
+    if (scripts.has(script)) continue
+    scripts.add(script)
+    const text = readFileSync(join(scriptsDir, script), 'utf8')
+    for (const [, helper] of text.matchAll(/^\s*(?:source|\.)\s+"[^"\n]*\/([\w.-]+\.sh)"/gm)) {
+      pending.push(helper)
+    }
+  }
+  return [...scripts]
+}
+
+const fixtureScripts = scriptsWithHelpers(['dev-docker.sh', 'test-db.sh'])
+
+// The test database's default name, as test-db.sh builds its default URL (a clone renames it).
+const testDatabaseName = /localhost:\$\{TEST_DB_PORT\}\/([\w-]+)/.exec(
+  readFileSync(join(scriptsDir, 'test-db.sh'), 'utf8'),
+)?.[1]
+assert.ok(testDatabaseName, 'test-db.sh builds its default URL from TEST_DB_PORT')
 const scratch = []
 
 afterEach(() => {
@@ -48,8 +81,8 @@ function checkouts() {
   for (const root of [main, outside]) {
     mkdirSync(join(root, 'scripts'), { recursive: true })
     mkdirSync(join(root, '.dev'))
-    for (const script of ['dev-docker.sh', 'dev-checkout.sh', 'test-db.sh']) {
-      copyFileSync(join(workspaceRoot, 'scripts', script), join(root, 'scripts', script))
+    for (const script of fixtureScripts) {
+      copyFileSync(join(scriptsDir, script), join(root, 'scripts', script))
     }
     writeFileSync(join(root, '.dev/docker-compose.yml'), 'services: {}\n')
   }
@@ -87,6 +120,10 @@ function devDocker(root, bin, env = {}) {
 }
 
 void describe('dev checkout resolution (node)', () => {
+  void it('copies every helper the scripts source into the fixtures', () => {
+    assert.ok(fixtureScripts.includes('dev-checkout.sh'), fixtureScripts.join(', '))
+  })
+
   void it('resolves a main checkout, a linked worktree and a folder outside git', () => {
     const { main, worktree, outside } = checkouts()
     assert.equal(mainCheckoutRoot(main), main)
@@ -140,6 +177,80 @@ void describe('dev checkout resolution (node)', () => {
   void it('has no .env to offer when neither checkout has one', () => {
     const { worktree } = checkouts()
     assert.equal(devDockerSettings(worktree, {}).envFile, undefined)
+  })
+
+  void it('reads the last assignment of a key, as compose does', () => {
+    const contents = [
+      'NESTLED_DEV_DATA_DIR=/first',
+      'NESTLED_DEV_DATA_DIR_OTHER=/not-this-key',
+      '  export   NESTLED_DEV_DATA_DIR =  /last  ',
+      '',
+    ].join('\n')
+    assert.equal(lastAssignment(contents, 'NESTLED_DEV_DATA_DIR'), '/last')
+    assert.equal(lastAssignment('OTHER=1\n', 'NESTLED_DEV_DATA_DIR'), undefined)
+
+    const { main, worktree } = checkouts()
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR=/elsewhere\nNESTLED_DEV_DATA_DIR=\n')
+    assert.equal(definesVariable(join(main, '.env'), 'NESTLED_DEV_DATA_DIR'), false)
+    assert.deepEqual(devDockerSettings(worktree, {}).composeVariables, {
+      NESTLED_DEV_DATA_DIR: join(main, '.dev', 'tmp'),
+    })
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR=\nNESTLED_DEV_DATA_DIR=/elsewhere\n')
+    assert.deepEqual(devDockerSettings(worktree, {}).composeVariables, {})
+  })
+
+  void it("skips assignment-looking lines inside another key's multi-line quoted value", () => {
+    for (const quote of ['"', "'"]) {
+      const contents = [
+        'NESTLED_DEV_DATA_DIR=/actual',
+        `NOTES=${quote}example`,
+        'NESTLED_DEV_DATA_DIR=',
+        `${quote}`,
+        '',
+      ].join('\n')
+      assert.equal(lastAssignment(contents, 'NESTLED_DEV_DATA_DIR'), '/actual', quote)
+    }
+    assert.equal(
+      lastAssignment(
+        'NOTES="a \\" quote\nNESTLED_DEV_DATA_DIR=\n"\nNESTLED_DEV_DATA_DIR=/x\n',
+        'NESTLED_DEV_DATA_DIR',
+      ),
+      '/x',
+    )
+    // Compose reads a backslash-escaped quote as part of the value in single quotes too.
+    const escapedSingle = [
+      'NESTLED_DEV_DATA_DIR=/actual',
+      "NOTES='It\\'s an example",
+      'NESTLED_DEV_DATA_DIR=',
+      "end'",
+      '',
+    ].join('\n')
+    assert.equal(lastAssignment(escapedSingle, 'NESTLED_DEV_DATA_DIR'), '/actual')
+    // An escaped backslash does not escape the quote after it: `'a\\'` closes.
+    assert.equal(
+      lastAssignment("NOTES='a\\\\'\nNESTLED_DEV_DATA_DIR=/x\n", 'NESTLED_DEV_DATA_DIR'),
+      '/x',
+    )
+    const { main, worktree } = checkouts()
+    writeFileSync(join(main, '.env'), escapedSingle)
+    assert.deepEqual(devDockerSettings(worktree, {}).composeVariables, {})
+    assert.throws(
+      () => lastAssignment('NESTLED_DEV_DATA_DIR="/a\n/b"\n', 'NESTLED_DEV_DATA_DIR'),
+      /spans lines/,
+    )
+  })
+
+  void it('refuses an unquoted value that starts with #, which compose and dotenv read differently', () => {
+    const { main, worktree } = checkouts()
+    for (const line of ['NESTLED_DEV_DATA_DIR= # shared data', 'NESTLED_DEV_DATA_DIR=#x']) {
+      writeFileSync(join(main, '.env'), `${line}\n`)
+      assert.throws(() => devDockerSettings(worktree, {}), /starts with '#'/, line)
+    }
+    // Quoted, the value is unambiguous: an empty one is unset, a `#` inside quotes is kept.
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR="" # shared data\n')
+    assert.equal(definesVariable(join(main, '.env'), 'NESTLED_DEV_DATA_DIR'), false)
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR="#data" # shared data\n')
+    assert.equal(definesVariable(join(main, '.env'), 'NESTLED_DEV_DATA_DIR'), true)
   })
 })
 
@@ -242,7 +353,7 @@ void describe('dev checkout resolution (scripts/dev-docker.sh)', () => {
     })
     assert.equal(
       url.stdout.trim(),
-      'postgresql://postgres:postgres@localhost:55433/nestled_template_test',
+      `postgresql://postgres:postgres@localhost:55433/${testDatabaseName}`,
     )
     const mainData = join(main, '.dev/tmp/postgres-test')
     const worktreeData = join(worktree, '.dev/tmp/postgres-test')
@@ -256,5 +367,279 @@ void describe('dev checkout resolution (scripts/dev-docker.sh)', () => {
     assert.equal(reset.status, 0, reset.stderr)
     assert.equal(existsSync(mainData), false)
     assert.equal(existsSync(worktreeData), true)
+  })
+})
+
+// A docker stub that records each call, reports `image` for `inspect`, and for `run` deletes what
+// the throwaway container would (the folder mounted at /target), and a pnpm stub that records its
+// arguments and the database URL it was given.
+function recordingStubs(base, { image = 'postgres:16' } = {}) {
+  const bin = join(base, 'recording-bin')
+  const log = join(base, 'calls.log')
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(
+    join(bin, 'docker'),
+    [
+      '#!/bin/bash',
+      `printf 'docker %s\\n' "$*" >> '${log}'`,
+      'case "$1" in',
+      `  inspect) ${image ? `echo '${image}'` : 'exit 1'} ;;`,
+      '  run)',
+      '    for arg in "$@"; do',
+      '      case "$arg" in *:/target) chmod -R u+w "${arg%:/target}"; find "${arg%:/target}" -mindepth 1 -delete ;; esac',
+      '    done',
+      '    ;;',
+      'esac',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  )
+  writeFileSync(
+    join(bin, 'pnpm'),
+    `#!/bin/bash\nprintf 'pnpm %s DATABASE_URL=%s\\n' "$*" "$DATABASE_URL" >> '${log}'\n`,
+    { mode: 0o755 },
+  )
+  const calls = () => (existsSync(log) ? readFileSync(log, 'utf8') : '')
+  return { bin, calls }
+}
+
+function testDb(root, bin, command, env = {}) {
+  const base = { ...process.env, NESTLED_DEV_DATA_DIR: '', PATH: `${bin}:${process.env.PATH}` }
+  delete base.TEST_DATABASE_URL
+  delete base.POSTGRES_TEST_PORT
+  delete base.E2E_ALLOW_NON_DISPOSABLE_DB
+  return spawnSync('bash', [join(root, 'scripts/test-db.sh'), command], {
+    cwd: root,
+    env: { ...base, ...env },
+    encoding: 'utf8',
+  })
+}
+
+void describe('scripts/test-db.sh reads .env as compose does, and acts only on what it can resolve', () => {
+  void it('reads the last assignment and drops an unquoted inline comment', () => {
+    const { main, bin } = checkouts()
+    writeFileSync(
+      join(main, '.env'),
+      'POSTGRES_TEST_PORT=55433\nPOSTGRES_TEST_PORT=55444 # block 4\n',
+    )
+    const url = testDb(main, bin, 'url')
+    assert.equal(url.status, 0, url.stderr)
+    assert.match(url.stdout.trim(), /@localhost:55444\//)
+  })
+
+  void it('resets the data directory of the last assignment', () => {
+    const { main, bin } = checkouts()
+    const first = join(main, 'first-data')
+    const last = join(main, 'last-data')
+    writeFileSync(
+      join(main, '.env'),
+      `NESTLED_DEV_DATA_DIR=${first}\nNESTLED_DEV_DATA_DIR=${last}\n`,
+    )
+    mkdirSync(join(first, 'postgres-test'), { recursive: true })
+    mkdirSync(join(last, 'postgres-test'), { recursive: true })
+    const reset = testDb(main, bin, 'reset')
+    assert.equal(reset.status, 0, reset.stderr)
+    assert.equal(existsSync(join(last, 'postgres-test')), false)
+    assert.equal(existsSync(join(first, 'postgres-test')), true)
+  })
+
+  void it('resets the folder compose mounts when a multi-line value holds an assignment-like line', () => {
+    const { main, bin } = checkouts()
+    const actual = join(main, 'actual-data')
+    writeFileSync(
+      join(main, '.env'),
+      `NESTLED_DEV_DATA_DIR=${actual}\nNOTES='example\nNESTLED_DEV_DATA_DIR=\n'\n`,
+    )
+    mkdirSync(join(actual, 'postgres-test'), { recursive: true })
+    mkdirSync(join(main, '.dev/tmp/postgres-test'), { recursive: true })
+    const reset = testDb(main, bin, 'reset')
+    assert.equal(reset.status, 0, reset.stderr)
+    assert.equal(existsSync(join(actual, 'postgres-test')), false)
+    assert.equal(existsSync(join(main, '.dev/tmp/postgres-test')), true)
+  })
+
+  void it('resets the mounted folder when a multi-line value with an escaped single quote holds an assignment-like line', () => {
+    const { main, bin } = checkouts()
+    const actual = join(main, 'actual-data')
+    writeFileSync(
+      join(main, '.env'),
+      `NESTLED_DEV_DATA_DIR=${actual}\nNOTES='It\\'s an example\nNESTLED_DEV_DATA_DIR=\nend'\n`,
+    )
+    mkdirSync(join(actual, 'postgres-test'), { recursive: true })
+    mkdirSync(join(main, '.dev/tmp/postgres-test'), { recursive: true })
+    const reset = testDb(main, bin, 'reset')
+    assert.equal(reset.status, 0, reset.stderr)
+    assert.equal(existsSync(join(actual, 'postgres-test')), false)
+    assert.equal(existsSync(join(main, '.dev/tmp/postgres-test')), true)
+  })
+
+  void it('refuses a quoted data directory with a backslash, which compose reads as an escape', () => {
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    for (const line of ["NESTLED_DEV_DATA_DIR='/a\\'b'", 'NESTLED_DEV_DATA_DIR="/a\\"b"']) {
+      writeFileSync(join(main, '.env'), `${line}\n`)
+      const reset = testDb(main, bin, 'reset')
+      assert.notEqual(reset.status, 0, line)
+      assert.match(reset.stderr, /backslash/, line)
+    }
+    assert.equal(calls(), '')
+  })
+
+  void it('refuses a data directory whose quoted value spans lines', () => {
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR="/a\n/b"\n')
+    const reset = testDb(main, bin, 'reset')
+    assert.notEqual(reset.status, 0)
+    assert.match(reset.stderr, /spans lines/)
+    assert.equal(calls(), '')
+  })
+
+  void it('refuses an unquoted value that starts with #, before stopping anything', () => {
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    mkdirSync(join(main, '.dev/tmp/postgres-test'), { recursive: true })
+    for (const line of ['NESTLED_DEV_DATA_DIR= # shared data', 'POSTGRES_TEST_PORT=#55433']) {
+      writeFileSync(join(main, '.env'), `${line}\n`)
+      const reset = testDb(main, bin, 'reset')
+      assert.notEqual(reset.status, 0, line)
+      assert.match(reset.stderr, /starts with '#'/, line)
+    }
+    assert.equal(calls(), '')
+    assert.equal(existsSync(join(main, '.dev/tmp/postgres-test')), true)
+  })
+
+  void it('refuses a value compose would interpolate, before stopping anything', () => {
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    for (const line of [
+      'NESTLED_DEV_DATA_DIR=${HOME}/data',
+      'NESTLED_DEV_DATA_DIR="$HOME/data"',
+      'POSTGRES_TEST_PORT=$PORT',
+    ]) {
+      writeFileSync(join(main, '.env'), `${line}\n`)
+      const reset = testDb(main, bin, 'reset')
+      assert.notEqual(reset.status, 0, line)
+      assert.match(reset.stderr, /interpolates/, line)
+    }
+    assert.equal(calls(), '')
+  })
+
+  void it('takes a single-quoted $ literally, as compose does', () => {
+    const { main, bin } = checkouts()
+    const configured = join(main, 'data$literal')
+    writeFileSync(join(main, '.env'), `NESTLED_DEV_DATA_DIR='${configured}'\n`)
+    mkdirSync(join(configured, 'postgres-test'), { recursive: true })
+    const reset = testDb(main, bin, 'reset')
+    assert.equal(reset.status, 0, reset.stderr)
+    assert.equal(existsSync(join(configured, 'postgres-test')), false)
+  })
+
+  void it('reports a missing data directory instead of claiming it was cleared', () => {
+    const { main, bin } = checkouts()
+    const reset = testDb(main, bin, 'reset')
+    assert.equal(reset.status, 0, reset.stderr)
+    assert.match(reset.stdout, /No data directory at .*postgres-test, so nothing was deleted/)
+    assert.doesNotMatch(reset.stdout, /reset complete/)
+  })
+
+  void it('clears a data directory it cannot delete through a throwaway container', t => {
+    if (process.getuid?.() === 0) {
+      t.skip('root can delete the folder directly')
+      return
+    }
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    const data = join(main, '.dev/tmp/postgres-test')
+    mkdirSync(join(data, 'base'), { recursive: true })
+    writeFileSync(join(data, 'base/file'), 'row')
+    chmodSync(join(data, 'base'), 0o500)
+    const reset = testDb(main, bin, 'reset')
+    assert.equal(reset.status, 0, reset.stderr)
+    assert.equal(existsSync(data), false)
+    assert.ok(
+      calls().includes(`docker run --rm -v ${data}:/target --entrypoint sh postgres:16`),
+      calls(),
+    )
+    assert.match(reset.stdout, /reset complete/)
+  })
+
+  void it('says how to delete the folder when there is no image to clear it with', t => {
+    if (process.getuid?.() === 0) {
+      t.skip('root can delete the folder directly')
+      return
+    }
+    const { main } = checkouts()
+    const { bin } = recordingStubs(main, { image: '' })
+    const data = join(main, '.dev/tmp/postgres-test')
+    mkdirSync(join(data, 'base'), { recursive: true })
+    writeFileSync(join(data, 'base/file'), 'row')
+    chmodSync(join(data, 'base'), 0o500)
+    try {
+      const reset = testDb(main, bin, 'reset')
+      assert.notEqual(reset.status, 0)
+      assert.match(reset.stderr, /sudo rm -rf/)
+    } finally {
+      chmodSync(join(data, 'base'), 0o700)
+    }
+  })
+
+  void it('migrates only a disposable test database', () => {
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    const local = 'postgresql://postgres:postgres@localhost:55433/app_test'
+    const ok = testDb(main, bin, 'migrate', { TEST_DATABASE_URL: local })
+    assert.equal(ok.status, 0, ok.stderr)
+    assert.ok(calls().includes(`pnpm prisma migrate deploy DATABASE_URL=${local}`), calls())
+
+    for (const url of [
+      'postgresql://postgres:postgres@db.example.com:5432/app_test',
+      'postgresql://postgres:postgres@localhost:5432/app',
+    ]) {
+      const refused = testDb(main, bin, 'migrate', { TEST_DATABASE_URL: url })
+      assert.notEqual(refused.status, 0, url)
+      assert.match(refused.stderr, /Refusing to migrate/, url)
+      const allowed = testDb(main, bin, 'migrate', {
+        TEST_DATABASE_URL: url,
+        E2E_ALLOW_NON_DISPOSABLE_DB: '1',
+      })
+      assert.equal(allowed.status, 0, allowed.stderr)
+    }
+    for (const url of [
+      'postgresql://postgres:postgres@localhost:5432/app_test?host=db.example.com',
+      'postgresql://postgres:postgres@localhost:5432/app_test#x',
+      'mysql://root@localhost:3306/app_test',
+    ]) {
+      const refused = testDb(main, bin, 'migrate', {
+        TEST_DATABASE_URL: url,
+        E2E_ALLOW_NON_DISPOSABLE_DB: '1',
+      })
+      assert.notEqual(refused.status, 0, url)
+      assert.match(refused.stderr, /not a plain postgresql:\/\/ URL/, url)
+    }
+    assert.equal(calls().match(/prisma migrate deploy/g)?.length, 3)
+  })
+})
+
+void describe('scripts/dev-docker.sh reads .env as compose does', () => {
+  void it('honours the last assignment of the data directory', () => {
+    const { main, worktree, bin } = checkouts()
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR=/elsewhere\nNESTLED_DEV_DATA_DIR=\n')
+    assert.equal(devDocker(worktree, bin).data, `${main}/.dev/tmp`)
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR=\nNESTLED_DEV_DATA_DIR=/elsewhere\n')
+    assert.equal(devDocker(worktree, bin).data, '')
+  })
+
+  void it('refuses an unquoted data directory that starts with #', () => {
+    const { main, worktree, bin } = checkouts()
+    writeFileSync(join(main, '.env'), 'NESTLED_DEV_DATA_DIR= # shared data\n')
+    const result = spawnSync('bash', [join(worktree, 'scripts/dev-docker.sh'), 'config'], {
+      cwd: worktree,
+      env: { ...process.env, NESTLED_DEV_DATA_DIR: '', PATH: `${bin}:${process.env.PATH}` },
+      encoding: 'utf8',
+    })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /starts with '#'/)
+    assert.equal(result.stdout, '')
   })
 })

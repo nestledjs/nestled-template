@@ -25,11 +25,15 @@ afterEach(() => {
 })
 
 describe('test database logging', () => {
-  it('test setup logs the database by host, port and name, never the password', async () => {
+  it('test setup reports the database by host, port and name, never the password', async () => {
+    // Every variable the module reads is stubbed, so the result does not depend on the caller's env.
     vi.stubEnv('TEST_DATABASE_URL', URL_WITH_PASSWORD)
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    await import('./test-setup')
-    const output = log.mock.calls.flat().join('\n')
+    vi.stubEnv('E2E_API_PORT', '3999')
+    vi.stubEnv('HOST', 'localhost')
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { testSetupMessages } = await import('./test-setup')
+    const output = testSetupMessages(URL_WITH_PASSWORD).join('\n')
+    expect(output).toContain('http://localhost:3999')
     expect(output).toContain('localhost:55999/app_test')
     expect(output).not.toContain(PASSWORD)
   })

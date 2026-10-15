@@ -1,0 +1,98 @@
+id: 2026-10-15-env-reading-and-test-db-safety
+title: >-
+  The dev scripts read .env as docker compose does, and test-db.sh refuses what it cannot resolve
+priority: high
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  One .env reader for the dev scripts. scripts/dev-checkout.sh defines nestled_env_line,
+  nestled_env_sets and nestled_env_value, and scripts/dev-checkout.mjs has the matching
+  lastAssignment and definesVariable. They follow docker compose. The last assignment of a key wins
+  (the readers used to take the first). A quoted value is kept up to its closing quote, and an
+  unquoted value's ` # comment` is dropped. An empty or quoted-empty value counts as unset. Lines
+  inside another key's multi-line quoted value are not read as assignments (a backslash escapes the
+  next character in single quotes as well as double, so `'It\'s` does not end the value), and a key
+  the scripts need whose own quoted value spans lines is refused.
+
+  test-db.sh's read_env uses nestled_env_value. It exits with a message, before stopping or deleting
+  anything, on a value it cannot read the way compose does:
+    - a `$` in an unquoted or double-quoted value, which compose interpolates and the script would
+      take literally (a single-quoted `$` is literal in both and is accepted);
+    - a backslash inside a quoted value (compose reads `\'` and `\"` as escaped quotes in either
+      kind of quotes);
+    - an unquoted value that starts with `#`, such as `KEY= # note`.
+
+  The last case is ambiguous. docker compose (measured on v5.6) reads it as the value `# note`,
+  while dotenv, which Nx and the API load, reads it as empty. dev-docker.sh and pnpm db-update refuse
+  it too, but only from a worktree, where it decides the data directory.
+
+  test-db.sh reset:
+    - reads the container's image before `down`;
+    - when the data folder cannot be deleted (Postgres makes it 0700 and owned by the container's
+      user, which on rootful Linux Docker is not you), empties it from a throwaway container of
+      that image (removing the emptied folder itself is best effort, since Postgres initializes an
+      existing empty one), or, with no image to use, stops and prints the `sudo rm -rf` to run;
+    - when there is no data folder, says that nothing was deleted, instead of "reset complete";
+    - builds the folder as `.dev/tmp`, no longer `.dev/./tmp`.
+
+  test-db.sh migrate applies the disposable-database guard the e2e setup uses before reset, migrate,
+  push and seed. The URL must be postgres(ql)://, on localhost, 127.0.0.1 or [::1], and named
+  *_test. E2E_ALLOW_NON_DISPOSABLE_DB=1 admits another host or name, but never a query string or
+  fragment.
+
+  runOnTestDatabase() includes psql's stderr, capped at 2000 characters, in the error it throws. The
+  global setup's psql client now captures stderr, and the `SELECT 1` probe prints that error under
+  "Test database is not accessible" instead of discarding it.
+
+  scripts/dev-checkout.spec.mjs and apps/api-e2e/src/support/database-guards.spec.ts cover each
+  case. .env.example and apps/api-e2e/README.md say what the scripts accept.
+why: >
+  test-db.sh reset deletes the folder it believes compose mounts. It read the first assignment of a
+  repeated key, and took `${HOME}/data` literally. In either case it deleted a different folder from
+  the one the container used, or found none, and still reported "Test database reset complete" with
+  every row intact. On rootful Linux its `rm -rf` failed on the container-owned 0700 folder.
+  `test-db.sh migrate` ran `prisma migrate deploy` against any TEST_DATABASE_URL, which has no guard
+  of its own. A failing psql probe or reset said only "exit 2", because stderr was discarded.
+affectedPaths:
+  - scripts/dev-checkout.sh
+  - scripts/dev-checkout.mjs
+  - scripts/dev-checkout.spec.mjs
+  - scripts/test-db.sh
+  - apps/api-e2e/src/support/database-guards.ts
+  - apps/api-e2e/src/support/database-guards.spec.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/README.md
+  - .env.example
+verification:
+  - node --test scripts/*.spec.mjs
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx run api-e2e:e2e
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    A project that already fixed its .env reader or test-db.sh locally (last assignment, an inline
+    `KEY= # comment`, a `$` refusal in reset, a migrate guard) should take the template's version
+    where it is equivalent, so the next template change applies cleanly. Keep the project's own
+    container name, default port, test database name and data-directory variable name. Record
+    `adapted`. Note that this note refuses `KEY= # note` rather than reading it as empty, because
+    compose and dotenv disagree on it.
+  - >
+    Check every .env reader the project has, not only test-db.sh: dev-checkout.sh/.mjs, any script
+    that greps .env for a port, and helper scripts that test-db.sh or dev-docker.sh source.
+    @nestledjs/doctor's readEnvValue is a published package and is fixed separately; do not patch
+    it in node_modules.
+  - >
+    If the project's test database image is not the stock postgres image (pgvector and the like),
+    nothing changes: reset clears with whatever image the container ran. Projects whose reset
+    re-runs init scripts should check that every relative bind mount in .dev/docker-compose.yml
+    (initdb included) resolves against the same folder test-db.sh uses.
+  - >
+    Shell specs that stub docker: a stub that answers every command the same way now also receives
+    `docker inspect -f {{.Config.Image}} <container>` before `down`. Its output is only used when
+    the plain delete fails.
+  - >
+    Per-file `git apply` loops when adapting this note: run them in bash with `while read -r f`.
+    zsh does not word-split an unquoted variable, so it reports a false "clean", and macOS bash 3.2
+    has no `mapfile`.

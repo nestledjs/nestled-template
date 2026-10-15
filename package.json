@@ -71,7 +71,7 @@
     "sdk": "graphql-codegen --config libs/shared/sdk/src/codegen.yml",
     "sdk:watch": "pnpm sdk --watch",
     "dev:web": "nx serve web",
-    "typecheck": "pnpm nx run-many -t typecheck && pnpm typecheck:workspace",
+    "typecheck": "pnpm nx run-many -t typecheck --parallel=1 && pnpm typecheck:workspace",
     "typecheck:workspace": "node scripts/typecheck-project.mjs --workspace scripts tools",
     "typecheck:watch": "cd apps/web && react-router typegen --watch",
     "storybook:web-ui": "nx storybook web-ui",

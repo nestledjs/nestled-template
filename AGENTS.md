@@ -102,6 +102,40 @@ pnpm typecheck          # every project: app/lib, spec and storybook configs (sc
                         # then scripts/ and tools/ (pnpm typecheck:workspace)
 ```
 
+A script under `scripts/` that imports a lib (`@nestled-template/...`) runs with
+`pnpm tsx --tsconfig scripts/tsconfig.json scripts/<name>.ts`. tsx reads `./tsconfig.json` by
+default, and the workspace root deliberately has none, so the path aliases would not resolve.
+
+### Typecheck Memory
+
+`pnpm typecheck` runs one Nx project at a time (`--parallel=1`). Peak memory is roughly the heaviest
+compiler times the parallelism, plus about 0.5 GB for Nx, pnpm and the runner. The heaviest config
+in a template clone is `apps/api` (about 1.3 GB, mostly third-party type declarations). Measured on
+a template clone in a 3 GB Linux container, uncached:
+
+| `--parallel`   | process-tree peak                  |
+| -------------- | ---------------------------------- |
+| 1              | about 1.85 GB                      |
+| 2              | about 2.5 GB                       |
+| 3 (Nx default) | over 3.2 GB: out of memory at 3 GB |
+
+- Choose parallelism per host, not per repository: keep 1 on a host with 3 GB or less, use 2 on
+  4 GB, and Nx's default on 5–6 GB or more. A clone with a heavier `apps/api` (more SDK clients)
+  measures before raising it.
+- Measure the peak of the whole process tree, not one process: run
+  `NX_DAEMON=false pnpm exec nx run-many -t typecheck --parallel=<n> --skip-nx-cache` inside a
+  container with a memory limit (`docker run --memory=3g --memory-swap=3g ...`), or sample the summed
+  RSS of the command's process tree every second. `time -l`/`-v` reports a single process only.
+- For a one-off faster run on a large host, pass the flag directly:
+  `pnpm exec nx run-many -t typecheck --parallel=3 && pnpm typecheck:workspace`.
+- `NX_ISOLATE_PLUGINS=false` roughly halves the memory of Nx's project-graph phase (one worker per
+  plugin, about 1.9 GB down to 0.9 GB on a warm cache). It does not lower the uncached peak, which
+  the compilers set. The `typecheck` script does not set it, because an inline `VAR=value` fails in
+  Windows `cmd` and the template has no cross-platform env helper; on a small host set it in the
+  shell (`export NX_ISOLATE_PLUGINS=false`, or `$env:NX_ISOLATE_PLUGINS='false'` in PowerShell).
+  Nx already turns plugin isolation off in the sandboxes it detects.
+- CI keeps Nx's default parallelism (`.github/workflows/ci.yml`); hosted runners have the memory.
+
 ### Prisma Operations
 
 ```bash

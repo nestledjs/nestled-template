@@ -48,6 +48,8 @@ export const formTheme = FormThemeSchema.parse({
     indeterminate: 'bg-gray-300 border-gray-400',
     readonlyCheckedIcon: (
       <svg
+        role="img"
+        aria-label="Checked"
         className="w-5 h-5 text-emerald-600"
         fill="none"
         viewBox="0 0 24 24"
@@ -59,6 +61,8 @@ export const formTheme = FormThemeSchema.parse({
     ),
     readonlyUncheckedIcon: (
       <svg
+        role="img"
+        aria-label="Not checked"
         className="w-5 h-5 text-red-500"
         fill="none"
         viewBox="0 0 24 24"
@@ -88,6 +92,8 @@ export const formTheme = FormThemeSchema.parse({
     errorText: 'text-xs text-red-600 dark:text-red-400',
     checkedIcon: (
       <svg
+        aria-hidden="true"
+        focusable="false"
         className="w-4 h-4 text-white"
         fill="none"
         viewBox="0 0 24 24"
@@ -100,6 +106,8 @@ export const formTheme = FormThemeSchema.parse({
     uncheckedIcon: null, // No icon when unchecked by default
     readonlyCheckedIcon: (
       <svg
+        role="img"
+        aria-label="Checked"
         className="w-4 h-4 text-emerald-600"
         fill="none"
         viewBox="0 0 24 24"
@@ -111,6 +119,8 @@ export const formTheme = FormThemeSchema.parse({
     ),
     readonlyUncheckedIcon: (
       <svg
+        role="img"
+        aria-label="Not checked"
         className="w-4 h-4 text-gray-400"
         fill="none"
         viewBox="0 0 24 24"
@@ -271,6 +281,8 @@ export const formTheme = FormThemeSchema.parse({
     readOnlyUnselected: 'w-5 h-5 text-red-600',
     readOnlyIcon: (
       <svg
+        role="img"
+        aria-label="Selected"
         className="w-5 h-5 text-emerald-600"
         fill="none"
         viewBox="0 0 24 24"
@@ -282,6 +294,8 @@ export const formTheme = FormThemeSchema.parse({
     ),
     readOnlyUnselectedIcon: (
       <svg
+        role="img"
+        aria-label="Not selected"
         className="w-5 h-5 text-red-600"
         fill="none"
         viewBox="0 0 24 24"

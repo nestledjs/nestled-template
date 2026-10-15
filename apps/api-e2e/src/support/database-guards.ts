@@ -179,13 +179,29 @@ export function psqlProcessEnvironment(
 /** How global setup reaches the database: the pg runner, or psql given its args and environment. */
 export interface DatabaseClients {
   pg: (databaseUrl: string, statement: string, timeout?: number) => void
-  psql: (args: string[], env: NodeJS.ProcessEnv, timeout?: number) => { status: number | null }
+  psql: (
+    args: string[],
+    env: NodeJS.ProcessEnv,
+    timeout?: number,
+  ) => { status: number | null; stderr?: string | null }
+}
+
+// psql's error output, quoted in the error so a failure says why (a refused connection, a failed
+// login, the statement's own error). Capped, since a failing script can print a great deal.
+const PSQL_STDERR_LIMIT = 2000
+
+function psqlFailureDetail(stderr: string | null | undefined): string {
+  const text = stderr?.trim()
+  if (!text) return ''
+  const shown = text.length > PSQL_STDERR_LIMIT ? `${text.slice(0, PSQL_STDERR_LIMIT)}…` : text
+  return `:\n${shown}`
 }
 
 /**
  * Run a statement on the test database with the client E2E_DATABASE_PROBE selects (see
  * databaseProbe). psql gets the URL through its environment, stops at the first error, and reads
- * no ~/.psqlrc. Throws when the statement fails.
+ * no ~/.psqlrc. Throws when the statement fails, with psql's error output when it gave any (the
+ * psql client must capture stderr for that; libpq never prints the password).
  */
 export function runOnTestDatabase(
   databaseUrl: string,
@@ -205,7 +221,8 @@ export function runOnTestDatabase(
   )
   if (result.status !== 0) {
     throw new Error(
-      `psql failed against ${describeDatabase(databaseUrl)} (exit ${result.status ?? 'signal'})`,
+      `psql failed against ${describeDatabase(databaseUrl)} (exit ${result.status ?? 'signal'})` +
+        psqlFailureDetail(result.stderr),
     )
   }
 }

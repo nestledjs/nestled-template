@@ -1,0 +1,58 @@
+id: 2026-10-15-svg-accessible-names
+title: Inline SVGs in the template's UI have an accessible name or are hidden from assistive tech
+priority: normal
+area: ui
+type: correctness
+delivery: code-patch
+intent: >
+  Every inline SVG that SonarCloud flagged under S1077 ("SVG elements should have an accessible
+  name") in the template's own UI code now either has an accessible name or is hidden. Only
+  attributes change, so there is no visual or behaviour change.
+
+  Decorative icons get `aria-hidden="true" focusable="false"`. These are icons beside visible text,
+  inside a link that already has an `aria-label`, or purely illustrative:
+    - apps/web/app/routes/admin/_index.tsx (the error banner icon);
+    - apps/web/app/routes/admin/settings/_index.tsx (the placeholder illustration);
+    - apps/web/app/routes/mcp-connect.tsx (the chevron in an organization row);
+    - libs/web-ui/src/lib/web-ui-social-links.tsx (the five social icons, whose links are labelled);
+    - the interactive custom checkbox's check mark in libs/shared/styles/src/lib/form-styles.tsx,
+      whose hidden input carries the state.
+
+  Icons that are the only signal of a state get `role="img"` and an `aria-label`. These are the
+  read-only checkbox icons ("Checked", "Not checked") and the read-only radio icons ("Selected",
+  "Not selected") in form-styles.tsx.
+
+  The web-ui avatar's placeholder icon is hidden when an image is given, because the `<img alt>`
+  names the avatar. Without an image it is `role="img"`, labelled with the user's name, or "Avatar"
+  when there is no name.
+why: >
+  Screen readers announced unlabelled SVGs as "image" or skipped state icons silently. A read-only
+  checkbox or radio showed checked or selected only through an icon that had no name, so its value
+  was not available to assistive technology. SonarCloud reports each one as S1077.
+affectedPaths:
+  - apps/web/app/routes/admin/_index.tsx
+  - apps/web/app/routes/admin/settings/_index.tsx
+  - apps/web/app/routes/mcp-connect.tsx
+  - libs/shared/styles/src/lib/form-styles.tsx
+  - libs/web-ui/src/lib/web-ui-avatar.tsx
+  - libs/web-ui/src/lib/web-ui-social-links.tsx
+verification:
+  - pnpm exec nx run-many -t typecheck,lint,test -p web,web-ui,styles --parallel=1
+  - pnpm exec prettier --check .
+agentHints:
+  - >
+    Classify each SVG by role before adding attributes. Hide it (`aria-hidden="true"
+    focusable="false"`) when visible text or a labelled parent already says what it means. Name it
+    (`role="img"` plus `aria-label`) when it is the only signal of a state or of content. Never do
+    both on one element.
+  - >
+    Do the same for the project's own inline SVGs outside these files. Listing the project's
+    tsconfigs in `sonar.typescript.tsconfigPaths` (2026-10-14-test-gate-follow-ups-2) re-baselines
+    SonarCloud: S1077 counts jump on old code at the first full analysis after that change, without
+    any new code. Fixing them at their call sites, as here, clears the gate. The
+    @nestledjs/data-browser and @nestledjs/shared-components packages carry their own S1077 findings,
+    which reach projects through package releases, not this note.
+  - >
+    A project whose form styles were customized keeps its own classes and icons and adds only the
+    attributes. Check tests that query these icons by role: `getByRole('img', { name: 'Checked' })`
+    now matches the read-only icons.

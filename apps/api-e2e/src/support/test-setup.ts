@@ -45,7 +45,16 @@ if (!e2eGlobal.__AXIOS_AGENT_CLEANUP_REGISTERED__) {
 // Global test configuration
 process.env.NODE_ENV = 'test'
 
-// The API server is started against this database by global-setup — never the dev database.
-console.log(`Test setup: axios base URL set to ${axios.defaults.baseURL}`)
-// Host, port and database name only: the URL carries the password, and this line reaches CI logs.
-console.log(`Test setup: Using TEST database - ${describeDatabase(testDatabaseUrl)}`)
+/**
+ * What test setup reports: the API base URL and the test database the API is started against by
+ * global-setup (never the dev database). The database is shown by host, port and name only: the URL
+ * carries the password, and these lines reach CI logs.
+ */
+export function testSetupMessages(databaseUrl: string = testDatabaseUrl): string[] {
+  return [
+    `Test setup: axios base URL set to ${axios.defaults.baseURL}`,
+    `Test setup: Using TEST database - ${describeDatabase(databaseUrl)}`,
+  ]
+}
+
+for (const message of testSetupMessages()) console.log(message)

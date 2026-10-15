@@ -70,6 +70,8 @@ export default function McpConnectPage() {
                 )}
                 <p className="flex-1 text-sm font-medium text-white truncate">{org.name}</p>
                 <svg
+                  aria-hidden="true"
+                  focusable="false"
                   className="h-4 w-4 flex-shrink-0 text-zinc-500"
                   fill="none"
                   stroke="currentColor"

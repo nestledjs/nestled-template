@@ -300,6 +300,39 @@ function compileFiles(ts, workspaceRoot, configPath, fileNames) {
   return diagnostics.length > 0 ? 1 : 0
 }
 
+// Compile every inspected config, one at a time; returns how many failed. A config with files in a
+// nested project compiles its own files only; the rest run through tsc.
+function compileConfigs(ts, workspaceRoot, inspected, display) {
+  let failed = 0
+  for (const config of inspected) {
+    const nested = config.nestedFileCount
+      ? `, ${config.nestedFileCount} in nested projects left to them`
+      : ''
+    console.log(`→ ${display(config.configPath)} (${config.fileCount} files${nested})`)
+    const status = config.nestedFileCount
+      ? compileFiles(ts, workspaceRoot, config.configPath, config.fileNames)
+      : runTsc(workspaceRoot, config.configPath)
+    if (status !== 0) failed += 1
+  }
+  return failed
+}
+
+// Report tracked TypeScript files no checked config covers, naming the twin that shadows one.
+function reportUncovered(uncovered, inspected, projectRoot, display) {
+  const covered = new Set(inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)))
+  console.error(
+    `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
+  )
+  for (const file of uncovered) {
+    const twin = shadowingTwin(file, covered)
+    const reason = twin
+      ? ` (shadowed by ${basename(twin)}: include matching keeps one file per name; rename one)`
+      : ''
+    console.error(`    ${display(file)}${reason}`)
+  }
+  console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
+}
+
 export function main(argv, workspaceRoot = process.cwd()) {
   if (argv[0] === '--workspace') return workspaceMain(argv.slice(1), workspaceRoot)
   const [projectArgument, ...explicitConfigs] = argv
@@ -325,35 +358,8 @@ export function main(argv, workspaceRoot = process.cwd()) {
   // Uncovered files fail the run, but every config is still compiled, so one run reports both the
   // coverage gap and every type error in what is covered.
   const uncovered = uncoveredFiles(workspaceRoot, projectRoot, inspected)
-  let failed = 0
-  for (const config of inspected) {
-    const nested = config.nestedFileCount
-      ? `, ${config.nestedFileCount} in nested projects left to them`
-      : ''
-    console.log(`→ ${display(config.configPath)} (${config.fileCount} files${nested})`)
-    const status = config.nestedFileCount
-      ? compileFiles(ts, workspaceRoot, config.configPath, config.fileNames)
-      : runTsc(workspaceRoot, config.configPath)
-    if (status !== 0) {
-      failed += 1
-    }
-  }
-  if (uncovered.length > 0) {
-    const covered = new Set(
-      inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)),
-    )
-    console.error(
-      `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
-    )
-    for (const file of uncovered) {
-      const twin = shadowingTwin(file, covered)
-      const reason = twin
-        ? ` (shadowed by ${basename(twin)}: include matching keeps one file per name; rename one)`
-        : ''
-      console.error(`    ${display(file)}${reason}`)
-    }
-    console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
-  }
+  const failed = compileConfigs(ts, workspaceRoot, inspected, display)
+  if (uncovered.length > 0) reportUncovered(uncovered, inspected, projectRoot, display)
   return failed > 0 || uncovered.length > 0 ? 1 : 0
 }
 

@@ -22,29 +22,91 @@ import { basename, dirname, join, resolve } from 'node:path'
 export function mainCheckoutRoot(root) {
   const dotGit = join(root, '.git')
   if (!existsSync(dotGit) || statSync(dotGit).isDirectory()) return root
-  const gitDirLine = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, 'utf8'))
-  if (!gitDirLine) return root
-  const gitDir = resolve(root, gitDirLine[1])
+  // A line scan rather than a lazy regex, which backtracks super-linearly on a long line.
+  const gitDirPath = readFileSync(dotGit, 'utf8')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(line => line.startsWith('gitdir:'))
+    ?.slice('gitdir:'.length)
+    .trim()
+  if (!gitDirPath) return root
+  const gitDir = resolve(root, gitDirPath)
   const commonDirFile = join(gitDir, 'commondir')
   if (!existsSync(commonDirFile)) return root
   const commonDir = resolve(gitDir, readFileSync(commonDirFile, 'utf8').trim())
   return basename(commonDir) === '.git' ? dirname(commonDir) : root
 }
 
+const ASSIGNMENT = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][\w.-]*)[ \t]*=/
+
+// The index of the quote that closes a value in `text`, or -1. As in compose, a backslash escapes
+// the next character inside either kind of quote: `'It\'s'` is one single-quoted value.
+function closingQuote(text, quote) {
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === '\\') index++
+    else if (text[index] === quote) return index
+  }
+  return -1
+}
+
 /**
- * Whether a .env file sets `name` to something. An empty or quoted-empty value counts as unset, as
- * compose's `${NAME:-default}` treats it. Keep in step with NESTLED_DEV_DATA_DIR_SET in
- * dev-checkout.sh.
+ * The text after `=` in the last assignment of `name` in a .env (an `export ` prefix and spaces
+ * around the name allowed), trimmed, or undefined when there is none. Compose and dotenv both let a
+ * later assignment win. Lines inside another key's multi-line quoted value are not assignments, as
+ * compose reads them; a `name` whose own value spans lines throws, since no caller needs one. Keep
+ * in step with nestled_env_line in dev-checkout.sh.
+ *
+ * @param {string} contents
+ * @param {string} name
+ * @returns {string | undefined}
+ */
+export function lastAssignment(contents, name) {
+  let value
+  let multiline = false
+  let openQuote
+  for (const line of contents.split(/\r?\n/)) {
+    if (openQuote) {
+      if (closingQuote(line, openQuote) !== -1) openQuote = undefined
+      continue
+    }
+    const match = ASSIGNMENT.exec(line)
+    if (!match) continue
+    const rest = line.slice(match[0].length).trim()
+    const quote = rest.startsWith('"') || rest.startsWith("'") ? rest[0] : undefined
+    const opens = quote !== undefined && closingQuote(rest.slice(1), quote) === -1
+    if (match[1] === name) {
+      value = rest
+      multiline = opens
+    }
+    if (opens) openQuote = quote
+  }
+  if (multiline)
+    throw new Error(`.env gives ${name} a quoted value that spans lines; put it on one line.`)
+  return value
+}
+
+/**
+ * Whether a .env file gives `name` a non-empty value, which is when compose's `${NAME:-default}`
+ * uses it: the last assignment counts, and an empty or quoted-empty value counts as unset. Throws
+ * on an unquoted value that starts with `#` (`NAME= # note`): compose reads it as `# note`, dotenv
+ * as empty, so neither answer is safe. Keep in step with nestled_env_sets in dev-checkout.sh.
  *
  * @param {string} file
  * @param {string} name
  * @returns {boolean}
  */
 export function definesVariable(file, name) {
-  return new RegExp(
-    `^[ \\t]*(?:export[ \\t]+)?${name}[ \\t]*=[ \\t]*(?:[^"'\\s#]|"[^"]|'[^'])`,
-    'm',
-  ).test(readFileSync(file, 'utf8'))
+  const value = lastAssignment(readFileSync(file, 'utf8'), name)
+  if (value === undefined || value === '' || value.startsWith('""') || value.startsWith("''")) {
+    return false
+  }
+  if (value.startsWith('#')) {
+    throw new Error(
+      `${file} sets ${name} to an unquoted value that starts with '#' (${value}). docker compose ` +
+        `reads that as the value and dotenv as empty. Remove the comment, or quote the value ("" for empty).`,
+    )
+  }
+  return true
 }
 
 /**

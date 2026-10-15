@@ -156,6 +156,8 @@ export default function AdminDashboard() {
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0">
               <svg
+                aria-hidden="true"
+                focusable="false"
                 className="h-6 w-6 text-red-600 dark:text-red-400"
                 fill="none"
                 viewBox="0 0 24 24"

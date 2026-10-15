@@ -14,6 +14,8 @@ export default function AdminSettingsPage() {
         <div className="mx-auto max-w-md">
           <div className="text-zinc-400 dark:text-zinc-500 mb-4">
             <svg
+              aria-hidden="true"
+              focusable="false"
               className="mx-auto h-16 w-16"
               fill="none"
               viewBox="0 0 24 24"

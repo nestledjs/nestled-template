@@ -5,6 +5,11 @@
   // toSorted and friends. useDefineForClassFields is off, as the API's es2021 target implies, so
   // DTOs that redeclare decorated fields compile (TS2612). A script that imports a lib whose types
   // rely on declaration shims (libs/**/src/types/*.d.ts) must add those shims to "include".
+  // Running a script that imports a lib: `pnpm tsx --tsconfig scripts/tsconfig.json scripts/x.ts`.
+  // tsx reads ./tsconfig.json by default, and the workspace root deliberately has none: a root
+  // tsconfig.json would give the root Nx project (./project.json) a typecheck target from
+  // tools/nx-plugins/typecheck.js, and would become the editor's config for every file no project
+  // config claims.
   "compilerOptions": {
     "noEmit": true,
     "strict": true,

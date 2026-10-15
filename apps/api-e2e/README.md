@@ -61,7 +61,8 @@ one test passed. A filter that matches nothing, or a run in which every test is 
   database. It never lets through a URL that could connect somewhere other than it appears to: a
   query parameter that overrides the destination (`?host=`, `?port=`, `?dbname=`...), a fragment,
   or a protocol other than `postgresql:`. A setup that empties the schema on every run gains nothing
-  from it and should not offer it.
+  from it and should not offer it. `scripts/test-db.sh migrate` applies the same rule before
+  `prisma migrate deploy`, except that it accepts no query string at all.
 - `E2E_DATABASE_PROBE`: the client global setup's own SQL (the `SELECT 1` probe and the
   from-scratch reset) runs through. `pg` (default) uses the pg runner; `psql` runs `psql` from PATH,
   for a repo whose lifecycle tests stub psql.
