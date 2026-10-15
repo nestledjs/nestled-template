@@ -39,10 +39,11 @@ export function mainCheckoutRoot(root) {
 
 const ASSIGNMENT = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][\w.-]*)[ \t]*=/
 
-// The index of the quote that closes a value in `text`, or -1. A backslash escapes a double quote.
+// The index of the quote that closes a value in `text`, or -1. As in compose, a backslash escapes
+// the next character inside either kind of quote: `'It\'s'` is one single-quoted value.
 function closingQuote(text, quote) {
   for (let index = 0; index < text.length; index++) {
-    if (quote === '"' && text[index] === '\\') index++
+    if (text[index] === '\\') index++
     else if (text[index] === quote) return index
   }
   return -1

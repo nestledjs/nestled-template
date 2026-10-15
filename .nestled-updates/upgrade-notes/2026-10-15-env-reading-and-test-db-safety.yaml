@@ -11,14 +11,16 @@ intent: >
   lastAssignment and definesVariable. They follow docker compose. The last assignment of a key wins
   (the readers used to take the first). A quoted value is kept up to its closing quote, and an
   unquoted value's ` # comment` is dropped. An empty or quoted-empty value counts as unset. Lines
-  inside another key's multi-line quoted value are not read as assignments, and a key the scripts
-  need whose own quoted value spans lines is refused.
+  inside another key's multi-line quoted value are not read as assignments (a backslash escapes the
+  next character in single quotes as well as double, so `'It\'s` does not end the value), and a key
+  the scripts need whose own quoted value spans lines is refused.
 
   test-db.sh's read_env uses nestled_env_value. It exits with a message, before stopping or deleting
   anything, on a value it cannot read the way compose does:
     - a `$` in an unquoted or double-quoted value, which compose interpolates and the script would
       take literally (a single-quoted `$` is literal in both and is accepted);
-    - a backslash escape inside double quotes;
+    - a backslash inside a quoted value (compose reads `\'` and `\"` as escaped quotes in either
+      kind of quotes);
     - an unquoted value that starts with `#`, such as `KEY= # note`.
 
   The last case is ambiguous. docker compose (measured on v5.6) reads it as the value `# note`,

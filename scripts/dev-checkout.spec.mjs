@@ -217,6 +217,23 @@ void describe('dev checkout resolution (node)', () => {
       ),
       '/x',
     )
+    // Compose reads a backslash-escaped quote as part of the value in single quotes too.
+    const escapedSingle = [
+      'NESTLED_DEV_DATA_DIR=/actual',
+      "NOTES='It\\'s an example",
+      'NESTLED_DEV_DATA_DIR=',
+      "end'",
+      '',
+    ].join('\n')
+    assert.equal(lastAssignment(escapedSingle, 'NESTLED_DEV_DATA_DIR'), '/actual')
+    // An escaped backslash does not escape the quote after it: `'a\\'` closes.
+    assert.equal(
+      lastAssignment("NOTES='a\\\\'\nNESTLED_DEV_DATA_DIR=/x\n", 'NESTLED_DEV_DATA_DIR'),
+      '/x',
+    )
+    const { main, worktree } = checkouts()
+    writeFileSync(join(main, '.env'), escapedSingle)
+    assert.deepEqual(devDockerSettings(worktree, {}).composeVariables, {})
     assert.throws(
       () => lastAssignment('NESTLED_DEV_DATA_DIR="/a\n/b"\n', 'NESTLED_DEV_DATA_DIR'),
       /spans lines/,
@@ -439,6 +456,33 @@ void describe('scripts/test-db.sh reads .env as compose does, and acts only on w
     assert.equal(reset.status, 0, reset.stderr)
     assert.equal(existsSync(join(actual, 'postgres-test')), false)
     assert.equal(existsSync(join(main, '.dev/tmp/postgres-test')), true)
+  })
+
+  void it('resets the mounted folder when a multi-line value with an escaped single quote holds an assignment-like line', () => {
+    const { main, bin } = checkouts()
+    const actual = join(main, 'actual-data')
+    writeFileSync(
+      join(main, '.env'),
+      `NESTLED_DEV_DATA_DIR=${actual}\nNOTES='It\\'s an example\nNESTLED_DEV_DATA_DIR=\nend'\n`,
+    )
+    mkdirSync(join(actual, 'postgres-test'), { recursive: true })
+    mkdirSync(join(main, '.dev/tmp/postgres-test'), { recursive: true })
+    const reset = testDb(main, bin, 'reset')
+    assert.equal(reset.status, 0, reset.stderr)
+    assert.equal(existsSync(join(actual, 'postgres-test')), false)
+    assert.equal(existsSync(join(main, '.dev/tmp/postgres-test')), true)
+  })
+
+  void it('refuses a quoted data directory with a backslash, which compose reads as an escape', () => {
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    for (const line of ["NESTLED_DEV_DATA_DIR='/a\\'b'", 'NESTLED_DEV_DATA_DIR="/a\\"b"']) {
+      writeFileSync(join(main, '.env'), `${line}\n`)
+      const reset = testDb(main, bin, 'reset')
+      assert.notEqual(reset.status, 0, line)
+      assert.match(reset.stderr, /backslash/, line)
+    }
+    assert.equal(calls(), '')
   })
 
   void it('refuses a data directory whose quoted value spans lines', () => {

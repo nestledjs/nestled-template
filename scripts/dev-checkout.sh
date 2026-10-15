@@ -37,11 +37,12 @@ nestled_main_checkout() {
 nestled_env_line() {
   local raw status=0
   raw="$(awk -v key="$2" '
-    # Whether s holds the closing quote q (a backslash escapes a double quote).
+    # Whether s holds the closing quote q. As in compose, a backslash escapes the next character
+    # inside either kind of quote.
     function closes(s, q,   i, c) {
       for (i = 1; i <= length(s); i++) {
         c = substr(s, i, 1)
-        if (q == "\"" && c == "\\") { i++; continue }
+        if (c == "\\") { i++; continue }
         if (c == q) return 1
       }
       return 0
@@ -96,12 +97,16 @@ nestled_env_sets() {
 # nestled_env_value <file> <key>: the value compose reads for <key>, for a script that uses it as is
 # (a port, a folder to delete). Empty when the key is absent. Fails, saying why, for a value this
 # cannot read the way compose does: one compose would interpolate (`$` unquoted or in double quotes;
-# single quotes are literal), one with backslash escapes in double quotes, and an unquoted value
-# that starts with `#`.
+# single quotes are literal), a quoted value with a backslash (compose reads `\'` and `\"` as escaped
+# quotes), and an unquoted value that starts with `#`.
 nestled_env_value() {
   local key="$2" raw first
   raw="$(nestled_env_line "$1" "$key")" || return 1
   first="${raw:0:1}"
+  if [[ ( "$first" == "'" || "$first" == '"' ) && "$raw" == *"\\"* ]]; then
+    echo "❌ .env sets $key to a quoted value with a backslash, which compose reads as an escape; use a plain value." >&2
+    return 1
+  fi
   if [[ "$first" == "'" && "${raw:1}" == *"$first"* ]]; then
     raw="${raw:1}"
     printf '%s\n' "${raw%%"$first"*}"
@@ -110,10 +115,6 @@ nestled_env_value() {
   if [[ "$first" == '"' && "${raw:1}" == *"$first"* ]]; then
     raw="${raw:1}"
     raw="${raw%%"$first"*}"
-    if [[ "$raw" == *"\\"* ]]; then
-      echo "❌ .env sets $key to a double-quoted value with a backslash escape; use a plain value." >&2
-      return 1
-    fi
   elif [[ "$first" == "#" ]]; then
     nestled_env_ambiguous "$key" "$raw"
     return 1
