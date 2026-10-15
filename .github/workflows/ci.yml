@@ -8,12 +8,15 @@ on:
     branches:
       - develop
 
-# One run per ref: a newer push or PR update cancels the run still in progress for the same ref.
-# Overlapping develop runs let an older commit's SonarCloud analysis publish after a newer one's,
-# so the long-lived branch showed stale results. Release and publish workflows must not copy this.
+# One run at a time per ref. On a pull request a newer push cancels the run still in progress.
+# On develop runs are never cancelled: they queue behind the running one (GitHub keeps only the
+# newest pending run), so every develop run that starts also finishes. Cancelling them starved a
+# busy develop, where each merge cancelled the last and no CI or SonarCloud analysis completed.
+# Serializing still keeps SonarCloud ordered: an older commit's analysis cannot publish after a
+# newer one's. Release and publish workflows must not copy this.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   actions: read
@@ -113,8 +116,10 @@ jobs:
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
       # On a develop push, the Nx base is the commit of the last successful CI run on develop, not
-      # the previous push: with cancel-in-progress (above), a superseded push never completes, so
-      # basing on it would leave the projects it changed out of every completed affected run.
+      # the previous push. A queued develop run is replaced when a newer push arrives (see
+      # concurrency above), and a run can fail or be cancelled by hand; basing on the previous push
+      # would leave the projects such a push changed out of every completed affected run. Do not
+      # override NX_BASE with `github.event.before`.
       - uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4
         with:
           main-branch-name: develop
@@ -154,6 +159,9 @@ jobs:
       # tools/nx-plugins/typecheck.js, which checks all of its configs (lib/app, spec, storybook) and
       # fails when a config checks nothing or a tracked source is in no config. Keep it unscoped — a
       # scoped list silently stops covering new projects as they are added.
+      #
+      # Nx's default parallelism (3) on purpose: hosted runners have the memory for three compilers
+      # at once. The local `pnpm typecheck` runs one project at a time instead (see AGENTS.md).
       - run: pnpm exec nx run-many -t typecheck
 
       # The workspace root's own TypeScript (scripts/, tools/) belongs to no Nx project; each folder's

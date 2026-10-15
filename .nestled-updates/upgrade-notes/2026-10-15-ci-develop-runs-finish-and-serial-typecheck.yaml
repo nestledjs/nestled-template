@@ -1,0 +1,61 @@
+id: 2026-10-15-ci-develop-runs-finish-and-serial-typecheck
+title: >-
+  CI cancels superseded runs only on pull requests, and the local typecheck runs one project at a
+  time
+priority: high
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  CI concurrency. .github/workflows/ci.yml keeps `group: ci-${{ github.ref }}` and sets
+  `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. A newer push to a pull request
+  still cancels the run in progress for it. On develop nothing is cancelled: the running job
+  finishes, and GitHub keeps only the newest push queued behind it, so every develop run that
+  starts completes, and SonarCloud analyses still publish in commit order. The comments above the
+  concurrency block and above nx-set-shas say why.
+
+  Local typecheck memory. The root `typecheck` script is `pnpm nx run-many -t typecheck
+  --parallel=1 && pnpm typecheck:workspace`: one project at a time. Nx's default of three compilers
+  at once ran out of memory in 3 GB; one at a time peaks at about 1.85 GB of process-tree memory.
+  CI's `nx run-many -t typecheck` keeps Nx's default parallelism. AGENTS.md has a "Typecheck Memory"
+  section on choosing parallelism per host and measuring the process-tree peak, and on
+  NX_ISOLATE_PLUGINS=false, which the script does not set because an inline variable is not
+  portable to Windows `cmd`.
+why: >
+  With `cancel-in-progress: true` on every event, each push to develop cancelled the develop run
+  still in progress. When merges land faster than a CI run takes, every develop run is cancelled
+  by the next one, so neither the build nor the SonarCloud analysis of develop ever completes, and
+  a merge can reach develop with no completed check at all. Separately, `pnpm typecheck` on a small development or agent host
+  (3 GB) was killed for running out of memory with Nx's default parallelism.
+affectedPaths:
+  - .github/workflows/ci.yml
+  - package.json
+  - AGENTS.md
+verification:
+  - pnpm exec nx run-many -t typecheck --parallel=1
+  - pnpm typecheck:workspace
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    CI concurrency: copying only the concurrency block is not enough. If the workflow overrides the
+    Nx base with `github.event.before` on push (an NX_BASE step or env), delete that override and
+    let nrwl/nx-set-shas pick the last successful run (`main-branch-name` set to the default
+    branch). A queued develop run is replaced by a newer push, so `github.event.before` would leave
+    the replaced push's projects out of every completed affected lint and build. Apply this to
+    every workflow that runs on push to the default branch and uses cancel-in-progress; release and
+    publish workflows should not cancel at all.
+  - >
+    package.json is not mirrored by template promotion: add `--parallel=1` to the project's own root
+    `typecheck` script by hand. If the project's script calls `nx run-many -t typecheck` under
+    another name, change that one. Leave CI's parallelism alone unless CI runs on a small
+    self-hosted runner.
+  - >
+    Parallelism is per host. A project whose `apps/api` carries more SDK clients than the template's
+    should measure its own uncached process-tree peak before raising `--parallel` (see the
+    "Typecheck Memory" section the template adds to AGENTS.md). Do not add NX_ISOLATE_PLUGINS=false
+    to the script as an inline `VAR=value`: it breaks the script on Windows `cmd`. A project that
+    already depends on cross-env, or sets pnpm `shell-emulator=true`, may set it in the script.
+  - >
+    AGENTS.md is template-owned: add the "Typecheck Memory" guidance to the project's own agent
+    docs in its own words rather than replacing the file.

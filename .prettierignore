@@ -12,3 +12,13 @@ apps/web/.react-router/
 
 # Release feed data written by the upgrade tooling in the published template (manifest, patches)
 .nestled-upgrades/
+
+# Each project's upgrade ledger (.nestled/upgrade-log.yaml), written by the upgrade tooling. Its YAML
+# is the tool's, not prettier's, so a formatting check would fail on every tool write.
+.nestled/
+
+# Per-directory CLAUDE.md files under apps/ and libs/ are written by agent memory tools (claude-mem
+# regenerates them on its own schedule). The repository's own agent docs (the root CLAUDE.md,
+# agents/**) are still checked.
+apps/**/CLAUDE.md
+libs/**/CLAUDE.md

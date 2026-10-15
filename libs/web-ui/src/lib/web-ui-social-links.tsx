@@ -76,6 +76,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
       {facebookLink ? (
         <a href={facebookLink} target="_blank" rel={'noreferrer'} aria-label="Facebook">
           <svg
+            aria-hidden="true"
+            focusable="false"
             xmlns="http://www.w3.org/2000/svg"
             className="h-5 w-5"
             fill={fill}
@@ -88,6 +90,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
       {twitterLink ? (
         <a href={twitterLink} target="_blank" rel={'noreferrer'} aria-label="Twitter">
           <svg
+            aria-hidden="true"
+            focusable="false"
             xmlns="http://www.w3.org/2000/svg"
             className="h-5 w-5"
             fill={fill}
@@ -100,6 +104,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
       {youtubeLink ? (
         <a href={youtubeLink} target="_blank" rel={'noreferrer'} aria-label="YouTube">
           <svg
+            aria-hidden="true"
+            focusable="false"
             xmlns="http://www.w3.org/2000/svg"
             className="h-5 w-5"
             fill={fill}
@@ -112,6 +118,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
       {linkedinLink ? (
         <a href={linkedinLink} target="_blank" rel={'noreferrer'} aria-label="LinkedIn">
           <svg
+            aria-hidden="true"
+            focusable="false"
             xmlns="http://www.w3.org/2000/svg"
             className="h-5 w-5"
             fill={fill}
@@ -124,6 +132,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
       {instagramLink ? (
         <a href={instagramLink} target="_blank" rel={'noreferrer'} aria-label="Instagram">
           <svg
+            aria-hidden="true"
+            focusable="false"
             xmlns="http://www.w3.org/2000/svg"
             className="h-5 w-5"
             fill={fill}

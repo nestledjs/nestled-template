@@ -1,0 +1,98 @@
+id: 2026-10-15-sonar-spec-and-prettier-hygiene
+title: >-
+  SonarCloud treats the scripts' specs as tests, the template's scripts lose their new-code smells,
+  and prettier ignores tool-written files
+priority: normal
+area: infra
+type: cleanup
+delivery: code-patch
+intent: >
+  SonarCloud. sonar-project.properties adds scripts/ to `sonar.tests` and `scripts/**/*.spec.mjs` to
+  `sonar.test.inclusions` and `sonar.cpd.exclusions`, so the node:test specs for the workspace
+  scripts are analysed as tests rather than as source.
+
+  Smells in the template's own scripts:
+    - scripts/dev-checkout.mjs reads the worktree's `gitdir:` line with a line scan instead of a
+      lazy regex (S8786). Its .env pattern no longer needs an escaped string (S7780), since it is
+      now a regex literal (2026-10-15-env-reading-and-test-db-safety).
+    - Every function in scripts/dev-checkout.sh ends with an explicit `return` (S7682).
+    - scripts/typecheck-project.mjs `main` is split into compileConfigs and reportUncovered
+      (S3776, cognitive complexity). Behaviour and output are unchanged.
+
+  Specs:
+    - scripts/dev-checkout.spec.mjs derives the test database name from test-db.sh's default URL
+      instead of hard-coding it. It copies into its fixtures every helper the scripts source,
+      following `source "$X/<name>.sh"` lines, so a new helper needs no edit there.
+    - apps/api-e2e/src/support/test-setup.ts exports testSetupMessages(). The spec checks those
+      messages with E2E_API_PORT and HOST stubbed, instead of capturing the module's import-time
+      console output.
+    - The password fixtures in database-guards.spec.ts are built at runtime, as test-setup.spec.ts
+      already did.
+
+  Prettier. .prettierignore adds `.nestled/`, the upgrade ledger the tooling writes, and
+  `apps/**/CLAUDE.md` and `libs/**/CLAUDE.md`, which agent memory tools regenerate. The root
+  CLAUDE.md and agents/** stay checked.
+
+  No root tsconfig.json. With one, the root Nx project (./project.json) would get a typecheck target
+  from tools/nx-plugins/typecheck.js, and editors would use it as the config for every file no other
+  config claims. A script that imports a lib runs with `pnpm tsx --tsconfig scripts/tsconfig.json
+  scripts/<name>.ts`. scripts/tsconfig.json and AGENTS.md say so.
+why: >
+  SonarCloud reported the scripts' specs as source code with smells, and flagged new-code smells in
+  scripts the template itself ships. Projects that fixed them locally then diverged from the
+  template. The dev-checkout spec failed in any project with a different test database name, and
+  silently tested stale helpers when a script started sourcing a new one. The test-setup spec
+  depended on the caller's E2E_API_PORT and on import-time logging. `prettier --check .` failed on
+  every upgrade-ledger write and every agent-memory file. `pnpm tsx scripts/x.ts` could not resolve
+  `@<scope>/...` imports, and nothing said why.
+affectedPaths:
+  - sonar-project.properties
+  - scripts/dev-checkout.mjs
+  - scripts/dev-checkout.sh
+  - scripts/dev-checkout.spec.mjs
+  - scripts/typecheck-project.mjs
+  - scripts/tsconfig.json
+  - apps/api-e2e/src/support/test-setup.ts
+  - apps/api-e2e/src/support/test-setup.spec.ts
+  - apps/api-e2e/src/support/database-guards.spec.ts
+  - .prettierignore
+  - AGENTS.md
+verification:
+  - node --test scripts/*.spec.mjs
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm typecheck
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    sonar-project.properties is not mirrored by template promotion: add `scripts` to `sonar.tests`
+    (keep the project's own list) and `scripts/**/*.spec.mjs` to `sonar.test.inclusions` and
+    `sonar.cpd.exclusions` by hand. The first analysis after that moves the specs' findings out of
+    the source issues.
+  - >
+    A project that already fixed these smells in its copies of dev-checkout.mjs, dev-checkout.sh or
+    typecheck-project.mjs should take the template's version where it is equivalent, so the next
+    template change applies cleanly. Record `adapted`.
+  - >
+    Prettier: run the project's pinned prettier with `--check .` after adding the ignores. Do not
+    combine this note with a repo-wide reformat. A whole-repository prettier pass belongs in its own
+    PR, with the owner's decision, because it touches hundreds of old lines and fails SonarCloud's
+    new-code coverage condition. If the project tracks per-directory agent-memory CLAUDE.md files
+    elsewhere than apps/ and libs/, ignore those folders too. Never ignore the root CLAUDE.md or
+    AGENTS.md.
+  - >
+    Build any test fixture that looks like a credential (a URL with a password, a token-shaped
+    string) at runtime, for example `['fixture', 'pw', String(process.pid)].join('-')`. GitGuardian
+    scans every commit of a PR, so a literal in an intermediate commit fails the check even after a
+    later commit removes it. Open a fresh branch instead of rewriting history.
+  - >
+    Per-file `git apply` loops when adapting this note: run them in bash with `while read -r f`.
+    zsh does not word-split an unquoted variable, so it reports a false "clean", and macOS bash 3.2
+    has no `mapfile`.
+  - >
+    Addendum to 2026-10-14-test-gate-follow-ups-2 (CI images through mirror.gcr.io). The registry
+    switch covers more than workflow `services:` and `container:` entries: any CI script that pulls
+    images (`docker pull`, `docker run`, a compose file used in CI) moves to
+    `mirror.gcr.io/library/...` the same way. A test suite that uses Testcontainers sets
+    `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io` in the CI job's environment, so its Docker
+    Hub images come through the mirror too.

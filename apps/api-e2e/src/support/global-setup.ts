@@ -26,16 +26,26 @@ const databaseClients: DatabaseClients = {
   pg: (databaseUrl, statement, timeout) => {
     runSql(databaseUrl, statement, {}, timeout)
   },
-  psql: (args, env, timeout) => spawnSync('psql', args, { env, stdio: 'ignore', timeout }),
+  // stderr is captured so a failure reports psql's own error; stdout is not needed.
+  psql: (args, env, timeout) =>
+    spawnSync('psql', args, {
+      env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
+      timeout,
+    }),
 }
 
-/** Check that the database answers `SELECT 1`, with the client E2E_DATABASE_PROBE selects. */
-function isDatabaseAccessible(databaseUrl: string): boolean {
+/**
+ * Check that the database answers `SELECT 1`, with the client E2E_DATABASE_PROBE selects. Returns
+ * undefined when it does, else the client's error, so the failure says why.
+ */
+function databaseAccessError(databaseUrl: string): string | undefined {
   try {
     runOnTestDatabase(databaseUrl, 'SELECT 1', databaseClients, { timeout: 10000 })
-    return true
-  } catch {
-    return false
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
   }
 }
 
@@ -238,12 +248,13 @@ module.exports = async function globalSetup() {
   }
 
   // Check if database is accessible
-  const dbAccessible = isDatabaseAccessible(testDatabaseUrl)
+  const accessError = databaseAccessError(testDatabaseUrl)
 
-  if (!dbAccessible) {
+  if (accessError !== undefined) {
     console.error('❌ Test database is not accessible')
     console.error('   Please ensure PostgreSQL is running and the test database exists')
     console.error(`   Database: ${describeDatabase(testDatabaseUrl)}`)
+    console.error(`   ${accessError.replaceAll('\n', '\n   ')}`)
     throw new Error('Test database not accessible')
   }
 
