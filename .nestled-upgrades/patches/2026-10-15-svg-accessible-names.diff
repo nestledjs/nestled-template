@@ -1,0 +1,176 @@
+diff --git a/apps/web/app/routes/admin/_index.tsx b/apps/web/app/routes/admin/_index.tsx
+index 4287aed..47c4982 100644
+--- a/apps/web/app/routes/admin/_index.tsx
++++ b/apps/web/app/routes/admin/_index.tsx
+@@ -156,6 +156,8 @@ export default function AdminDashboard() {
+           <div className="flex items-start gap-4">
+             <div className="flex-shrink-0">
+               <svg
++                aria-hidden="true"
++                focusable="false"
+                 className="h-6 w-6 text-red-600 dark:text-red-400"
+                 fill="none"
+                 viewBox="0 0 24 24"
+diff --git a/apps/web/app/routes/admin/settings/_index.tsx b/apps/web/app/routes/admin/settings/_index.tsx
+index 2dc79f7..6749fd6 100644
+--- a/apps/web/app/routes/admin/settings/_index.tsx
++++ b/apps/web/app/routes/admin/settings/_index.tsx
+@@ -14,6 +14,8 @@ export default function AdminSettingsPage() {
+         <div className="mx-auto max-w-md">
+           <div className="text-zinc-400 dark:text-zinc-500 mb-4">
+             <svg
++              aria-hidden="true"
++              focusable="false"
+               className="mx-auto h-16 w-16"
+               fill="none"
+               viewBox="0 0 24 24"
+diff --git a/apps/web/app/routes/mcp-connect.tsx b/apps/web/app/routes/mcp-connect.tsx
+index f27b662..8a7b208 100644
+--- a/apps/web/app/routes/mcp-connect.tsx
++++ b/apps/web/app/routes/mcp-connect.tsx
+@@ -70,6 +70,8 @@ export default function McpConnectPage() {
+                 )}
+                 <p className="flex-1 text-sm font-medium text-white truncate">{org.name}</p>
+                 <svg
++                  aria-hidden="true"
++                  focusable="false"
+                   className="h-4 w-4 flex-shrink-0 text-zinc-500"
+                   fill="none"
+                   stroke="currentColor"
+diff --git a/libs/shared/styles/src/lib/form-styles.tsx b/libs/shared/styles/src/lib/form-styles.tsx
+index 034ecbf..3c90aa6 100644
+--- a/libs/shared/styles/src/lib/form-styles.tsx
++++ b/libs/shared/styles/src/lib/form-styles.tsx
+@@ -48,6 +48,8 @@ export const formTheme = FormThemeSchema.parse({
+     indeterminate: 'bg-gray-300 border-gray-400',
+     readonlyCheckedIcon: (
+       <svg
++        role="img"
++        aria-label="Checked"
+         className="w-5 h-5 text-emerald-600"
+         fill="none"
+         viewBox="0 0 24 24"
+@@ -59,6 +61,8 @@ export const formTheme = FormThemeSchema.parse({
+     ),
+     readonlyUncheckedIcon: (
+       <svg
++        role="img"
++        aria-label="Not checked"
+         className="w-5 h-5 text-red-500"
+         fill="none"
+         viewBox="0 0 24 24"
+@@ -88,6 +92,8 @@ export const formTheme = FormThemeSchema.parse({
+     errorText: 'text-xs text-red-600 dark:text-red-400',
+     checkedIcon: (
+       <svg
++        aria-hidden="true"
++        focusable="false"
+         className="w-4 h-4 text-white"
+         fill="none"
+         viewBox="0 0 24 24"
+@@ -100,6 +106,8 @@ export const formTheme = FormThemeSchema.parse({
+     uncheckedIcon: null, // No icon when unchecked by default
+     readonlyCheckedIcon: (
+       <svg
++        role="img"
++        aria-label="Checked"
+         className="w-4 h-4 text-emerald-600"
+         fill="none"
+         viewBox="0 0 24 24"
+@@ -111,6 +119,8 @@ export const formTheme = FormThemeSchema.parse({
+     ),
+     readonlyUncheckedIcon: (
+       <svg
++        role="img"
++        aria-label="Not checked"
+         className="w-4 h-4 text-gray-400"
+         fill="none"
+         viewBox="0 0 24 24"
+@@ -271,6 +281,8 @@ export const formTheme = FormThemeSchema.parse({
+     readOnlyUnselected: 'w-5 h-5 text-red-600',
+     readOnlyIcon: (
+       <svg
++        role="img"
++        aria-label="Selected"
+         className="w-5 h-5 text-emerald-600"
+         fill="none"
+         viewBox="0 0 24 24"
+@@ -282,6 +294,8 @@ export const formTheme = FormThemeSchema.parse({
+     ),
+     readOnlyUnselectedIcon: (
+       <svg
++        role="img"
++        aria-label="Not selected"
+         className="w-5 h-5 text-red-600"
+         fill="none"
+         viewBox="0 0 24 24"
+diff --git a/libs/web-ui/src/lib/web-ui-avatar.tsx b/libs/web-ui/src/lib/web-ui-avatar.tsx
+index 48663c5..e9824a3 100644
+--- a/libs/web-ui/src/lib/web-ui-avatar.tsx
++++ b/libs/web-ui/src/lib/web-ui-avatar.tsx
+@@ -91,7 +91,15 @@ export function WebUiAvatar({
+         }`}
+       >
+         {placeholder === 'icon' && (
+-          <svg className="h-full w-full text-gray-300" fill="currentColor" viewBox="0 0 24 24">
++          <svg
++            role={src ? undefined : 'img'}
++            aria-label={src ? undefined : name || 'Avatar'}
++            aria-hidden={src ? true : undefined}
++            focusable="false"
++            className="h-full w-full text-gray-300"
++            fill="currentColor"
++            viewBox="0 0 24 24"
++          >
+             <path d="M24 20.993V24H0v-2.996A14.977 14.977 0 0112.004 15c4.904 0 9.26 2.354 11.996 5.993zM16.002 8.999a4 4 0 11-8 0 4 4 0 018 0z" />
+           </svg>
+         )}
+diff --git a/libs/web-ui/src/lib/web-ui-social-links.tsx b/libs/web-ui/src/lib/web-ui-social-links.tsx
+index 084184e..5bcedea 100644
+--- a/libs/web-ui/src/lib/web-ui-social-links.tsx
++++ b/libs/web-ui/src/lib/web-ui-social-links.tsx
+@@ -76,6 +76,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
+       {facebookLink ? (
+         <a href={facebookLink} target="_blank" rel={'noreferrer'} aria-label="Facebook">
+           <svg
++            aria-hidden="true"
++            focusable="false"
+             xmlns="http://www.w3.org/2000/svg"
+             className="h-5 w-5"
+             fill={fill}
+@@ -88,6 +90,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
+       {twitterLink ? (
+         <a href={twitterLink} target="_blank" rel={'noreferrer'} aria-label="Twitter">
+           <svg
++            aria-hidden="true"
++            focusable="false"
+             xmlns="http://www.w3.org/2000/svg"
+             className="h-5 w-5"
+             fill={fill}
+@@ -100,6 +104,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
+       {youtubeLink ? (
+         <a href={youtubeLink} target="_blank" rel={'noreferrer'} aria-label="YouTube">
+           <svg
++            aria-hidden="true"
++            focusable="false"
+             xmlns="http://www.w3.org/2000/svg"
+             className="h-5 w-5"
+             fill={fill}
+@@ -112,6 +118,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
+       {linkedinLink ? (
+         <a href={linkedinLink} target="_blank" rel={'noreferrer'} aria-label="LinkedIn">
+           <svg
++            aria-hidden="true"
++            focusable="false"
+             xmlns="http://www.w3.org/2000/svg"
+             className="h-5 w-5"
+             fill={fill}
+@@ -124,6 +132,8 @@ export function WebUiSocialLinks(props: SocialLinksProps) {
+       {instagramLink ? (
+         <a href={instagramLink} target="_blank" rel={'noreferrer'} aria-label="Instagram">
+           <svg
++            aria-hidden="true"
++            focusable="false"
+             xmlns="http://www.w3.org/2000/svg"
+             className="h-5 w-5"
+             fill={fill}

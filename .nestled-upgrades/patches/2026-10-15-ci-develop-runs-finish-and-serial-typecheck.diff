@@ -1,0 +1,105 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index c28c771..1bd8bd7 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -8,12 +8,15 @@ on:
+     branches:
+       - develop
+ 
+-# One run per ref: a newer push or PR update cancels the run still in progress for the same ref.
+-# Overlapping develop runs let an older commit's SonarCloud analysis publish after a newer one's,
+-# so the long-lived branch showed stale results. Release and publish workflows must not copy this.
++# One run at a time per ref. On a pull request a newer push cancels the run still in progress.
++# On develop runs are never cancelled: they queue behind the running one (GitHub keeps only the
++# newest pending run), so every develop run that starts also finishes. Cancelling them starved a
++# busy develop, where each merge cancelled the last and no CI or SonarCloud analysis completed.
++# Serializing still keeps SonarCloud ordered: an older commit's analysis cannot publish after a
++# newer one's. Release and publish workflows must not copy this.
+ concurrency:
+   group: ci-${{ github.ref }}
+-  cancel-in-progress: true
++  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+ 
+ permissions:
+   actions: read
+@@ -113,8 +116,10 @@ jobs:
+         run: ./node_modules/.bin/playwright install --with-deps chromium
+ 
+       # On a develop push, the Nx base is the commit of the last successful CI run on develop, not
+-      # the previous push: with cancel-in-progress (above), a superseded push never completes, so
+-      # basing on it would leave the projects it changed out of every completed affected run.
++      # the previous push. A queued develop run is replaced when a newer push arrives (see
++      # concurrency above), and a run can fail or be cancelled by hand; basing on the previous push
++      # would leave the projects such a push changed out of every completed affected run. Do not
++      # override NX_BASE with `github.event.before`.
+       - uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4
+         with:
+           main-branch-name: develop
+@@ -154,6 +159,9 @@ jobs:
+       # tools/nx-plugins/typecheck.js, which checks all of its configs (lib/app, spec, storybook) and
+       # fails when a config checks nothing or a tracked source is in no config. Keep it unscoped — a
+       # scoped list silently stops covering new projects as they are added.
++      #
++      # Nx's default parallelism (3) on purpose: hosted runners have the memory for three compilers
++      # at once. The local `pnpm typecheck` runs one project at a time instead (see AGENTS.md).
+       - run: pnpm exec nx run-many -t typecheck
+ 
+       # The workspace root's own TypeScript (scripts/, tools/) belongs to no Nx project; each folder's
+diff --git a/AGENTS.md b/AGENTS.md
+index fd292a4..f3f5e18 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -102,6 +102,40 @@ pnpm typecheck          # every project: app/lib, spec and storybook configs (sc
+                         # then scripts/ and tools/ (pnpm typecheck:workspace)
+ ```
+ 
++A script under `scripts/` that imports a lib (`@nestled-template/...`) runs with
++`pnpm tsx --tsconfig scripts/tsconfig.json scripts/<name>.ts`. tsx reads `./tsconfig.json` by
++default, and the workspace root deliberately has none, so the path aliases would not resolve.
++
++### Typecheck Memory
++
++`pnpm typecheck` runs one Nx project at a time (`--parallel=1`). Peak memory is roughly the heaviest
++compiler times the parallelism, plus about 0.5 GB for Nx, pnpm and the runner. The heaviest config
++in a template clone is `apps/api` (about 1.3 GB, mostly third-party type declarations). Measured on
++a template clone in a 3 GB Linux container, uncached:
++
++| `--parallel`   | process-tree peak                  |
++| -------------- | ---------------------------------- |
++| 1              | about 1.85 GB                      |
++| 2              | about 2.5 GB                       |
++| 3 (Nx default) | over 3.2 GB: out of memory at 3 GB |
++
++- Choose parallelism per host, not per repository: keep 1 on a host with 3 GB or less, use 2 on
++  4 GB, and Nx's default on 5–6 GB or more. A clone with a heavier `apps/api` (more SDK clients)
++  measures before raising it.
++- Measure the peak of the whole process tree, not one process: run
++  `NX_DAEMON=false pnpm exec nx run-many -t typecheck --parallel=<n> --skip-nx-cache` inside a
++  container with a memory limit (`docker run --memory=3g --memory-swap=3g ...`), or sample the summed
++  RSS of the command's process tree every second. `time -l`/`-v` reports a single process only.
++- For a one-off faster run on a large host, pass the flag directly:
++  `pnpm exec nx run-many -t typecheck --parallel=3 && pnpm typecheck:workspace`.
++- `NX_ISOLATE_PLUGINS=false` roughly halves the memory of Nx's project-graph phase (one worker per
++  plugin, about 1.9 GB down to 0.9 GB on a warm cache). It does not lower the uncached peak, which
++  the compilers set. The `typecheck` script does not set it, because an inline `VAR=value` fails in
++  Windows `cmd` and the template has no cross-platform env helper; on a small host set it in the
++  shell (`export NX_ISOLATE_PLUGINS=false`, or `$env:NX_ISOLATE_PLUGINS='false'` in PowerShell).
++  Nx already turns plugin isolation off in the sandboxes it detects.
++- CI keeps Nx's default parallelism (`.github/workflows/ci.yml`); hosted runners have the memory.
++
+ ### Prisma Operations
+ 
+ ```bash
+diff --git a/package.json b/package.json
+index eb89f00..fd59be7 100644
+--- a/package.json
++++ b/package.json
+@@ -71,7 +71,7 @@
+     "sdk": "graphql-codegen --config libs/shared/sdk/src/codegen.yml",
+     "sdk:watch": "pnpm sdk --watch",
+     "dev:web": "nx serve web",
+-    "typecheck": "pnpm nx run-many -t typecheck && pnpm typecheck:workspace",
++    "typecheck": "pnpm nx run-many -t typecheck --parallel=1 && pnpm typecheck:workspace",
+     "typecheck:workspace": "node scripts/typecheck-project.mjs --workspace scripts tools",
+     "typecheck:watch": "cd apps/web && react-router typegen --watch",
+     "storybook:web-ui": "nx storybook web-ui",

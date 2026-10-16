@@ -1,0 +1,190 @@
+diff --git a/.prettierignore b/.prettierignore
+index 756d9a9..f6c2499 100644
+--- a/.prettierignore
++++ b/.prettierignore
+@@ -12,3 +12,13 @@ apps/web/.react-router/
+ 
+ # Release feed data written by the upgrade tooling in the published template (manifest, patches)
+ .nestled-upgrades/
++
++# Each project's upgrade ledger (.nestled/upgrade-log.yaml), written by the upgrade tooling. Its YAML
++# is the tool's, not prettier's, so a formatting check would fail on every tool write.
++.nestled/
++
++# Per-directory CLAUDE.md files under apps/ and libs/ are written by agent memory tools (claude-mem
++# regenerates them on its own schedule). The repository's own agent docs (the root CLAUDE.md,
++# agents/**) are still checked.
++apps/**/CLAUDE.md
++libs/**/CLAUDE.md
+diff --git a/apps/api-e2e/src/support/test-setup.spec.ts b/apps/api-e2e/src/support/test-setup.spec.ts
+index 2c0a689..1a81516 100644
+--- a/apps/api-e2e/src/support/test-setup.spec.ts
++++ b/apps/api-e2e/src/support/test-setup.spec.ts
+@@ -25,11 +25,15 @@ afterEach(() => {
+ })
+ 
+ describe('test database logging', () => {
+-  it('test setup logs the database by host, port and name, never the password', async () => {
++  it('test setup reports the database by host, port and name, never the password', async () => {
++    // Every variable the module reads is stubbed, so the result does not depend on the caller's env.
+     vi.stubEnv('TEST_DATABASE_URL', URL_WITH_PASSWORD)
+-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+-    await import('./test-setup')
+-    const output = log.mock.calls.flat().join('\n')
++    vi.stubEnv('E2E_API_PORT', '3999')
++    vi.stubEnv('HOST', 'localhost')
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++    const { testSetupMessages } = await import('./test-setup')
++    const output = testSetupMessages(URL_WITH_PASSWORD).join('\n')
++    expect(output).toContain('http://localhost:3999')
+     expect(output).toContain('localhost:55999/app_test')
+     expect(output).not.toContain(PASSWORD)
+   })
+diff --git a/apps/api-e2e/src/support/test-setup.ts b/apps/api-e2e/src/support/test-setup.ts
+index e2c8684..eafb4e1 100644
+--- a/apps/api-e2e/src/support/test-setup.ts
++++ b/apps/api-e2e/src/support/test-setup.ts
+@@ -45,7 +45,16 @@ if (!e2eGlobal.__AXIOS_AGENT_CLEANUP_REGISTERED__) {
+ // Global test configuration
+ process.env.NODE_ENV = 'test'
+ 
+-// The API server is started against this database by global-setup — never the dev database.
+-console.log(`Test setup: axios base URL set to ${axios.defaults.baseURL}`)
+-// Host, port and database name only: the URL carries the password, and this line reaches CI logs.
+-console.log(`Test setup: Using TEST database - ${describeDatabase(testDatabaseUrl)}`)
++/**
++ * What test setup reports: the API base URL and the test database the API is started against by
++ * global-setup (never the dev database). The database is shown by host, port and name only: the URL
++ * carries the password, and these lines reach CI logs.
++ */
++export function testSetupMessages(databaseUrl: string = testDatabaseUrl): string[] {
++  return [
++    `Test setup: axios base URL set to ${axios.defaults.baseURL}`,
++    `Test setup: Using TEST database - ${describeDatabase(databaseUrl)}`,
++  ]
++}
++
++for (const message of testSetupMessages()) console.log(message)
+diff --git a/scripts/tsconfig.json b/scripts/tsconfig.json
+index 60c2751..0f3fb42 100644
+--- a/scripts/tsconfig.json
++++ b/scripts/tsconfig.json
+@@ -5,6 +5,11 @@
+   // toSorted and friends. useDefineForClassFields is off, as the API's es2021 target implies, so
+   // DTOs that redeclare decorated fields compile (TS2612). A script that imports a lib whose types
+   // rely on declaration shims (libs/**/src/types/*.d.ts) must add those shims to "include".
++  // Running a script that imports a lib: `pnpm tsx --tsconfig scripts/tsconfig.json scripts/x.ts`.
++  // tsx reads ./tsconfig.json by default, and the workspace root deliberately has none: a root
++  // tsconfig.json would give the root Nx project (./project.json) a typecheck target from
++  // tools/nx-plugins/typecheck.js, and would become the editor's config for every file no project
++  // config claims.
+   "compilerOptions": {
+     "noEmit": true,
+     "strict": true,
+diff --git a/scripts/typecheck-project.mjs b/scripts/typecheck-project.mjs
+index e5ed7cb..85d31e8 100644
+--- a/scripts/typecheck-project.mjs
++++ b/scripts/typecheck-project.mjs
+@@ -300,6 +300,39 @@ function compileFiles(ts, workspaceRoot, configPath, fileNames) {
+   return diagnostics.length > 0 ? 1 : 0
+ }
+ 
++// Compile every inspected config, one at a time; returns how many failed. A config with files in a
++// nested project compiles its own files only; the rest run through tsc.
++function compileConfigs(ts, workspaceRoot, inspected, display) {
++  let failed = 0
++  for (const config of inspected) {
++    const nested = config.nestedFileCount
++      ? `, ${config.nestedFileCount} in nested projects left to them`
++      : ''
++    console.log(`→ ${display(config.configPath)} (${config.fileCount} files${nested})`)
++    const status = config.nestedFileCount
++      ? compileFiles(ts, workspaceRoot, config.configPath, config.fileNames)
++      : runTsc(workspaceRoot, config.configPath)
++    if (status !== 0) failed += 1
++  }
++  return failed
++}
++
++// Report tracked TypeScript files no checked config covers, naming the twin that shadows one.
++function reportUncovered(uncovered, inspected, projectRoot, display) {
++  const covered = new Set(inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)))
++  console.error(
++    `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
++  )
++  for (const file of uncovered) {
++    const twin = shadowingTwin(file, covered)
++    const reason = twin
++      ? ` (shadowed by ${basename(twin)}: include matching keeps one file per name; rename one)`
++      : ''
++    console.error(`    ${display(file)}${reason}`)
++  }
++  console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
++}
++
+ export function main(argv, workspaceRoot = process.cwd()) {
+   if (argv[0] === '--workspace') return workspaceMain(argv.slice(1), workspaceRoot)
+   const [projectArgument, ...explicitConfigs] = argv
+@@ -325,35 +358,8 @@ export function main(argv, workspaceRoot = process.cwd()) {
+   // Uncovered files fail the run, but every config is still compiled, so one run reports both the
+   // coverage gap and every type error in what is covered.
+   const uncovered = uncoveredFiles(workspaceRoot, projectRoot, inspected)
+-  let failed = 0
+-  for (const config of inspected) {
+-    const nested = config.nestedFileCount
+-      ? `, ${config.nestedFileCount} in nested projects left to them`
+-      : ''
+-    console.log(`→ ${display(config.configPath)} (${config.fileCount} files${nested})`)
+-    const status = config.nestedFileCount
+-      ? compileFiles(ts, workspaceRoot, config.configPath, config.fileNames)
+-      : runTsc(workspaceRoot, config.configPath)
+-    if (status !== 0) {
+-      failed += 1
+-    }
+-  }
+-  if (uncovered.length > 0) {
+-    const covered = new Set(
+-      inspected.flatMap(config => config.fileNames ?? []).map(f => resolve(f)),
+-    )
+-    console.error(
+-      `✖ ${uncovered.length} TypeScript file(s) in ${display(projectRoot)} are in no checked config:`,
+-    )
+-    for (const file of uncovered) {
+-      const twin = shadowingTwin(file, covered)
+-      const reason = twin
+-        ? ` (shadowed by ${basename(twin)}: include matching keeps one file per name; rename one)`
+-        : ''
+-      console.error(`    ${display(file)}${reason}`)
+-    }
+-    console.error('  Add them to the tsconfig that matches how they run (app, lib or spec).')
+-  }
++  const failed = compileConfigs(ts, workspaceRoot, inspected, display)
++  if (uncovered.length > 0) reportUncovered(uncovered, inspected, projectRoot, display)
+   return failed > 0 || uncovered.length > 0 ? 1 : 0
+ }
+ 
+diff --git a/sonar-project.properties b/sonar-project.properties
+index e7b7a2b..9ebf03a 100644
+--- a/sonar-project.properties
++++ b/sonar-project.properties
+@@ -52,14 +52,18 @@ sonar.cpd.exclusions=\
+   **/*.spec.tsx,\
+   **/*.test.ts,\
+   **/*.test.tsx,\
++  scripts/**/*.spec.mjs,\
+   **/vite.config.ts
+ 
+-sonar.tests=apps,libs
++# scripts/ holds the workspace scripts' node:test specs (*.spec.mjs). Without them listed as tests,
++# SonarCloud analysed each spec as source code: its fixtures and stubs were reported as smells.
++sonar.tests=apps,libs,scripts
+ sonar.test.inclusions=\
+   **/*.spec.ts,\
+   **/*.spec.tsx,\
+   **/*.test.ts,\
+-  **/*.test.tsx
++  **/*.test.tsx,\
++  scripts/**/*.spec.mjs
+ 
+ sonar.javascript.lcov.reportPaths=\
+   coverage/apps/web/lcov.info,\
