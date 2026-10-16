@@ -1,7 +1,7 @@
 schemaVersion: 1
 generatedAt: 2026-10-16
 channels:
-  canary: 2026.10.14
+  canary: 2026.10.15
   stable: 2026.10.14
 releases:
   - id: 2026.08.0
@@ -703,3 +703,25 @@ releases:
           - pnpm exec nx run-many -t typecheck,lint,test -p web,web-ui,styles --parallel=1
           - pnpm exec prettier --check .
         patch: patches/2026-10-15-svg-accessible-names.diff
+  - id: 2026.10.15
+    date: 2026-10-16
+    title: Release 2026.10.15
+    templateCommit: 482d61f
+    notes:
+      - id: 2026-10-16-template-script-sonar-smells
+        title: The dev-checkout and test-db scripts from release 2026.10.14 no longer raise SonarCloud smells
+        delivery: code-patch
+        intent: "The worktree-safe dev Docker scripts added in release 2026.10.14 raised SonarCloud smells as new code in every clone. They are refactored without any change in behaviour or output: - scripts/dev-checkout.mjs: lastAssignment() reads each line through a new splitAssignment() helper (key, trimmed value, opening quote, whether that quote stays open), which brings its cognitive complexity under the limit (S3776). - scripts/dev-checkout.sh and scripts/test-db.sh: every function copies its positional parameters into named locals before using them, and test-db.sh reads its command from `COMMAND=\"${1:-}\"` (S7679). - The two `case` statements in dev-checkout.sh without a default branch get an explicit, commented `*) ;;` (S131). - scripts/dev-checkout.spec.mjs checks that test-db.sh's default URL names a test database in a `before()` hook instead of at module top level, so the assertion runs inside the test runner (S8784). - scripts/test-db.sh: the usage comment at the top lists every command the script handles (`start|stop|reset|logs|migrate|url`), and its whitespace-only blank lines are emptied."
+        area: infra
+        affectedPaths:
+          - scripts/dev-checkout.mjs
+          - scripts/dev-checkout.sh
+          - scripts/test-db.sh
+          - scripts/dev-checkout.spec.mjs
+        verification:
+          - node --test scripts/*.spec.mjs
+          - bash -n scripts/dev-checkout.sh
+          - bash -n scripts/test-db.sh
+          - pnpm exec prettier --check .
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-16-template-script-sonar-smells.diff
