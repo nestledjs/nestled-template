@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, describe, it } from 'node:test'
+import { afterEach, before, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   definesVariable,
@@ -49,7 +49,9 @@ const fixtureScripts = scriptsWithHelpers(['dev-docker.sh', 'test-db.sh'])
 const testDatabaseName = /localhost:\$\{TEST_DB_PORT\}\/([\w-]+)/.exec(
   readFileSync(join(scriptsDir, 'test-db.sh'), 'utf8'),
 )?.[1]
-assert.ok(testDatabaseName, 'test-db.sh builds its default URL from TEST_DB_PORT')
+before(() => {
+  assert.ok(testDatabaseName, 'test-db.sh builds its default URL from TEST_DB_PORT')
+})
 const scratch = []
 
 afterEach(() => {

@@ -49,6 +49,18 @@ function closingQuote(text, quote) {
   return -1
 }
 
+// One .env line read as an assignment: the key, the trimmed text after `=`, the quote that text
+// starts with (if any), and whether that quote is still open at the end of the line. Undefined when
+// the line is not an assignment.
+function splitAssignment(line) {
+  const match = ASSIGNMENT.exec(line)
+  if (!match) return undefined
+  const rest = line.slice(match[0].length).trim()
+  const quote = rest.startsWith('"') || rest.startsWith("'") ? rest[0] : undefined
+  const opens = quote !== undefined && closingQuote(rest.slice(1), quote) === -1
+  return { key: match[1], rest, quote, opens }
+}
+
 /**
  * The text after `=` in the last assignment of `name` in a .env (an `export ` prefix and spaces
  * around the name allowed), trimmed, or undefined when there is none. Compose and dotenv both let a
@@ -69,12 +81,10 @@ export function lastAssignment(contents, name) {
       if (closingQuote(line, openQuote) !== -1) openQuote = undefined
       continue
     }
-    const match = ASSIGNMENT.exec(line)
-    if (!match) continue
-    const rest = line.slice(match[0].length).trim()
-    const quote = rest.startsWith('"') || rest.startsWith("'") ? rest[0] : undefined
-    const opens = quote !== undefined && closingQuote(rest.slice(1), quote) === -1
-    if (match[1] === name) {
+    const assignment = splitAssignment(line)
+    if (!assignment) continue
+    const { key, rest, quote, opens } = assignment
+    if (key === name) {
       value = rest
       multiline = opens
     }

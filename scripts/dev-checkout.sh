@@ -35,8 +35,8 @@ nestled_main_checkout() {
 # key's multi-line quoted value are not assignments, as compose reads them. A <key> whose own value
 # spans lines is refused (status 1, reason on stderr): no script here needs one.
 nestled_env_line() {
-  local raw status=0
-  raw="$(awk -v key="$2" '
+  local file="$1" key="$2" raw status=0
+  raw="$(awk -v key="$key" '
     # Whether s holds the closing quote q. As in compose, a backslash escapes the next character
     # inside either kind of quote.
     function closes(s, q,   i, c) {
@@ -60,9 +60,9 @@ nestled_env_line() {
       if (opens) open = q
     }
     END { if (multiline) exit 3; printf "%s", value }
-  ' "$1" 2>/dev/null)" || status=$?
+  ' "$file" 2>/dev/null)" || status=$?
   if [[ "$status" -eq 3 ]]; then
-    echo "❌ .env gives $2 a quoted value that spans lines; put it on one line." >&2
+    echo "❌ .env gives $key a quoted value that spans lines; put it on one line." >&2
     return 1
   fi
   printf '%s\n' "${raw%"${raw##*[![:space:]]}"}"
@@ -73,7 +73,8 @@ nestled_env_line() {
 # Compose reads `KEY= # note` as the value `# note`; dotenv, which Nx and the API load, reads it as
 # empty. No reading is safe, so nothing guesses.
 nestled_env_ambiguous() {
-  echo "❌ .env sets $1 to an unquoted value that starts with '#' ($2)." >&2
+  local key="$1" raw="$2"
+  echo "❌ .env sets $key to an unquoted value that starts with '#' ($raw)." >&2
   echo "   docker compose reads that as the value and dotenv as empty. Remove the comment, or quote" >&2
   echo "   the value (\"\" for empty)." >&2
   return 1
@@ -82,14 +83,15 @@ nestled_env_ambiguous() {
 # nestled_env_sets <file> <key>: whether the .env gives <key> a non-empty value, which is when
 # compose's ${KEY:-default} uses it. Status 0 yes, 1 no, 2 ambiguous (reported on stderr).
 nestled_env_sets() {
-  local raw
-  raw="$(nestled_env_line "$1" "$2")" || return 2
+  local file="$1" key="$2" raw
+  raw="$(nestled_env_line "$file" "$key")" || return 2
   case "$raw" in
     "" | '""'* | "''"*) return 1 ;;
     "#"*)
-      nestled_env_ambiguous "$2" "$raw"
+      nestled_env_ambiguous "$key" "$raw"
       return 2
       ;;
+    *) ;; # a non-empty value, which compose uses
   esac
   return 0
 }
@@ -100,8 +102,8 @@ nestled_env_sets() {
 # single quotes are literal), a quoted value with a backslash (compose reads `\'` and `\"` as escaped
 # quotes), and an unquoted value that starts with `#`.
 nestled_env_value() {
-  local key="$2" raw first
-  raw="$(nestled_env_line "$1" "$key")" || return 1
+  local file="$1" key="$2" raw first
+  raw="$(nestled_env_line "$file" "$key")" || return 1
   first="${raw:0:1}"
   if [[ ( "$first" == "'" || "$first" == '"' ) && "$raw" == *"\\"* ]]; then
     echo "❌ .env sets $key to a quoted value with a backslash, which compose reads as an escape; use a plain value." >&2
@@ -133,8 +135,8 @@ nestled_env_value() {
 }
 
 nestled_dev_checkout() {
-  local root
-  root="$(cd "$1" && pwd -P)"
+  local checkout="$1" root
+  root="$(cd "$checkout" && pwd -P)"
   # An exported-but-empty value would still reach compose and outrank --env-file, so the .env's real
   # data directory would be masked and ${NESTLED_DEV_DATA_DIR:-./tmp} would fall back to this tree.
   [[ -n "${NESTLED_DEV_DATA_DIR:-}" ]] || unset NESTLED_DEV_DATA_DIR
@@ -155,6 +157,7 @@ nestled_dev_checkout() {
   case "$sets" in
     1) export NESTLED_DEV_DATA_DIR="$NESTLED_MAIN_CHECKOUT/.dev/tmp" ;;
     2) return 1 ;;
+    *) ;; # the .env sets it, so compose takes it from there
   esac
   return 0
 }
