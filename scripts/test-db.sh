@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test Database Management Script
-# Usage: ./scripts/test-db.sh [start|stop|reset|logs]
+# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|url]
 
 set -e
 
@@ -20,8 +20,9 @@ nestled_dev_checkout "$ROOT"
 # would read differently (interpolation, or an unquoted value starting with `#`): a port or a data
 # folder this script acts on must be the one compose uses.
 read_env() {
+  local key="$1"
   [[ -n "$NESTLED_DEV_ENV_FILE" ]] || return 0
-  nestled_env_value "$NESTLED_DEV_ENV_FILE" "$1" || exit 1
+  nestled_env_value "$NESTLED_DEV_ENV_FILE" "$key" || exit 1
 }
 
 # An exported var wins over .env, which wins over the default. Keeping the port and the URL
@@ -66,9 +67,10 @@ TEST_DB_DATA_DIR="$DEV_DATA_DIR/postgres-test"
 # *_test. E2E_ALLOW_NON_DISPOSABLE_DB=1 admits another host or name; a query string or fragment,
 # which could send the client elsewhere, is refused either way.
 assert_disposable_test_database() {
+  local action="$1"
   local pattern='^(postgres|postgresql)://([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?/([A-Za-z0-9_-]+)$'
   if [[ ! "$TEST_DB_URL" =~ $pattern ]]; then
-    echo "❌ Refusing to $1 $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
+    echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
     exit 1
   fi
   local host="${BASH_REMATCH[3]}" database="${BASH_REMATCH[5]}"
@@ -78,10 +80,10 @@ assert_disposable_test_database() {
     return 0
   fi
   if [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" == "1" ]]; then
-    echo "⚠️  E2E_ALLOW_NON_DISPOSABLE_DB=1: running $1 on $TEST_DB_DISPLAY_URL, which is not a local *_test database."
+    echo "⚠️  E2E_ALLOW_NON_DISPOSABLE_DB=1: running $action on $TEST_DB_DISPLAY_URL, which is not a local *_test database."
     return 0
   fi
-  echo "❌ Refusing to $1 $TEST_DB_DISPLAY_URL: a test database must be on this machine (localhost," >&2
+  echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: a test database must be on this machine (localhost," >&2
   echo "   127.0.0.1 or [::1]) and named *_test. Point TEST_DATABASE_URL at one, or set" >&2
   echo "   E2E_ALLOW_NON_DISPOSABLE_DB=1 if this one is disposable under another host or name." >&2
   exit 1
@@ -92,16 +94,17 @@ assert_disposable_test_database() {
 # is emptied from inside a throwaway container of the image the test database ran (given as $1),
 # which runs as root, and the empty folder, which you can remove, is removed here.
 clear_test_data() {
+  local image="$1"
   rm -rf "${TEST_DB_DATA_DIR:?}" 2>/dev/null || true
   [[ -e "$TEST_DB_DATA_DIR" ]] || return 0
-  if [[ -z "$1" ]]; then
+  if [[ -z "$image" ]]; then
     echo "❌ Could not delete $TEST_DB_DATA_DIR (it belongs to the container's postgres user)." >&2
     echo "   Delete it with: sudo rm -rf '$TEST_DB_DATA_DIR'" >&2
     echo "   then run: ./scripts/test-db.sh start" >&2
     exit 1
   fi
-  echo "   Not removable by $(id -un); clearing it through a throwaway $1 container"
-  docker run --rm -v "$TEST_DB_DATA_DIR:/target" --entrypoint sh "$1" \
+  echo "   Not removable by $(id -un); clearing it through a throwaway $image container"
+  docker run --rm -v "$TEST_DB_DATA_DIR:/target" --entrypoint sh "$image" \
     -c 'find /target -mindepth 1 -delete'
   # Best effort: compose may have created the parent as root, so the emptied folder itself can stay.
   # Postgres initializes an existing empty data directory.
@@ -121,7 +124,8 @@ wait_for_db() {
   done
 }
 
-case "$1" in
+COMMAND="${1:-}"
+case "$COMMAND" in
   "start")
     echo "🚀 Starting test database..."
     "$COMPOSE" --profile testing up -d postgres-test
@@ -131,13 +135,13 @@ case "$1" in
     echo "✅ Test database is ready on port $TEST_DB_DISPLAY_PORT"
     echo "📄 Connection string: $TEST_DB_DISPLAY_URL"
     ;;
-    
+
   "stop")
     echo "🛑 Stopping test database..."
     "$COMPOSE" stop postgres-test
     echo "✅ Test database stopped"
     ;;
-    
+
   "reset")
     echo "🔄 Resetting test database (this destroys all test data)..."
     # The image to clear a container-owned data folder with, read before `down` removes the container.
@@ -164,12 +168,12 @@ case "$1" in
       echo "✅ Test database recreated; no data directory was found to clear"
     fi
     ;;
-    
+
   "logs")
     echo "📋 Test database logs:"
     "$COMPOSE" logs postgres-test
     ;;
-    
+
   "migrate")
     assert_disposable_test_database migrate
     echo "🔄 Running Prisma migrations on test database..."
