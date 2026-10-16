@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-14
+generatedAt: 2026-10-16
 channels:
-  canary: 2026.10.13
+  canary: 2026.10.14
   stable: 2026.10.13
 releases:
   - id: 2026.08.0
@@ -621,3 +621,85 @@ releases:
         verification:
           - pnpm run nestled-doctor
         patch: patches/2026-10-14-worktree-safe-branch-steps.diff
+  - id: 2026.10.14
+    date: 2026-10-16
+    title: Release 2026.10.14
+    templateCommit: ad6f189
+    notes:
+      - id: 2026-10-15-ci-develop-runs-finish-and-serial-typecheck
+        title: CI cancels superseded runs only on pull requests, and the local typecheck runs one project at a time
+        delivery: code-patch
+        intent: "CI concurrency. .github/workflows/ci.yml keeps `group: ci-${{ github.ref }}` and sets `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. A newer push to a pull request still cancels the run in progress for it. On develop nothing is cancelled: the running job finishes, and GitHub keeps only the newest push queued behind it, so every develop run that starts completes, and SonarCloud analyses still publish in commit order. The comments above the concurrency block and above nx-set-shas say why. Local typecheck memory. The root `typecheck` script is `pnpm nx run-many -t typecheck --parallel=1 && pnpm typecheck:workspace`: one project at a time. Nx's default of three compilers at once ran out of memory in 3 GB; one at a time peaks at about 1.85 GB of process-tree memory. CI's `nx run-many -t typecheck` keeps Nx's default parallelism. AGENTS.md has a \"Typecheck Memory\" section on choosing parallelism per host and measuring the process-tree peak, and on NX_ISOLATE_PLUGINS=false, which the script does not set because an inline variable is not portable to Windows `cmd`."
+        area: infra
+        affectedPaths:
+          - .github/workflows/ci.yml
+          - package.json
+          - AGENTS.md
+        verification:
+          - pnpm exec nx run-many -t typecheck --parallel=1
+          - "pnpm typecheck:workspace"
+          - pnpm exec prettier --check .
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-15-ci-develop-runs-finish-and-serial-typecheck.diff
+      - id: 2026-10-15-env-reading-and-test-db-safety
+        title: The dev scripts read .env as docker compose does, and test-db.sh refuses what it cannot resolve
+        delivery: code-patch
+        intent: "One .env reader for the dev scripts. scripts/dev-checkout.sh defines nestled_env_line, nestled_env_sets and nestled_env_value, and scripts/dev-checkout.mjs has the matching lastAssignment and definesVariable. They follow docker compose. The last assignment of a key wins (the readers used to take the first). A quoted value is kept up to its closing quote, and an unquoted value's ` # comment` is dropped. An empty or quoted-empty value counts as unset. Lines inside another key's multi-line quoted value are not read as assignments (a backslash escapes the next character in single quotes as well as double, so `'It\\'s` does not end the value), and a key the scripts need whose own quoted value spans lines is refused. test-db.sh's read_env uses nestled_env_value. It exits with a message, before stopping or deleting anything, on a value it cannot read the way compose does: - a `$` in an unquoted or double-quoted value, which compose interpolates and the script would take literally (a single-quoted `$` is literal in both and is accepted); - a backslash inside a quoted value (compose reads `\\'` and `\\\"` as escaped quotes in either kind of quotes); - an unquoted value that starts with `#`, such as `KEY= # note`. The last case is ambiguous. docker compose (measured on v5.6) reads it as the value `# note`, while dotenv, which Nx and the API load, reads it as empty. dev-docker.sh and pnpm db-update refuse it too, but only from a worktree, where it decides the data directory. test-db.sh reset: - reads the container's image before `down`; - when the data folder cannot be deleted (Postgres makes it 0700 and owned by the container's user, which on rootful Linux Docker is not you), empties it from a throwaway container of that image (removing the emptied folder itself is best effort, since Postgres initializes an existing empty one), or, with no image to use, stops and prints the `sudo rm -rf` to run; - when there is no data folder, says that nothing was deleted, instead of \"reset complete\"; - builds the folder as `.dev/tmp`, no longer `.dev/./tmp`. test-db.sh migrate applies the disposable-database guard the e2e setup uses before reset, migrate, push and seed. The URL must be postgres(ql)://, on localhost, 127.0.0.1 or [::1], and named *_test. E2E_ALLOW_NON_DISPOSABLE_DB=1 admits another host or name, but never a query string or fragment. runOnTestDatabase() includes psql's stderr, capped at 2000 characters, in the error it throws. The global setup's psql client now captures stderr, and the `SELECT 1` probe prints that error under \"Test database is not accessible\" instead of discarding it. scripts/dev-checkout.spec.mjs and apps/api-e2e/src/support/database-guards.spec.ts cover each case. .env.example and apps/api-e2e/README.md say what the scripts accept."
+        area: infra
+        affectedPaths:
+          - scripts/dev-checkout.sh
+          - scripts/dev-checkout.mjs
+          - scripts/dev-checkout.spec.mjs
+          - scripts/test-db.sh
+          - apps/api-e2e/src/support/database-guards.ts
+          - apps/api-e2e/src/support/database-guards.spec.ts
+          - apps/api-e2e/src/support/global-setup.ts
+          - apps/api-e2e/README.md
+          - .env.example
+        verification:
+          - node --test scripts/*.spec.mjs
+          - "pnpm exec nx run api-e2e:test-support --skip-nx-cache"
+          - "pnpm exec nx run api-e2e:e2e"
+          - pnpm exec prettier --check .
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-15-env-reading-and-test-db-safety.diff
+      - id: 2026-10-15-sonar-spec-and-prettier-hygiene
+        title: SonarCloud treats the scripts' specs as tests, the template's scripts lose their new-code smells, and prettier ignores tool-written files
+        delivery: code-patch
+        intent: "SonarCloud. sonar-project.properties adds scripts/ to `sonar.tests` and `scripts/**/*.spec.mjs` to `sonar.test.inclusions` and `sonar.cpd.exclusions`, so the node:test specs for the workspace scripts are analysed as tests rather than as source. Smells in the template's own scripts: - scripts/dev-checkout.mjs reads the worktree's `gitdir:` line with a line scan instead of a lazy regex (S8786). Its .env pattern no longer needs an escaped string (S7780), since it is now a regex literal (2026-10-15-env-reading-and-test-db-safety). - Every function in scripts/dev-checkout.sh ends with an explicit `return` (S7682). - scripts/typecheck-project.mjs `main` is split into compileConfigs and reportUncovered (S3776, cognitive complexity). Behaviour and output are unchanged. Specs: - scripts/dev-checkout.spec.mjs derives the test database name from test-db.sh's default URL instead of hard-coding it. It copies into its fixtures every helper the scripts source, following `source \"$X/<name>.sh\"` lines, so a new helper needs no edit there. - apps/api-e2e/src/support/test-setup.ts exports testSetupMessages(). The spec checks those messages with E2E_API_PORT and HOST stubbed, instead of capturing the module's import-time console output. - The password fixtures in database-guards.spec.ts are built at runtime, as test-setup.spec.ts already did. Prettier. .prettierignore adds `.nestled/`, the upgrade ledger the tooling writes, and `apps/**/CLAUDE.md` and `libs/**/CLAUDE.md`, which agent memory tools regenerate. The root CLAUDE.md and agents/** stay checked. No root tsconfig.json. With one, the root Nx project (./project.json) would get a typecheck target from tools/nx-plugins/typecheck.js, and editors would use it as the config for every file no other config claims. A script that imports a lib runs with `pnpm tsx --tsconfig scripts/tsconfig.json scripts/<name>.ts`. scripts/tsconfig.json and AGENTS.md say so."
+        area: infra
+        affectedPaths:
+          - sonar-project.properties
+          - scripts/dev-checkout.mjs
+          - scripts/dev-checkout.sh
+          - scripts/dev-checkout.spec.mjs
+          - scripts/typecheck-project.mjs
+          - scripts/tsconfig.json
+          - apps/api-e2e/src/support/test-setup.ts
+          - apps/api-e2e/src/support/test-setup.spec.ts
+          - apps/api-e2e/src/support/database-guards.spec.ts
+          - .prettierignore
+          - AGENTS.md
+        verification:
+          - node --test scripts/*.spec.mjs
+          - "pnpm exec nx run api-e2e:test-support --skip-nx-cache"
+          - pnpm typecheck
+          - pnpm exec prettier --check .
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-15-sonar-spec-and-prettier-hygiene.diff
+      - id: 2026-10-15-svg-accessible-names
+        title: Inline SVGs in the template's UI have an accessible name or are hidden from assistive tech
+        delivery: code-patch
+        intent: "Every inline SVG that SonarCloud flagged under S1077 (\"SVG elements should have an accessible name\") in the template's own UI code now either has an accessible name or is hidden. Only attributes change, so there is no visual or behaviour change. Decorative icons get `aria-hidden=\"true\" focusable=\"false\"`. These are icons beside visible text, inside a link that already has an `aria-label`, or purely illustrative: - apps/web/app/routes/admin/_index.tsx (the error banner icon); - apps/web/app/routes/admin/settings/_index.tsx (the placeholder illustration); - apps/web/app/routes/mcp-connect.tsx (the chevron in an organization row); - libs/web-ui/src/lib/web-ui-social-links.tsx (the five social icons, whose links are labelled); - the interactive custom checkbox's check mark in libs/shared/styles/src/lib/form-styles.tsx, whose hidden input carries the state. Icons that are the only signal of a state get `role=\"img\"` and an `aria-label`. These are the read-only checkbox icons (\"Checked\", \"Not checked\") and the read-only radio icons (\"Selected\", \"Not selected\") in form-styles.tsx. The web-ui avatar's placeholder icon is hidden when an image is given, because the `<img alt>` names the avatar. Without an image it is `role=\"img\"`, labelled with the user's name, or \"Avatar\" when there is no name."
+        area: ui
+        affectedPaths:
+          - apps/web/app/routes/admin/_index.tsx
+          - apps/web/app/routes/admin/settings/_index.tsx
+          - apps/web/app/routes/mcp-connect.tsx
+          - libs/shared/styles/src/lib/form-styles.tsx
+          - libs/web-ui/src/lib/web-ui-avatar.tsx
+          - libs/web-ui/src/lib/web-ui-social-links.tsx
+        verification:
+          - pnpm exec nx run-many -t typecheck,lint,test -p web,web-ui,styles --parallel=1
+          - pnpm exec prettier --check .
+        patch: patches/2026-10-15-svg-accessible-names.diff
