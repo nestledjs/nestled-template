@@ -1,0 +1,319 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-10-16-template-script-sonar-smells.yaml b/.nestled-updates/upgrade-notes/2026-10-16-template-script-sonar-smells.yaml
+new file mode 100644
+index 0000000..c5cd99d
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-16-template-script-sonar-smells.yaml
+@@ -0,0 +1,52 @@
++id: 2026-10-16-template-script-sonar-smells
++title: The dev-checkout and test-db scripts from release 2026.10.14 no longer raise SonarCloud smells
++priority: normal
++area: infra
++type: cleanup
++delivery: code-patch
++intent: >
++  The worktree-safe dev Docker scripts added in release 2026.10.14 raised SonarCloud smells as new
++  code in every clone. They are refactored without any change in behaviour or output:
++
++    - scripts/dev-checkout.mjs: lastAssignment() reads each line through a new splitAssignment()
++      helper (key, trimmed value, opening quote, whether that quote stays open), which brings its
++      cognitive complexity under the limit (S3776).
++    - scripts/dev-checkout.sh and scripts/test-db.sh: every function copies its positional
++      parameters into named locals before using them, and test-db.sh reads its command from
++      `COMMAND="${1:-}"` (S7679).
++    - The two `case` statements in dev-checkout.sh without a default branch get an explicit,
++      commented `*) ;;` (S131).
++    - scripts/dev-checkout.spec.mjs checks that test-db.sh's default URL names a test database in
++      a `before()` hook instead of at module top level, so the assertion runs inside the test
++      runner (S8784).
++    - scripts/test-db.sh: the usage comment at the top lists every command the script handles
++      (`start|stop|reset|logs|migrate|url`), and its whitespace-only blank lines are emptied.
++why: >
++  Each clone's SonarCloud analysis reported these as new-code smells in files the template ships,
++  so a project either carried the findings or fixed them locally and drifted from the template,
++  which makes the next template change to these scripts apply less cleanly.
++affectedPaths:
++  - scripts/dev-checkout.mjs
++  - scripts/dev-checkout.sh
++  - scripts/test-db.sh
++  - scripts/dev-checkout.spec.mjs
++verification:
++  - node --test scripts/*.spec.mjs
++  - bash -n scripts/dev-checkout.sh
++  - bash -n scripts/test-db.sh
++  - pnpm exec prettier --check .
++  - pnpm run nestled-doctor
++agentHints:
++  - >
++    A project whose copies of these four files are still 2026.10.14's, unchanged, takes the
++    template's versions verbatim, except for test-db.sh's project-specific lines (the default test
++    port, the default test database name and the test container name), which keep the project's
++    values. Record `applied`.
++  - >
++    A project that already fixed these smells locally converges on the template's versions where
++    they are equivalent (the helper's name and the local variable names may differ), so the next
++    template change to these scripts applies cleanly. Keep any project-specific behaviour. Record
++    `adapted`.
++  - >
++    These are behaviour-preserving refactors: if the project's dev-checkout spec passed before, it
++    must pass after. A failure points at a mis-merged line, not at the note.
+diff --git a/scripts/dev-checkout.mjs b/scripts/dev-checkout.mjs
+index d7c1975..840fe04 100644
+--- a/scripts/dev-checkout.mjs
++++ b/scripts/dev-checkout.mjs
+@@ -49,6 +49,18 @@ function closingQuote(text, quote) {
+   return -1
+ }
+ 
++// One .env line read as an assignment: the key, the trimmed text after `=`, the quote that text
++// starts with (if any), and whether that quote is still open at the end of the line. Undefined when
++// the line is not an assignment.
++function splitAssignment(line) {
++  const match = ASSIGNMENT.exec(line)
++  if (!match) return undefined
++  const rest = line.slice(match[0].length).trim()
++  const quote = rest.startsWith('"') || rest.startsWith("'") ? rest[0] : undefined
++  const opens = quote !== undefined && closingQuote(rest.slice(1), quote) === -1
++  return { key: match[1], rest, quote, opens }
++}
++
+ /**
+  * The text after `=` in the last assignment of `name` in a .env (an `export ` prefix and spaces
+  * around the name allowed), trimmed, or undefined when there is none. Compose and dotenv both let a
+@@ -69,12 +81,10 @@ export function lastAssignment(contents, name) {
+       if (closingQuote(line, openQuote) !== -1) openQuote = undefined
+       continue
+     }
+-    const match = ASSIGNMENT.exec(line)
+-    if (!match) continue
+-    const rest = line.slice(match[0].length).trim()
+-    const quote = rest.startsWith('"') || rest.startsWith("'") ? rest[0] : undefined
+-    const opens = quote !== undefined && closingQuote(rest.slice(1), quote) === -1
+-    if (match[1] === name) {
++    const assignment = splitAssignment(line)
++    if (!assignment) continue
++    const { key, rest, quote, opens } = assignment
++    if (key === name) {
+       value = rest
+       multiline = opens
+     }
+diff --git a/scripts/dev-checkout.sh b/scripts/dev-checkout.sh
+index 0eab63f..68348cb 100755
+--- a/scripts/dev-checkout.sh
++++ b/scripts/dev-checkout.sh
+@@ -35,8 +35,8 @@ nestled_main_checkout() {
+ # key's multi-line quoted value are not assignments, as compose reads them. A <key> whose own value
+ # spans lines is refused (status 1, reason on stderr): no script here needs one.
+ nestled_env_line() {
+-  local raw status=0
+-  raw="$(awk -v key="$2" '
++  local file="$1" key="$2" raw status=0
++  raw="$(awk -v key="$key" '
+     # Whether s holds the closing quote q. As in compose, a backslash escapes the next character
+     # inside either kind of quote.
+     function closes(s, q,   i, c) {
+@@ -60,9 +60,9 @@ nestled_env_line() {
+       if (opens) open = q
+     }
+     END { if (multiline) exit 3; printf "%s", value }
+-  ' "$1" 2>/dev/null)" || status=$?
++  ' "$file" 2>/dev/null)" || status=$?
+   if [[ "$status" -eq 3 ]]; then
+-    echo "❌ .env gives $2 a quoted value that spans lines; put it on one line." >&2
++    echo "❌ .env gives $key a quoted value that spans lines; put it on one line." >&2
+     return 1
+   fi
+   printf '%s\n' "${raw%"${raw##*[![:space:]]}"}"
+@@ -73,7 +73,8 @@ nestled_env_line() {
+ # Compose reads `KEY= # note` as the value `# note`; dotenv, which Nx and the API load, reads it as
+ # empty. No reading is safe, so nothing guesses.
+ nestled_env_ambiguous() {
+-  echo "❌ .env sets $1 to an unquoted value that starts with '#' ($2)." >&2
++  local key="$1" raw="$2"
++  echo "❌ .env sets $key to an unquoted value that starts with '#' ($raw)." >&2
+   echo "   docker compose reads that as the value and dotenv as empty. Remove the comment, or quote" >&2
+   echo "   the value (\"\" for empty)." >&2
+   return 1
+@@ -82,14 +83,15 @@ nestled_env_ambiguous() {
+ # nestled_env_sets <file> <key>: whether the .env gives <key> a non-empty value, which is when
+ # compose's ${KEY:-default} uses it. Status 0 yes, 1 no, 2 ambiguous (reported on stderr).
+ nestled_env_sets() {
+-  local raw
+-  raw="$(nestled_env_line "$1" "$2")" || return 2
++  local file="$1" key="$2" raw
++  raw="$(nestled_env_line "$file" "$key")" || return 2
+   case "$raw" in
+     "" | '""'* | "''"*) return 1 ;;
+     "#"*)
+-      nestled_env_ambiguous "$2" "$raw"
++      nestled_env_ambiguous "$key" "$raw"
+       return 2
+       ;;
++    *) ;; # a non-empty value, which compose uses
+   esac
+   return 0
+ }
+@@ -100,8 +102,8 @@ nestled_env_sets() {
+ # single quotes are literal), a quoted value with a backslash (compose reads `\'` and `\"` as escaped
+ # quotes), and an unquoted value that starts with `#`.
+ nestled_env_value() {
+-  local key="$2" raw first
+-  raw="$(nestled_env_line "$1" "$key")" || return 1
++  local file="$1" key="$2" raw first
++  raw="$(nestled_env_line "$file" "$key")" || return 1
+   first="${raw:0:1}"
+   if [[ ( "$first" == "'" || "$first" == '"' ) && "$raw" == *"\\"* ]]; then
+     echo "❌ .env sets $key to a quoted value with a backslash, which compose reads as an escape; use a plain value." >&2
+@@ -133,8 +135,8 @@ nestled_env_value() {
+ }
+ 
+ nestled_dev_checkout() {
+-  local root
+-  root="$(cd "$1" && pwd -P)"
++  local checkout="$1" root
++  root="$(cd "$checkout" && pwd -P)"
+   # An exported-but-empty value would still reach compose and outrank --env-file, so the .env's real
+   # data directory would be masked and ${NESTLED_DEV_DATA_DIR:-./tmp} would fall back to this tree.
+   [[ -n "${NESTLED_DEV_DATA_DIR:-}" ]] || unset NESTLED_DEV_DATA_DIR
+@@ -155,6 +157,7 @@ nestled_dev_checkout() {
+   case "$sets" in
+     1) export NESTLED_DEV_DATA_DIR="$NESTLED_MAIN_CHECKOUT/.dev/tmp" ;;
+     2) return 1 ;;
++    *) ;; # the .env sets it, so compose takes it from there
+   esac
+   return 0
+ }
+diff --git a/scripts/dev-checkout.spec.mjs b/scripts/dev-checkout.spec.mjs
+index 529e1b1..5b4b17d 100644
+--- a/scripts/dev-checkout.spec.mjs
++++ b/scripts/dev-checkout.spec.mjs
+@@ -13,7 +13,7 @@ import {
+ } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { dirname, join } from 'node:path'
+-import { afterEach, describe, it } from 'node:test'
++import { afterEach, before, describe, it } from 'node:test'
+ import { fileURLToPath } from 'node:url'
+ import {
+   definesVariable,
+@@ -49,7 +49,9 @@ const fixtureScripts = scriptsWithHelpers(['dev-docker.sh', 'test-db.sh'])
+ const testDatabaseName = /localhost:\$\{TEST_DB_PORT\}\/([\w-]+)/.exec(
+   readFileSync(join(scriptsDir, 'test-db.sh'), 'utf8'),
+ )?.[1]
+-assert.ok(testDatabaseName, 'test-db.sh builds its default URL from TEST_DB_PORT')
++before(() => {
++  assert.ok(testDatabaseName, 'test-db.sh builds its default URL from TEST_DB_PORT')
++})
+ const scratch = []
+ 
+ afterEach(() => {
+diff --git a/scripts/test-db.sh b/scripts/test-db.sh
+index adfa7b5..09866a9 100755
+--- a/scripts/test-db.sh
++++ b/scripts/test-db.sh
+@@ -1,7 +1,7 @@
+ #!/bin/bash
+ 
+ # Test Database Management Script
+-# Usage: ./scripts/test-db.sh [start|stop|reset|logs]
++# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|url]
+ 
+ set -e
+ 
+@@ -20,8 +20,9 @@ nestled_dev_checkout "$ROOT"
+ # would read differently (interpolation, or an unquoted value starting with `#`): a port or a data
+ # folder this script acts on must be the one compose uses.
+ read_env() {
++  local key="$1"
+   [[ -n "$NESTLED_DEV_ENV_FILE" ]] || return 0
+-  nestled_env_value "$NESTLED_DEV_ENV_FILE" "$1" || exit 1
++  nestled_env_value "$NESTLED_DEV_ENV_FILE" "$key" || exit 1
+ }
+ 
+ # An exported var wins over .env, which wins over the default. Keeping the port and the URL
+@@ -66,9 +67,10 @@ TEST_DB_DATA_DIR="$DEV_DATA_DIR/postgres-test"
+ # *_test. E2E_ALLOW_NON_DISPOSABLE_DB=1 admits another host or name; a query string or fragment,
+ # which could send the client elsewhere, is refused either way.
+ assert_disposable_test_database() {
++  local action="$1"
+   local pattern='^(postgres|postgresql)://([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?/([A-Za-z0-9_-]+)$'
+   if [[ ! "$TEST_DB_URL" =~ $pattern ]]; then
+-    echo "❌ Refusing to $1 $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
++    echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
+     exit 1
+   fi
+   local host="${BASH_REMATCH[3]}" database="${BASH_REMATCH[5]}"
+@@ -78,10 +80,10 @@ assert_disposable_test_database() {
+     return 0
+   fi
+   if [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" == "1" ]]; then
+-    echo "⚠️  E2E_ALLOW_NON_DISPOSABLE_DB=1: running $1 on $TEST_DB_DISPLAY_URL, which is not a local *_test database."
++    echo "⚠️  E2E_ALLOW_NON_DISPOSABLE_DB=1: running $action on $TEST_DB_DISPLAY_URL, which is not a local *_test database."
+     return 0
+   fi
+-  echo "❌ Refusing to $1 $TEST_DB_DISPLAY_URL: a test database must be on this machine (localhost," >&2
++  echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: a test database must be on this machine (localhost," >&2
+   echo "   127.0.0.1 or [::1]) and named *_test. Point TEST_DATABASE_URL at one, or set" >&2
+   echo "   E2E_ALLOW_NON_DISPOSABLE_DB=1 if this one is disposable under another host or name." >&2
+   exit 1
+@@ -92,16 +94,17 @@ assert_disposable_test_database() {
+ # is emptied from inside a throwaway container of the image the test database ran (given as $1),
+ # which runs as root, and the empty folder, which you can remove, is removed here.
+ clear_test_data() {
++  local image="$1"
+   rm -rf "${TEST_DB_DATA_DIR:?}" 2>/dev/null || true
+   [[ -e "$TEST_DB_DATA_DIR" ]] || return 0
+-  if [[ -z "$1" ]]; then
++  if [[ -z "$image" ]]; then
+     echo "❌ Could not delete $TEST_DB_DATA_DIR (it belongs to the container's postgres user)." >&2
+     echo "   Delete it with: sudo rm -rf '$TEST_DB_DATA_DIR'" >&2
+     echo "   then run: ./scripts/test-db.sh start" >&2
+     exit 1
+   fi
+-  echo "   Not removable by $(id -un); clearing it through a throwaway $1 container"
+-  docker run --rm -v "$TEST_DB_DATA_DIR:/target" --entrypoint sh "$1" \
++  echo "   Not removable by $(id -un); clearing it through a throwaway $image container"
++  docker run --rm -v "$TEST_DB_DATA_DIR:/target" --entrypoint sh "$image" \
+     -c 'find /target -mindepth 1 -delete'
+   # Best effort: compose may have created the parent as root, so the emptied folder itself can stay.
+   # Postgres initializes an existing empty data directory.
+@@ -121,7 +124,8 @@ wait_for_db() {
+   done
+ }
+ 
+-case "$1" in
++COMMAND="${1:-}"
++case "$COMMAND" in
+   "start")
+     echo "🚀 Starting test database..."
+     "$COMPOSE" --profile testing up -d postgres-test
+@@ -131,13 +135,13 @@ case "$1" in
+     echo "✅ Test database is ready on port $TEST_DB_DISPLAY_PORT"
+     echo "📄 Connection string: $TEST_DB_DISPLAY_URL"
+     ;;
+-    
++
+   "stop")
+     echo "🛑 Stopping test database..."
+     "$COMPOSE" stop postgres-test
+     echo "✅ Test database stopped"
+     ;;
+-    
++
+   "reset")
+     echo "🔄 Resetting test database (this destroys all test data)..."
+     # The image to clear a container-owned data folder with, read before `down` removes the container.
+@@ -164,12 +168,12 @@ case "$1" in
+       echo "✅ Test database recreated; no data directory was found to clear"
+     fi
+     ;;
+-    
++
+   "logs")
+     echo "📋 Test database logs:"
+     "$COMPOSE" logs postgres-test
+     ;;
+-    
++
+   "migrate")
+     assert_disposable_test_database migrate
+     echo "🔄 Running Prisma migrations on test database..."
