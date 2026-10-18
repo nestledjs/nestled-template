@@ -1,0 +1,1181 @@
+diff --git a/apps/api-e2e/README.md b/apps/api-e2e/README.md
+index 58cf0a5..aee9aa4 100644
+--- a/apps/api-e2e/README.md
++++ b/apps/api-e2e/README.md
+@@ -27,9 +27,13 @@ one test passed. A filter that matches nothing, or a run in which every test is
+ 
+ ## How It Works
+ 
+-1. **Wrapper** (`run-tests.sh`): resolves the test database URL, probes it with its own
+-   credentials, and if it is unreachable either fails (a caller-supplied `TEST_DATABASE_URL`) or
+-   starts the repo's test container (no URL supplied). It then runs Vitest and checks the summary.
++1. **Wrapper** (`run-tests.sh`): resolves the test database URL and probes it with its own
++   credentials. When the probe fails it prints the client's error, with the URL and credentials
++   removed, then runs `scripts/test-db.sh ensure`, which creates the database when the server is up
++   but lacks it (only a plain `postgresql://` URL on this machine named `*_test`, whatever
++   `E2E_ALLOW_NON_DISPOSABLE_DB` says), and probes again. If it is still unreachable it either fails
++   (a caller-supplied `TEST_DATABASE_URL`) or starts the repo's test container (no URL supplied),
++   whose `start` creates the database the same way. It then runs Vitest and checks the summary.
+ 2. **Global setup** (`src/support/global-setup.ts`):
+    - refuses a test database that is not disposable (a `postgresql:` URL on this machine, named
+      `*_test`, with no `?schema=`, fragment or destination-override parameter) before anything is
+@@ -90,8 +94,10 @@ src/
+ - **"Refusing to run e2e setup against ..."**: `TEST_DATABASE_URL` is not a disposable database; the
+   message says why. Point it at one, or, when the message allows it, set
+   `E2E_ALLOW_NON_DISPOSABLE_DB=1` if it is disposable anyway.
+-- **"Test database not accessible"**: check `TEST_DATABASE_URL`, or start the container with
+-  `pnpm test:db:start`.
++- **"Test database not accessible"**: the "Probe error" line above it says why (a refused
++  connection, a failed login, a missing database). Check `TEST_DATABASE_URL`, or start the
++  container with `pnpm test:db:start`. A missing local `*_test` database is created by
++  `./scripts/test-db.sh ensure`; any other database you create yourself.
+ - **"no test passed"**: the file filter matched nothing, or every test was skipped.
+ - **"could not stop it"**: the wrapper started the test database and `scripts/test-db.sh stop`
+   failed. Stop it by hand before the next run.
+diff --git a/apps/api-e2e/run-tests.sh b/apps/api-e2e/run-tests.sh
+index 50a56c7..21ae278 100755
+--- a/apps/api-e2e/run-tests.sh
++++ b/apps/api-e2e/run-tests.sh
+@@ -26,10 +26,33 @@ export E2E_API_PORT="${E2E_API_PORT:-3100}"
+ # Probe the database with the URL itself — its host, port, credentials and name — through the
+ # suite's pg runner, so no psql binary is needed. A probe with fixed postgres:postgres credentials
+ # failed against any other login (CI's test database uses prisma:prisma) and started a container
+-# the tests never used.
++# the tests never used. The runner's error (a refused connection, a failed login, a missing
++# database) is kept in PROBE_ERROR so a failure says why.
++PROBE_ERROR=""
+ probe_test_database() {
+-  node -e 'process.stdout.write(JSON.stringify({ url: process.env.TEST_DATABASE_URL, statement: "SELECT 1" }))' |
+-    node apps/api-e2e/src/support/sql-runner.mjs >/dev/null 2>&1
++  local status=0
++  PROBE_ERROR="$(
++    node -e 'process.stdout.write(JSON.stringify({ url: process.env.TEST_DATABASE_URL, statement: "SELECT 1" }))' |
++      node apps/api-e2e/src/support/sql-runner.mjs 2>&1 >/dev/null
++  )" || status=$?
++  return "$status"
++}
++
++# Text for the log with the test database URL and any `scheme://user:password@` user-info removed.
++# The runner already leaves the URL out of its errors; this is the second line of defence, since
++# these lines reach CI logs.
++scrub_credentials() {
++  local text="$1"
++  text="${text//"$TEST_DATABASE_URL"/<TEST_DATABASE_URL>}"
++  printf '%s\n' "$text" | sed -E 's#([A-Za-z][A-Za-z0-9+.-]*://)[^@[:space:]/]+@#\1***@#g'
++  return 0
++}
++
++# Print the probe's error, indented, or say there was none.
++report_probe_error() {
++  local detail="${PROBE_ERROR:-(no error output)}"
++  echo "   Probe error: $(scrub_credentials "$detail" | sed '2,$s/^/   /')"
++  return 0
+ }
+ 
+ TEST_DB_STARTED=false
+@@ -49,19 +72,28 @@ cleanup() {
+ trap cleanup EXIT
+ 
+ if ! probe_test_database; then
+-  if [[ -n "$SUPPLIED_TEST_DATABASE_URL" ]]; then
++  echo "⚠️  The test database did not answer SELECT 1."
++  report_probe_error
++  # A server that is up but lacks the database: create it when the URL is a local *_test database
++  # (test-db.sh ensure refuses anything else), then probe again.
++  ENSURE_OUTPUT=""
++  if ENSURE_OUTPUT="$(./scripts/test-db.sh ensure 2>&1)" && probe_test_database; then
++    scrub_credentials "$ENSURE_OUTPUT"
++  elif [[ -n "$SUPPLIED_TEST_DATABASE_URL" ]]; then
++    [[ -z "$ENSURE_OUTPUT" ]] || scrub_credentials "$ENSURE_OUTPUT"
+     echo "❌ TEST_DATABASE_URL is set but that database is not accessible"
++    report_probe_error
+     echo "   Start it, or unset TEST_DATABASE_URL to use the repo's own test database"
+     exit 1
+-  fi
+-  if ! docker info >/dev/null 2>&1; then
++  elif ! docker info >/dev/null 2>&1; then
+     echo "❌ Test database is not accessible and Docker is not running"
+     echo "   Start Docker or set TEST_DATABASE_URL to an accessible test database"
+     exit 1
++  else
++    # start also creates the database the URL names when the container lacks it.
++    ./scripts/test-db.sh start
++    TEST_DB_STARTED=true
+   fi
+-
+-  ./scripts/test-db.sh start
+-  TEST_DB_STARTED=true
+ fi
+ 
+ # Call vitest directly to avoid infinite loop (since NX now calls this script)
+diff --git a/apps/api-e2e/src/support/e2e-runner.spec.ts b/apps/api-e2e/src/support/e2e-runner.spec.ts
+index fe5d96f..d477b57 100644
+--- a/apps/api-e2e/src/support/e2e-runner.spec.ts
++++ b/apps/api-e2e/src/support/e2e-runner.spec.ts
+@@ -93,6 +93,11 @@ const runWrapper = (
+   stopExit = 0,
+   suppliedUrl = SUPPLIED_URL,
+   urlExit = 0,
++  {
++    probeExits = [probeExit],
++    probeStderr = '',
++    ensureExit = 0,
++  }: { probeExits?: number[]; probeStderr?: string; ensureExit?: number } = {},
+ ) => {
+   const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
+   roots.push(root)
+@@ -104,14 +109,22 @@ const runWrapper = (
+     join(root, 'scripts/test-db.sh'),
+     '#!/bin/bash\necho "$1" >> db-calls\n' +
+       `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n` +
+-      `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n`,
++      `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n` +
++      `if [[ "$1" == ensure ]]; then echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit}; fi\n`,
+     { mode: 0o755 },
+   )
+-  // Stands in for the pg runner: records the probe request and answers with the probe's result.
++  // Stands in for the pg runner: records the probe request and answers each probe in turn with the
++  // next of probeExits (the last one repeats), writing probeStderr when it fails.
+   writeFileSync(
+     join(root, 'apps/api-e2e/src/support/sql-runner.mjs'),
+-    "import { readFileSync, writeFileSync } from 'node:fs'\n" +
+-      `writeFileSync('probe', readFileSync(0))\nprocess.exit(${probeExit})\n`,
++    "import { existsSync, readFileSync, writeFileSync } from 'node:fs'\n" +
++      `const exits = ${JSON.stringify(probeExits)}\n` +
++      "const count = existsSync('probe-count') ? Number(readFileSync('probe-count', 'utf8')) : 0\n" +
++      "writeFileSync('probe-count', String(count + 1))\n" +
++      "writeFileSync('probe', readFileSync(0))\n" +
++      'const exit = exits[Math.min(count, exits.length - 1)]\n' +
++      `if (exit !== 0) process.stderr.write(${JSON.stringify(probeStderr)})\n` +
++      'process.exit(exit)\n',
+   )
+   writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
+   writeFileSync(join(root, 'vitest-output'), vitestOutput)
+@@ -136,7 +149,13 @@ const runWrapper = (
+       return ''
+     }
+   }
+-  return { result, probe: read('probe'), dbCalls: read('db-calls'), npxCalls: read('npx-calls') }
++  return {
++    result,
++    probe: read('probe'),
++    probes: Number(read('probe-count') || 0),
++    dbCalls: read('db-calls'),
++    npxCalls: read('npx-calls'),
++  }
+ }
+ 
+ const summary = (tests: string) => `\n Test Files  2 passed (2)\n      Tests  ${tests}\n`
+@@ -208,6 +227,54 @@ describe('api-e2e test wrapper', () => {
+     expect(npxCalls).toBe('')
+     expect(result.stdout).not.toContain('PASSED')
+   })
++  it('prints why the probe failed, without the URL or its credentials', () => {
++    const { result } = runWrapper(summary('5 passed (5)'), 0, 1, 0, SUPPLIED_URL, 0, {
++      probeStderr: `connect failed for ${SUPPLIED_URL} via postgres://other:hunter@db.local/x`,
++    })
++    expect(result.status).toBe(1)
++    const output = `${result.stdout}${result.stderr}`
++    expect(output).toContain('Probe error: connect failed for <TEST_DATABASE_URL>')
++    expect(output).toContain('postgres://***@db.local/x')
++    expect(output).not.toContain('secret')
++    expect(output).not.toContain('hunter')
++  })
++  it('creates a missing database and runs, without starting a container', () => {
++    const { result, dbCalls, probes, npxCalls } = runWrapper(
++      summary('5 passed (5)'),
++      0,
++      1,
++      0,
++      '',
++      0,
++      {
++        probeExits: [1, 0],
++        probeStderr: 'database "app_test" does not exist',
++      },
++    )
++    expect(result.status).toBe(0)
++    expect(result.stdout).toContain('database "app_test" does not exist')
++    expect(dbCalls).toContain('ensure')
++    expect(dbCalls).not.toContain('start')
++    expect(probes).toBe(2)
++    expect(npxCalls).toBe('ran\n')
++  })
++  it('creates a missing database behind a supplied URL, printing its output scrubbed', () => {
++    const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1, 0, SUPPLIED_URL, 0, {
++      probeExits: [1, 0],
++    })
++    expect(result.status).toBe(0)
++    expect(dbCalls).toContain('ensure')
++    expect(result.stdout).toContain('ensure output for <TEST_DATABASE_URL>')
++    expect(result.stdout).not.toContain('secret')
++  })
++  it('starts its own test database when ensure cannot create one', () => {
++    const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1, 0, '', 0, {
++      ensureExit: 1,
++    })
++    expect(result.status).toBe(0)
++    expect(dbCalls).toContain('ensure')
++    expect(dbCalls).toContain('start')
++  })
+   it('finds a failure in the summary of a long log', () => {
+     const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`
+     const { result } = runWrapper(log, 0)
+diff --git a/apps/api-e2e/src/support/sql-runner.mjs b/apps/api-e2e/src/support/sql-runner.mjs
+index e52613f..bb7d19f 100644
+--- a/apps/api-e2e/src/support/sql-runner.mjs
++++ b/apps/api-e2e/src/support/sql-runner.mjs
+@@ -152,13 +152,69 @@ export async function runSql({ url, statement, variables = {} }) {
+   }
+ }
+ 
++/**
++ * An error message with the request's URL, its user-info and its password removed, and the user-info
++ * of any other `scheme://user:password@` in it: the runner's errors reach terminals and CI logs.
++ *
++ * @param {string} message
++ * @param {string | undefined} url
++ * @returns {string}
++ */
++export function scrubCredentials(message, url) {
++  let scrubbed = message
++  if (url) {
++    const userInfo = /^[a-z]+:\/\/([^@/?#]*)@/i.exec(url)?.[1] ?? ''
++    const password = userInfo.split(':').slice(1).join(':')
++    let decoded = password
++    try {
++      decoded = decodeURIComponent(password)
++    } catch {
++      // Not valid percent-encoding: the raw form is scrubbed below.
++    }
++    for (const secret of [url, userInfo, password, decoded].filter(Boolean)) {
++      scrubbed = scrubbed.split(secret).join('***')
++    }
++  }
++  return dropUserInfo(scrubbed)
++}
++
++/**
++ * Text with the user-info of every `scheme://user:password@host` replaced by `***`. A plain scan
++ * rather than a regex, so a long or malformed message cannot make it backtrack.
++ *
++ * @param {string} text
++ * @returns {string}
++ */
++function dropUserInfo(text) {
++  let result = ''
++  let from = 0
++  let separator = text.indexOf('://')
++  while (separator !== -1) {
++    const start = separator + 3
++    let end = start
++    while (end < text.length && !'@/ \t\r\n'.includes(text[end])) end++
++    const hasUserInfo = text[end] === '@' && end > start
++    result += text.slice(from, start) + (hasUserInfo ? '***' : text.slice(start, end))
++    from = end
++    separator = text.indexOf('://', end)
++  }
++  return result + text.slice(from)
++}
++
+ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
++  /** @type {string | undefined} */
++  let url
+   Promise.resolve()
+-    .then(() => runSql(JSON.parse(readFileSync(0, 'utf8'))))
++    .then(() => {
++      const request = JSON.parse(readFileSync(0, 'utf8'))
++      url = typeof request?.url === 'string' ? request.url : undefined
++      return runSql(request)
++    })
+     .then(
+       output => process.stdout.write(output),
+       error => {
+-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
++        const message = error instanceof Error ? error.message : String(error)
++        process.stderr.write(`${scrubCredentials(message, url)}\n`)
+         process.exitCode = 1
+       },
+     )
+diff --git a/apps/api-e2e/src/support/sql-runner.spec.ts b/apps/api-e2e/src/support/sql-runner.spec.ts
+index d3c358d..8845eea 100644
+--- a/apps/api-e2e/src/support/sql-runner.spec.ts
++++ b/apps/api-e2e/src/support/sql-runner.spec.ts
+@@ -1,5 +1,10 @@
+ import { describe, expect, it } from 'vitest'
+-import { formatRows, prepareStatements } from './sql-runner.mjs'
++import { spawnSync } from 'node:child_process'
++import { resolve } from 'node:path'
++import { formatRows, prepareStatements, scrubCredentials } from './sql-runner.mjs'
++
++// Built at runtime, so the fixture is not a credential-shaped literal in the source.
++const PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
+ 
+ const quote = (value: string) => `'${value.replaceAll("'", "''")}'`
+ 
+@@ -91,3 +96,31 @@ describe('sql runner', () => {
+     expect(formatRows({ fields: [], rows: [] })).toEqual([])
+   })
+ })
++
++describe('sql runner errors', () => {
++  it('drop the URL, its user-info and its password, raw and percent-decoded', () => {
++    const url = `postgresql://app:${PASSWORD}%21@localhost:55433/app_test`
++    const message = `failed ${url}; app:${PASSWORD}%21; ${PASSWORD}!; postgres://u:p@elsewhere/db`
++    const scrubbed = scrubCredentials(message, url)
++    expect(scrubbed).not.toContain(PASSWORD)
++    expect(scrubbed).not.toContain(url)
++    expect(scrubbed).toContain('postgres://***@elsewhere/db')
++  })
++
++  it('keep a message with no credential as it is', () => {
++    expect(scrubCredentials('connect ECONNREFUSED 127.0.0.1:1', undefined)).toBe(
++      'connect ECONNREFUSED 127.0.0.1:1',
++    )
++  })
++
++  it('reach stderr scrubbed when the database cannot be reached', () => {
++    const url = `postgresql://app:${PASSWORD}@127.0.0.1:1/app_test`
++    const result = spawnSync(process.execPath, [resolve(__dirname, 'sql-runner.mjs')], {
++      input: JSON.stringify({ url, statement: 'SELECT 1' }),
++      encoding: 'utf8',
++    })
++    expect(result.status).toBe(1)
++    expect(result.stderr.trim()).not.toBe('')
++    expect(result.stderr).not.toContain(PASSWORD)
++  })
++})
+diff --git a/libs/web-ui/src/lib/web-ui-avatar.spec.tsx b/libs/web-ui/src/lib/web-ui-avatar.spec.tsx
+new file mode 100644
+index 0000000..fc17799
+--- /dev/null
++++ b/libs/web-ui/src/lib/web-ui-avatar.spec.tsx
+@@ -0,0 +1,46 @@
++import { render, screen } from '@testing-library/react'
++import { describe, expect, it } from 'vitest'
++import { WebUiAvatar } from './web-ui-avatar'
++
++describe('WebUiAvatar', () => {
++  it('names the placeholder icon after the user when there is no image', () => {
++    render(<WebUiAvatar placeholder="icon" name="Ada Lovelace" />)
++    const icon = screen.getByRole('img', { name: 'Ada Lovelace' })
++    expect(icon.tagName.toLowerCase()).toBe('svg')
++    expect(icon.getAttribute('aria-hidden')).toBeNull()
++  })
++
++  it('names the placeholder icon "Avatar" when there is no name either', () => {
++    render(<WebUiAvatar placeholder="icon" />)
++    expect(screen.getByRole('img', { name: 'Avatar' }).tagName.toLowerCase()).toBe('svg')
++  })
++
++  it('hides the placeholder icon when an image names the avatar', () => {
++    const { container } = render(
++      <WebUiAvatar placeholder="icon" name="Ada Lovelace" src="https://example.com/a.png" />,
++    )
++    const icon = container.querySelector('svg')
++    expect(icon?.getAttribute('aria-hidden')).toBe('true')
++    expect(icon?.getAttribute('role')).toBeNull()
++    expect(icon?.getAttribute('aria-label')).toBeNull()
++    // The image is the one named element.
++    const named = screen.getAllByRole('img', { name: 'Ada Lovelace' })
++    expect(named).toHaveLength(1)
++    expect(named[0].tagName.toLowerCase()).toBe('img')
++  })
++
++  it('shows initials, and no icon, for the initials placeholder', () => {
++    const { container } = render(<WebUiAvatar placeholder="initials" name="Ada Lovelace" />)
++    expect(screen.getByText('AL')).toBeTruthy()
++    expect(container.querySelector('svg')).toBeNull()
++  })
++
++  it('applies the shape, size and notification classes', () => {
++    const { container } = render(
++      <WebUiAvatar shape="square" size="lg" notification notificationPosition="top" />,
++    )
++    const root = container.firstElementChild
++    expect(root?.className).toContain('h-12 w-12')
++    expect(container.querySelector('.top-0.right-0')).not.toBeNull()
++  })
++})
+diff --git a/libs/web-ui/src/lib/web-ui-social-links.spec.tsx b/libs/web-ui/src/lib/web-ui-social-links.spec.tsx
+new file mode 100644
+index 0000000..9d81221
+--- /dev/null
++++ b/libs/web-ui/src/lib/web-ui-social-links.spec.tsx
+@@ -0,0 +1,49 @@
++import { render, screen } from '@testing-library/react'
++import { describe, expect, it } from 'vitest'
++import { WebUiSocialLinks } from './web-ui-social-links'
++
++const member = {
++  facebook: 'https://facebook.com/example',
++  twitter: 'https://twitter.com/example',
++  instagram: 'https://instagram.com/example',
++  linkedin: 'https://linkedin.com/in/example',
++  youtube: 'https://youtube.com/user/example',
++}
++
++describe('WebUiSocialLinks', () => {
++  it('names each link by its network and hides the icon inside it', () => {
++    const { container } = render(<WebUiSocialLinks member={member} />)
++    for (const name of ['Facebook', 'Twitter', 'Instagram', 'LinkedIn', 'YouTube']) {
++      const link = screen.getByRole('link', { name })
++      const icon = link.querySelector('svg')
++      expect(icon?.getAttribute('aria-hidden')).toBe('true')
++      expect(icon?.getAttribute('focusable')).toBe('false')
++      expect(icon?.getAttribute('role')).toBeNull()
++    }
++    // No icon is announced on its own: the link's label is the only name.
++    expect(screen.queryAllByRole('img')).toEqual([])
++    expect(container.querySelectorAll('svg')).toHaveLength(5)
++  })
++
++  it('renders only the networks the member has, with the given fill', () => {
++    render(<WebUiSocialLinks member={{ twitter: 'https://twitter.com/example' }} color="black" />)
++    const link = screen.getByRole('link', { name: 'Twitter' })
++    expect(link.getAttribute('href')).toContain('example')
++    expect(link.querySelector('svg')?.getAttribute('fill')).toBe('black')
++    expect(screen.queryByRole('link', { name: 'Facebook' })).toBeNull()
++  })
++
++  it('links a LinkedIn company page', () => {
++    render(<WebUiSocialLinks member={{ linkedin: 'https://linkedin.com/company/example' }} />)
++    expect(screen.getByRole('link', { name: 'LinkedIn' }).getAttribute('href')).toContain(
++      'company/example',
++    )
++  })
++
++  it('renders nothing without a member or without any link', () => {
++    const { container: none } = render(<WebUiSocialLinks member={null} />)
++    expect(none.innerHTML).toBe('')
++    const { container: empty } = render(<WebUiSocialLinks member={{ facebook: '' }} />)
++    expect(empty.innerHTML).toBe('')
++  })
++})
+diff --git a/scripts/dev-checkout.spec.mjs b/scripts/dev-checkout.spec.mjs
+index 5b4b17d..88dde78 100644
+--- a/scripts/dev-checkout.spec.mjs
++++ b/scripts/dev-checkout.spec.mjs
+@@ -621,6 +621,149 @@ void describe('scripts/test-db.sh reads .env as compose does, and acts only on w
+     }
+     assert.equal(calls().match(/prisma migrate deploy/g)?.length, 3)
+   })
++
++  void it('never prints the password or the full URL when it refuses to migrate', () => {
++    const { main } = checkouts()
++    const { bin, calls } = recordingStubs(main)
++    for (const rest of [
++      'db.example.com:5432/app_test',
++      'localhost:5432/app',
++      'localhost:5432/app_test?sslmode=disable',
++      'localhost:5432/app_test#x',
++    ]) {
++      const url = urlWithPassword(rest)
++      const refused = testDb(main, bin, 'migrate', { TEST_DATABASE_URL: url })
++      const output = `${refused.stdout}${refused.stderr}`
++      assert.notEqual(refused.status, 0, rest)
++      assert.match(refused.stderr, /Refusing to migrate/, rest)
++      assert.ok(!output.includes(FIXTURE_PASSWORD), output)
++      assert.ok(!output.includes(url), output)
++    }
++    assert.equal(calls(), '')
++  })
++})
++
++// Built at runtime, so the fixture is not a credential-shaped literal in the source.
++const FIXTURE_PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
++const urlWithPassword = rest => `postgresql://app:${FIXTURE_PASSWORD}@${rest}`
++
++// A stub `node` on PATH standing in for test-database.mjs: it records the arguments and the
++// TEST_DATABASE_URL it was given, and exits with NODE_EXIT.
++function nodeStub(root) {
++  const bin = join(root, '..', 'node-bin')
++  const log = join(root, '..', 'node-calls.log')
++  mkdirSync(bin, { recursive: true })
++  writeFileSync(
++    join(bin, 'node'),
++    `#!/bin/bash\nprintf '%s %s\\n' "$*" "$TEST_DATABASE_URL" >> '${log}'\nexit "\${NODE_EXIT:-0}"\n`,
++    { mode: 0o755 },
++  )
++  const calls = () => (existsSync(log) ? readFileSync(log, 'utf8') : '')
++  return { bin, calls }
++}
++
++void describe('scripts/test-db.sh ensure creates only a local *_test database', () => {
++  void it('hands a local *_test URL to test-database.mjs through the environment', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
++      const url = urlWithPassword(`${host}:55433/App_TEST`)
++      const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure', { TEST_DATABASE_URL: url })
++      assert.equal(ensured.status, 0, ensured.stderr)
++      assert.ok(node.calls().includes(`/scripts/test-database.mjs ensure ${url}`), node.calls())
++    }
++  })
++
++  void it('ensures the default URL, built from the port in .env', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    writeFileSync(join(main, '.env'), 'POSTGRES_TEST_PORT=55444\n')
++    const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure')
++    assert.equal(ensured.status, 0, ensured.stderr)
++    assert.match(node.calls(), new RegExp(`@localhost:55444/${testDatabaseName}\\n$`))
++  })
++
++  void it('fails when test-database.mjs fails', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure', {
++      TEST_DATABASE_URL: urlWithPassword('localhost:55433/app_test'),
++      NODE_EXIT: '1',
++    })
++    assert.notEqual(ensured.status, 0)
++  })
++
++  void it('refuses any other database, E2E_ALLOW_NON_DISPOSABLE_DB or not, without printing it', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    for (const rest of [
++      'db.example.com:5432/app_test',
++      'localhost:5432/app',
++      'localhost:5432/app_testing',
++      'localhost:5432/app_test?host=db.example.com',
++      'localhost:5432/app_test#x',
++    ]) {
++      const url = urlWithPassword(rest)
++      for (const allow of ['', '1']) {
++        const refused = testDb(main, `${node.bin}:${bin}`, 'ensure', {
++          TEST_DATABASE_URL: url,
++          E2E_ALLOW_NON_DISPOSABLE_DB: allow,
++        })
++        const output = `${refused.stdout}${refused.stderr}`
++        assert.notEqual(refused.status, 0, rest)
++        assert.match(refused.stderr, /Refusing to create/, rest)
++        assert.ok(!output.includes(FIXTURE_PASSWORD), output)
++      }
++    }
++    assert.equal(node.calls(), '')
++  })
++
++  void it('refuses a .env value it cannot read as compose does, before connecting anywhere', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    for (const line of [
++      'POSTGRES_TEST_PORT=$PORT',
++      'POSTGRES_TEST_PORT="${PORT}"',
++      'POSTGRES_TEST_PORT= # c',
++      'NESTLED_DEV_DATA_DIR= # shared data',
++    ]) {
++      writeFileSync(join(main, '.env'), `${line}\n`)
++      const refused = testDb(main, `${node.bin}:${bin}`, 'ensure')
++      assert.notEqual(refused.status, 0, line)
++    }
++    assert.equal(node.calls(), '')
++  })
++
++  void it('start ensures the database it reports, and only a local *_test one', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    const local = urlWithPassword('localhost:55433/app_test')
++    const started = testDb(main, `${node.bin}:${bin}`, 'start', { TEST_DATABASE_URL: local })
++    assert.equal(started.status, 0, started.stderr)
++    assert.ok(node.calls().includes(`ensure ${local}`), node.calls())
++
++    const remote = urlWithPassword('db.example.com:5432/app_test')
++    const skipped = testDb(main, `${node.bin}:${bin}`, 'start', { TEST_DATABASE_URL: remote })
++    assert.equal(skipped.status, 0, skipped.stderr)
++    assert.match(
++      skipped.stdout,
++      /Not checking that postgresql:\/\/db\.example\.com:5432\/app_test exists/,
++    )
++    assert.ok(!node.calls().includes(remote), node.calls())
++    assert.ok(!`${skipped.stdout}${skipped.stderr}`.includes(FIXTURE_PASSWORD))
++  })
++
++  void it('start still succeeds, with a warning, when the database cannot be created', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    const started = testDb(main, `${node.bin}:${bin}`, 'start', {
++      TEST_DATABASE_URL: urlWithPassword('localhost:55433/app_test'),
++      NODE_EXIT: '1',
++    })
++    assert.equal(started.status, 0, started.stderr)
++    assert.match(started.stderr, /could not be checked or created/)
++    assert.ok(!`${started.stdout}${started.stderr}`.includes(FIXTURE_PASSWORD))
++  })
+ })
+ 
+ void describe('scripts/dev-docker.sh reads .env as compose does', () => {
+diff --git a/scripts/test-database.mjs b/scripts/test-database.mjs
+new file mode 100644
+index 0000000..5eb9485
+--- /dev/null
++++ b/scripts/test-database.mjs
+@@ -0,0 +1,199 @@
++// @ts-check
++// Creates the test database a test run needs when it is missing, so a fresh checkout or worktree
++// whose TEST_DATABASE_URL names a database the server does not have yet gets it instead of a failed
++// run. Called by `scripts/test-db.sh ensure` (and by its `start` and `reset`), which applies the
++// same rule first; this module checks it again before it connects anywhere.
++//
++// It only ever creates a database, never drops or alters one, and only one that is plainly a local
++// test database: a postgres(ql):// URL on localhost, 127.0.0.1 or [::1] whose database name ends in
++// _test, with no query string or fragment. E2E_ALLOW_NON_DISPOSABLE_DB does not widen that. It
++// connects with the URL's own credentials to the server's `postgres` database (`template1` when that
++// does not exist), checks pg_database, and runs CREATE DATABASE only when the name is absent.
++//
++// Usage: TEST_DATABASE_URL=... node scripts/test-database.mjs ensure
++// The URL comes from the environment, so its password never appears in a process listing. Every
++// message is scrubbed of the URL and its credentials.
++
++import pg from 'pg'
++import { pathToFileURL } from 'node:url'
++
++// The same shape test-db.sh accepts: scheme, optional user-info, a host name or bracketed IPv6
++// literal, an optional port and a plain database name, and nothing after it.
++const PLAIN_URL =
++  /^(postgres|postgresql):\/\/([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:\d+)?\/([A-Za-z0-9_-]+)$/
++const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
++// PostgreSQL truncates identifiers longer than this, so a longer name would create another database.
++const MAX_IDENTIFIER_BYTES = 63
++const DUPLICATE_DATABASE = '42P04'
++const INVALID_CATALOG_NAME = '3D000'
++
++/**
++ * The database a URL names, when this module may create it: a local *_test database in a plain
++ * postgres(ql):// URL. Throws, without echoing the URL, for anything else.
++ *
++ * @param {string} databaseUrl
++ * @returns {{ database: string, maintenanceUrl: (database: string) => string }}
++ */
++export function creatableTestDatabase(databaseUrl) {
++  const match = PLAIN_URL.exec(databaseUrl)
++  if (!match) {
++    throw new Error('not a plain postgresql:// URL (no query or fragment), so it is not created')
++  }
++  const [, scheme, userInfo = '', host, port = '', database] = match
++  if (!LOCAL_HOSTS.has(host)) {
++    throw new Error('its host is not localhost, 127.0.0.1 or [::1], so it is not created')
++  }
++  if (!/_test$/i.test(database)) {
++    throw new Error('its database name does not end in _test, so it is not created')
++  }
++  if (Buffer.byteLength(database) > MAX_IDENTIFIER_BYTES) {
++    throw new Error(`its database name is longer than ${MAX_IDENTIFIER_BYTES} bytes`)
++  }
++  return {
++    database,
++    maintenanceUrl: name => `${scheme}://${userInfo}${host}${port}/${name}`,
++  }
++}
++
++/**
++ * Text with a database URL, its user-info and its password removed, for messages that reach
++ * terminals and CI logs. Any other `scheme://user:password@` in the text loses its user-info too.
++ *
++ * @param {string} text
++ * @param {string} databaseUrl
++ * @returns {string}
++ */
++export function scrubCredentials(text, databaseUrl) {
++  let scrubbed = text
++  const secrets = [databaseUrl]
++  const userInfo = /^[a-z]+:\/\/([^@/?#]*)@/i.exec(databaseUrl)?.[1]
++  if (userInfo) {
++    secrets.push(userInfo)
++    const password = userInfo.split(':').slice(1).join(':')
++    if (password) {
++      secrets.push(password)
++      try {
++        secrets.push(decodeURIComponent(password))
++      } catch {
++        // Not valid percent-encoding: the raw form is already listed.
++      }
++    }
++  }
++  for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
++    scrubbed = scrubbed.split(secret).join('***')
++  }
++  return dropUserInfo(scrubbed)
++}
++
++/**
++ * Text with the user-info of every `scheme://user:password@host` replaced by `***`. A plain scan
++ * rather than a regex, so a long or malformed message cannot make it backtrack.
++ *
++ * @param {string} text
++ * @returns {string}
++ */
++export function dropUserInfo(text) {
++  let result = ''
++  let from = 0
++  let separator = text.indexOf('://')
++  while (separator !== -1) {
++    const start = separator + 3
++    let end = start
++    while (end < text.length && !'@/ \t\r\n'.includes(text[end])) end++
++    const hasUserInfo = text[end] === '@' && end > start
++    result += text.slice(from, start) + (hasUserInfo ? '***' : text.slice(start, end))
++    from = end
++    separator = text.indexOf('://', end)
++  }
++  return result + text.slice(from)
++}
++
++/**
++ * @typedef {{ query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null }>, end: () => Promise<void> }} SqlClient
++ * @typedef {(connectionString: string) => Promise<SqlClient>} Connect
++ */
++
++/** @type {Connect} */
++async function connectWithPg(connectionString) {
++  const client = new pg.Client({ connectionString, connectionTimeoutMillis: 5000 })
++  await client.connect()
++  return client
++}
++
++/**
++ * A client on the server's maintenance database: `postgres`, or `template1` when the server has no
++ * `postgres` database.
++ *
++ * @param {(database: string) => string} maintenanceUrl
++ * @param {Connect} connect
++ */
++async function connectToMaintenance(maintenanceUrl, connect) {
++  try {
++    return await connect(maintenanceUrl('postgres'))
++  } catch (error) {
++    if (/** @type {{ code?: string }} */ (error)?.code !== INVALID_CATALOG_NAME) throw error
++    return connect(maintenanceUrl('template1'))
++  }
++}
++
++/**
++ * Create the test database a URL names when the server does not have it. Resolves to `created`
++ * or `exists`; rejects when the URL is not a local *_test database or the server refuses.
++ *
++ * @param {string} databaseUrl
++ * @param {{ connect?: Connect }} [options]
++ * @returns {Promise<'created' | 'exists'>}
++ */
++export async function ensureTestDatabase(databaseUrl, { connect = connectWithPg } = {}) {
++  const { database, maintenanceUrl } = creatableTestDatabase(databaseUrl)
++  const client = await connectToMaintenance(maintenanceUrl, connect)
++  try {
++    const existing = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [database])
++    if (existing.rowCount) return 'exists'
++    try {
++      // The name matched [A-Za-z0-9_-]+ above, so quoting it as an identifier is exact.
++      await client.query(`CREATE DATABASE "${database}"`)
++      return 'created'
++    } catch (error) {
++      // Another run created it between the check and here.
++      if (/** @type {{ code?: string }} */ (error)?.code === DUPLICATE_DATABASE) return 'exists'
++      throw error
++    }
++  } finally {
++    await client.end()
++  }
++}
++
++/**
++ * @param {string[]} args
++ * @param {NodeJS.ProcessEnv} env
++ * @param {{ connect?: Connect, write?: (line: string) => void, writeError?: (line: string) => void }} [io]
++ * @returns {Promise<number>} the exit status
++ */
++export async function main(args, env, io = {}) {
++  const write = io.write ?? (line => process.stdout.write(`${line}\n`))
++  const writeError = io.writeError ?? (line => process.stderr.write(`${line}\n`))
++  const databaseUrl = env.TEST_DATABASE_URL ?? ''
++  if (args[0] !== 'ensure' || !databaseUrl) {
++    writeError('Usage: TEST_DATABASE_URL=<url> node scripts/test-database.mjs ensure')
++    return 2
++  }
++  try {
++    const outcome = await ensureTestDatabase(databaseUrl, { connect: io.connect })
++    const { database } = creatableTestDatabase(databaseUrl)
++    write(
++      outcome === 'created'
++        ? `✅ Created the test database ${database}`
++        : `✅ The test database ${database} exists`,
++    )
++    return 0
++  } catch (error) {
++    const message = error instanceof Error ? error.message : String(error)
++    writeError(`❌ Could not ensure the test database: ${scrubCredentials(message, databaseUrl)}`)
++    return 1
++  }
++}
++
++if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
++  process.exitCode = await main(process.argv.slice(2), process.env)
++}
+diff --git a/scripts/test-database.spec.mjs b/scripts/test-database.spec.mjs
+new file mode 100644
+index 0000000..f304b83
+--- /dev/null
++++ b/scripts/test-database.spec.mjs
+@@ -0,0 +1,216 @@
++import assert from 'node:assert/strict'
++import { describe, it } from 'node:test'
++import {
++  creatableTestDatabase,
++  dropUserInfo,
++  ensureTestDatabase,
++  main,
++  scrubCredentials,
++} from './test-database.mjs'
++
++// Built at runtime, so the fixture is not a credential-shaped literal in the source.
++const PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
++const withPassword = (rest, password = PASSWORD) => `postgresql://app:${password}@${rest}`
++const LOCAL_URL = withPassword('localhost:55433/app_test')
++
++// A server that records what it was asked. `databases` are the names pg_database holds;
++// `missing` are databases a connection to fails with 3D000.
++function fakeServer({ databases = [], missing = [], createError } = {}) {
++  const connections = []
++  const statements = []
++  const connect = async connectionString => {
++    connections.push(connectionString)
++    const name = new URL(connectionString).pathname.slice(1)
++    if (missing.includes(name)) {
++      throw Object.assign(new Error(`database "${name}" does not exist`), { code: '3D000' })
++    }
++    return {
++      query: async (text, values) => {
++        statements.push(values ? `${text} ${JSON.stringify(values)}` : text)
++        if (text.startsWith('SELECT')) {
++          return { rowCount: databases.includes(values?.[0]) ? 1 : 0 }
++        }
++        if (createError) throw createError
++        return { rowCount: null }
++      },
++      end: async () => undefined,
++    }
++  }
++  return { connect, connections, statements }
++}
++
++void describe('creatableTestDatabase', () => {
++  void it('accepts a plain local *_test URL and names its maintenance URL on the same server', () => {
++    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
++      const { database, maintenanceUrl } = creatableTestDatabase(
++        withPassword(`${host}:5433/App_TEST`),
++      )
++      assert.equal(database, 'App_TEST')
++      assert.equal(maintenanceUrl('postgres'), withPassword(`${host}:5433/postgres`))
++    }
++    assert.equal(creatableTestDatabase('postgres://localhost/app_test').database, 'app_test')
++  })
++
++  void it('refuses anything that is not plainly a local test database, without echoing it', () => {
++    for (const url of [
++      withPassword('db.example.com:5432/app_test'),
++      withPassword('localhost:5432/app'),
++      withPassword('localhost:5432/app_test?host=db.example.com'),
++      withPassword('localhost:5432/app_test#x'),
++      withPassword('localhost:5432/app$x_test'),
++      withPassword('localhost:5432/app"x_test'),
++      withPassword(`localhost:5432/${'a'.repeat(60)}_test`),
++      `mysql://root:${PASSWORD}@localhost:3306/app_test`,
++      'not a url',
++    ]) {
++      assert.throws(
++        () => creatableTestDatabase(url),
++        error => !error.message.includes(PASSWORD) && !error.message.includes(url),
++        url,
++      )
++    }
++  })
++})
++
++void describe('ensureTestDatabase', () => {
++  void it('creates the database when the server does not have it', async () => {
++    const server = fakeServer({ databases: ['postgres'] })
++    assert.equal(await ensureTestDatabase(LOCAL_URL, server), 'created')
++    assert.deepEqual(server.connections, [withPassword('localhost:55433/postgres')])
++    assert.deepEqual(server.statements, [
++      'SELECT 1 FROM pg_database WHERE datname = $1 ["app_test"]',
++      'CREATE DATABASE "app_test"',
++    ])
++  })
++
++  void it('leaves an existing database alone', async () => {
++    const server = fakeServer({ databases: ['app_test'] })
++    assert.equal(await ensureTestDatabase(LOCAL_URL, server), 'exists')
++    assert.equal(server.statements.length, 1)
++  })
++
++  void it('treats a database another run created meanwhile as existing', async () => {
++    const duplicate = Object.assign(new Error('already exists'), { code: '42P04' })
++    const server = fakeServer({ createError: duplicate })
++    assert.equal(await ensureTestDatabase(LOCAL_URL, server), 'exists')
++  })
++
++  void it('falls back to template1 when the server has no postgres database', async () => {
++    const server = fakeServer({ missing: ['postgres'] })
++    assert.equal(await ensureTestDatabase(LOCAL_URL, server), 'created')
++    assert.deepEqual(server.connections, [
++      withPassword('localhost:55433/postgres'),
++      withPassword('localhost:55433/template1'),
++    ])
++  })
++
++  void it('reports a refused CREATE DATABASE', async () => {
++    const denied = Object.assign(new Error('permission denied to create database'), {
++      code: '42501',
++    })
++    await assert.rejects(ensureTestDatabase(LOCAL_URL, fakeServer({ createError: denied })), {
++      message: 'permission denied to create database',
++    })
++  })
++
++  void it('never connects for a URL it refuses', async () => {
++    const server = fakeServer()
++    for (const url of [
++      withPassword('db.example.com:5432/app_test'),
++      withPassword('localhost:5432/app'),
++    ]) {
++      await assert.rejects(ensureTestDatabase(url, server))
++    }
++    assert.deepEqual(server.connections, [])
++  })
++})
++
++void describe('scrubCredentials', () => {
++  void it('removes the URL, its user-info and its password, raw and decoded', () => {
++    const encoded = `${PASSWORD}%40x`
++    const url = withPassword('localhost:5433/app_test', encoded)
++    const text = `failed: ${url} / app:${encoded} / ${PASSWORD}@x / postgres://u:${PASSWORD}@h/db`
++    const scrubbed = scrubCredentials(text, url)
++    assert.ok(!scrubbed.includes(PASSWORD), scrubbed)
++    assert.ok(!scrubbed.includes(url), scrubbed)
++    assert.match(scrubbed, /^failed: \*\*\* /)
++    assert.match(scrubbed, /postgres:\/\/\*\*\*@h\/db$/)
++  })
++
++  void it('keeps a message that carries no credential', () => {
++    assert.equal(
++      scrubCredentials('connect ECONNREFUSED 127.0.0.1:55433', LOCAL_URL),
++      'connect ECONNREFUSED 127.0.0.1:55433',
++    )
++  })
++})
++
++void describe('dropUserInfo', () => {
++  void it('replaces the user-info of every URL and leaves everything else', () => {
++    assert.equal(
++      dropUserInfo('a postgres://u:p@h/db b https://x@y/z c http://host/path d://@e'),
++      'a postgres://***@h/db b https://***@y/z c http://host/path d://@e',
++    )
++    assert.equal(dropUserInfo('no url here'), 'no url here')
++  })
++
++  void it('stays fast on a long message with no @', () => {
++    const long = `x://${'a:'.repeat(200000)}`
++    const started = process.hrtime.bigint()
++    assert.equal(dropUserInfo(long), long)
++    assert.ok(process.hrtime.bigint() - started < 1_000_000_000n)
++  })
++})
++
++void describe('test-database.mjs ensure', () => {
++  const run = async (args, env, server) => {
++    const out = []
++    const err = []
++    const status = await main(args, env, {
++      connect: server?.connect,
++      write: line => out.push(line),
++      writeError: line => err.push(line),
++    })
++    return { status, out: out.join('\n'), err: err.join('\n') }
++  }
++
++  void it('says what it did', async () => {
++    const created = await run(['ensure'], { TEST_DATABASE_URL: LOCAL_URL }, fakeServer())
++    assert.equal(created.status, 0)
++    assert.equal(created.out, '✅ Created the test database app_test')
++    const exists = await run(
++      ['ensure'],
++      { TEST_DATABASE_URL: LOCAL_URL },
++      fakeServer({ databases: ['app_test'] }),
++    )
++    assert.equal(exists.out, '✅ The test database app_test exists')
++  })
++
++  void it('fails with a scrubbed reason, never the URL or its password', async () => {
++    const leaky = Object.assign(new Error(`could not connect to ${LOCAL_URL} as app:${PASSWORD}`), {
++      code: '08006',
++    })
++    const failing = {
++      connect: async () => {
++        throw leaky
++      },
++    }
++    const failed = await run(['ensure'], { TEST_DATABASE_URL: LOCAL_URL }, failing)
++    assert.equal(failed.status, 1)
++    assert.match(failed.err, /Could not ensure the test database/)
++    assert.ok(!failed.err.includes(PASSWORD), failed.err)
++    assert.ok(!failed.err.includes(LOCAL_URL), failed.err)
++
++    const refused = await run(['ensure'], {
++      TEST_DATABASE_URL: withPassword('db.example.com:5432/app_test'),
++    })
++    assert.equal(refused.status, 1)
++    assert.match(refused.err, /host is not localhost/)
++    assert.ok(!refused.err.includes(PASSWORD), refused.err)
++  })
++
++  void it('needs the ensure command and a URL', async () => {
++    assert.equal((await run([], { TEST_DATABASE_URL: LOCAL_URL })).status, 2)
++    assert.equal((await run(['ensure'], {})).status, 2)
++  })
++})
+diff --git a/scripts/test-db.sh b/scripts/test-db.sh
+index 09866a9..e0c04a4 100755
+--- a/scripts/test-db.sh
++++ b/scripts/test-db.sh
+@@ -1,7 +1,7 @@
+ #!/bin/bash
+ 
+ # Test Database Management Script
+-# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|url]
++# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|ensure|url]
+ 
+ set -e
+ 
+@@ -61,6 +61,23 @@ DEV_DATA_DIR="${DEV_DATA_DIR:-./tmp}"
+ [[ "$DEV_DATA_DIR" == /* ]] || DEV_DATA_DIR="$ROOT/.dev/${DEV_DATA_DIR#./}"
+ TEST_DB_DATA_DIR="$DEV_DATA_DIR/postgres-test"
+ 
++# A plain URL: scheme, optional user-info, host, optional port and a database name, nothing after.
++TEST_DB_PLAIN_URL_PATTERN='^(postgres|postgresql)://([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?/([A-Za-z0-9_-]+)$'
++
++# Whether TEST_DB_URL names a local test database: a plain postgres(ql):// URL on this
++# machine, named *_test. `migrate` accepts it (and, with E2E_ALLOW_NON_DISPOSABLE_DB=1, more); `ensure`
++# creates nothing else, whatever E2E_ALLOW_NON_DISPOSABLE_DB says.
++is_local_test_database() {
++  [[ "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]] || return 1
++  local host="${BASH_REMATCH[3]}" database="${BASH_REMATCH[5]}"
++  local lower_database
++  lower_database="$(printf '%s' "$database" | tr '[:upper:]' '[:lower:]')"
++  if [[ "$host" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ && "$lower_database" == *_test ]]; then
++    return 0
++  fi
++  return 1
++}
++
+ # Prisma's `migrate deploy` has no guard of its own, so `migrate` refuses a URL that is not a
+ # disposable test database, by the rules the e2e setup applies before it resets, migrates, pushes or
+ # seeds (apps/api-e2e/src/support/database-guards.ts): a postgres(ql):// URL on this machine, named
+@@ -68,15 +85,11 @@ TEST_DB_DATA_DIR="$DEV_DATA_DIR/postgres-test"
+ # which could send the client elsewhere, is refused either way.
+ assert_disposable_test_database() {
+   local action="$1"
+-  local pattern='^(postgres|postgresql)://([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?/([A-Za-z0-9_-]+)$'
+-  if [[ ! "$TEST_DB_URL" =~ $pattern ]]; then
++  if [[ ! "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]]; then
+     echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
+     exit 1
+   fi
+-  local host="${BASH_REMATCH[3]}" database="${BASH_REMATCH[5]}"
+-  local lower_database
+-  lower_database="$(printf '%s' "$database" | tr '[:upper:]' '[:lower:]')"
+-  if [[ "$host" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ && "$lower_database" == *_test ]]; then
++  if is_local_test_database; then
+     return 0
+   fi
+   if [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" == "1" ]]; then
+@@ -89,6 +102,35 @@ assert_disposable_test_database() {
+   exit 1
+ }
+ 
++# Create the test database when the server is up but does not have it: a fresh checkout or worktree
++# whose TEST_DATABASE_URL names a database the container was not initialised with. It only creates,
++# never drops or alters, and only a local *_test database (test-database.mjs checks the same rule
++# again before it connects). The URL reaches node through the environment, never its command line.
++ensure_test_database() {
++  if ! is_local_test_database; then
++    echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: only a plain postgresql:// URL on this machine" >&2
++    echo "   (localhost, 127.0.0.1 or [::1]) named *_test is created. E2E_ALLOW_NON_DISPOSABLE_DB does" >&2
++    echo "   not apply; create any other database yourself." >&2
++    return 1
++  fi
++  TEST_DATABASE_URL="$TEST_DB_URL" node "$SCRIPT_DIR/test-database.mjs" ensure || return 1
++  return 0
++}
++
++# After start or reset: the container creates only its own POSTGRES_DB, so make sure the database the
++# URL names exists too. A URL that is not a local *_test database is left alone, and a failure is a
++# warning: the container is up, and the run that needs the database reports why it cannot reach it.
++ensure_test_database_after_start() {
++  if ! is_local_test_database; then
++    echo "ℹ️  Not checking that $TEST_DB_DISPLAY_URL exists: only a local *_test database is created."
++    return 0
++  fi
++  if ! ensure_test_database; then
++    echo "⚠️  The test database is running, but $TEST_DB_DISPLAY_URL could not be checked or created." >&2
++  fi
++  return 0
++}
++
+ # Delete the test database's data folder. Postgres makes it 0700 and owned by the container's
+ # postgres user; on rootful Linux Docker that user is not you, so a plain rm fails. Then the folder
+ # is emptied from inside a throwaway container of the image the test database ran (given as $1),
+@@ -131,6 +173,7 @@ case "$COMMAND" in
+     "$COMPOSE" --profile testing up -d postgres-test
+ 
+     wait_for_db
++    ensure_test_database_after_start
+ 
+     echo "✅ Test database is ready on port $TEST_DB_DISPLAY_PORT"
+     echo "📄 Connection string: $TEST_DB_DISPLAY_URL"
+@@ -161,6 +204,7 @@ case "$COMMAND" in
+     "$COMPOSE" --profile testing up -d postgres-test
+ 
+     wait_for_db
++    ensure_test_database_after_start
+ 
+     if [[ -n "$CLEARED" ]]; then
+       echo "✅ Test database reset complete"
+@@ -183,6 +227,10 @@ case "$COMMAND" in
+     echo "✅ Test database migrations complete"
+     ;;
+ 
++  "ensure")
++    ensure_test_database || exit 1
++    ;;
++
+   "url")
+     # The one place that resolves the test-database URL. Callers that are NOT launched through Nx
+     # (pnpm runs a script with a plain shell, which never loads .env) must ask for it here rather
+@@ -202,6 +250,7 @@ case "$COMMAND" in
+     echo "  reset   - Reset the test database (destroys data)"
+     echo "  logs    - Show test database logs"
+     echo "  migrate - Run Prisma migrations on test database"
++    echo "  ensure  - Create the test database if the server does not have it (local *_test only)"
+     echo "  url     - Print the resolved test database URL"
+     echo ""
+     echo "Test DB URL: $TEST_DB_DISPLAY_URL"
+diff --git a/scripts/tsconfig.json b/scripts/tsconfig.json
+index 0f3fb42..888a60f 100644
+--- a/scripts/tsconfig.json
++++ b/scripts/tsconfig.json
+@@ -6,10 +6,11 @@
+   // DTOs that redeclare decorated fields compile (TS2612). A script that imports a lib whose types
+   // rely on declaration shims (libs/**/src/types/*.d.ts) must add those shims to "include".
+   // Running a script that imports a lib: `pnpm tsx --tsconfig scripts/tsconfig.json scripts/x.ts`.
+-  // tsx reads ./tsconfig.json by default, and the workspace root deliberately has none: a root
+-  // tsconfig.json would give the root Nx project (./project.json) a typecheck target from
+-  // tools/nx-plugins/typecheck.js, and would become the editor's config for every file no project
+-  // config claims.
++  // Pass --tsconfig whether or not the workspace root has a tsconfig.json. tsx reads ./tsconfig.json
++  // by default. The template ships none (one would give the root Nx project, ./project.json, a
++  // typecheck target from tools/nx-plugins/typecheck.js), so without the flag the path aliases do
++  // not resolve. A project may have added one, and then tsx uses it instead of this file: its
++  // settings, not these, decide whether the script's imports resolve and compile.
+   "compilerOptions": {
+     "noEmit": true,
+     "strict": true,
