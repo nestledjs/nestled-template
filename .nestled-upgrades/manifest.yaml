@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-16
+generatedAt: 2026-10-18
 channels:
-  canary: 2026.10.15
+  canary: 2026.10.16
   stable: 2026.10.15
 releases:
   - id: 2026.08.0
@@ -725,3 +725,67 @@ releases:
           - pnpm exec prettier --check .
           - pnpm run nestled-doctor
         patch: patches/2026-10-16-template-script-sonar-smells.diff
+  - id: 2026.10.16
+    date: 2026-10-18
+    title: Release 2026.10.16
+    templateCommit: 3d47541
+    notes:
+      - id: 2026-10-18-data-browser-1-0-24-shared-components-1-0-18-svg-names
+        title: "@nestledjs/data-browser 1.0.24 and @nestledjs/shared-components 1.0.18 give every inline SVG an accessible name or hide it"
+        delivery: package-release
+        intent: "Every inline SVG in the two published packages now has an accessible name or is hidden, with no visual change. Each icon is classified at its call site, as the template's own S1077 sweep (2026-10-15-svg-accessible-names) did. In @nestledjs/data-browser every inline SVG goes through a small internal wrapper, SvgIcon, that renders either `role=\"img\"` with an `aria-label` (when given a `label`) or `aria-hidden=\"true\" focusable=\"false\"`, never both and never neither; the breadcrumb separator on the create and edit pages is one shared BreadcrumbChevron. Hidden, because visible text or a labelled control already says what they mean: the chevrons, breadcrumb separators, spinners, the success and error notification icons, the export, import, filter and view-record icons, the search icon, the search-field selector's icon (its button has an `aria-label`), and the large icons on the \"model not found\" and \"no query\" screens. Named, because the icon is a button's only content: the fullscreen toggle (\"Enter fullscreen\" or \"Exit fullscreen\") and the filter panel's close button (\"Close filters\"). A spec fails when an inline `<svg>` is added anywhere in the package's source outside the wrapper. In @nestledjs/shared-components the three icons, in ErrorBoundaryUi, ServiceUnavailable and ViteCacheError, each sit beside the heading that says what they mean and carry `aria-hidden=\"true\" focusable=\"false\"` directly. A spec fails on any inline `<svg>` in the package that is neither hidden nor named."
+        area: ui
+        verification:
+          - pnpm install
+          - "pnpm build:web"
+          - pnpm nx test web
+        packageReleases:
+          - name: "@nestledjs/data-browser"
+            sourcePath: libs/data-browser
+            targetVersion: 1.0.24
+            versionRange: ^1.0.24
+          - name: "@nestledjs/shared-components"
+            sourcePath: libs/shared-components
+            targetVersion: 1.0.18
+            versionRange: ^1.0.18
+      - id: 2026-10-18-doctor-0-6-5-env-last-assignment
+        title: "@nestledjs/doctor 0.6.5 reads a duplicated `.env` key as its last assignment, as docker compose does"
+        delivery: package-release
+        intent: "The doctor's `.env` reader now resolves a key assigned more than once to its last assignment, the value docker compose and the template's scripts use. It also reads `export KEY=value` lines, treats `KEY= # comment` as an empty value, and strips a comment after a closing quote. Commented-out lines are still ignored. A `.env` that assigns each key once, without `export ` or a bare `KEY= # comment`, reads exactly as before."
+        area: infra
+        verification:
+          - pnpm install
+          - pnpm run nestled-doctor
+        packageReleases:
+          - name: "@nestledjs/doctor"
+            targetVersion: 0.6.5
+            versionRange: 0.6.5
+      - id: 2026-10-18-template-tooling-nits
+        title: The test database is created when missing, a failed probe says why, and the web-ui icons have specs
+        delivery: code-patch
+        intent: "Test database. scripts/test-db.sh gains an `ensure` command, and `start` and `reset` run it once the container is ready. It creates the database TEST_DATABASE_URL names when the server is up but does not have it: a fresh checkout or worktree whose URL names another database than the container's POSTGRES_DB, or a container whose data directory was initialised for another name. It only ever creates (never drops or alters), and only a database that is plainly a local test database: a plain postgres(ql):// URL on localhost, 127.0.0.1 or [::1], with no query string or fragment, whose name ends in _test. E2E_ALLOW_NON_DISPOSABLE_DB does not widen that. The new scripts/test-database.mjs does the work with the `pg` client: it checks the same rule again, connects with the URL's own credentials to the server's `postgres` database (`template1` when that is missing), and runs CREATE DATABASE only when pg_database lacks the name; a database another run created meanwhile counts as existing. The URL reaches it through the environment, never its command line, and every message it prints is scrubbed of the URL and its credentials. Every existing guard still runs first: test-db.sh refuses a .env value compose would read differently (a `$`, `KEY= # comment`, a quoted backslash, a multi-line value) before it connects anywhere. In `start` and `reset` a URL that is not a local *_test database is left alone, and a failure to create is a warning, since the container is up and the run that needs the database reports why. The shared refusal rule in test-db.sh is now one function, is_local_test_database, which `migrate` uses as well. Probe errors. apps/api-e2e/run-tests.sh no longer discards the `SELECT 1` probe's error output. When the probe fails it prints the client's error (a refused connection, a failed login, a missing database) with the test database URL replaced by `<TEST_DATABASE_URL>` and any `scheme://user:password@` user-info removed. It then runs `test-db.sh ensure` and probes again; only when the database is still unreachable does it fail (a supplied TEST_DATABASE_URL, now with the probe error) or start the repo's test container. apps/api-e2e/src/support/sql-runner.mjs exports scrubCredentials() and uses it for its own error output, so the URL, its user-info and its password (raw or percent-decoded) never reach stderr. Specs. scripts/test-database.spec.mjs covers the create, exists, race, template1 fallback and refusal paths and the scrubbing. scripts/dev-checkout.spec.mjs covers `test-db.sh ensure` (a stub `node` stands in for test-database.mjs), including that it never runs for a refused URL or an unreadable .env value, and that `start` ensures only a local *_test database; and it now asserts that `migrate`'s refusal never prints the password or the full URL. e2e-runner.spec.ts covers the printed probe error and the ensure-then-reprobe path; sql-runner.spec.ts covers scrubCredentials. libs/web-ui gains web-ui-social-links.spec.tsx and web-ui-avatar.spec.tsx, which check the accessible names 2026-10-15-svg-accessible-names gave those icons: each social link is named by its network and its icon is `aria-hidden`; the avatar's placeholder icon is `role=\"img\"` named after the user (\"Avatar\" without a name) when there is no image, and hidden when the `<img alt>` names the avatar. scripts/tsconfig.json and AGENTS.md no longer say the workspace root has no tsconfig.json as if that held everywhere. The template ships none; a project may have added one, and tsx would then use it. `--tsconfig scripts/tsconfig.json` is needed either way."
+        area: infra
+        affectedPaths:
+          - scripts/test-db.sh
+          - scripts/test-database.mjs
+          - scripts/test-database.spec.mjs
+          - scripts/dev-checkout.spec.mjs
+          - scripts/tsconfig.json
+          - apps/api-e2e/run-tests.sh
+          - apps/api-e2e/README.md
+          - apps/api-e2e/src/support/sql-runner.mjs
+          - apps/api-e2e/src/support/sql-runner.spec.ts
+          - apps/api-e2e/src/support/e2e-runner.spec.ts
+          - libs/web-ui/src/lib/web-ui-social-links.spec.tsx
+          - libs/web-ui/src/lib/web-ui-avatar.spec.tsx
+          - AGENTS.md
+        verification:
+          - node --test scripts/*.spec.mjs
+          - bash -n scripts/test-db.sh
+          - bash -n apps/api-e2e/run-tests.sh
+          - "pnpm exec nx run api-e2e:test-support --skip-nx-cache"
+          - pnpm exec nx test web-ui
+          - "pnpm typecheck:workspace"
+          - pnpm exec prettier --check .
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-18-template-tooling-nits.diff
