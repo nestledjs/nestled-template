@@ -6,10 +6,11 @@
   // DTOs that redeclare decorated fields compile (TS2612). A script that imports a lib whose types
   // rely on declaration shims (libs/**/src/types/*.d.ts) must add those shims to "include".
   // Running a script that imports a lib: `pnpm tsx --tsconfig scripts/tsconfig.json scripts/x.ts`.
-  // tsx reads ./tsconfig.json by default, and the workspace root deliberately has none: a root
-  // tsconfig.json would give the root Nx project (./project.json) a typecheck target from
-  // tools/nx-plugins/typecheck.js, and would become the editor's config for every file no project
-  // config claims.
+  // Pass --tsconfig whether or not the workspace root has a tsconfig.json. tsx reads ./tsconfig.json
+  // by default. The template ships none (one would give the root Nx project, ./project.json, a
+  // typecheck target from tools/nx-plugins/typecheck.js), so without the flag the path aliases do
+  // not resolve. A project may have added one, and then tsx uses it instead of this file: its
+  // settings, not these, decide whether the script's imports resolve and compile.
   "compilerOptions": {
     "noEmit": true,
     "strict": true,

@@ -1,0 +1,111 @@
+id: 2026-10-18-template-tooling-nits
+title: >-
+  The test database is created when missing, a failed probe says why, and the web-ui icons have
+  specs
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  Test database. scripts/test-db.sh gains an `ensure` command, and `start` and `reset` run it once
+  the container is ready. It creates the database TEST_DATABASE_URL names when the server is up but
+  does not have it: a fresh checkout or worktree whose URL names another database than the
+  container's POSTGRES_DB, or a container whose data directory was initialised for another name. It
+  only ever creates (never drops or alters), and only a database that is plainly a local test
+  database: a plain postgres(ql):// URL on localhost, 127.0.0.1 or [::1], with no query string or
+  fragment, whose name ends in _test. E2E_ALLOW_NON_DISPOSABLE_DB does not widen that. The new
+  scripts/test-database.mjs does the work with the `pg` client: it checks the same rule again,
+  connects with the URL's own credentials to the server's `postgres` database (`template1` when that
+  is missing), and runs CREATE DATABASE only when pg_database lacks the name; a database another run
+  created meanwhile counts as existing. The URL reaches it through the environment, never its
+  command line, and every message it prints is scrubbed of the URL and its credentials. Every
+  existing guard still runs first: test-db.sh refuses a .env value compose would read differently
+  (a `$`, `KEY= # comment`, a quoted backslash, a multi-line value) before it connects anywhere. In
+  `start` and `reset` a URL that is not a local *_test database is left alone, and a failure to
+  create is a warning, since the container is up and the run that needs the database reports why.
+  The shared refusal rule in test-db.sh is now one function, is_local_test_database, which
+  `migrate` uses as well.
+
+  Probe errors. apps/api-e2e/run-tests.sh no longer discards the `SELECT 1` probe's error output.
+  When the probe fails it prints the client's error (a refused connection, a failed login, a
+  missing database) with the test database URL replaced by `<TEST_DATABASE_URL>` and any
+  `scheme://user:password@` user-info removed. It then runs `test-db.sh ensure` and probes again;
+  only when the database is still unreachable does it fail (a supplied TEST_DATABASE_URL, now with
+  the probe error) or start the repo's test container. apps/api-e2e/src/support/sql-runner.mjs
+  exports scrubCredentials() and uses it for its own error output, so the URL, its user-info and its
+  password (raw or percent-decoded) never reach stderr.
+
+  Specs. scripts/test-database.spec.mjs covers the create, exists, race, template1 fallback and
+  refusal paths and the scrubbing. scripts/dev-checkout.spec.mjs covers `test-db.sh ensure` (a stub
+  `node` stands in for test-database.mjs), including that it never runs for a refused URL or an
+  unreadable .env value, and that `start` ensures only a local *_test database; and it now asserts
+  that `migrate`'s refusal never prints the password or the full URL. e2e-runner.spec.ts covers the
+  printed probe error and the ensure-then-reprobe path; sql-runner.spec.ts covers scrubCredentials.
+  libs/web-ui gains web-ui-social-links.spec.tsx and web-ui-avatar.spec.tsx, which check the
+  accessible names 2026-10-15-svg-accessible-names gave those icons: each social link is named by
+  its network and its icon is `aria-hidden`; the avatar's placeholder icon is `role="img"` named
+  after the user ("Avatar" without a name) when there is no image, and hidden when the `<img alt>`
+  names the avatar.
+
+  scripts/tsconfig.json and AGENTS.md no longer say the workspace root has no tsconfig.json as if
+  that held everywhere. The template ships none; a project may have added one, and tsx would then
+  use it. `--tsconfig scripts/tsconfig.json` is needed either way.
+why: >
+  A fresh worktree, or a checkout whose test database URL named a database the shared test
+  container was never initialised with, failed every e2e run with "Test database not accessible"
+  and no reason: the wrapper's probe sent its error to /dev/null, and nothing created the missing
+  database. A downstream PR that touched the web-ui social links or avatar failed SonarCloud's
+  new-code coverage condition, because neither file had a spec. The tsconfig comment told a project
+  that had a root tsconfig.json something untrue about its own workspace.
+affectedPaths:
+  - scripts/test-db.sh
+  - scripts/test-database.mjs
+  - scripts/test-database.spec.mjs
+  - scripts/dev-checkout.spec.mjs
+  - scripts/tsconfig.json
+  - apps/api-e2e/run-tests.sh
+  - apps/api-e2e/README.md
+  - apps/api-e2e/src/support/sql-runner.mjs
+  - apps/api-e2e/src/support/sql-runner.spec.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - libs/web-ui/src/lib/web-ui-social-links.spec.tsx
+  - libs/web-ui/src/lib/web-ui-avatar.spec.tsx
+  - AGENTS.md
+verification:
+  - node --test scripts/*.spec.mjs
+  - bash -n scripts/test-db.sh
+  - bash -n apps/api-e2e/run-tests.sh
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx test web-ui
+  - pnpm typecheck:workspace
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    test-db.sh keeps the project's own default port, test database name and container name. The
+    `ensure` rule must stay at least as strict as the template's: a local host, a name ending in
+    _test, no query string or fragment, and no E2E_ALLOW_NON_DISPOSABLE_DB exception. Never widen it
+    to create a database the project's tests reach on another host; create that one by hand.
+  - >
+    scripts/test-database.mjs imports `pg`, which the template has as a root dependency for the e2e
+    SQL runner. A project without `pg` at the root adds it at the same version as the e2e suite's,
+    or the ensure step fails with "Cannot find package 'pg'" (as a warning in `start`).
+  - >
+    A project that wrapped or replaced run-tests.sh's probe keeps its own probe and adds the two
+    behaviours: print the probe's error with the URL and user-info scrubbed, and run `test-db.sh
+    ensure` and probe again before failing or starting a container. A shell spec that stubs
+    test-db.sh with one answer for every command now also receives `ensure`; if the stub succeeds
+    for it, the wrapper probes a second time.
+  - >
+    Specs that run test-db.sh `start` or `reset` against a stub docker now also reach `ensure`,
+    which runs node on test-database.mjs. In a fixture without that file, or against a URL nothing
+    listens on, it prints a warning and `start` still exits 0. A spec that asserts on start's exact
+    output allows for the extra line, or puts a stub `node` on PATH as dev-checkout.spec.mjs does.
+  - >
+    Credential fixtures in the new specs are built at runtime (`['fixture', 'pw',
+    String(process.pid)].join('-')`), as 2026-10-15-sonar-spec-and-prettier-hygiene asks. Keep that
+    when adapting them.
+  - >
+    The web-ui specs pass only if the project's web-ui-social-links.tsx and web-ui-avatar.tsx carry
+    2026-10-15-svg-accessible-names. A project that customised those components keeps its markup
+    and adjusts the spec's expected names, not the accessibility rule.

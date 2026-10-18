@@ -1,0 +1,29 @@
+id: 2026-10-18-doctor-0-6-5-env-last-assignment
+title: >-
+  @nestledjs/doctor 0.6.5 reads a duplicated `.env` key as its last assignment, as docker compose
+  does
+priority: normal
+area: infra
+type: correctness
+delivery: package-release
+intent: >
+  The doctor's `.env` reader now resolves a key assigned more than once to its last assignment,
+  the value docker compose and the template's scripts use. It also reads `export KEY=value` lines,
+  treats `KEY= # comment` as an empty value, and strips a comment after a closing quote.
+  Commented-out lines are still ignored. A `.env` that assigns each key once, without `export ` or
+  a bare `KEY= # comment`, reads exactly as before.
+why: >
+  With a key assigned twice, the doctor checked the first value while compose and the scripts used
+  the last, so it could pass or fail on a port or database name the project does not actually use.
+packageReleases:
+  - name: '@nestledjs/doctor'
+    targetVersion: 0.6.5
+    versionRange: 0.6.5
+verification:
+  - pnpm install
+  - pnpm run nestled-doctor
+agentHints:
+  - Update package.json and the lockfile to the published version. The template pins the doctor exactly, so keep the exact pin.
+  - >
+    If the project's `.env` assigns a key twice, the doctor may now report a different result for
+    checks that read it. That reflects the value compose already uses; it is not a regression.

@@ -26,10 +26,33 @@ export E2E_API_PORT="${E2E_API_PORT:-3100}"
 # Probe the database with the URL itself — its host, port, credentials and name — through the
 # suite's pg runner, so no psql binary is needed. A probe with fixed postgres:postgres credentials
 # failed against any other login (CI's test database uses prisma:prisma) and started a container
-# the tests never used.
+# the tests never used. The runner's error (a refused connection, a failed login, a missing
+# database) is kept in PROBE_ERROR so a failure says why.
+PROBE_ERROR=""
 probe_test_database() {
-  node -e 'process.stdout.write(JSON.stringify({ url: process.env.TEST_DATABASE_URL, statement: "SELECT 1" }))' |
-    node apps/api-e2e/src/support/sql-runner.mjs >/dev/null 2>&1
+  local status=0
+  PROBE_ERROR="$(
+    node -e 'process.stdout.write(JSON.stringify({ url: process.env.TEST_DATABASE_URL, statement: "SELECT 1" }))' |
+      node apps/api-e2e/src/support/sql-runner.mjs 2>&1 >/dev/null
+  )" || status=$?
+  return "$status"
+}
+
+# Text for the log with the test database URL and any `scheme://user:password@` user-info removed.
+# The runner already leaves the URL out of its errors; this is the second line of defence, since
+# these lines reach CI logs.
+scrub_credentials() {
+  local text="$1"
+  text="${text//"$TEST_DATABASE_URL"/<TEST_DATABASE_URL>}"
+  printf '%s\n' "$text" | sed -E 's#([A-Za-z][A-Za-z0-9+.-]*://)[^@[:space:]/]+@#\1***@#g'
+  return 0
+}
+
+# Print the probe's error, indented, or say there was none.
+report_probe_error() {
+  local detail="${PROBE_ERROR:-(no error output)}"
+  echo "   Probe error: $(scrub_credentials "$detail" | sed '2,$s/^/   /')"
+  return 0
 }
 
 TEST_DB_STARTED=false
@@ -49,19 +72,28 @@ cleanup() {
 trap cleanup EXIT
 
 if ! probe_test_database; then
-  if [[ -n "$SUPPLIED_TEST_DATABASE_URL" ]]; then
+  echo "⚠️  The test database did not answer SELECT 1."
+  report_probe_error
+  # A server that is up but lacks the database: create it when the URL is a local *_test database
+  # (test-db.sh ensure refuses anything else), then probe again.
+  ENSURE_OUTPUT=""
+  if ENSURE_OUTPUT="$(./scripts/test-db.sh ensure 2>&1)" && probe_test_database; then
+    scrub_credentials "$ENSURE_OUTPUT"
+  elif [[ -n "$SUPPLIED_TEST_DATABASE_URL" ]]; then
+    [[ -z "$ENSURE_OUTPUT" ]] || scrub_credentials "$ENSURE_OUTPUT"
     echo "❌ TEST_DATABASE_URL is set but that database is not accessible"
+    report_probe_error
     echo "   Start it, or unset TEST_DATABASE_URL to use the repo's own test database"
     exit 1
-  fi
-  if ! docker info >/dev/null 2>&1; then
+  elif ! docker info >/dev/null 2>&1; then
     echo "❌ Test database is not accessible and Docker is not running"
     echo "   Start Docker or set TEST_DATABASE_URL to an accessible test database"
     exit 1
+  else
+    # start also creates the database the URL names when the container lacks it.
+    ./scripts/test-db.sh start
+    TEST_DB_STARTED=true
   fi
-
-  ./scripts/test-db.sh start
-  TEST_DB_STARTED=true
 fi
 
 # Call vitest directly to avoid infinite loop (since NX now calls this script)

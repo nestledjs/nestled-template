@@ -152,13 +152,69 @@ export async function runSql({ url, statement, variables = {} }) {
   }
 }
 
+/**
+ * An error message with the request's URL, its user-info and its password removed, and the user-info
+ * of any other `scheme://user:password@` in it: the runner's errors reach terminals and CI logs.
+ *
+ * @param {string} message
+ * @param {string | undefined} url
+ * @returns {string}
+ */
+export function scrubCredentials(message, url) {
+  let scrubbed = message
+  if (url) {
+    const userInfo = /^[a-z]+:\/\/([^@/?#]*)@/i.exec(url)?.[1] ?? ''
+    const password = userInfo.split(':').slice(1).join(':')
+    let decoded = password
+    try {
+      decoded = decodeURIComponent(password)
+    } catch {
+      // Not valid percent-encoding: the raw form is scrubbed below.
+    }
+    for (const secret of [url, userInfo, password, decoded].filter(Boolean)) {
+      scrubbed = scrubbed.split(secret).join('***')
+    }
+  }
+  return dropUserInfo(scrubbed)
+}
+
+/**
+ * Text with the user-info of every `scheme://user:password@host` replaced by `***`. A plain scan
+ * rather than a regex, so a long or malformed message cannot make it backtrack.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function dropUserInfo(text) {
+  let result = ''
+  let from = 0
+  let separator = text.indexOf('://')
+  while (separator !== -1) {
+    const start = separator + 3
+    let end = start
+    while (end < text.length && !'@/ \t\r\n'.includes(text[end])) end++
+    const hasUserInfo = text[end] === '@' && end > start
+    result += text.slice(from, start) + (hasUserInfo ? '***' : text.slice(start, end))
+    from = end
+    separator = text.indexOf('://', end)
+  }
+  return result + text.slice(from)
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  /** @type {string | undefined} */
+  let url
   Promise.resolve()
-    .then(() => runSql(JSON.parse(readFileSync(0, 'utf8'))))
+    .then(() => {
+      const request = JSON.parse(readFileSync(0, 'utf8'))
+      url = typeof request?.url === 'string' ? request.url : undefined
+      return runSql(request)
+    })
     .then(
       output => process.stdout.write(output),
       error => {
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+        const message = error instanceof Error ? error.message : String(error)
+        process.stderr.write(`${scrubCredentials(message, url)}\n`)
         process.exitCode = 1
       },
     )
