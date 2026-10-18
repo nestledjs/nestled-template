@@ -65,6 +65,11 @@ verification:
   - pnpm run nestled-doctor
 agentHints:
   - >
+    Check whether `scripts/**` is excluded from Sonar first. A project whose sonar-project.properties
+    excludes it (or leaves `scripts` out of `sonar.sources`) has no script findings to move, so the
+    `sonar.tests` and `sonar.test.inclusions` changes below change nothing there; add them only if
+    the project analyses its scripts.
+  - >
     sonar-project.properties is not mirrored by template promotion: add `scripts` to `sonar.tests`
     (keep the project's own list) and `scripts/**/*.spec.mjs` to `sonar.test.inclusions` and
     `sonar.cpd.exclusions` by hand. The first analysis after that moves the specs' findings out of
@@ -73,6 +78,11 @@ agentHints:
     A project that already fixed these smells in its copies of dev-checkout.mjs, dev-checkout.sh or
     typecheck-project.mjs should take the template's version where it is equivalent, so the next
     template change applies cleanly. Record `adapted`.
+  - >
+    test-setup.spec.ts stubs E2E_API_PORT and HOST because the template's test-setup.ts reads them.
+    Stub what your setup actually reads: a project whose test setup takes its base URL from PORT,
+    API_URL or another variable stubs those instead, so the spec's result never depends on the
+    caller's environment.
   - >
     Prettier: run the project's pinned prettier with `--check .` after adding the ignores. Do not
     combine this note with a repo-wide reformat. A whole-repository prettier pass belongs in its own

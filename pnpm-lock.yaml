@@ -112,8 +112,8 @@ importers:
         specifier: ^6.5.0
         version: 6.5.0(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29)(reflect-metadata@0.2.2)
       '@nestledjs/data-browser':
-        specifier: ^1.0.23
-        version: 1.0.23(edc8ae831a3a91143640311b4a5bfc5a)
+        specifier: ^1.0.24
+        version: 1.0.24(3f70c106bb854ae99f0584c3f225583d)
       '@nestledjs/forms':
         specifier: 0.9.0
         version: 0.9.0(@apollo/client@4.1.8(graphql-ws@6.2.1(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.14.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.21)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
@@ -124,8 +124,8 @@ importers:
         specifier: 3.4.1
         version: 3.4.1(@babel/traverse@7.29.8)(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(esbuild-register@3.6.0(esbuild@0.28.2))(eslint@9.39.5(jiti@2.4.2))(magicast@0.5.2)(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))(prettier@3.9.6)(ts-node@10.9.2(@swc/core@1.15.8(@swc/helpers@0.5.18))(@types/node@24.13.3)(typescript@5.9.3))(typescript@5.9.3)(verdaccio@6.5.2(encoding@0.1.13)(typanion@3.14.0))
       '@nestledjs/shared-components':
-        specifier: ^1.0.17
-        version: 1.0.17(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
+        specifier: ^1.0.18
+        version: 1.0.18(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
       '@nx/devkit':
         specifier: 22.7.8
         version: 22.7.8(nx@22.7.8(@swc-node/register@1.11.1(@swc/core@1.15.8(@swc/helpers@0.5.18))(@swc/types@0.1.25)(typescript@5.9.3))(@swc/core@1.15.8(@swc/helpers@0.5.18)))
@@ -404,8 +404,8 @@ importers:
         specifier: ^11.1.29
         version: 11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29)(@nestjs/platform-express@11.1.29)
       '@nestledjs/doctor':
-        specifier: 0.6.4
-        version: 0.6.4(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
+        specifier: 0.6.5
+        version: 0.6.5(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))
       '@nx/eslint':
         specifier: 22.7.8
         version: 22.7.8(54731966972b5fabcf66c95f47a10080)
@@ -3954,8 +3954,8 @@ packages:
     peerDependencies:
       react: 19.1.0
 
-  '@nestledjs/data-browser@1.0.23':
-    resolution: {integrity: sha512-STTzyzGSnFnvlqKyCb3kHTbRVsuzIKhWHZo0WIc3nTi4woW+bgpEsjC44/Zox5xY3G/O3izKW6e+1s37D9OH/w==}
+  '@nestledjs/data-browser@1.0.24':
+    resolution: {integrity: sha512-MHuuf4x3aG7iyhIYTfwGV6o14FnBeGAWfZO7gZpmEan76zdj2ISOfJ2jnyWAQDsogNlpySkMVbqq+YdtjT7JrQ==}
     peerDependencies:
       '@apollo/client': 4.1.8
       '@heroicons/react': ^2.0.0
@@ -3965,8 +3965,8 @@ packages:
       react: 19.1.0
       react-router: ^7.0.0
 
-  '@nestledjs/doctor@0.6.4':
-    resolution: {integrity: sha512-axzRlTW30Rx53CSyve/fVh+s7H9Dn8Pf2RB5/YHwGS5f7Bv50f2Zn43mU3GDJ6vpl4IrPiEBksWO+dOVbMwRNg==}
+  '@nestledjs/doctor@0.6.5':
+    resolution: {integrity: sha512-w3PrknEUuQOREUINe2kDSoJPSex5dWnw8b/ZtuA+Wu7FZGZ8c+KkBRp1ypFOEolScc3qDJSuW2LegXCY8wn0EA==}
     hasBin: true
     peerDependencies:
       '@prisma/internals': '>=6'
@@ -4008,8 +4008,8 @@ packages:
   '@nestledjs/generators@3.4.1':
     resolution: {integrity: sha512-ryzbVQr+3dWfvYNcSyiNyrkns9GqsbBNXDLK7K1rUZeMoUjLh1vcdgyS+msHJuo9ndSOi3XB5rA5HGJPYIFRZg==}
 
-  '@nestledjs/shared-components@1.0.17':
-    resolution: {integrity: sha512-b1fA/XhZmE1eEn7vRG1vZMSTPuhViwWkile4j3qVh/U4kNQkBajyNzP2g8JZXmZLxmkx7fI4rDykHTDX1F6OIQ==}
+  '@nestledjs/shared-components@1.0.18':
+    resolution: {integrity: sha512-6il8LamtlSFkAd/wqZDLcYHHGv+zHduS7Fw5fieZ6bnF6uCyAIEYiEZLKAHM5W9e1YvLwHUlZpqayjMIVB5IhA==}
     peerDependencies:
       '@heroicons/react': ^2.0.0
       react: 19.1.0
@@ -19112,17 +19112,17 @@ snapshots:
     dependencies:
       react: 19.1.0
 
-  '@nestledjs/data-browser@1.0.23(edc8ae831a3a91143640311b4a5bfc5a)':
+  '@nestledjs/data-browser@1.0.24(3f70c106bb854ae99f0584c3f225583d)':
     dependencies:
       '@apollo/client': 4.1.8(graphql-ws@6.2.1(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.14.2))
       '@heroicons/react': 2.2.0(react@19.1.0)
       '@nestledjs/forms': 0.9.0(@apollo/client@4.1.8(graphql-ws@6.2.1(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.14.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(@mdxeditor/editor@3.39.1(@codemirror/language@6.12.3)(@lezer/highlight@1.2.3)(@types/react-dom@19.1.0(@types/react@19.1.0))(@types/react@19.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(yjs@13.6.27))(dayjs@1.11.21)(react-dom@19.1.0(react@19.1.0))(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
       '@nestledjs/forms-core': 0.9.0(@apollo/client@4.1.8(graphql-ws@6.2.1(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.14.2)))(@hookform/resolvers@3.10.0(react-hook-form@7.73.1(react@19.1.0)))(dayjs@1.11.21)(react-hook-form@7.73.1(react@19.1.0))(react@19.1.0)(zod@3.25.56)
-      '@nestledjs/shared-components': 1.0.17(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
+      '@nestledjs/shared-components': 1.0.18(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
       react: 19.1.0
       react-router: 7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
 
-  '@nestledjs/doctor@0.6.4(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
+  '@nestledjs/doctor@0.6.5(@prisma/internals@7.9.1(magicast@0.5.2)(typescript@5.9.3))':
     dependencies:
       graphql: 16.14.2
       tslib: 2.8.1
@@ -19189,7 +19189,7 @@ snapshots:
       - typescript
       - verdaccio
 
-  '@nestledjs/shared-components@1.0.17(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)':
+  '@nestledjs/shared-components@1.0.18(@heroicons/react@2.2.0(react@19.1.0))(react-router@7.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@heroicons/react': 2.2.0(react@19.1.0)
       dayjs: 1.11.21

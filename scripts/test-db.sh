@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test Database Management Script
-# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|url]
+# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|ensure|url]
 
 set -e
 
@@ -61,6 +61,23 @@ DEV_DATA_DIR="${DEV_DATA_DIR:-./tmp}"
 [[ "$DEV_DATA_DIR" == /* ]] || DEV_DATA_DIR="$ROOT/.dev/${DEV_DATA_DIR#./}"
 TEST_DB_DATA_DIR="$DEV_DATA_DIR/postgres-test"
 
+# A plain URL: scheme, optional user-info, host, optional port and a database name, nothing after.
+TEST_DB_PLAIN_URL_PATTERN='^(postgres|postgresql)://([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?/([A-Za-z0-9_-]+)$'
+
+# Whether TEST_DB_URL names a local test database: a plain postgres(ql):// URL on this
+# machine, named *_test. `migrate` accepts it (and, with E2E_ALLOW_NON_DISPOSABLE_DB=1, more); `ensure`
+# creates nothing else, whatever E2E_ALLOW_NON_DISPOSABLE_DB says.
+is_local_test_database() {
+  [[ "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]] || return 1
+  local host="${BASH_REMATCH[3]}" database="${BASH_REMATCH[5]}"
+  local lower_database
+  lower_database="$(printf '%s' "$database" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$host" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ && "$lower_database" == *_test ]]; then
+    return 0
+  fi
+  return 1
+}
+
 # Prisma's `migrate deploy` has no guard of its own, so `migrate` refuses a URL that is not a
 # disposable test database, by the rules the e2e setup applies before it resets, migrates, pushes or
 # seeds (apps/api-e2e/src/support/database-guards.ts): a postgres(ql):// URL on this machine, named
@@ -68,15 +85,11 @@ TEST_DB_DATA_DIR="$DEV_DATA_DIR/postgres-test"
 # which could send the client elsewhere, is refused either way.
 assert_disposable_test_database() {
   local action="$1"
-  local pattern='^(postgres|postgresql)://([^@/?#]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?/([A-Za-z0-9_-]+)$'
-  if [[ ! "$TEST_DB_URL" =~ $pattern ]]; then
+  if [[ ! "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]]; then
     echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
     exit 1
   fi
-  local host="${BASH_REMATCH[3]}" database="${BASH_REMATCH[5]}"
-  local lower_database
-  lower_database="$(printf '%s' "$database" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$host" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ && "$lower_database" == *_test ]]; then
+  if is_local_test_database; then
     return 0
   fi
   if [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" == "1" ]]; then
@@ -87,6 +100,35 @@ assert_disposable_test_database() {
   echo "   127.0.0.1 or [::1]) and named *_test. Point TEST_DATABASE_URL at one, or set" >&2
   echo "   E2E_ALLOW_NON_DISPOSABLE_DB=1 if this one is disposable under another host or name." >&2
   exit 1
+}
+
+# Create the test database when the server is up but does not have it: a fresh checkout or worktree
+# whose TEST_DATABASE_URL names a database the container was not initialised with. It only creates,
+# never drops or alters, and only a local *_test database (test-database.mjs checks the same rule
+# again before it connects). The URL reaches node through the environment, never its command line.
+ensure_test_database() {
+  if ! is_local_test_database; then
+    echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: only a plain postgresql:// URL on this machine" >&2
+    echo "   (localhost, 127.0.0.1 or [::1]) named *_test is created. E2E_ALLOW_NON_DISPOSABLE_DB does" >&2
+    echo "   not apply; create any other database yourself." >&2
+    return 1
+  fi
+  TEST_DATABASE_URL="$TEST_DB_URL" node "$SCRIPT_DIR/test-database.mjs" ensure || return 1
+  return 0
+}
+
+# After start or reset: the container creates only its own POSTGRES_DB, so make sure the database the
+# URL names exists too. A URL that is not a local *_test database is left alone, and a failure is a
+# warning: the container is up, and the run that needs the database reports why it cannot reach it.
+ensure_test_database_after_start() {
+  if ! is_local_test_database; then
+    echo "ℹ️  Not checking that $TEST_DB_DISPLAY_URL exists: only a local *_test database is created."
+    return 0
+  fi
+  if ! ensure_test_database; then
+    echo "⚠️  The test database is running, but $TEST_DB_DISPLAY_URL could not be checked or created." >&2
+  fi
+  return 0
 }
 
 # Delete the test database's data folder. Postgres makes it 0700 and owned by the container's
@@ -131,6 +173,7 @@ case "$COMMAND" in
     "$COMPOSE" --profile testing up -d postgres-test
 
     wait_for_db
+    ensure_test_database_after_start
 
     echo "✅ Test database is ready on port $TEST_DB_DISPLAY_PORT"
     echo "📄 Connection string: $TEST_DB_DISPLAY_URL"
@@ -161,6 +204,7 @@ case "$COMMAND" in
     "$COMPOSE" --profile testing up -d postgres-test
 
     wait_for_db
+    ensure_test_database_after_start
 
     if [[ -n "$CLEARED" ]]; then
       echo "✅ Test database reset complete"
@@ -183,6 +227,10 @@ case "$COMMAND" in
     echo "✅ Test database migrations complete"
     ;;
 
+  "ensure")
+    ensure_test_database || exit 1
+    ;;
+
   "url")
     # The one place that resolves the test-database URL. Callers that are NOT launched through Nx
     # (pnpm runs a script with a plain shell, which never loads .env) must ask for it here rather
@@ -202,6 +250,7 @@ case "$COMMAND" in
     echo "  reset   - Reset the test database (destroys data)"
     echo "  logs    - Show test database logs"
     echo "  migrate - Run Prisma migrations on test database"
+    echo "  ensure  - Create the test database if the server does not have it (local *_test only)"
     echo "  url     - Print the resolved test database URL"
     echo ""
     echo "Test DB URL: $TEST_DB_DISPLAY_URL"

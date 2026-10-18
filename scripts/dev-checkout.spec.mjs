@@ -621,6 +621,149 @@ void describe('scripts/test-db.sh reads .env as compose does, and acts only on w
     }
     assert.equal(calls().match(/prisma migrate deploy/g)?.length, 3)
   })
+
+  void it('never prints the password or the full URL when it refuses to migrate', () => {
+    const { main } = checkouts()
+    const { bin, calls } = recordingStubs(main)
+    for (const rest of [
+      'db.example.com:5432/app_test',
+      'localhost:5432/app',
+      'localhost:5432/app_test?sslmode=disable',
+      'localhost:5432/app_test#x',
+    ]) {
+      const url = urlWithPassword(rest)
+      const refused = testDb(main, bin, 'migrate', { TEST_DATABASE_URL: url })
+      const output = `${refused.stdout}${refused.stderr}`
+      assert.notEqual(refused.status, 0, rest)
+      assert.match(refused.stderr, /Refusing to migrate/, rest)
+      assert.ok(!output.includes(FIXTURE_PASSWORD), output)
+      assert.ok(!output.includes(url), output)
+    }
+    assert.equal(calls(), '')
+  })
+})
+
+// Built at runtime, so the fixture is not a credential-shaped literal in the source.
+const FIXTURE_PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
+const urlWithPassword = rest => `postgresql://app:${FIXTURE_PASSWORD}@${rest}`
+
+// A stub `node` on PATH standing in for test-database.mjs: it records the arguments and the
+// TEST_DATABASE_URL it was given, and exits with NODE_EXIT.
+function nodeStub(root) {
+  const bin = join(root, '..', 'node-bin')
+  const log = join(root, '..', 'node-calls.log')
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(
+    join(bin, 'node'),
+    `#!/bin/bash\nprintf '%s %s\\n' "$*" "$TEST_DATABASE_URL" >> '${log}'\nexit "\${NODE_EXIT:-0}"\n`,
+    { mode: 0o755 },
+  )
+  const calls = () => (existsSync(log) ? readFileSync(log, 'utf8') : '')
+  return { bin, calls }
+}
+
+void describe('scripts/test-db.sh ensure creates only a local *_test database', () => {
+  void it('hands a local *_test URL to test-database.mjs through the environment', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      const url = urlWithPassword(`${host}:55433/App_TEST`)
+      const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure', { TEST_DATABASE_URL: url })
+      assert.equal(ensured.status, 0, ensured.stderr)
+      assert.ok(node.calls().includes(`/scripts/test-database.mjs ensure ${url}`), node.calls())
+    }
+  })
+
+  void it('ensures the default URL, built from the port in .env', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    writeFileSync(join(main, '.env'), 'POSTGRES_TEST_PORT=55444\n')
+    const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure')
+    assert.equal(ensured.status, 0, ensured.stderr)
+    assert.match(node.calls(), new RegExp(`@localhost:55444/${testDatabaseName}\\n$`))
+  })
+
+  void it('fails when test-database.mjs fails', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure', {
+      TEST_DATABASE_URL: urlWithPassword('localhost:55433/app_test'),
+      NODE_EXIT: '1',
+    })
+    assert.notEqual(ensured.status, 0)
+  })
+
+  void it('refuses any other database, E2E_ALLOW_NON_DISPOSABLE_DB or not, without printing it', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    for (const rest of [
+      'db.example.com:5432/app_test',
+      'localhost:5432/app',
+      'localhost:5432/app_testing',
+      'localhost:5432/app_test?host=db.example.com',
+      'localhost:5432/app_test#x',
+    ]) {
+      const url = urlWithPassword(rest)
+      for (const allow of ['', '1']) {
+        const refused = testDb(main, `${node.bin}:${bin}`, 'ensure', {
+          TEST_DATABASE_URL: url,
+          E2E_ALLOW_NON_DISPOSABLE_DB: allow,
+        })
+        const output = `${refused.stdout}${refused.stderr}`
+        assert.notEqual(refused.status, 0, rest)
+        assert.match(refused.stderr, /Refusing to create/, rest)
+        assert.ok(!output.includes(FIXTURE_PASSWORD), output)
+      }
+    }
+    assert.equal(node.calls(), '')
+  })
+
+  void it('refuses a .env value it cannot read as compose does, before connecting anywhere', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    for (const line of [
+      'POSTGRES_TEST_PORT=$PORT',
+      'POSTGRES_TEST_PORT="${PORT}"',
+      'POSTGRES_TEST_PORT= # c',
+      'NESTLED_DEV_DATA_DIR= # shared data',
+    ]) {
+      writeFileSync(join(main, '.env'), `${line}\n`)
+      const refused = testDb(main, `${node.bin}:${bin}`, 'ensure')
+      assert.notEqual(refused.status, 0, line)
+    }
+    assert.equal(node.calls(), '')
+  })
+
+  void it('start ensures the database it reports, and only a local *_test one', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    const local = urlWithPassword('localhost:55433/app_test')
+    const started = testDb(main, `${node.bin}:${bin}`, 'start', { TEST_DATABASE_URL: local })
+    assert.equal(started.status, 0, started.stderr)
+    assert.ok(node.calls().includes(`ensure ${local}`), node.calls())
+
+    const remote = urlWithPassword('db.example.com:5432/app_test')
+    const skipped = testDb(main, `${node.bin}:${bin}`, 'start', { TEST_DATABASE_URL: remote })
+    assert.equal(skipped.status, 0, skipped.stderr)
+    assert.match(
+      skipped.stdout,
+      /Not checking that postgresql:\/\/db\.example\.com:5432\/app_test exists/,
+    )
+    assert.ok(!node.calls().includes(remote), node.calls())
+    assert.ok(!`${skipped.stdout}${skipped.stderr}`.includes(FIXTURE_PASSWORD))
+  })
+
+  void it('start still succeeds, with a warning, when the database cannot be created', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    const started = testDb(main, `${node.bin}:${bin}`, 'start', {
+      TEST_DATABASE_URL: urlWithPassword('localhost:55433/app_test'),
+      NODE_EXIT: '1',
+    })
+    assert.equal(started.status, 0, started.stderr)
+    assert.match(started.stderr, /could not be checked or created/)
+    assert.ok(!`${started.stdout}${started.stderr}`.includes(FIXTURE_PASSWORD))
+  })
 })
 
 void describe('scripts/dev-docker.sh reads .env as compose does', () => {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { formatRows, prepareStatements } from './sql-runner.mjs'
+import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
+import { formatRows, prepareStatements, scrubCredentials } from './sql-runner.mjs'
+
+// Built at runtime, so the fixture is not a credential-shaped literal in the source.
+const PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
 
 const quote = (value: string) => `'${value.replaceAll("'", "''")}'`
 
@@ -89,5 +94,33 @@ describe('sql runner', () => {
       }),
     ).toEqual(['1|t|', '2|f|x|y'])
     expect(formatRows({ fields: [], rows: [] })).toEqual([])
+  })
+})
+
+describe('sql runner errors', () => {
+  it('drop the URL, its user-info and its password, raw and percent-decoded', () => {
+    const url = `postgresql://app:${PASSWORD}%21@localhost:55433/app_test`
+    const message = `failed ${url}; app:${PASSWORD}%21; ${PASSWORD}!; postgres://u:p@elsewhere/db`
+    const scrubbed = scrubCredentials(message, url)
+    expect(scrubbed).not.toContain(PASSWORD)
+    expect(scrubbed).not.toContain(url)
+    expect(scrubbed).toContain('postgres://***@elsewhere/db')
+  })
+
+  it('keep a message with no credential as it is', () => {
+    expect(scrubCredentials('connect ECONNREFUSED 127.0.0.1:1', undefined)).toBe(
+      'connect ECONNREFUSED 127.0.0.1:1',
+    )
+  })
+
+  it('reach stderr scrubbed when the database cannot be reached', () => {
+    const url = `postgresql://app:${PASSWORD}@127.0.0.1:1/app_test`
+    const result = spawnSync(process.execPath, [resolve(__dirname, 'sql-runner.mjs')], {
+      input: JSON.stringify({ url, statement: 'SELECT 1' }),
+      encoding: 'utf8',
+    })
+    expect(result.status).toBe(1)
+    expect(result.stderr.trim()).not.toBe('')
+    expect(result.stderr).not.toContain(PASSWORD)
   })
 })

@@ -93,6 +93,11 @@ const runWrapper = (
   stopExit = 0,
   suppliedUrl = SUPPLIED_URL,
   urlExit = 0,
+  {
+    probeExits = [probeExit],
+    probeStderr = '',
+    ensureExit = 0,
+  }: { probeExits?: number[]; probeStderr?: string; ensureExit?: number } = {},
 ) => {
   const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
   roots.push(root)
@@ -104,14 +109,22 @@ const runWrapper = (
     join(root, 'scripts/test-db.sh'),
     '#!/bin/bash\necho "$1" >> db-calls\n' +
       `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n` +
-      `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n`,
+      `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n` +
+      `if [[ "$1" == ensure ]]; then echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit}; fi\n`,
     { mode: 0o755 },
   )
-  // Stands in for the pg runner: records the probe request and answers with the probe's result.
+  // Stands in for the pg runner: records the probe request and answers each probe in turn with the
+  // next of probeExits (the last one repeats), writing probeStderr when it fails.
   writeFileSync(
     join(root, 'apps/api-e2e/src/support/sql-runner.mjs'),
-    "import { readFileSync, writeFileSync } from 'node:fs'\n" +
-      `writeFileSync('probe', readFileSync(0))\nprocess.exit(${probeExit})\n`,
+    "import { existsSync, readFileSync, writeFileSync } from 'node:fs'\n" +
+      `const exits = ${JSON.stringify(probeExits)}\n` +
+      "const count = existsSync('probe-count') ? Number(readFileSync('probe-count', 'utf8')) : 0\n" +
+      "writeFileSync('probe-count', String(count + 1))\n" +
+      "writeFileSync('probe', readFileSync(0))\n" +
+      'const exit = exits[Math.min(count, exits.length - 1)]\n' +
+      `if (exit !== 0) process.stderr.write(${JSON.stringify(probeStderr)})\n` +
+      'process.exit(exit)\n',
   )
   writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
   writeFileSync(join(root, 'vitest-output'), vitestOutput)
@@ -136,7 +149,13 @@ const runWrapper = (
       return ''
     }
   }
-  return { result, probe: read('probe'), dbCalls: read('db-calls'), npxCalls: read('npx-calls') }
+  return {
+    result,
+    probe: read('probe'),
+    probes: Number(read('probe-count') || 0),
+    dbCalls: read('db-calls'),
+    npxCalls: read('npx-calls'),
+  }
 }
 
 const summary = (tests: string) => `\n Test Files  2 passed (2)\n      Tests  ${tests}\n`
@@ -207,6 +226,54 @@ describe('api-e2e test wrapper', () => {
     expect(probe).toBe('')
     expect(npxCalls).toBe('')
     expect(result.stdout).not.toContain('PASSED')
+  })
+  it('prints why the probe failed, without the URL or its credentials', () => {
+    const { result } = runWrapper(summary('5 passed (5)'), 0, 1, 0, SUPPLIED_URL, 0, {
+      probeStderr: `connect failed for ${SUPPLIED_URL} via postgres://other:hunter@db.local/x`,
+    })
+    expect(result.status).toBe(1)
+    const output = `${result.stdout}${result.stderr}`
+    expect(output).toContain('Probe error: connect failed for <TEST_DATABASE_URL>')
+    expect(output).toContain('postgres://***@db.local/x')
+    expect(output).not.toContain('secret')
+    expect(output).not.toContain('hunter')
+  })
+  it('creates a missing database and runs, without starting a container', () => {
+    const { result, dbCalls, probes, npxCalls } = runWrapper(
+      summary('5 passed (5)'),
+      0,
+      1,
+      0,
+      '',
+      0,
+      {
+        probeExits: [1, 0],
+        probeStderr: 'database "app_test" does not exist',
+      },
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('database "app_test" does not exist')
+    expect(dbCalls).toContain('ensure')
+    expect(dbCalls).not.toContain('start')
+    expect(probes).toBe(2)
+    expect(npxCalls).toBe('ran\n')
+  })
+  it('creates a missing database behind a supplied URL, printing its output scrubbed', () => {
+    const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1, 0, SUPPLIED_URL, 0, {
+      probeExits: [1, 0],
+    })
+    expect(result.status).toBe(0)
+    expect(dbCalls).toContain('ensure')
+    expect(result.stdout).toContain('ensure output for <TEST_DATABASE_URL>')
+    expect(result.stdout).not.toContain('secret')
+  })
+  it('starts its own test database when ensure cannot create one', () => {
+    const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1, 0, '', 0, {
+      ensureExit: 1,
+    })
+    expect(result.status).toBe(0)
+    expect(dbCalls).toContain('ensure')
+    expect(dbCalls).toContain('start')
   })
   it('finds a failure in the summary of a long log', () => {
     const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`

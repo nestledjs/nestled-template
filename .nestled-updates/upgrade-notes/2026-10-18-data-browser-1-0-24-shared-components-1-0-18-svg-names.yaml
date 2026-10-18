@@ -1,0 +1,54 @@
+id: 2026-10-18-data-browser-1-0-24-shared-components-1-0-18-svg-names
+title: >-
+  @nestledjs/data-browser 1.0.24 and @nestledjs/shared-components 1.0.18 give every inline SVG an
+  accessible name or hide it
+priority: normal
+area: ui
+type: correctness
+delivery: package-release
+intent: >
+  Every inline SVG in the two published packages now has an accessible name or is hidden, with no
+  visual change. Each icon is classified at its call site, as the template's own S1077 sweep
+  (2026-10-15-svg-accessible-names) did.
+
+  In @nestledjs/data-browser every inline SVG goes through a small internal wrapper, SvgIcon, that
+  renders either `role="img"` with an `aria-label` (when given a `label`) or `aria-hidden="true"
+  focusable="false"`, never both and never neither; the breadcrumb separator on the create and edit
+  pages is one shared BreadcrumbChevron. Hidden, because visible text or a labelled control already
+  says what they mean: the chevrons, breadcrumb separators, spinners, the success and error
+  notification icons, the export, import, filter and view-record icons, the search icon, the
+  search-field selector's icon (its button has an `aria-label`), and the large icons on the "model
+  not found" and "no query" screens. Named, because the icon is a button's only content: the
+  fullscreen toggle ("Enter fullscreen" or "Exit fullscreen") and the filter panel's close button
+  ("Close filters"). A spec fails when an inline `<svg>` is added anywhere in the package's source
+  outside the wrapper.
+
+  In @nestledjs/shared-components the three icons, in ErrorBoundaryUi, ServiceUnavailable and
+  ViteCacheError, each sit beside the heading that says what they mean and carry
+  `aria-hidden="true" focusable="false"` directly. A spec fails on any inline `<svg>` in the package
+  that is neither hidden nor named.
+why: >
+  Screen readers announced the unlabelled icons as "image" or skipped them, and two icon-only
+  buttons in the data browser had no accessible name beyond a `title`. SonarCloud reported each
+  icon as S1077. These files are published packages, so projects receive the fix by upgrading, not
+  through 2026-10-15-svg-accessible-names.
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.24
+    versionRange: ^1.0.24
+  - name: '@nestledjs/shared-components'
+    sourcePath: libs/shared-components
+    targetVersion: 1.0.18
+    versionRange: ^1.0.18
+verification:
+  - pnpm install
+  - pnpm build:web
+  - pnpm nx test web
+agentHints:
+  - Update package.json and the lockfile to the published versions. Do not copy files from libs/data-browser or libs/shared-components.
+  - >
+    A project test that found the data browser's fullscreen toggle or the filter panel's close
+    button by its `title` or by position can now use `getByRole('button', { name: 'Enter
+    fullscreen' })` or `{ name: 'Close filters' }`. Those two icons are now `role="img"`, so a test
+    that counts `getAllByRole('img')` inside the data browser can see them.

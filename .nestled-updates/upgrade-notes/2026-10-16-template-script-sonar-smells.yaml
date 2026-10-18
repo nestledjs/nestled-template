@@ -38,6 +38,12 @@ verification:
   - pnpm run nestled-doctor
 agentHints:
   - >
+    Check whether `scripts/**` is excluded from Sonar first (`sonar.exclusions`, or `scripts` absent
+    from `sonar.sources`, in the project's sonar-project.properties). If it is, these smells never
+    reached the project's analysis and there is no Sonar finding to clear; take the refactors anyway
+    so the next template change to these scripts applies cleanly, and do not add `scripts` to the
+    analysis as part of this note.
+  - >
     A project whose copies of these four files are still 2026.10.14's, unchanged, takes the
     template's versions verbatim, except for test-db.sh's project-specific lines (the default test
     port, the default test database name and the test container name), which keep the project's
