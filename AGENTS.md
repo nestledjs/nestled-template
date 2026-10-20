@@ -104,7 +104,8 @@ pnpm typecheck          # every project: app/lib, spec and storybook configs (sc
 
 A script under `scripts/` that imports a lib (`@nestled-template/...`) runs with
 `pnpm tsx --tsconfig scripts/tsconfig.json scripts/<name>.ts`. tsx reads `./tsconfig.json` by
-default, and the workspace root deliberately has none, so the path aliases would not resolve.
+default. The template's root has none, so without the flag the path aliases would not resolve; a
+project that added a root tsconfig.json would get that file's settings instead of these.
 
 ### Typecheck Memory
 
@@ -456,19 +457,35 @@ service also carries a Railway health check on `/api/uptime` (300s) so a contain
 boot never takes traffic. Neither `build:api` nor `start:api` touches the database, and the
 `web` service has no database URL and no pre-deploy.
 
-Both settings live on the service in Railway and are declared in `.railway/railway.ts`
-(Railway Infrastructure as Code). Do not add a `railway.json`: config-as-code is deprecated,
-is not read for services that never used it, and stops being read for everyone on 2026-12-01.
-Railway does not read `.railway/railway.ts` on deploy either. It is applied with
-`railway config apply` (or the `railwayapp/config` GitHub Action on merge) after
-`railway config plan` shows only the change you intend. Omitted resources are deleted on apply,
-so keep the file complete: regenerate it from live state with `railway config pull` rather than
-hand-editing it, then diff. `railway config plan` currently reports importer noise on the managed
-Postgres/Redis services (it wants to pin their images); leave that unapplied.
+These are service settings in Railway, not files in the repo. Railway reads nothing from the
+repository for them: do not add a `railway.json` (config-as-code is deprecated, is not read for
+services that never used it, and stops being read for everyone on 2026-12-01), and there is no
+Infrastructure-as-Code file to apply. Set them in the Railway dashboard and check them there.
 
-`.railway/railway.ts` here describes the template's own Railway project. A project cloned from
-the template regenerates it for its own project with `railway config pull` and keeps the
-`preDeploy` and `healthcheck` settings on `api`.
+**Railway deploy checklist:**
+
+1. Deploy from the published Railway template
+   [Nestled.js Setup Template](https://railway.com/deploy/nestledjs-setup-template) (template
+   code `nestledjs-setup-template`). It creates `api`, `web`, `Postgres` and `Redis`; point `api`
+   and `web` at your own repository and deploy branch.
+2. `api` service:
+   - build command `npm run build:api`, start command `npm run start:api`;
+   - pre-deploy command `pnpm prisma:deploy`;
+   - health check path `/api/uptime`, health check timeout `300` seconds.
+3. `web` service:
+   - build command `npm run build:web`, start command `npm run start:web`;
+   - public domain on port `3000` (`PORT=3000`);
+   - no pre-deploy command and no database URL.
+4. `api` variables: `DATABASE_URL` and `REDIS_URL` / `REDIS_PASSWORD` (referenced from the
+   `Postgres` and `Redis` services), `JWT_SECRET`, `NODE_ENV`, `HOST`, `ALLOWED_ORIGINS`,
+   `API_COOKIE_DOMAIN`, `APP_URL`, `SITE_URL`, `APP_NAME`, `APP_EMAIL`, `APP_SUPPORT_EMAIL`,
+   `APP_ADMIN_EMAILS`, `EMAIL_PROVIDER`, `VITE_COOKIE_NAME`, `PGBOUNCER_ENABLED`, and the
+   query-observability flags `COUNT_PRISMA_QUERIES`, `LOG_PRISMA_QUERIES`,
+   `LOG_QUERY_COMPLEXITY`, `LOG_QUERY_COMPLEXITY_THRESHOLD`, `QUERY_COMPLEXITY_LIMIT`,
+   `QUERY_COMPLEXITY_VERBOSE_ERRORS`. `.env.example` describes each one and the optional
+   integrations (Stripe, OAuth, storage, email provider keys).
+5. `web` variables: `PORT`, `VITE_API_URL`, `VITE_COOKIE_NAME` (the same value as on `api`).
+   `VITE_*` values are compiled in at build time, so changing one needs a rebuild, not a restart.
 
 Schema changes are migrations, not pushes: edit the schema, run `pnpm prisma:migrate` against
 the local database to create and apply a migration, commit the new folder under

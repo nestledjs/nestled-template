@@ -1,0 +1,57 @@
+id: 2026-10-19-retire-railway-iac
+title: The unused Railway Infrastructure-as-Code file is retired for a deploy checklist
+priority: normal
+area: infra
+type: cleanup
+delivery: code-patch
+intent: >
+  .railway/railway.ts and .railway/README.md are deleted, and the `railway` devDependency (the
+  package that let `railway config plan` evaluate that file) leaves package.json and
+  pnpm-lock.yaml. No script used it.
+
+  AGENTS.md's "Production Migrations" section keeps the contract (the api's pre-deploy command
+  runs `pnpm prisma:deploy`, the api has a health check on /api/uptime with a 300 s timeout, and
+  web has neither) and replaces the IaC instructions with a deploy checklist: deploy from the
+  published Railway template "Nestled.js Setup Template"
+  (https://railway.com/deploy/nestledjs-setup-template); the api build, start and pre-deploy
+  commands and its health check; the web build and start commands and port; and the variables
+  each service needs. The settings stay on the services in Railway; nothing in the repo applies
+  them, and `railway.json` stays forbidden.
+why: >
+  Nothing applied .railway/railway.ts: no workflow ran `railway config apply`, and Railway does
+  not read the file on deploy. It described one specific Railway project, and IaC apply deletes
+  anything the file omits, so a project that ran it as documented risked deleting its own
+  services. Keeping it also kept the `railway` package in every install. The settings it recorded
+  now live in the checklist, which matches what the published Railway template creates.
+affectedPaths:
+  - .railway/railway.ts
+  - .railway/README.md
+  - package.json
+  - pnpm-lock.yaml
+  - AGENTS.md
+skipIf:
+  - >
+    The project never had .railway/ or the `railway` dependency, and its deploy docs already list
+    the pre-deploy command, health check and per-service settings.
+verification:
+  - pnpm install --frozen-lockfile
+  - git grep -nE '\.railway/|railway config' -- ':!.nestled-updates' # no hits
+  - 'Railway dashboard: api pre-deploy `pnpm prisma:deploy`, health check /api/uptime (300 s)'
+agentHints:
+  - >
+    If the project's CI or scripts really invoke `railway config apply` (for example the
+    railwayapp/config GitHub Action) or import .railway/railway.ts, keep the file and the
+    dependency and record adapted with that reason; still add the checklist to the project's
+    deploy docs.
+  - >
+    A project not deployed on Railway records not-applicable for the Railway parts; it can still
+    drop an unused `railway` devDependency.
+  - >
+    Before deleting the file, confirm the live api service has the pre-deploy command and health
+    check the checklist lists. The file never applied them, so if they are missing set them in the
+    Railway dashboard; do not run `railway config apply` to do it.
+  - >
+    Write the checklist with the project's own services, commands and variables. The template's
+    list is the minimum; keep any extra service or variable the project uses. Older notes such as
+    2026-09-15-railway-predeploy-migrations still mention .railway/railway.ts; this note supersedes
+    that part of them.

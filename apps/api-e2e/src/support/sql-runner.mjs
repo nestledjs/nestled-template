@@ -153,6 +153,30 @@ export async function runSql({ url, statement, variables = {} }) {
 }
 
 /**
+ * Why an operation failed, in words. pg rejects a refused connection with Node's AggregateError,
+ * whose own message is empty (one error per address tried, e.g. ::1 and 127.0.0.1): its nested
+ * messages say why, and its `code` (ECONNREFUSED) when they are missing too. The result is not yet
+ * scrubbed; pass it through scrubCredentials before printing it.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function errorReason(error) {
+  if (!(error instanceof Error)) return String(error)
+  if (error.message) return error.message
+  const nested =
+    error instanceof AggregateError
+      ? error.errors
+          .map(inner => (inner instanceof Error ? inner.message : String(inner ?? '')))
+          .filter(Boolean)
+      : []
+  if (nested.length > 0) return [...new Set(nested)].join('; ')
+  const code = /** @type {{ code?: unknown }} */ (error).code
+  if (typeof code === 'string' && code) return code
+  return error.name || 'unknown error'
+}
+
+/**
  * An error message with the request's URL, its user-info and its password removed, and the user-info
  * of any other `scheme://user:password@` in it: the runner's errors reach terminals and CI logs.
  *
@@ -213,8 +237,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     .then(
       output => process.stdout.write(output),
       error => {
-        const message = error instanceof Error ? error.message : String(error)
-        process.stderr.write(`${scrubCredentials(message, url)}\n`)
+        process.stderr.write(`${scrubCredentials(errorReason(error), url)}\n`)
         process.exitCode = 1
       },
     )

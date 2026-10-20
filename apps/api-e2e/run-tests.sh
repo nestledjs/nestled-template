@@ -32,10 +32,36 @@ PROBE_ERROR=""
 probe_test_database() {
   local status=0
   PROBE_ERROR="$(
-    node -e 'process.stdout.write(JSON.stringify({ url: process.env.TEST_DATABASE_URL, statement: "SELECT 1" }))' |
+    PROBE_DATABASE_URL="$(probe_url "$TEST_DATABASE_URL")" node -e 'process.stdout.write(JSON.stringify({ url: process.env.PROBE_DATABASE_URL, statement: "SELECT 1" }))' |
       node apps/api-e2e/src/support/sql-runner.mjs 2>&1 >/dev/null
   )" || status=$?
   return "$status"
+}
+
+# The URL without the query parameters only Prisma reads (?schema=, ?connection_limit= ...): psql
+# rejects them as invalid URI parameters, and they say nothing about whether the server answers.
+# Everything else is kept, the destination parameters (host, port, dbname ...) above all, so the
+# probe reaches exactly the database the tests will. The suite itself still gets the full URL.
+probe_url() {
+  local url="$1" query param key kept=""
+  local -a params
+  if [[ "$url" != *\?* ]]; then
+    printf '%s' "$url"
+    return 0
+  fi
+  query="${url#*\?}"
+  if [[ -n "$query" ]]; then
+    IFS='&' read -r -a params <<<"$query"
+    for param in "${params[@]}"; do
+      key="$(printf '%s' "${param%%=*}" | tr '[:upper:]' '[:lower:]')"
+      case "$key" in
+        schema | connection_limit | pool_timeout | socket_timeout | pgbouncer | statement_cache_size | sslaccept | sslidentity) ;;
+        *) kept="${kept:+$kept&}$param" ;;
+      esac
+    done
+  fi
+  printf '%s' "${url%%\?*}${kept:+?$kept}"
+  return 0
 }
 
 # Text for the log with the test database URL and any `scheme://user:password@` user-info removed.

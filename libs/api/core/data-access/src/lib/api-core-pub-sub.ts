@@ -38,40 +38,54 @@ const dateReviver = (_key: unknown, value: string | Date): Date => {
   return new Date(value)
 }
 
+const sharedRedisOptions = () => ({
+  // Add password if provided separately (Railway sometimes does this)
+  ...(REDIS_PASSWORD && { password: REDIS_PASSWORD }),
+  // TLS settings for secure connections
+  ...(secure && {
+    tls: {
+      rejectUnauthorized: false,
+    },
+  }),
+  // Force IPv6 for Railway private networking
+  family: 6,
+  // Retry strategy to handle temporary connection issues
+  retryStrategy: (times: number) => {
+    if (times > 3) {
+      Logger.error(`🔴 Redis: Failed to connect after ${times} attempts. Giving up.`)
+      return null // Stop retrying
+    }
+    const delay = Math.min(times * 1000, 3000)
+    Logger.warn(`🔴 Redis: Connection attempt ${times} failed. Retrying in ${delay}ms...`)
+    return delay
+  },
+  // A connection attempt that cannot complete fails after 2s instead of the OS TCP timeout.
+  connectTimeout: 2000,
+  lazyConnect: true, // Don't connect immediately, wait for first command
+})
+
+/**
+ * The publisher runs inside mutations, so a slow or unreachable Redis must not hold the request:
+ * one retry and a 3s per-command timeout. The subscriber gets no commandTimeout: once subscribed
+ * it waits indefinitely for messages by design, and a timeout on SUBSCRIBE would tear down a
+ * healthy subscription on a slow reply. It keeps three retries so a subscription survives a brief
+ * reconnect; it is never on a request's critical path.
+ */
+export function redisPubSubClientOptions(role: 'publisher' | 'subscriber') {
+  return role === 'publisher'
+    ? { ...sharedRedisOptions(), maxRetriesPerRequest: 1, commandTimeout: 3000 }
+    : { ...sharedRedisOptions(), maxRetriesPerRequest: 3 }
+}
+
 function createRedisPubSub(): RedisPubSub | PubSub {
   if (!hasValidRedisUrl) {
     // Fall back to in-memory PubSub when Redis is not available
     return new PubSub()
   }
 
-  const options = {
-    // Add password if provided separately (Railway sometimes does this)
-    ...(REDIS_PASSWORD && { password: REDIS_PASSWORD }),
-    // TLS settings for secure connections
-    ...(secure && {
-      tls: {
-        rejectUnauthorized: false,
-      },
-    }),
-    // Force IPv6 for Railway private networking
-    family: 6,
-    // Retry strategy to handle temporary connection issues
-    retryStrategy: (times: number) => {
-      if (times > 3) {
-        Logger.error(`🔴 Redis: Failed to connect after ${times} attempts. Giving up.`)
-        return null // Stop retrying
-      }
-      const delay = Math.min(times * 1000, 3000)
-      Logger.warn(`🔴 Redis: Connection attempt ${times} failed. Retrying in ${delay}ms...`)
-      return delay
-    },
-    maxRetriesPerRequest: 3,
-    lazyConnect: true, // Don't connect immediately, wait for first command
-  }
-
   try {
-    const publisher = new Redis(REDIS_URL, options)
-    const subscriber = new Redis(REDIS_URL, options)
+    const publisher = new Redis(REDIS_URL, redisPubSubClientOptions('publisher'))
+    const subscriber = new Redis(REDIS_URL, redisPubSubClientOptions('subscriber'))
 
     // Handle connection errors gracefully
     publisher.on('error', err => {

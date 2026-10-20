@@ -9,9 +9,53 @@ import { useSubscription, useLimit, useGlobalCtx } from '@nestled-template/web'
 
 // Mock Apollo Client
 const mockUseMutation = vi.fn()
+const mockUseQuery = vi.fn()
 vi.mock('@apollo/client/react', () => ({
   useMutation: (...args: unknown[]) => mockUseMutation(...args),
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }))
+
+// The seeded organization roles, as the settings area reads them (MyOrganizationsWithMembers).
+const permissionsOf = (...names: string[]) =>
+  names.map((name, index) => {
+    const [subject, action] = name.split(':')
+    return { id: `perm-${index}`, subject, action }
+  })
+const ROLES = {
+  Owner: permissionsOf(
+    'organization:read',
+    'organization:delete',
+    'billing:read',
+    'billing:manage',
+  ),
+  Admin: permissionsOf('organization:read', 'organization:update', 'billing:read'),
+  Member: permissionsOf('organization:read', 'member:read', 'role:read', 'team:read'),
+} as const
+type RoleName = keyof typeof ROLES
+
+const viewer = { id: 'user-123', activeOrganizationId: 'org-123', isSuperAdmin: false }
+
+const setRole = (roleName: RoleName) => {
+  mockUseQuery.mockReturnValue({
+    loading: false,
+    data: {
+      myOrganizations: [
+        {
+          id: 'org-123',
+          name: 'Example Org',
+          members: [
+            {
+              id: 'member-1',
+              userId: viewer.id,
+              roleId: `role-${roleName}`,
+              role: { id: `role-${roleName}`, name: roleName, permissions: ROLES[roleName] },
+            },
+          ],
+        },
+      ],
+    },
+  })
+}
 
 // Mock SDK (for DocumentNode exports)
 vi.mock('@nestled-template/shared/sdk', async importOriginal => {
@@ -25,7 +69,6 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
 
 // Mock web hooks and components
 vi.mock('@nestled-template/web', () => ({
-  RequireOwner: ({ children, fallback }: any) => children || fallback,
   useSubscription: vi.fn(),
   usePlan: vi.fn(),
   useLimit: vi.fn(),
@@ -54,6 +97,7 @@ describe('BillingSettings Component', () => {
 
   beforeEach(() => {
     mockUseMutation.mockClear()
+    setRole('Owner')
 
     mockCreatePortalSession = vi.fn()
     mockCancelSubscription = vi.fn()
@@ -72,7 +116,7 @@ describe('BillingSettings Component', () => {
 
     vi.mocked(useGlobalCtx).mockReturnValue({
       activeOrganization: mockActiveOrganization,
-      user: null,
+      user: viewer as any,
       organizations: [],
       activeOrganizationMember: null,
     })
@@ -802,18 +846,90 @@ describe('BillingSettings Component', () => {
   })
 
   describe('Permission Guards', () => {
-    it('should render for owners', () => {
+    const subscribed = () =>
+      vi.mocked(useSubscription).mockReturnValue({
+        subscription: { id: 'sub-123' },
+        plan: { id: 'plan-pro', name: 'Pro Plan', price: '29.99', interval: 'month' },
+        hasActiveSubscription: true,
+        isTrialing: false,
+        isCanceled: false,
+        isPastDue: false,
+        periodEndsAt: new Date('2024-12-31'),
+        trialEndsAt: null,
+      } as any)
+
+    const actionButtons = [
+      'Change Plan',
+      'Subscribe',
+      'Cancel Subscription',
+      'Open Customer Portal',
+      'Quick Subscribe',
+    ]
+
+    it('gives an Owner (billing:manage) the page and every action', () => {
+      setRole('Owner')
+      subscribed()
       renderWithRouter()
 
-      expect(screen.getByText('Billing & Subscription')).toBeInTheDocument()
+      expect(screen.getByText('Pro Plan')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Change Plan' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cancel Subscription' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Open Customer Portal' })).toBeInTheDocument()
+      expect(screen.queryByText(/read-only access to billing/i)).not.toBeInTheDocument()
     })
 
-    it('should show permission required fallback for non-owners', () => {
-      // RequireOwner mock would render fallback
-      // In the current mock, it renders children by default
+    it('gives an Admin (billing:read) the billing data read-only, with no actions', () => {
+      setRole('Admin')
+      subscribed()
       renderWithRouter()
 
       expect(screen.getByText('Billing & Subscription')).toBeInTheDocument()
+      expect(screen.getByText('Pro Plan')).toBeInTheDocument()
+      expect(screen.getByText('active')).toBeInTheDocument()
+      expect(screen.getByText('$29.99')).toBeInTheDocument()
+      expect(screen.getByText(/Next billing date:/i)).toBeInTheDocument()
+      expect(screen.getByText(/read-only access to billing/i)).toBeInTheDocument()
+      for (const name of actionButtons) {
+        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+      }
+      expect(screen.queryByText('Manage Billing')).not.toBeInTheDocument()
+      expect(screen.queryByText('Permission Required')).not.toBeInTheDocument()
+    })
+
+    it('gives an Admin without a subscription no way to subscribe', () => {
+      setRole('Admin')
+      renderWithRouter()
+
+      expect(screen.getByText('No Plan')).toBeInTheDocument()
+      expect(screen.getByText('No Active Subscription')).toBeInTheDocument()
+      for (const name of actionButtons) {
+        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+      }
+      expect(screen.queryByRole('link', { name: 'View Plans' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: 'Browse plans' })).not.toBeInTheDocument()
+      expect(screen.queryByTestId('upgrade-modal')).not.toBeInTheDocument()
+    })
+
+    it('shows a Member (no billing permission) the no-access state, not the page', () => {
+      setRole('Member')
+      subscribed()
+      renderWithRouter()
+
+      expect(screen.getByText('Permission Required')).toBeInTheDocument()
+      expect(screen.queryByText('Billing & Subscription')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pro Plan')).not.toBeInTheDocument()
+      for (const name of actionButtons) {
+        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+      }
+    })
+
+    it('renders nothing while the membership is loading', () => {
+      mockUseQuery.mockReturnValue({ loading: true, data: undefined })
+      const { container } = renderWithRouter()
+
+      expect(screen.queryByText('Permission Required')).not.toBeInTheDocument()
+      expect(screen.queryByText('Billing & Subscription')).not.toBeInTheDocument()
+      expect(container).toBeEmptyDOMElement()
     })
   })
 })

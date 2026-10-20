@@ -1,0 +1,72 @@
+id: 2026-10-19-test-database-tooling-nits
+title: >-
+  A refused test-database connection prints its reason, the e2e probe ignores Prisma-only URL
+  parameters, and the runner specs build their credentials at runtime
+priority: low
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  Empty reasons. When pg cannot reach the server it rejects with Node's AggregateError, whose own
+  message is empty, so scripts/test-database.mjs printed "Could not ensure the test database: " and
+  the e2e probe in apps/api-e2e/run-tests.sh printed an empty probe error. Both
+  scripts/test-database.mjs and apps/api-e2e/src/support/sql-runner.mjs (the probe's runner) gain
+  errorReason(error): the error's message, else its nested errors' messages (deduplicated, joined by
+  `; `), else its `code` (ECONNREFUSED), else its name. The result goes through the existing
+  scrubCredentials before it is printed, exactly as the message did.
+
+
+  Probe URL. run-tests.sh probes the database with probe_url "$TEST_DATABASE_URL": the URL without
+  the query parameters only Prisma reads (schema, connection_limit, pool_timeout, socket_timeout,
+  pgbouncer, statement_cache_size, sslaccept, sslidentity). Every other parameter is kept, the
+  destination ones (host, port, dbname ...) above all, so the probe reaches the same database the
+  tests do. DATABASE_URL, DIRECT_URL and TEST_DATABASE_URL still carry the full URL.
+
+
+  Specs. e2e-runner.spec.ts builds its fixture passwords at runtime (`['fixture', 'pw',
+  String(process.pid)].join('-')`) instead of `user:password` literals that secret scanners flag, and
+  checks the probe's URL; sql-runner.spec.ts and test-database.spec.mjs cover a refused connection
+  whose message is empty. agents/debugging-playbook.md pointed at `tsx scripts/doctor.ts`, which
+  no longer exists; it now names `pnpm run nestled-doctor`.
+why: >
+  "Test database not accessible" with an empty reason was the commonest e2e setup failure to
+  diagnose, and it was empty precisely in the commonest case: nothing listening on the port. A
+  TEST_DATABASE_URL carrying `?schema=` was probed with a parameter psql rejects. Credential-shaped
+  literals in specs keep tripping secret scanners on every downstream that copies them.
+affectedPaths:
+  - scripts/test-database.mjs
+  - scripts/test-database.spec.mjs
+  - apps/api-e2e/run-tests.sh
+  - apps/api-e2e/src/support/sql-runner.mjs
+  - apps/api-e2e/src/support/sql-runner.spec.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - agents/debugging-playbook.md
+verification:
+  - node --test scripts/*.spec.mjs
+  - bash -n apps/api-e2e/run-tests.sh
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec prettier --check .
+agentHints:
+  - >
+    After a partial patch apply, check run-tests.sh and scripts/test-db.sh for duplicate function
+    definitions (probe_test_database, probe_url, scrub_credentials, ensure_test_database). bash
+    keeps the later definition without a warning, so a stale copy below the new one silently wins.
+  - >
+    A project without the web-ui social-links component records that part of earlier tooling notes
+    (2026-10-18-template-tooling-nits' web-ui-social-links spec) as not-applicable; it does not
+    affect this note.
+  - >
+    scripts/test-db.sh reads TEST_DATABASE_URL from the environment, not from .env; only
+    POSTGRES_TEST_PORT and NESTLED_DEV_DATA_DIR come from .env. A URL that lives only in .env
+    reaches it through Nx (which loads .env into task environments) or an explicit export.
+  - >
+    A project whose run-tests.sh, or a wrapper around it, sets a default POSTGRES_TEST_PORT
+    (`export POSTGRES_TEST_PORT=${POSTGRES_TEST_PORT:-5433}`) before calling `test-db.sh url`
+    overrides the .env port with that default. The template sets none and lets test-db.sh resolve
+    environment, then .env, then 5433; remove such a default.
+  - >
+    A new scripts/ file or spec may need adding to a project's explicit CI step or Sonar
+    sources/tests list when that project names files rather than globbing scripts/*.spec.mjs.
+  - >
+    A project that replaced sql-runner.mjs or test-database.mjs keeps its own and adds the same
+    fallback before scrubbing: message, then AggregateError's nested messages, then `code`.

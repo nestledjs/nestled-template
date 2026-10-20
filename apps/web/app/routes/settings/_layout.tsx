@@ -12,15 +12,15 @@ import {
   UserCircleIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline'
-import { useGlobalCtx } from '@nestled-template/web'
-import {
-  MyOrganizationsWithMembers,
-  type MeQuery,
-  type MyOrganizationsWithMembersQuery,
-} from '@nestled-template/shared/sdk'
 import { Avatar } from '@nestled-template/web-ui'
 import { cn } from '@nestled-template/shared/utils'
-import { useQuery } from '@apollo/client/react'
+import type { MeQuery } from '@nestled-template/shared/sdk'
+import {
+  hasBillingAccess,
+  hasRolePermission,
+  useSettingsOrganization,
+  type SettingsOrganizationMember,
+} from './_settings-access'
 
 interface NavItem {
   name: string
@@ -31,37 +31,11 @@ interface NavItem {
   description: string
 }
 
-type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
-  activeOrganizationId?: string | null
-}
-
-type ActiveOrganizationMember = NonNullable<
-  NonNullable<MyOrganizationsWithMembersQuery['myOrganizations'][number]['members']>[number]
->
-
-function hasBillingAccess(
-  user: MeQuery['me'] | null | undefined,
-  member: ActiveOrganizationMember | null,
-) {
-  if (user?.isSuperAdmin) return true
-  if (!member) return false
-
-  const roleName = member.role?.name
-  if (roleName === 'Owner' || roleName === 'Admin') return true
-
-  return !!member.role?.permissions?.some(p => p.subject === 'billing' && p.action === 'read')
-}
-
-function hasRolePermission(member: ActiveOrganizationMember | null, permission: string) {
-  const [subject, action] = permission.split(':')
-  return !!member?.role?.permissions?.some(p => p.subject === subject && p.action === action)
-}
-
 function canViewSetting(
   permission: string | undefined,
   user: MeQuery['me'] | null | undefined,
   hasActiveOrganization: boolean,
-  activeOrganizationMember: ActiveOrganizationMember | null,
+  activeOrganizationMember: SettingsOrganizationMember | null,
 ) {
   if (!permission) return true
   if (!hasActiveOrganization) return false
@@ -73,18 +47,7 @@ function canViewSetting(
 
 export default function SettingsLayout() {
   const location = useLocation()
-  const { user } = useGlobalCtx()
-
-  // Fetch user's organizations with member data
-  const { data: orgsData } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers)
-  const organizations = orgsData?.myOrganizations || []
-  const userWithActiveOrganization: UserWithActiveOrganization | null | undefined = user
-  const activeOrganization =
-    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
-    organizations[0] ||
-    null
-  const activeOrganizationMember =
-    activeOrganization?.members?.find(member => member.userId === user?.id) || null
+  const { user, activeOrganization, activeOrganizationMember } = useSettingsOrganization()
 
   const personalSettings: NavItem[] = [
     {
