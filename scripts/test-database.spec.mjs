@@ -4,6 +4,7 @@ import {
   creatableTestDatabase,
   dropUserInfo,
   ensureTestDatabase,
+  errorReason,
   main,
   scrubCredentials,
 } from './test-database.mjs'
@@ -209,8 +210,53 @@ void describe('test-database.mjs ensure', () => {
     assert.ok(!refused.err.includes(PASSWORD), refused.err)
   })
 
+  void it('names the reason for a refused connection, whose own message is empty', async () => {
+    const refusal = Object.assign(
+      new AggregateError(
+        [
+          Object.assign(new Error('connect ECONNREFUSED ::1:55433'), { code: 'ECONNREFUSED' }),
+          Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:55433'), {
+            code: 'ECONNREFUSED',
+          }),
+        ],
+        '',
+      ),
+      { code: 'ECONNREFUSED' },
+    )
+    const failed = await run(
+      ['ensure'],
+      { TEST_DATABASE_URL: LOCAL_URL },
+      {
+        connect: async () => {
+          throw refusal
+        },
+      },
+    )
+    assert.equal(failed.status, 1)
+    assert.equal(
+      failed.err,
+      '❌ Could not ensure the test database: connect ECONNREFUSED ::1:55433; ' +
+        'connect ECONNREFUSED 127.0.0.1:55433',
+    )
+  })
+
   void it('needs the ensure command and a URL', async () => {
     assert.equal((await run([], { TEST_DATABASE_URL: LOCAL_URL })).status, 2)
     assert.equal((await run(['ensure'], {})).status, 2)
+  })
+})
+
+void describe('errorReason', () => {
+  void it('prefers the message, then the nested messages, then the code', () => {
+    assert.equal(errorReason(new Error('boom')), 'boom')
+    const nested = new AggregateError([new Error('a'), new Error('a'), new Error('b')], '')
+    assert.equal(errorReason(nested), 'a; b')
+    assert.equal(
+      errorReason(Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' })),
+      'ECONNREFUSED',
+    )
+    assert.equal(errorReason(Object.assign(new Error(''), { code: 'ETIMEDOUT' })), 'ETIMEDOUT')
+    assert.equal(errorReason(new Error('')), 'Error')
+    assert.equal(errorReason('plain'), 'plain')
   })
 })

@@ -1,0 +1,62 @@
+id: 2026-10-19-runtime-advisories-handlebars-proxy-addr-mcp-sdk
+title: >-
+  handlebars, proxy-addr and the MCP SDK move past their critical and high advisories
+priority: high
+area: infra
+type: security
+delivery: code-patch
+intent: >
+  Three dependencies on the api's runtime path move to fixed versions in the root package.json
+  and pnpm-lock.yaml.
+
+  handlebars, a direct dependency that renders email templates
+  (libs/api/integrations/src/lib/email/template-manager-simple.ts), goes to ^4.7.10. A
+  pnpm.overrides entry `"handlebars@<4.7.10": "4.7.10"` also lifts the copy pinned by tooling
+  (verdaccio's hooks package, reached through @nx/js), so no 4.7.9 remains in the lockfile.
+
+  proxy-addr is not a direct dependency: Express 5 pulls it in and uses it for `trust proxy`. A
+  pnpm.overrides entry `"proxy-addr@<2.0.8": "2.0.8"` forces 2.0.8, next to the existing
+  overrides.
+
+  @modelcontextprotocol/sdk, used by the MCP plugin under libs/api/custom/src/lib/plugins/mcp, goes
+  from ^1.30.0 to ^1.32.1 (latest 1.x). It stays on the v1 package; the move to the v2 packages is
+  a separate change.
+
+  After the change `pnpm audit --prod` reports no advisory for any of the three. The template's
+  count went from 106 (3 critical, 48 high, 49 moderate, 6 low) to 101 (0 critical, 47 high, 48
+  moderate, 6 low). The remaining advisories are left to a later, wider audit cleanup.
+why: >
+  handlebars <=4.7.9 has two critical JavaScript-injection advisories in template compilation and
+  a moderate one in precompiled-template embedding. proxy-addr <2.0.8 has a critical IP-spoofing
+  advisory: an IPv4-mapped IPv6 address can match a trusted subnet. Express resolves req.ip through
+  it under `trust proxy`; the template sets a hop count (TRUST_PROXY_HOPS), but a project that
+  trusts addresses or subnets instead could have the client address behind its rate limits forged.
+  @modelcontextprotocol/sdk >=1.12.0 <1.31.0 has a high advisory: its OAuth client can send
+  credentials to an authorization server chosen by the MCP server.
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+verification:
+  - pnpm audit --prod # before and after; no handlebars, proxy-addr or @modelcontextprotocol/sdk entry after
+  - pnpm install --frozen-lockfile
+  - pnpm why handlebars proxy-addr @modelcontextprotocol/sdk
+  - pnpm exec nx test api-custom
+  - pnpm exec nx test integrations
+  - pnpm exec nx build api
+  - pnpm typecheck:workspace
+agentHints:
+  - >
+    Run `pnpm audit --prod` before the change and after it, and record both counts in the upgrade
+    log entry. Only these three packages are in scope; do not fold other audit fixes into this
+    note.
+  - >
+    A project that does not depend on one of these packages (no MCP plugin, so no
+    @modelcontextprotocol/sdk; no handlebars email templates) records that part not-applicable and
+    still applies the rest. proxy-addr comes with Express, so every project with the api has it.
+  - >
+    A project on an older @modelcontextprotocol/sdk major or minor keeps its major but takes at
+    least 1.31.0 (the template uses ^1.32.1). Do not move to the v2 packages under this note.
+  - >
+    package.json is not mirrored by template promotion. Apply the version bumps and the two
+    overrides by hand, then run `pnpm install` so the lockfile follows. Keep the project's other
+    overrides.

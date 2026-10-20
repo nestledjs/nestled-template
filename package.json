@@ -10,7 +10,7 @@
   "scripts": {
     "pre-publish": "pnpm exec nx affected -t lint build test:unit --base=develop",
     "db-update": "node scripts/db-update.mjs",
-    "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom && pnpm run nestled-doctor",
+    "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom",
     "build:api": "prisma generate --schema=libs/api/prisma/src/lib/schemas/schema.prisma && NODE_OPTIONS='--no-warnings' nx build api --prod",
     "build:web": "nx run web:react-router:build",
     "start:api": "node dist/apps/api/main.js",
@@ -97,7 +97,7 @@
     "@heroicons/react": "^2.2.0",
     "@mdx-js/react": "^3.1.1",
     "@mdx-js/rollup": "^3.1.1",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@nestjs/apollo": "^13.4.4",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^11.1.29",
@@ -156,7 +156,7 @@
     "graphql-tag": "^2.12.7",
     "graphql-upload-minimal": "^1.6.4",
     "graphql-ws": "^6.2.1",
-    "handlebars": "^4.7.9",
+    "handlebars": "^4.7.10",
     "helmet": "^8.3.0",
     "imagekit": "^6.0.0",
     "ioredis": "^5.11.1",
@@ -277,7 +277,6 @@
     "prettier": "^3.9.6",
     "prisma": "^7.9.1",
     "prisma-graphql-type-decimal": "4.0.2",
-    "railway": "^3.11.0",
     "rollup": "^4.62.4",
     "storybook": "10.5.7",
     "tailwindcss": "^4.3.3",
@@ -323,7 +322,9 @@
       "protobufjs@<7.6.1": "7.6.1",
       "shell-quote@<1.9.0": "1.9.0",
       "websocket-driver@<0.7.5": "0.7.5",
-      "less>image-size": "-"
+      "less>image-size": "-",
+      "proxy-addr@<2.0.8": "2.0.8",
+      "handlebars@<4.7.10": "4.7.10"
     },
     "onlyBuiltDependencies": [
       "@apollo/protobufjs",

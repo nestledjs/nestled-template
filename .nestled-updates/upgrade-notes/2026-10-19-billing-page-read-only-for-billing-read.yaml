@@ -1,0 +1,73 @@
+id: 2026-10-19-billing-page-read-only-for-billing-read
+title: The billing settings page opens read-only for billing:read, and only billing:manage can act
+priority: normal
+area: billing
+type: correctness
+delivery: code-patch
+intent: >
+  The organization billing settings page (apps/web/app/routes/settings/billing.tsx) no longer wraps
+  itself in RequireOwner. It decides who sees what from the same membership the settings layout
+  uses to show the Billing tab, so the tab never leads to a page that turns its user away.
+
+  Viewing. Anyone who may see the Billing tab sees the page: a platform super admin, a member whose
+  role holds billing:read or billing:manage, and (as the layout already allowed) a member of the
+  role named Owner or Admin. A viewer without billing:manage gets a read-only page: the current plan,
+  its price and interval, its status, the trial end or renewal / access-until date, and usage and
+  limits, with a notice that changing billing needs billing:manage. Anyone else gets the existing
+  "Permission Required" state, now worded for billing access rather than ownership, and none of the
+  page.
+
+  Acting. Every billing action is shown only to a super admin or a member whose role holds
+  billing:manage, the permission the API's billing mutations require: Subscribe / Change Plan and
+  the upgrade modal, Cancel Subscription, the customer-portal "Manage Billing" card and its button,
+  and the "Browse plans", "View Plans" and "Quick Subscribe" calls to action. A role's name never
+  grants an action. The portal and cancel handlers also return early without billing:manage.
+
+  The layout's helpers move to apps/web/app/routes/settings/_settings-access.ts so both files share
+  them: useSettingsOrganization() (the active organization and the viewer's membership from
+  MyOrganizationsWithMembers), hasRolePermission(), hasBillingAccess() (now also true for
+  billing:manage alone, so a manage-only role sees the tab) and the new canManageBilling(). The
+  billing page renders nothing while that membership is still loading, instead of flashing the
+  no-access state.
+
+  The API, the seeded roles and the permission names do not change.
+why: >
+  The template split billing permissions: the API serves reads to billing:read or billing:manage
+  and mutations to billing:manage, the seeded Admin role holds billing:read, and the settings
+  layout shows the Billing tab for billing:read. The page itself still required ownership, so an
+  Admin saw the tab, opened it and hit "Only organization owners can manage billing settings."
+  Gating on ownership rather than on billing:manage was also the wrong check for actions: a custom
+  role granted billing:manage could not use them.
+affectedPaths:
+  - apps/web/app/routes/settings/billing.tsx
+  - apps/web/app/routes/settings/_layout.tsx
+  - apps/web/app/routes/settings/_settings-access.ts
+  - apps/web/tests/routes/settings/billing.spec.tsx
+  - apps/web/tests/routes/settings/_layout.spec.tsx
+packageReleases: []
+skipIf:
+  - The project has no organization billing settings page.
+verification:
+  - pnpm exec nx test web
+  - pnpm typecheck:workspace
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    A project that customised its billing page keeps its own layout, copy and components and applies
+    only the permission gating: billing:read (or billing:manage) to view the page, billing:manage
+    for every action that changes billing or opens the payment provider's portal. Reuse the check
+    the project's settings layout already makes for the Billing tab rather than adding a new one.
+  - >
+    A project whose billing is its own product (for example, charging its customers for its domain
+    services) rather than the template's SaaS subscription for the organization records this note
+    as not-applicable, with that reason in the ledger.
+  - >
+    Never widen who can mutate billing. Actions stay behind billing:manage (or super admin), never
+    behind billing:read, a role name, or "is an admin"; and the API's billing mutations keep
+    requiring billing:manage. If the project's page had stricter gating than this (for example,
+    owner-only actions), keep the stricter rule for actions and only open the read-only view.
+  - >
+    The spec mocks useQuery for MyOrganizationsWithMembers with the seeded Owner, Admin and Member
+    roles. A project with renamed or extra roles adjusts the fixtures to its own seeds; the
+    assertions (Owner acts, Admin reads only, Member is turned away) stay.

@@ -1,0 +1,64 @@
+id: 2026-10-19-db-update-doctor-after-schema-refresh
+title: >-
+  db-update runs its final Doctor check after the API schema and SDK are refreshed, not before
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+intent: >
+  `pnpm db-update` runs Doctor last. The final `nestled-doctor` run moves out of the
+  `db-update:generate` script and into scripts/db-update.mjs, which runs it after it has refreshed
+  api-schema.graphql (through the API watcher or a one-shot isolated API) and rebuilt the typed SDK.
+  The order is now: preflight Doctor, Prisma and the Nestled generators (`db-update:generate`), API
+  schema refresh, SDK, Doctor. The Doctor checks themselves are unchanged and nothing is exempted;
+  only their timing moves, so the SDK contract is checked against the refreshed schema instead of
+  the previous one.
+
+
+  package.json change (promotion does not carry package.json, so make it by hand): in
+  `scripts["db-update:generate"]`, delete the trailing ` && pnpm run nestled-doctor`. Keep the
+  leading `pnpm run nestled-doctor && ` preflight. The template's script now reads:
+  `pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g
+  @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g
+  @nestledjs/generators:sdk && nx g @nestledjs/generators:custom`.
+
+
+  The step order lives in the new scripts/db-update-steps.mjs (runDbUpdateSteps), which
+  db-update.mjs calls; scripts/db-update-steps.spec.mjs checks the order, reproduces the failure the
+  old order hit with a retired generated model, and asserts that package.json's
+  `db-update:generate` keeps the preflight and has no trailing Doctor run. db-update.mjs prints a
+  warning when `db-update:generate` still ends with nestled-doctor. AGENTS.md, docs/dev/doctor.md
+  and docs/dev/api-extension-methodology.md describe the new order.
+why: >
+  Retiring a generated CRUD model made `pnpm db-update` fail. The generators removed the model's
+  SDK documents, and the Doctor run at the end of `db-update:generate` then compared the SDK with
+  api-schema.graphql before db-update had refreshed it: the stale schema still listed the model's
+  root fields, so sdk-contract reported them as missing SDK operations and db-update stopped before
+  reaching the refresh that would have removed them. A one-off isolated schema and SDK refresh
+  followed by an unchanged `pnpm db-update` passed, which showed the problem was the order alone.
+affectedPaths:
+  - package.json
+  - scripts/db-update.mjs
+  - scripts/db-update-steps.mjs
+  - scripts/db-update-steps.spec.mjs
+  - AGENTS.md
+  - docs/dev/doctor.md
+  - docs/dev/api-extension-methodology.md
+verification:
+  - node --test scripts/db-update-steps.spec.mjs
+  - node --check scripts/db-update.mjs
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    The package.json edit is the part promotion cannot deliver. Without it the mirrored
+    db-update.mjs runs Doctor twice at the end (once stale, once fresh), the stale run still fails
+    on a retired model, and db-update prints a warning that names the script. A project that renamed
+    or split `db-update:generate` removes the Doctor run that follows the generators, wherever it
+    sits, and keeps the one that precedes them.
+  - >
+    A project whose db-update.mjs has local changes keeps them and makes one structural change:
+    call `pnpm run nestled-doctor` after the schema refresh and the SDK step (or wait), not before.
+    scripts/db-update-steps.mjs is new and has no project-specific content; copy it as is.
+  - >
+    scripts/db-update-steps.spec.mjs runs under `node --test scripts/*.spec.mjs`. A project whose CI
+    or Sonar configuration lists scripts or specs explicitly adds the two new files there.

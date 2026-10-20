@@ -3,6 +3,19 @@ import Redis from 'ioredis'
 import { OrganizationContext } from '../types/nest-context-type'
 
 /**
+ * Every auth-cache read sits on the request path (SSR renders included), and every caller treats a
+ * failed read as a miss and goes to the database. So a slow or unreachable Redis must fail fast
+ * rather than hold the request: one retry, a 2s connect timeout and a 3s per-command timeout
+ * (which also bounds a command waiting in the offline queue). These change only how quickly the
+ * cache falls through to the database, never what is authorized.
+ */
+export const AUTH_CACHE_REDIS_TIMEOUTS = {
+  maxRetriesPerRequest: 1,
+  connectTimeout: 2000,
+  commandTimeout: 3000,
+} as const
+
+/**
  * Redis cache service for authentication and organization context.
  * Implements the second tier of the three-tier caching architecture:
  * 1. Request-level cache (req.organizationContext)
@@ -45,13 +58,14 @@ export class AuthCacheService {
             ...(redisPassword && { password: redisPassword }),
             ...(secure && { tls: { rejectUnauthorized: false } }),
             family: 6, // IPv6 for Railway private networking
-            maxRetriesPerRequest: 3,
+            ...AUTH_CACHE_REDIS_TIMEOUTS,
             lazyConnect: true,
           })
           this.redis.on('error', err => {
             this.logger.warn(`Redis cache error: ${err.message}`)
           })
           this.logger.log('Auth cache service initialized with Redis')
+          this.reportConnectionStatus(this.redis)
         } catch {
           // Redis initialization can fail in environments without Redis configured.
           // This is expected - fall back to caching disabled.
@@ -63,6 +77,21 @@ export class AuthCacheService {
         this.redis = null
       }
     }
+  }
+
+  /**
+   * Connects once at boot and logs the outcome, so a deployment shows whether the auth cache reached
+   * Redis. The error is ioredis's own message (host and port at most), never the URL or password.
+   * A failure leaves the client in place: ioredis keeps reconnecting, and every read falls through.
+   */
+  private reportConnectionStatus(redis: Redis): void {
+    redis.connect().then(
+      () => this.logger.log('Auth cache Redis connected'),
+      (error: unknown) =>
+        this.logger.warn(
+          `Auth cache Redis connection failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    )
   }
 
   /**

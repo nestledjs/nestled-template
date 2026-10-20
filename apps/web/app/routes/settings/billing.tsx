@@ -2,19 +2,14 @@ import React, { useState } from 'react'
 import { Link } from 'react-router'
 import { CreditCardIcon, ArrowUpIcon, BanknotesIcon } from '@heroicons/react/24/outline'
 import { useMutation } from '@apollo/client/react'
-import {
-  RequireOwner,
-  useSubscription,
-  useLimit,
-  UpgradeModal,
-  useGlobalCtx,
-} from '@nestled-template/web'
+import { useSubscription, useLimit, UpgradeModal, useGlobalCtx } from '@nestled-template/web'
 import {
   CreatePortalSession,
   CancelSubscription,
   type CreatePortalSessionMutation,
   type CancelSubscriptionMutation,
 } from '@nestled-template/shared/sdk'
+import { canManageBilling, hasBillingAccess, useSettingsOrganization } from './_settings-access'
 
 type OrganizationWithMemberCount = {
   _count?: {
@@ -23,6 +18,24 @@ type OrganizationWithMemberCount = {
 }
 
 // Helper function to determine progress bar color based on usage
+const noBillingAccess = (
+  <div className="rounded-xl border border-amber-500/20 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
+    <div className="flex items-center gap-3">
+      <div className="rounded-lg bg-amber-500/10 p-3">
+        <CreditCardIcon className="h-6 w-6 text-amber-500 dark:text-amber-400" />
+      </div>
+      <div>
+        <h3 className="text-lg font-semibold text-amber-600 dark:text-amber-300">
+          Permission Required
+        </h3>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
+          You need billing access in this organization to view its billing settings.
+        </p>
+      </div>
+    </div>
+  </div>
+)
+
 const getProgressBarColor = (isAtLimit: boolean, percentUsed: number) => {
   if (isAtLimit) return 'bg-rose-500'
   if (percentUsed >= 80) return 'bg-amber-500'
@@ -35,6 +48,11 @@ export default function BillingSettings() {
   const [cancelLoading, setCancelLoading] = useState(false)
 
   const { activeOrganization } = useGlobalCtx()
+  // Same source the settings layout uses to show the Billing tab. `billing:read` sees the page
+  // read-only; only `billing:manage` (what the API's billing mutations require) gets the actions.
+  const { user, activeOrganizationMember, loading: accessLoading } = useSettingsOrganization()
+  const canViewBilling = hasBillingAccess(user, activeOrganizationMember)
+  const canManage = canManageBilling(user, activeOrganizationMember)
   const {
     plan,
     hasActiveSubscription,
@@ -55,6 +73,7 @@ export default function BillingSettings() {
   const storageLimit = useLimit('max_storage_gb', 0) // FUTURE: Implement storage tracking
 
   const handleManageBilling = async () => {
+    if (!canManage) return
     setPortalLoading(true)
     try {
       const result = await createPortalSession()
@@ -71,6 +90,7 @@ export default function BillingSettings() {
   }
 
   const handleCancelSubscription = async () => {
+    if (!canManage) return
     if (
       !globalThis.confirm(
         'Are you sure you want to cancel your subscription? You will retain access until the end of your billing period.',
@@ -112,26 +132,11 @@ export default function BillingSettings() {
     return badges[status] || badges.inactive
   }
 
+  if (accessLoading) return null
+  if (!canViewBilling) return noBillingAccess
+
   return (
-    <RequireOwner
-      fallback={
-        <div className="rounded-xl border border-amber-500/20 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-amber-500/10 p-3">
-              <CreditCardIcon className="h-6 w-6 text-amber-500 dark:text-amber-400" />
-            </div>
-            <div>
-              <h3 className="text-lg font-semibold text-amber-600 dark:text-amber-300">
-                Permission Required
-              </h3>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                Only organization owners can manage billing settings.
-              </p>
-            </div>
-          </div>
-        </div>
-      }
-    >
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
@@ -144,10 +149,21 @@ export default function BillingSettings() {
                 Billing & Subscription
               </h2>
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                Manage your subscription, payment methods, and invoices
+                {canManage
+                  ? 'Manage your subscription, payment methods, and invoices'
+                  : "View your organization's subscription and usage"}
               </p>
             </div>
           </div>
+          {!canManage && (
+            <p
+              role="status"
+              className="mt-4 rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300"
+            >
+              You have read-only access to billing. Changing the plan, cancelling, or updating
+              payment details needs the billing:manage permission.
+            </p>
+          )}
         </div>
 
         {/* Current Plan */}
@@ -190,36 +206,40 @@ export default function BillingSettings() {
               {!plan && (
                 <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">
                   You don't have an active subscription.{' '}
-                  <Link
-                    to="/pricing"
-                    className="text-emerald-300 hover:text-emerald-200 transition"
-                  >
-                    Browse plans
-                  </Link>
+                  {canManage && (
+                    <Link
+                      to="/pricing"
+                      className="text-emerald-300 hover:text-emerald-200 transition"
+                    >
+                      Browse plans
+                    </Link>
+                  )}
                 </p>
               )}
             </div>
 
-            <div className="flex flex-col gap-2">
-              {!isCanceled && (
-                <button
-                  onClick={() => setShowUpgrade(true)}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
-                >
-                  <ArrowUpIcon className="h-5 w-5" />
-                  {hasActiveSubscription ? 'Change Plan' : 'Subscribe'}
-                </button>
-              )}
-              {hasActiveSubscription && !isCanceled && (
-                <button
-                  onClick={handleCancelSubscription}
-                  disabled={cancelLoading}
-                  className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-5 py-2 font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:opacity-50"
-                >
-                  {cancelLoading ? 'Canceling...' : 'Cancel Subscription'}
-                </button>
-              )}
-            </div>
+            {canManage && (
+              <div className="flex flex-col gap-2">
+                {!isCanceled && (
+                  <button
+                    onClick={() => setShowUpgrade(true)}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
+                  >
+                    <ArrowUpIcon className="h-5 w-5" />
+                    {hasActiveSubscription ? 'Change Plan' : 'Subscribe'}
+                  </button>
+                )}
+                {hasActiveSubscription && !isCanceled && (
+                  <button
+                    onClick={handleCancelSubscription}
+                    disabled={cancelLoading}
+                    className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-5 py-2 font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:opacity-50"
+                  >
+                    {cancelLoading ? 'Canceling...' : 'Cancel Subscription'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -299,7 +319,7 @@ export default function BillingSettings() {
         )}
 
         {/* Stripe Customer Portal */}
-        {hasActiveSubscription && (
+        {canManage && hasActiveSubscription && (
           <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
               Manage Billing
@@ -331,26 +351,28 @@ export default function BillingSettings() {
               Subscribe to a plan to unlock premium features, increase your limits, and get the most
               out of your account.
             </p>
-            <div className="flex gap-3 justify-center">
-              <Link
-                to="/pricing"
-                className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
-              >
-                View Plans
-              </Link>
-              <button
-                onClick={() => setShowUpgrade(true)}
-                className="rounded-lg border border-zinc-300 dark:border-white/15 bg-white dark:bg-white/5 px-5 py-2.5 font-semibold text-zinc-900 dark:text-white transition hover:bg-zinc-100 dark:hover:bg-white/10"
-              >
-                Quick Subscribe
-              </button>
-            </div>
+            {canManage && (
+              <div className="flex gap-3 justify-center">
+                <Link
+                  to="/pricing"
+                  className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
+                >
+                  View Plans
+                </Link>
+                <button
+                  onClick={() => setShowUpgrade(true)}
+                  className="rounded-lg border border-zinc-300 dark:border-white/15 bg-white dark:bg-white/5 px-5 py-2.5 font-semibold text-zinc-900 dark:text-white transition hover:bg-zinc-100 dark:hover:bg-white/10"
+                >
+                  Quick Subscribe
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* Upgrade Modal */}
-      <UpgradeModal isOpen={showUpgrade} onClose={() => setShowUpgrade(false)} />
-    </RequireOwner>
+      {canManage && <UpgradeModal isOpen={showUpgrade} onClose={() => setShowUpgrade(false)} />}
+    </>
   )
 }

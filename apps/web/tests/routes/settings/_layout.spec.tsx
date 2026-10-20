@@ -383,6 +383,37 @@ describe('SettingsLayout Component', () => {
       expect(screen.getByText('Billing')).toBeInTheDocument()
     })
 
+    it('should show billing to members with only billing manage permission', () => {
+      vi.mocked(useQuery).mockReturnValue({
+        data: {
+          myOrganizations: [
+            {
+              ...mockOrganization,
+              members: [
+                {
+                  id: 'member-1',
+                  userId: 'user-123',
+                  role: {
+                    id: 'role-member',
+                    name: 'Member',
+                    permissions: [
+                      { subject: 'organization', action: 'read' },
+                      { subject: 'member', action: 'read' },
+                      { subject: 'billing', action: 'manage' },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      } as any)
+
+      renderWithRouter()
+
+      expect(screen.getByText('Billing')).toBeInTheDocument()
+    })
+
     it('should allow super admins to access all settings', () => {
       vi.mocked(useGlobalCtx).mockReturnValue({
         user: { ...mockUser, isSuperAdmin: true } as any,

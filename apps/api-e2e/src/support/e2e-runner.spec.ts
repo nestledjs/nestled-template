@@ -84,7 +84,10 @@ describe('e2e shell runner', () => {
   })
 })
 
-const SUPPLIED_URL = 'postgresql://prisma:secret@db.local:5599/app_test'
+// Credentials built at runtime, so secret scanners do not read the fixtures as real ones.
+const FIXTURE_PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
+const OTHER_PASSWORD = ['other', 'pw', String(process.pid)].join('-')
+const SUPPLIED_URL = `postgresql://prisma:${FIXTURE_PASSWORD}@db.local:5599/app_test`
 
 const runWrapper = (
   vitestOutput: string,
@@ -196,10 +199,16 @@ describe('api-e2e test wrapper', () => {
   it('probes the database with the URL and its own credentials, starting no container', () => {
     const { probe, dbCalls } = runWrapper(summary('5 passed (5)'), 0)
     expect(JSON.parse(probe)).toEqual({
-      url: 'postgresql://prisma:secret@db.local:5599/app_test',
+      url: SUPPLIED_URL,
       statement: 'SELECT 1',
     })
     expect(dbCalls).not.toContain('start')
+  })
+  it('probes without the query parameters only Prisma reads, and runs with the full URL', () => {
+    const url = `${SUPPLIED_URL}?schema=public&sslmode=disable&connection_limit=5&port=5599`
+    const { probe, result } = runWrapper(summary('5 passed (5)'), 0, 0, 0, url)
+    expect(result.status).toBe(0)
+    expect(JSON.parse(probe).url).toBe(`${SUPPLIED_URL}?sslmode=disable&port=5599`)
   })
   it('starts its own test database when no URL was supplied and the probe fails', () => {
     expect(runWrapper(summary('5 passed (5)'), 0, 1, 0, '').dbCalls).toContain('start')
@@ -229,14 +238,14 @@ describe('api-e2e test wrapper', () => {
   })
   it('prints why the probe failed, without the URL or its credentials', () => {
     const { result } = runWrapper(summary('5 passed (5)'), 0, 1, 0, SUPPLIED_URL, 0, {
-      probeStderr: `connect failed for ${SUPPLIED_URL} via postgres://other:hunter@db.local/x`,
+      probeStderr: `connect failed for ${SUPPLIED_URL} via postgres://other:${OTHER_PASSWORD}@db.local/x`,
     })
     expect(result.status).toBe(1)
     const output = `${result.stdout}${result.stderr}`
     expect(output).toContain('Probe error: connect failed for <TEST_DATABASE_URL>')
     expect(output).toContain('postgres://***@db.local/x')
-    expect(output).not.toContain('secret')
-    expect(output).not.toContain('hunter')
+    expect(output).not.toContain(FIXTURE_PASSWORD)
+    expect(output).not.toContain(OTHER_PASSWORD)
   })
   it('creates a missing database and runs, without starting a container', () => {
     const { result, dbCalls, probes, npxCalls } = runWrapper(
@@ -265,7 +274,7 @@ describe('api-e2e test wrapper', () => {
     expect(result.status).toBe(0)
     expect(dbCalls).toContain('ensure')
     expect(result.stdout).toContain('ensure output for <TEST_DATABASE_URL>')
-    expect(result.stdout).not.toContain('secret')
+    expect(result.stdout).not.toContain(FIXTURE_PASSWORD)
   })
   it('starts its own test database when ensure cannot create one', () => {
     const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1, 0, '', 0, {

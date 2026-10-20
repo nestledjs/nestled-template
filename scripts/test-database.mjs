@@ -56,6 +56,30 @@ export function creatableTestDatabase(databaseUrl) {
 }
 
 /**
+ * Why an operation failed, in words. pg rejects a refused connection with Node's AggregateError,
+ * whose own message is empty (one error per address tried, e.g. ::1 and 127.0.0.1): its nested
+ * messages say why, and its `code` (ECONNREFUSED) when they are missing too. The result is not yet
+ * scrubbed; pass it through scrubCredentials before printing it.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function errorReason(error) {
+  if (!(error instanceof Error)) return String(error)
+  if (error.message) return error.message
+  const nested =
+    error instanceof AggregateError
+      ? error.errors
+          .map(inner => (inner instanceof Error ? inner.message : String(inner ?? '')))
+          .filter(Boolean)
+      : []
+  if (nested.length > 0) return [...new Set(nested)].join('; ')
+  const code = /** @type {{ code?: unknown }} */ (error).code
+  if (typeof code === 'string' && code) return code
+  return error.name || 'unknown error'
+}
+
+/**
  * Text with a database URL, its user-info and its password removed, for messages that reach
  * terminals and CI logs. Any other `scheme://user:password@` in the text loses its user-info too.
  *
@@ -188,8 +212,9 @@ export async function main(args, env, io = {}) {
     )
     return 0
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    writeError(`❌ Could not ensure the test database: ${scrubCredentials(message, databaseUrl)}`)
+    writeError(
+      `❌ Could not ensure the test database: ${scrubCredentials(errorReason(error), databaseUrl)}`,
+    )
     return 1
   }
 }

@@ -1,0 +1,59 @@
+id: 2026-10-19-redis-fail-fast-timeouts
+title: >-
+  The auth cache and the pub-sub publisher fail fast when Redis is slow or unreachable, so requests
+  fall through instead of hanging
+priority: high
+area: api
+type: correctness
+delivery: code-patch
+intent: >
+  Auth cache. libs/api/utils/src/lib/services/auth-cache.service.ts creates its ioredis client with
+  `maxRetriesPerRequest: 1`, `connectTimeout: 2000` and `commandTimeout: 3000` (exported as
+  AUTH_CACHE_REDIS_TIMEOUTS), in place of `maxRetriesPerRequest: 3` and no timeouts. The client is
+  still lazy; the service now connects once at boot and logs either "Auth cache Redis connected" or
+  "Auth cache Redis connection failed: <reason>", where the reason is ioredis's error message (host
+  and port at most, never the URL or password). A failed connect leaves the client in place, so
+  ioredis keeps reconnecting. Authorization does not change: every cache read already treated an
+  error as a miss and went to the database. The timeouts only bound how long a read waits before it
+  does, and commandTimeout also bounds a command parked in the offline queue while disconnected.
+
+
+  Pub-sub. libs/api/core/data-access/src/lib/api-core-pub-sub.ts builds the publisher and the
+  subscriber from redisPubSubClientOptions(role). Both get `connectTimeout: 2000`. The publisher,
+  which runs inside mutations, also gets `maxRetriesPerRequest: 1` and `commandTimeout: 3000`. The
+  subscriber keeps `maxRetriesPerRequest: 3` and gets no commandTimeout: a subscriber connection
+  waits indefinitely for messages by design, a timeout on SUBSCRIBE would drop a healthy
+  subscription on a slow reply, and the subscriber is never on a request's critical path. The retry
+  strategy, the IPv6 family, TLS handling and lazy connect are unchanged.
+
+
+  Specs: auth-cache.service.redis-options.spec.ts asserts the client options, the boot log in both
+  outcomes and that neither log carries the URL or password; api-core-pub-sub.spec.ts asserts both
+  roles' options and that the module creates each client with its own.
+why: >
+  With `maxRetriesPerRequest: 3` and no connect or command timeout, a Redis that accepted no
+  connection or stopped answering held every auth-cache read until ioredis gave up on its retries,
+  and server-side renders that resolve the session waited with it. Nothing in the logs said whether
+  the cache had ever connected.
+affectedPaths:
+  - libs/api/utils/src/lib/services/auth-cache.service.ts
+  - libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
+  - libs/api/core/data-access/src/lib/api-core-pub-sub.ts
+  - libs/api/core/data-access/src/lib/api-core-pub-sub.spec.ts
+verification:
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec nx test api-core-data-access --skip-nx-cache
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    A project that tuned these clients (another retry count, a sentinel or cluster client, its own
+    timeouts) keeps its choices if they already bound each command; the requirement is that an
+    auth-cache read or a publish cannot wait longer than a few seconds on Redis. Do not add a
+    commandTimeout to a subscriber connection.
+  - >
+    A project with more Redis clients on the request path (rate limiting, sessions, queues used
+    synchronously) applies the same reasoning to each: a bounded connect, a bounded command, and a
+    caller that treats a Redis error as a miss.
+  - >
+    The boot log line is new output. A spec that asserts the service logs exactly one line, or that
+    mocks ioredis without a `connect` method, needs the mock's `connect` to return a promise.

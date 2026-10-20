@@ -6,6 +6,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
+import { generateScriptEndsWithDoctor, runDbUpdateSteps } from './db-update-steps.mjs'
 import { devDockerSettings } from './dev-checkout.mjs'
 
 const root = await realpath(process.cwd())
@@ -564,29 +565,54 @@ async function waitForSdkWatcher(watcher) {
   )
 }
 
+async function warnOnTrailingDoctor() {
+  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+  const script = manifest.scripts?.['db-update:generate'] ?? ''
+  if (generateScriptEndsWithDoctor(script)) {
+    console.warn(
+      'package.json: db-update:generate still ends with nestled-doctor. That run checks the SDK ' +
+        'contract before api-schema.graphql is refreshed and can fail on the previous schema. ' +
+        'Remove the trailing "&& pnpm run nestled-doctor"; db-update runs Doctor after the SDK.',
+    )
+  }
+}
+
 async function main() {
   await acquireLock()
   const schemaBeforeGeneration = await fileStamp(schemaFile)
   try {
-    console.log('Running Prisma and Nestled generators.')
-    run('pnpm', generatedCommand)
-
-    const apiWatcher = await findWorkspaceProcess(isApiWatcher)
-    if (apiWatcher) {
-      await refreshWithApiWatcher(apiWatcher, schemaBeforeGeneration)
-    } else {
-      console.log('No API watcher found; starting an isolated one-shot schema refresh.')
-      await refreshWithIsolatedApi()
-    }
-
-    const sdkWatcher = await findWorkspaceProcess(isSdkWatcher)
-    if (sdkWatcher) {
-      await waitForSdkWatcher(sdkWatcher)
-    } else {
-      console.log('No SDK watcher found; running one-shot SDK generation.')
-      run('pnpm', ['sdk'])
-    }
-    console.log('db-update complete: generators, API schema, and typed SDK are in sync.')
+    await warnOnTrailingDoctor()
+    await runDbUpdateSteps({
+      generate: () => {
+        console.log('Running Prisma and Nestled generators.')
+        run('pnpm', generatedCommand)
+      },
+      refreshSchema: async () => {
+        const apiWatcher = await findWorkspaceProcess(isApiWatcher)
+        if (apiWatcher) {
+          await refreshWithApiWatcher(apiWatcher, schemaBeforeGeneration)
+        } else {
+          console.log('No API watcher found; starting an isolated one-shot schema refresh.')
+          await refreshWithIsolatedApi()
+        }
+      },
+      refreshSdk: async () => {
+        const sdkWatcher = await findWorkspaceProcess(isSdkWatcher)
+        if (sdkWatcher) {
+          await waitForSdkWatcher(sdkWatcher)
+        } else {
+          console.log('No SDK watcher found; running one-shot SDK generation.')
+          run('pnpm', ['sdk'])
+        }
+      },
+      // Last, against the refreshed schema and SDK: the generators may have removed SDK documents
+      // whose root fields only the refresh removes from api-schema.graphql.
+      doctor: () => {
+        console.log('Running Doctor against the refreshed API schema and SDK.')
+        run('pnpm', ['run', 'nestled-doctor'])
+      },
+    })
+    console.log('db-update complete: generators, API schema, typed SDK and Doctor are in sync.')
   } finally {
     await unlink(lockFile).catch(error => {
       if (error.code !== 'ENOENT') throw error

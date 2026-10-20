@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
-import { formatRows, prepareStatements, scrubCredentials } from './sql-runner.mjs'
+import { errorReason, formatRows, prepareStatements, scrubCredentials } from './sql-runner.mjs'
 
 // Built at runtime, so the fixture is not a credential-shaped literal in the source.
 const PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
@@ -113,6 +113,25 @@ describe('sql runner errors', () => {
     )
   })
 
+  it('name the reason for a refused connection, whose own message is empty', () => {
+    const refusal = Object.assign(
+      new AggregateError(
+        [new Error('connect ECONNREFUSED ::1:1'), new Error('connect ECONNREFUSED 127.0.0.1:1')],
+        '',
+      ),
+      { code: 'ECONNREFUSED' },
+    )
+    expect(errorReason(refusal)).toBe(
+      'connect ECONNREFUSED ::1:1; connect ECONNREFUSED 127.0.0.1:1',
+    )
+    expect(errorReason(Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' }))).toBe(
+      'ECONNREFUSED',
+    )
+    expect(errorReason(new Error('password authentication failed'))).toBe(
+      'password authentication failed',
+    )
+  })
+
   it('reach stderr scrubbed when the database cannot be reached', () => {
     const url = `postgresql://app:${PASSWORD}@127.0.0.1:1/app_test`
     const result = spawnSync(process.execPath, [resolve(__dirname, 'sql-runner.mjs')], {
@@ -121,6 +140,7 @@ describe('sql runner errors', () => {
     })
     expect(result.status).toBe(1)
     expect(result.stderr.trim()).not.toBe('')
+    expect(result.stderr).toMatch(/ECONNREFUSED/)
     expect(result.stderr).not.toContain(PASSWORD)
   })
 })
