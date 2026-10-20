@@ -1,0 +1,352 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index f3f5e18..fb0ace6 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -104,7 +104,8 @@ pnpm typecheck          # every project: app/lib, spec and storybook configs (sc
+ 
+ A script under `scripts/` that imports a lib (`@nestled-template/...`) runs with
+ `pnpm tsx --tsconfig scripts/tsconfig.json scripts/<name>.ts`. tsx reads `./tsconfig.json` by
+-default, and the workspace root deliberately has none, so the path aliases would not resolve.
++default. The template's root has none, so without the flag the path aliases would not resolve; a
++project that added a root tsconfig.json would get that file's settings instead of these.
+ 
+ ### Typecheck Memory
+ 
+@@ -456,19 +457,35 @@ service also carries a Railway health check on `/api/uptime` (300s) so a contain
+ boot never takes traffic. Neither `build:api` nor `start:api` touches the database, and the
+ `web` service has no database URL and no pre-deploy.
+ 
+-Both settings live on the service in Railway and are declared in `.railway/railway.ts`
+-(Railway Infrastructure as Code). Do not add a `railway.json`: config-as-code is deprecated,
+-is not read for services that never used it, and stops being read for everyone on 2026-12-01.
+-Railway does not read `.railway/railway.ts` on deploy either. It is applied with
+-`railway config apply` (or the `railwayapp/config` GitHub Action on merge) after
+-`railway config plan` shows only the change you intend. Omitted resources are deleted on apply,
+-so keep the file complete: regenerate it from live state with `railway config pull` rather than
+-hand-editing it, then diff. `railway config plan` currently reports importer noise on the managed
+-Postgres/Redis services (it wants to pin their images); leave that unapplied.
+-
+-`.railway/railway.ts` here describes the template's own Railway project. A project cloned from
+-the template regenerates it for its own project with `railway config pull` and keeps the
+-`preDeploy` and `healthcheck` settings on `api`.
++These are service settings in Railway, not files in the repo. Railway reads nothing from the
++repository for them: do not add a `railway.json` (config-as-code is deprecated, is not read for
++services that never used it, and stops being read for everyone on 2026-12-01), and there is no
++Infrastructure-as-Code file to apply. Set them in the Railway dashboard and check them there.
++
++**Railway deploy checklist:**
++
++1. Deploy from the published Railway template
++   [Nestled.js Setup Template](https://railway.com/deploy/nestledjs-setup-template) (template
++   code `nestledjs-setup-template`). It creates `api`, `web`, `Postgres` and `Redis`; point `api`
++   and `web` at your own repository and deploy branch.
++2. `api` service:
++   - build command `npm run build:api`, start command `npm run start:api`;
++   - pre-deploy command `pnpm prisma:deploy`;
++   - health check path `/api/uptime`, health check timeout `300` seconds.
++3. `web` service:
++   - build command `npm run build:web`, start command `npm run start:web`;
++   - public domain on port `3000` (`PORT=3000`);
++   - no pre-deploy command and no database URL.
++4. `api` variables: `DATABASE_URL` and `REDIS_URL` / `REDIS_PASSWORD` (referenced from the
++   `Postgres` and `Redis` services), `JWT_SECRET`, `NODE_ENV`, `HOST`, `ALLOWED_ORIGINS`,
++   `API_COOKIE_DOMAIN`, `APP_URL`, `SITE_URL`, `APP_NAME`, `APP_EMAIL`, `APP_SUPPORT_EMAIL`,
++   `APP_ADMIN_EMAILS`, `EMAIL_PROVIDER`, `VITE_COOKIE_NAME`, `PGBOUNCER_ENABLED`, and the
++   query-observability flags `COUNT_PRISMA_QUERIES`, `LOG_PRISMA_QUERIES`,
++   `LOG_QUERY_COMPLEXITY`, `LOG_QUERY_COMPLEXITY_THRESHOLD`, `QUERY_COMPLEXITY_LIMIT`,
++   `QUERY_COMPLEXITY_VERBOSE_ERRORS`. `.env.example` describes each one and the optional
++   integrations (Stripe, OAuth, storage, email provider keys).
++5. `web` variables: `PORT`, `VITE_API_URL`, `VITE_COOKIE_NAME` (the same value as on `api`).
++   `VITE_*` values are compiled in at build time, so changing one needs a rebuild, not a restart.
+ 
+ Schema changes are migrations, not pushes: edit the schema, run `pnpm prisma:migrate` against
+ the local database to create and apply a migration, commit the new folder under
+diff --git a/package.json b/package.json
+index b7b5f9b..6c6a6c7 100644
+--- a/package.json
++++ b/package.json
+@@ -10,7 +10,7 @@
+   "scripts": {
+     "pre-publish": "pnpm exec nx affected -t lint build test:unit --base=develop",
+     "db-update": "node scripts/db-update.mjs",
+-    "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom && pnpm run nestled-doctor",
++    "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom",
+     "build:api": "prisma generate --schema=libs/api/prisma/src/lib/schemas/schema.prisma && NODE_OPTIONS='--no-warnings' nx build api --prod",
+     "build:web": "nx run web:react-router:build",
+     "start:api": "node dist/apps/api/main.js",
+@@ -97,7 +97,7 @@
+     "@heroicons/react": "^2.2.0",
+     "@mdx-js/react": "^3.1.1",
+     "@mdx-js/rollup": "^3.1.1",
+-    "@modelcontextprotocol/sdk": "^1.30.0",
++    "@modelcontextprotocol/sdk": "^1.32.1",
+     "@nestjs/apollo": "^13.4.4",
+     "@nestjs/axios": "^4.0.1",
+     "@nestjs/common": "^11.1.29",
+@@ -156,7 +156,7 @@
+     "graphql-tag": "^2.12.7",
+     "graphql-upload-minimal": "^1.6.4",
+     "graphql-ws": "^6.2.1",
+-    "handlebars": "^4.7.9",
++    "handlebars": "^4.7.10",
+     "helmet": "^8.3.0",
+     "imagekit": "^6.0.0",
+     "ioredis": "^5.11.1",
+@@ -277,7 +277,6 @@
+     "prettier": "^3.9.6",
+     "prisma": "^7.9.1",
+     "prisma-graphql-type-decimal": "4.0.2",
+-    "railway": "^3.11.0",
+     "rollup": "^4.62.4",
+     "storybook": "10.5.7",
+     "tailwindcss": "^4.3.3",
+@@ -323,7 +322,9 @@
+       "protobufjs@<7.6.1": "7.6.1",
+       "shell-quote@<1.9.0": "1.9.0",
+       "websocket-driver@<0.7.5": "0.7.5",
+-      "less>image-size": "-"
++      "less>image-size": "-",
++      "proxy-addr@<2.0.8": "2.0.8",
++      "handlebars@<4.7.10": "4.7.10"
+     },
+     "onlyBuiltDependencies": [
+       "@apollo/protobufjs",
+diff --git a/scripts/db-update-steps.mjs b/scripts/db-update-steps.mjs
+new file mode 100644
+index 0000000..5fe1370
+--- /dev/null
++++ b/scripts/db-update-steps.mjs
+@@ -0,0 +1,35 @@
++// The order `pnpm db-update` runs its steps in, kept apart from db-update.mjs (which starts work as
++// soon as it is imported) so a spec can check it.
++//
++// Doctor's final check compares the SDK documents with api-schema.graphql. The generators rewrite
++// the SDK documents first, so until the API has re-emitted the schema and the typed SDK has been
++// rebuilt, the two describe different contracts: a retired generated model's SDK documents are
++// already gone while the stale schema still lists its root fields. The final Doctor run therefore
++// comes last, after the schema refresh and the SDK. `db-update:generate` keeps only the preflight
++// Doctor run that precedes the generators.
++
++/**
++ * @param {{
++ *   generate: () => unknown | Promise<unknown>,
++ *   refreshSchema: () => unknown | Promise<unknown>,
++ *   refreshSdk: () => unknown | Promise<unknown>,
++ *   doctor: () => unknown | Promise<unknown>,
++ * }} steps
++ */
++export async function runDbUpdateSteps(steps) {
++  await steps.generate()
++  await steps.refreshSchema()
++  await steps.refreshSdk()
++  await steps.doctor()
++}
++
++/**
++ * True when a `db-update:generate` script ends by running Doctor, the order that checked the SDK
++ * contract against the previous schema.
++ *
++ * @param {string} script
++ */
++export function generateScriptEndsWithDoctor(script) {
++  const commands = script.split('&&').map(command => command.trim())
++  return /^(pnpm|npm|yarn)( run)? nestled-doctor\b/.test(commands.at(-1) ?? '')
++}
+diff --git a/scripts/db-update-steps.spec.mjs b/scripts/db-update-steps.spec.mjs
+new file mode 100644
+index 0000000..749bcdc
+--- /dev/null
++++ b/scripts/db-update-steps.spec.mjs
+@@ -0,0 +1,106 @@
++import assert from 'node:assert/strict'
++import { readFileSync } from 'node:fs'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++import { generateScriptEndsWithDoctor, runDbUpdateSteps } from './db-update-steps.mjs'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++
++// A model the generators manage, with the root fields its admin CRUD exposes.
++const rootsFor = model => [`${model}`, `${model}s`, `create${model}`, `update${model}`]
++
++/**
++ * A miniature workspace: the generators own the SDK documents, the API owns the emitted schema, and
++ * Doctor's sdk-contract check fails when a schema root field has no SDK document.
++ */
++function workspace(models, nextModels) {
++  const state = {
++    schemaRoots: new Set(models.flatMap(rootsFor)),
++    sdkDocuments: new Set(models.flatMap(rootsFor)),
++    sdkCompiledFrom: null,
++  }
++  const calls = []
++  const steps = {
++    generate: () => {
++      calls.push('generate')
++      state.sdkDocuments = new Set(nextModels.flatMap(rootsFor))
++    },
++    refreshSchema: async () => {
++      calls.push('refreshSchema')
++      state.schemaRoots = new Set(nextModels.flatMap(rootsFor))
++    },
++    refreshSdk: () => {
++      calls.push('refreshSdk')
++      state.sdkCompiledFrom = new Set(state.schemaRoots)
++    },
++    doctor: () => {
++      calls.push('doctor')
++      const missing = [...state.schemaRoots].filter(field => !state.sdkDocuments.has(field))
++      if (missing.length > 0) {
++        throw new Error(`sdk-contract: no SDK document for ${missing.join(', ')}`)
++      }
++    },
++  }
++  return { state, calls, steps }
++}
++
++describe('runDbUpdateSteps', () => {
++  it('runs Doctor last, after the schema refresh and the SDK', async () => {
++    const { calls, steps } = workspace(['Widget'], ['Widget'])
++    await runDbUpdateSteps(steps)
++    assert.deepEqual(calls, ['generate', 'refreshSchema', 'refreshSdk', 'doctor'])
++  })
++
++  it('passes when a generated model is retired', async () => {
++    const { state, steps } = workspace(['Widget', 'Gadget'], ['Widget'])
++    await runDbUpdateSteps(steps)
++    assert.deepEqual([...state.schemaRoots].sort(), rootsFor('Widget').sort())
++    assert.deepEqual([...state.sdkCompiledFrom].sort(), rootsFor('Widget').sort())
++  })
++
++  it('reproduces the failure the old order hit: Doctor between generation and the refresh', async () => {
++    const { steps } = workspace(['Widget', 'Gadget'], ['Widget'])
++    await steps.generate()
++    assert.throws(() => steps.doctor(), /sdk-contract: no SDK document for Gadget, Gadgets/)
++  })
++
++  it('still fails when the refreshed contract is broken', async () => {
++    const { state, steps } = workspace(['Widget'], ['Widget'])
++    const refresh = steps.refreshSchema
++    steps.refreshSchema = async () => {
++      await refresh()
++      state.schemaRoots.add('orphanRoot')
++    }
++    await assert.rejects(runDbUpdateSteps(steps), /no SDK document for orphanRoot/)
++  })
++
++  it('stops at the first failing step', async () => {
++    const { calls, steps } = workspace(['Widget'], ['Widget'])
++    steps.refreshSchema = () => {
++      calls.push('refreshSchema')
++      throw new Error('API exited')
++    }
++    await assert.rejects(runDbUpdateSteps(steps), /API exited/)
++    assert.deepEqual(calls, ['generate', 'refreshSchema'])
++  })
++})
++
++describe('db-update:generate', () => {
++  it('recognises a trailing Doctor run', () => {
++    assert.equal(
++      generateScriptEndsWithDoctor('pnpm run nestled-doctor && nx g x && pnpm run nestled-doctor'),
++      true,
++    )
++    assert.equal(generateScriptEndsWithDoctor('nx g x && pnpm nestled-doctor'), true)
++    assert.equal(generateScriptEndsWithDoctor('pnpm run nestled-doctor && nx g x'), false)
++    assert.equal(generateScriptEndsWithDoctor(''), false)
++  })
++
++  it('keeps the preflight Doctor run and has no trailing one in the template', () => {
++    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
++    const script = manifest.scripts['db-update:generate']
++    assert.match(script, /^pnpm run nestled-doctor && /)
++    assert.equal(generateScriptEndsWithDoctor(script), false)
++  })
++})
+diff --git a/scripts/db-update.mjs b/scripts/db-update.mjs
+index 3755ccf..13cd0d9 100644
+--- a/scripts/db-update.mjs
++++ b/scripts/db-update.mjs
+@@ -6,6 +6,7 @@ import { createServer } from 'node:net'
+ import { tmpdir } from 'node:os'
+ import { isAbsolute, join } from 'node:path'
+ import { spawn, spawnSync } from 'node:child_process'
++import { generateScriptEndsWithDoctor, runDbUpdateSteps } from './db-update-steps.mjs'
+ import { devDockerSettings } from './dev-checkout.mjs'
+ 
+ const root = await realpath(process.cwd())
+@@ -564,29 +565,54 @@ async function waitForSdkWatcher(watcher) {
+   )
+ }
+ 
++async function warnOnTrailingDoctor() {
++  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
++  const script = manifest.scripts?.['db-update:generate'] ?? ''
++  if (generateScriptEndsWithDoctor(script)) {
++    console.warn(
++      'package.json: db-update:generate still ends with nestled-doctor. That run checks the SDK ' +
++        'contract before api-schema.graphql is refreshed and can fail on the previous schema. ' +
++        'Remove the trailing "&& pnpm run nestled-doctor"; db-update runs Doctor after the SDK.',
++    )
++  }
++}
++
+ async function main() {
+   await acquireLock()
+   const schemaBeforeGeneration = await fileStamp(schemaFile)
+   try {
+-    console.log('Running Prisma and Nestled generators.')
+-    run('pnpm', generatedCommand)
+-
+-    const apiWatcher = await findWorkspaceProcess(isApiWatcher)
+-    if (apiWatcher) {
+-      await refreshWithApiWatcher(apiWatcher, schemaBeforeGeneration)
+-    } else {
+-      console.log('No API watcher found; starting an isolated one-shot schema refresh.')
+-      await refreshWithIsolatedApi()
+-    }
+-
+-    const sdkWatcher = await findWorkspaceProcess(isSdkWatcher)
+-    if (sdkWatcher) {
+-      await waitForSdkWatcher(sdkWatcher)
+-    } else {
+-      console.log('No SDK watcher found; running one-shot SDK generation.')
+-      run('pnpm', ['sdk'])
+-    }
+-    console.log('db-update complete: generators, API schema, and typed SDK are in sync.')
++    await warnOnTrailingDoctor()
++    await runDbUpdateSteps({
++      generate: () => {
++        console.log('Running Prisma and Nestled generators.')
++        run('pnpm', generatedCommand)
++      },
++      refreshSchema: async () => {
++        const apiWatcher = await findWorkspaceProcess(isApiWatcher)
++        if (apiWatcher) {
++          await refreshWithApiWatcher(apiWatcher, schemaBeforeGeneration)
++        } else {
++          console.log('No API watcher found; starting an isolated one-shot schema refresh.')
++          await refreshWithIsolatedApi()
++        }
++      },
++      refreshSdk: async () => {
++        const sdkWatcher = await findWorkspaceProcess(isSdkWatcher)
++        if (sdkWatcher) {
++          await waitForSdkWatcher(sdkWatcher)
++        } else {
++          console.log('No SDK watcher found; running one-shot SDK generation.')
++          run('pnpm', ['sdk'])
++        }
++      },
++      // Last, against the refreshed schema and SDK: the generators may have removed SDK documents
++      // whose root fields only the refresh removes from api-schema.graphql.
++      doctor: () => {
++        console.log('Running Doctor against the refreshed API schema and SDK.')
++        run('pnpm', ['run', 'nestled-doctor'])
++      },
++    })
++    console.log('db-update complete: generators, API schema, typed SDK and Doctor are in sync.')
+   } finally {
+     await unlink(lockFile).catch(error => {
+       if (error.code !== 'ENOENT') throw error

@@ -1,0 +1,345 @@
+diff --git a/libs/api/core/data-access/src/lib/api-core-pub-sub.spec.ts b/libs/api/core/data-access/src/lib/api-core-pub-sub.spec.ts
+new file mode 100644
+index 0000000..b15ebb5
+--- /dev/null
++++ b/libs/api/core/data-access/src/lib/api-core-pub-sub.spec.ts
+@@ -0,0 +1,89 @@
++import { Logger } from '@nestjs/common'
++
++jest.mock('ioredis', () => ({ __esModule: true, default: jest.fn() }))
++
++const remoteUrl = 'redis://cache.internal.example:6379'
++
++type PubSubModule = typeof import('./api-core-pub-sub')
++
++function loadWithRedisUrl(url: string | undefined): {
++  module: PubSubModule
++  RedisMock: jest.Mock
++} {
++  const saved = {
++    REDIS_URL: process.env['REDIS_URL'],
++    REDIS_PRIVATE_URL: process.env['REDIS_PRIVATE_URL'],
++    REDIS_TLS_URL: process.env['REDIS_TLS_URL'],
++  }
++  delete process.env['REDIS_PRIVATE_URL']
++  delete process.env['REDIS_TLS_URL']
++  if (url === undefined) delete process.env['REDIS_URL']
++  else process.env['REDIS_URL'] = url
++  let loaded: { module: PubSubModule; RedisMock: jest.Mock } | undefined
++  try {
++    jest.isolateModules(() => {
++      const RedisMock = jest.requireMock('ioredis').default as jest.Mock
++      RedisMock.mockImplementation(() => ({ on: jest.fn() }))
++      loaded = { module: require('./api-core-pub-sub') as PubSubModule, RedisMock }
++    })
++  } finally {
++    for (const [key, value] of Object.entries(saved)) {
++      if (value === undefined) delete process.env[key]
++      else process.env[key] = value
++    }
++  }
++  if (!loaded) throw new Error('module did not load')
++  return loaded
++}
++
++describe('apiCorePubSub Redis client options', () => {
++  beforeEach(() => {
++    jest.spyOn(Logger, 'log').mockImplementation(() => undefined)
++    jest.spyOn(Logger, 'warn').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    jest.restoreAllMocks()
++  })
++
++  it('gives the publisher one retry, a 2s connect timeout and a 3s command timeout', () => {
++    const { module } = loadWithRedisUrl(undefined)
++
++    expect(module.redisPubSubClientOptions('publisher')).toEqual(
++      expect.objectContaining({
++        maxRetriesPerRequest: 1,
++        connectTimeout: 2000,
++        commandTimeout: 3000,
++        lazyConnect: true,
++      }),
++    )
++  })
++
++  it('gives the subscriber a connect timeout but no command timeout', () => {
++    const { module } = loadWithRedisUrl(undefined)
++    const options = module.redisPubSubClientOptions('subscriber')
++
++    expect(options).toEqual(
++      expect.objectContaining({ maxRetriesPerRequest: 3, connectTimeout: 2000, lazyConnect: true }),
++    )
++    expect(options).not.toHaveProperty('commandTimeout')
++  })
++
++  it('creates the publisher and subscriber with their own options', () => {
++    const { module, RedisMock } = loadWithRedisUrl(remoteUrl)
++
++    expect(RedisMock).toHaveBeenCalledTimes(2)
++    const [publisherCall, subscriberCall] = RedisMock.mock.calls
++    expect(publisherCall[0]).toBe(remoteUrl)
++    expect(publisherCall[1]).toEqual(expect.objectContaining({ commandTimeout: 3000 }))
++    expect(subscriberCall[1]).not.toHaveProperty('commandTimeout')
++    expect(module.apiCorePubSub.constructor.name).toBe('RedisPubSub')
++  })
++
++  it('falls back to in-memory PubSub without a remote URL', () => {
++    const { module, RedisMock } = loadWithRedisUrl(undefined)
++
++    expect(RedisMock).not.toHaveBeenCalled()
++    expect(module.apiCorePubSub.constructor.name).toBe('PubSub')
++  })
++})
+diff --git a/libs/api/core/data-access/src/lib/api-core-pub-sub.ts b/libs/api/core/data-access/src/lib/api-core-pub-sub.ts
+index 1e5e3f5..8665f77 100644
+--- a/libs/api/core/data-access/src/lib/api-core-pub-sub.ts
++++ b/libs/api/core/data-access/src/lib/api-core-pub-sub.ts
+@@ -38,40 +38,54 @@ const dateReviver = (_key: unknown, value: string | Date): Date => {
+   return new Date(value)
+ }
+ 
++const sharedRedisOptions = () => ({
++  // Add password if provided separately (Railway sometimes does this)
++  ...(REDIS_PASSWORD && { password: REDIS_PASSWORD }),
++  // TLS settings for secure connections
++  ...(secure && {
++    tls: {
++      rejectUnauthorized: false,
++    },
++  }),
++  // Force IPv6 for Railway private networking
++  family: 6,
++  // Retry strategy to handle temporary connection issues
++  retryStrategy: (times: number) => {
++    if (times > 3) {
++      Logger.error(`🔴 Redis: Failed to connect after ${times} attempts. Giving up.`)
++      return null // Stop retrying
++    }
++    const delay = Math.min(times * 1000, 3000)
++    Logger.warn(`🔴 Redis: Connection attempt ${times} failed. Retrying in ${delay}ms...`)
++    return delay
++  },
++  // A connection attempt that cannot complete fails after 2s instead of the OS TCP timeout.
++  connectTimeout: 2000,
++  lazyConnect: true, // Don't connect immediately, wait for first command
++})
++
++/**
++ * The publisher runs inside mutations, so a slow or unreachable Redis must not hold the request:
++ * one retry and a 3s per-command timeout. The subscriber gets no commandTimeout: once subscribed
++ * it waits indefinitely for messages by design, and a timeout on SUBSCRIBE would tear down a
++ * healthy subscription on a slow reply. It keeps three retries so a subscription survives a brief
++ * reconnect; it is never on a request's critical path.
++ */
++export function redisPubSubClientOptions(role: 'publisher' | 'subscriber') {
++  return role === 'publisher'
++    ? { ...sharedRedisOptions(), maxRetriesPerRequest: 1, commandTimeout: 3000 }
++    : { ...sharedRedisOptions(), maxRetriesPerRequest: 3 }
++}
++
+ function createRedisPubSub(): RedisPubSub | PubSub {
+   if (!hasValidRedisUrl) {
+     // Fall back to in-memory PubSub when Redis is not available
+     return new PubSub()
+   }
+ 
+-  const options = {
+-    // Add password if provided separately (Railway sometimes does this)
+-    ...(REDIS_PASSWORD && { password: REDIS_PASSWORD }),
+-    // TLS settings for secure connections
+-    ...(secure && {
+-      tls: {
+-        rejectUnauthorized: false,
+-      },
+-    }),
+-    // Force IPv6 for Railway private networking
+-    family: 6,
+-    // Retry strategy to handle temporary connection issues
+-    retryStrategy: (times: number) => {
+-      if (times > 3) {
+-        Logger.error(`🔴 Redis: Failed to connect after ${times} attempts. Giving up.`)
+-        return null // Stop retrying
+-      }
+-      const delay = Math.min(times * 1000, 3000)
+-      Logger.warn(`🔴 Redis: Connection attempt ${times} failed. Retrying in ${delay}ms...`)
+-      return delay
+-    },
+-    maxRetriesPerRequest: 3,
+-    lazyConnect: true, // Don't connect immediately, wait for first command
+-  }
+-
+   try {
+-    const publisher = new Redis(REDIS_URL, options)
+-    const subscriber = new Redis(REDIS_URL, options)
++    const publisher = new Redis(REDIS_URL, redisPubSubClientOptions('publisher'))
++    const subscriber = new Redis(REDIS_URL, redisPubSubClientOptions('subscriber'))
+ 
+     // Handle connection errors gracefully
+     publisher.on('error', err => {
+diff --git a/libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts b/libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
+new file mode 100644
+index 0000000..a1ff9f9
+--- /dev/null
++++ b/libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
+@@ -0,0 +1,96 @@
++import { Logger } from '@nestjs/common'
++import Redis from 'ioredis'
++import { AUTH_CACHE_REDIS_TIMEOUTS, AuthCacheService } from './auth-cache.service'
++
++jest.mock('ioredis', () => ({ __esModule: true, default: jest.fn() }))
++
++const RedisMock = Redis as unknown as jest.Mock
++
++// Built at runtime so secret scanners do not read a fixture as a credential.
++const fixturePassword = ['fixture', 'pw', String(process.pid)].join('-')
++const remoteUrl = `redis://default:${fixturePassword}@cache.internal.example:6379`
++
++function mockClient(connect: () => Promise<void>) {
++  const client = { on: jest.fn(), connect: jest.fn(connect) }
++  RedisMock.mockImplementationOnce(() => client)
++  return client
++}
++
++const flush = () => new Promise(resolve => setImmediate(resolve))
++
++describe('AuthCacheService Redis client options', () => {
++  const originalRedisUrl = process.env['REDIS_URL']
++  let log: jest.SpyInstance
++  let warn: jest.SpyInstance
++
++  beforeEach(() => {
++    process.env['REDIS_URL'] = remoteUrl
++    log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
++    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    jest.restoreAllMocks()
++    RedisMock.mockReset()
++    if (originalRedisUrl === undefined) delete process.env['REDIS_URL']
++    else process.env['REDIS_URL'] = originalRedisUrl
++  })
++
++  it('fails fast: one retry, a 2s connect timeout and a 3s command timeout', () => {
++    mockClient(() => Promise.resolve())
++
++    const service = new AuthCacheService()
++
++    expect(service.isEnabled()).toBe(true)
++    expect(AUTH_CACHE_REDIS_TIMEOUTS).toEqual({
++      maxRetriesPerRequest: 1,
++      connectTimeout: 2000,
++      commandTimeout: 3000,
++    })
++    expect(RedisMock).toHaveBeenCalledWith(
++      remoteUrl,
++      expect.objectContaining({
++        maxRetriesPerRequest: 1,
++        connectTimeout: 2000,
++        commandTimeout: 3000,
++        lazyConnect: true,
++      }),
++    )
++  })
++
++  it('logs once that the cache connected', async () => {
++    const client = mockClient(() => Promise.resolve())
++
++    new AuthCacheService()
++    await flush()
++
++    expect(client.connect).toHaveBeenCalledTimes(1)
++    expect(log).toHaveBeenCalledWith('Auth cache Redis connected')
++  })
++
++  it('logs the connection failure reason without the URL or password', async () => {
++    const client = mockClient(() => Promise.reject(new Error('connect ECONNREFUSED 10.0.0.5:6379')))
++
++    const service = new AuthCacheService()
++    await flush()
++
++    expect(client.connect).toHaveBeenCalledTimes(1)
++    expect(warn).toHaveBeenCalledWith(
++      'Auth cache Redis connection failed: connect ECONNREFUSED 10.0.0.5:6379',
++    )
++    const printed = [...log.mock.calls, ...warn.mock.calls].flat().join('\n')
++    expect(printed).not.toContain(fixturePassword)
++    expect(printed).not.toContain(remoteUrl)
++    // A failed connect only means cache misses; the service keeps its client and falls through.
++    expect(service.isEnabled()).toBe(true)
++  })
++
++  it('creates no client for a local or missing URL', () => {
++    process.env['REDIS_URL'] = 'redis://localhost:6379'
++
++    const service = new AuthCacheService()
++
++    expect(RedisMock).not.toHaveBeenCalled()
++    expect(service.isEnabled()).toBe(false)
++  })
++})
+diff --git a/libs/api/utils/src/lib/services/auth-cache.service.ts b/libs/api/utils/src/lib/services/auth-cache.service.ts
+index dc44fd2..c08b23f 100644
+--- a/libs/api/utils/src/lib/services/auth-cache.service.ts
++++ b/libs/api/utils/src/lib/services/auth-cache.service.ts
+@@ -2,6 +2,19 @@ import { Injectable, Logger, Optional } from '@nestjs/common'
+ import Redis from 'ioredis'
+ import { OrganizationContext } from '../types/nest-context-type'
+ 
++/**
++ * Every auth-cache read sits on the request path (SSR renders included), and every caller treats a
++ * failed read as a miss and goes to the database. So a slow or unreachable Redis must fail fast
++ * rather than hold the request: one retry, a 2s connect timeout and a 3s per-command timeout
++ * (which also bounds a command waiting in the offline queue). These change only how quickly the
++ * cache falls through to the database, never what is authorized.
++ */
++export const AUTH_CACHE_REDIS_TIMEOUTS = {
++  maxRetriesPerRequest: 1,
++  connectTimeout: 2000,
++  commandTimeout: 3000,
++} as const
++
+ /**
+  * Redis cache service for authentication and organization context.
+  * Implements the second tier of the three-tier caching architecture:
+@@ -45,13 +58,14 @@ export class AuthCacheService {
+             ...(redisPassword && { password: redisPassword }),
+             ...(secure && { tls: { rejectUnauthorized: false } }),
+             family: 6, // IPv6 for Railway private networking
+-            maxRetriesPerRequest: 3,
++            ...AUTH_CACHE_REDIS_TIMEOUTS,
+             lazyConnect: true,
+           })
+           this.redis.on('error', err => {
+             this.logger.warn(`Redis cache error: ${err.message}`)
+           })
+           this.logger.log('Auth cache service initialized with Redis')
++          this.reportConnectionStatus(this.redis)
+         } catch {
+           // Redis initialization can fail in environments without Redis configured.
+           // This is expected - fall back to caching disabled.
+@@ -65,6 +79,21 @@ export class AuthCacheService {
+     }
+   }
+ 
++  /**
++   * Connects once at boot and logs the outcome, so a deployment shows whether the auth cache reached
++   * Redis. The error is ioredis's own message (host and port at most), never the URL or password.
++   * A failure leaves the client in place: ioredis keeps reconnecting, and every read falls through.
++   */
++  private reportConnectionStatus(redis: Redis): void {
++    redis.connect().then(
++      () => this.logger.log('Auth cache Redis connected'),
++      (error: unknown) =>
++        this.logger.warn(
++          `Auth cache Redis connection failed: ${error instanceof Error ? error.message : String(error)}`,
++        ),
++    )
++  }
++
+   /**
+    * Check if caching is available
+    */

@@ -1,0 +1,311 @@
+diff --git a/apps/api-e2e/run-tests.sh b/apps/api-e2e/run-tests.sh
+index 21ae278..227108b 100755
+--- a/apps/api-e2e/run-tests.sh
++++ b/apps/api-e2e/run-tests.sh
+@@ -32,12 +32,38 @@ PROBE_ERROR=""
+ probe_test_database() {
+   local status=0
+   PROBE_ERROR="$(
+-    node -e 'process.stdout.write(JSON.stringify({ url: process.env.TEST_DATABASE_URL, statement: "SELECT 1" }))' |
++    PROBE_DATABASE_URL="$(probe_url "$TEST_DATABASE_URL")" node -e 'process.stdout.write(JSON.stringify({ url: process.env.PROBE_DATABASE_URL, statement: "SELECT 1" }))' |
+       node apps/api-e2e/src/support/sql-runner.mjs 2>&1 >/dev/null
+   )" || status=$?
+   return "$status"
+ }
+ 
++# The URL without the query parameters only Prisma reads (?schema=, ?connection_limit= ...): psql
++# rejects them as invalid URI parameters, and they say nothing about whether the server answers.
++# Everything else is kept, the destination parameters (host, port, dbname ...) above all, so the
++# probe reaches exactly the database the tests will. The suite itself still gets the full URL.
++probe_url() {
++  local url="$1" query param key kept=""
++  local -a params
++  if [[ "$url" != *\?* ]]; then
++    printf '%s' "$url"
++    return 0
++  fi
++  query="${url#*\?}"
++  if [[ -n "$query" ]]; then
++    IFS='&' read -r -a params <<<"$query"
++    for param in "${params[@]}"; do
++      key="$(printf '%s' "${param%%=*}" | tr '[:upper:]' '[:lower:]')"
++      case "$key" in
++        schema | connection_limit | pool_timeout | socket_timeout | pgbouncer | statement_cache_size | sslaccept | sslidentity) ;;
++        *) kept="${kept:+$kept&}$param" ;;
++      esac
++    done
++  fi
++  printf '%s' "${url%%\?*}${kept:+?$kept}"
++  return 0
++}
++
+ # Text for the log with the test database URL and any `scheme://user:password@` user-info removed.
+ # The runner already leaves the URL out of its errors; this is the second line of defence, since
+ # these lines reach CI logs.
+diff --git a/apps/api-e2e/src/support/e2e-runner.spec.ts b/apps/api-e2e/src/support/e2e-runner.spec.ts
+index d477b57..abcc9e6 100644
+--- a/apps/api-e2e/src/support/e2e-runner.spec.ts
++++ b/apps/api-e2e/src/support/e2e-runner.spec.ts
+@@ -84,7 +84,10 @@ describe('e2e shell runner', () => {
+   })
+ })
+ 
+-const SUPPLIED_URL = 'postgresql://prisma:secret@db.local:5599/app_test'
++// Credentials built at runtime, so secret scanners do not read the fixtures as real ones.
++const FIXTURE_PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
++const OTHER_PASSWORD = ['other', 'pw', String(process.pid)].join('-')
++const SUPPLIED_URL = `postgresql://prisma:${FIXTURE_PASSWORD}@db.local:5599/app_test`
+ 
+ const runWrapper = (
+   vitestOutput: string,
+@@ -196,11 +199,17 @@ describe('api-e2e test wrapper', () => {
+   it('probes the database with the URL and its own credentials, starting no container', () => {
+     const { probe, dbCalls } = runWrapper(summary('5 passed (5)'), 0)
+     expect(JSON.parse(probe)).toEqual({
+-      url: 'postgresql://prisma:secret@db.local:5599/app_test',
++      url: SUPPLIED_URL,
+       statement: 'SELECT 1',
+     })
+     expect(dbCalls).not.toContain('start')
+   })
++  it('probes without the query parameters only Prisma reads, and runs with the full URL', () => {
++    const url = `${SUPPLIED_URL}?schema=public&sslmode=disable&connection_limit=5&port=5599`
++    const { probe, result } = runWrapper(summary('5 passed (5)'), 0, 0, 0, url)
++    expect(result.status).toBe(0)
++    expect(JSON.parse(probe).url).toBe(`${SUPPLIED_URL}?sslmode=disable&port=5599`)
++  })
+   it('starts its own test database when no URL was supplied and the probe fails', () => {
+     expect(runWrapper(summary('5 passed (5)'), 0, 1, 0, '').dbCalls).toContain('start')
+   })
+@@ -229,14 +238,14 @@ describe('api-e2e test wrapper', () => {
+   })
+   it('prints why the probe failed, without the URL or its credentials', () => {
+     const { result } = runWrapper(summary('5 passed (5)'), 0, 1, 0, SUPPLIED_URL, 0, {
+-      probeStderr: `connect failed for ${SUPPLIED_URL} via postgres://other:hunter@db.local/x`,
++      probeStderr: `connect failed for ${SUPPLIED_URL} via postgres://other:${OTHER_PASSWORD}@db.local/x`,
+     })
+     expect(result.status).toBe(1)
+     const output = `${result.stdout}${result.stderr}`
+     expect(output).toContain('Probe error: connect failed for <TEST_DATABASE_URL>')
+     expect(output).toContain('postgres://***@db.local/x')
+-    expect(output).not.toContain('secret')
+-    expect(output).not.toContain('hunter')
++    expect(output).not.toContain(FIXTURE_PASSWORD)
++    expect(output).not.toContain(OTHER_PASSWORD)
+   })
+   it('creates a missing database and runs, without starting a container', () => {
+     const { result, dbCalls, probes, npxCalls } = runWrapper(
+@@ -265,7 +274,7 @@ describe('api-e2e test wrapper', () => {
+     expect(result.status).toBe(0)
+     expect(dbCalls).toContain('ensure')
+     expect(result.stdout).toContain('ensure output for <TEST_DATABASE_URL>')
+-    expect(result.stdout).not.toContain('secret')
++    expect(result.stdout).not.toContain(FIXTURE_PASSWORD)
+   })
+   it('starts its own test database when ensure cannot create one', () => {
+     const { result, dbCalls } = runWrapper(summary('5 passed (5)'), 0, 1, 0, '', 0, {
+diff --git a/apps/api-e2e/src/support/sql-runner.mjs b/apps/api-e2e/src/support/sql-runner.mjs
+index bb7d19f..946fc76 100644
+--- a/apps/api-e2e/src/support/sql-runner.mjs
++++ b/apps/api-e2e/src/support/sql-runner.mjs
+@@ -152,6 +152,30 @@ export async function runSql({ url, statement, variables = {} }) {
+   }
+ }
+ 
++/**
++ * Why an operation failed, in words. pg rejects a refused connection with Node's AggregateError,
++ * whose own message is empty (one error per address tried, e.g. ::1 and 127.0.0.1): its nested
++ * messages say why, and its `code` (ECONNREFUSED) when they are missing too. The result is not yet
++ * scrubbed; pass it through scrubCredentials before printing it.
++ *
++ * @param {unknown} error
++ * @returns {string}
++ */
++export function errorReason(error) {
++  if (!(error instanceof Error)) return String(error)
++  if (error.message) return error.message
++  const nested =
++    error instanceof AggregateError
++      ? error.errors
++          .map(inner => (inner instanceof Error ? inner.message : String(inner ?? '')))
++          .filter(Boolean)
++      : []
++  if (nested.length > 0) return [...new Set(nested)].join('; ')
++  const code = /** @type {{ code?: unknown }} */ (error).code
++  if (typeof code === 'string' && code) return code
++  return error.name || 'unknown error'
++}
++
+ /**
+  * An error message with the request's URL, its user-info and its password removed, and the user-info
+  * of any other `scheme://user:password@` in it: the runner's errors reach terminals and CI logs.
+@@ -213,8 +237,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+     .then(
+       output => process.stdout.write(output),
+       error => {
+-        const message = error instanceof Error ? error.message : String(error)
+-        process.stderr.write(`${scrubCredentials(message, url)}\n`)
++        process.stderr.write(`${scrubCredentials(errorReason(error), url)}\n`)
+         process.exitCode = 1
+       },
+     )
+diff --git a/apps/api-e2e/src/support/sql-runner.spec.ts b/apps/api-e2e/src/support/sql-runner.spec.ts
+index 8845eea..fa065d2 100644
+--- a/apps/api-e2e/src/support/sql-runner.spec.ts
++++ b/apps/api-e2e/src/support/sql-runner.spec.ts
+@@ -1,7 +1,7 @@
+ import { describe, expect, it } from 'vitest'
+ import { spawnSync } from 'node:child_process'
+ import { resolve } from 'node:path'
+-import { formatRows, prepareStatements, scrubCredentials } from './sql-runner.mjs'
++import { errorReason, formatRows, prepareStatements, scrubCredentials } from './sql-runner.mjs'
+ 
+ // Built at runtime, so the fixture is not a credential-shaped literal in the source.
+ const PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
+@@ -113,6 +113,25 @@ describe('sql runner errors', () => {
+     )
+   })
+ 
++  it('name the reason for a refused connection, whose own message is empty', () => {
++    const refusal = Object.assign(
++      new AggregateError(
++        [new Error('connect ECONNREFUSED ::1:1'), new Error('connect ECONNREFUSED 127.0.0.1:1')],
++        '',
++      ),
++      { code: 'ECONNREFUSED' },
++    )
++    expect(errorReason(refusal)).toBe(
++      'connect ECONNREFUSED ::1:1; connect ECONNREFUSED 127.0.0.1:1',
++    )
++    expect(errorReason(Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' }))).toBe(
++      'ECONNREFUSED',
++    )
++    expect(errorReason(new Error('password authentication failed'))).toBe(
++      'password authentication failed',
++    )
++  })
++
+   it('reach stderr scrubbed when the database cannot be reached', () => {
+     const url = `postgresql://app:${PASSWORD}@127.0.0.1:1/app_test`
+     const result = spawnSync(process.execPath, [resolve(__dirname, 'sql-runner.mjs')], {
+@@ -121,6 +140,7 @@ describe('sql runner errors', () => {
+     })
+     expect(result.status).toBe(1)
+     expect(result.stderr.trim()).not.toBe('')
++    expect(result.stderr).toMatch(/ECONNREFUSED/)
+     expect(result.stderr).not.toContain(PASSWORD)
+   })
+ })
+diff --git a/scripts/test-database.mjs b/scripts/test-database.mjs
+index 5eb9485..2d77d4e 100644
+--- a/scripts/test-database.mjs
++++ b/scripts/test-database.mjs
+@@ -55,6 +55,30 @@ export function creatableTestDatabase(databaseUrl) {
+   }
+ }
+ 
++/**
++ * Why an operation failed, in words. pg rejects a refused connection with Node's AggregateError,
++ * whose own message is empty (one error per address tried, e.g. ::1 and 127.0.0.1): its nested
++ * messages say why, and its `code` (ECONNREFUSED) when they are missing too. The result is not yet
++ * scrubbed; pass it through scrubCredentials before printing it.
++ *
++ * @param {unknown} error
++ * @returns {string}
++ */
++export function errorReason(error) {
++  if (!(error instanceof Error)) return String(error)
++  if (error.message) return error.message
++  const nested =
++    error instanceof AggregateError
++      ? error.errors
++          .map(inner => (inner instanceof Error ? inner.message : String(inner ?? '')))
++          .filter(Boolean)
++      : []
++  if (nested.length > 0) return [...new Set(nested)].join('; ')
++  const code = /** @type {{ code?: unknown }} */ (error).code
++  if (typeof code === 'string' && code) return code
++  return error.name || 'unknown error'
++}
++
+ /**
+  * Text with a database URL, its user-info and its password removed, for messages that reach
+  * terminals and CI logs. Any other `scheme://user:password@` in the text loses its user-info too.
+@@ -188,8 +212,9 @@ export async function main(args, env, io = {}) {
+     )
+     return 0
+   } catch (error) {
+-    const message = error instanceof Error ? error.message : String(error)
+-    writeError(`❌ Could not ensure the test database: ${scrubCredentials(message, databaseUrl)}`)
++    writeError(
++      `❌ Could not ensure the test database: ${scrubCredentials(errorReason(error), databaseUrl)}`,
++    )
+     return 1
+   }
+ }
+diff --git a/scripts/test-database.spec.mjs b/scripts/test-database.spec.mjs
+index f304b83..f366965 100644
+--- a/scripts/test-database.spec.mjs
++++ b/scripts/test-database.spec.mjs
+@@ -4,6 +4,7 @@ import {
+   creatableTestDatabase,
+   dropUserInfo,
+   ensureTestDatabase,
++  errorReason,
+   main,
+   scrubCredentials,
+ } from './test-database.mjs'
+@@ -209,8 +210,53 @@ void describe('test-database.mjs ensure', () => {
+     assert.ok(!refused.err.includes(PASSWORD), refused.err)
+   })
+ 
++  void it('names the reason for a refused connection, whose own message is empty', async () => {
++    const refusal = Object.assign(
++      new AggregateError(
++        [
++          Object.assign(new Error('connect ECONNREFUSED ::1:55433'), { code: 'ECONNREFUSED' }),
++          Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:55433'), {
++            code: 'ECONNREFUSED',
++          }),
++        ],
++        '',
++      ),
++      { code: 'ECONNREFUSED' },
++    )
++    const failed = await run(
++      ['ensure'],
++      { TEST_DATABASE_URL: LOCAL_URL },
++      {
++        connect: async () => {
++          throw refusal
++        },
++      },
++    )
++    assert.equal(failed.status, 1)
++    assert.equal(
++      failed.err,
++      '❌ Could not ensure the test database: connect ECONNREFUSED ::1:55433; ' +
++        'connect ECONNREFUSED 127.0.0.1:55433',
++    )
++  })
++
+   void it('needs the ensure command and a URL', async () => {
+     assert.equal((await run([], { TEST_DATABASE_URL: LOCAL_URL })).status, 2)
+     assert.equal((await run(['ensure'], {})).status, 2)
+   })
+ })
++
++void describe('errorReason', () => {
++  void it('prefers the message, then the nested messages, then the code', () => {
++    assert.equal(errorReason(new Error('boom')), 'boom')
++    const nested = new AggregateError([new Error('a'), new Error('a'), new Error('b')], '')
++    assert.equal(errorReason(nested), 'a; b')
++    assert.equal(
++      errorReason(Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' })),
++      'ECONNREFUSED',
++    )
++    assert.equal(errorReason(Object.assign(new Error(''), { code: 'ETIMEDOUT' })), 'ETIMEDOUT')
++    assert.equal(errorReason(new Error('')), 'Error')
++    assert.equal(errorReason('plain'), 'plain')
++  })
++})
