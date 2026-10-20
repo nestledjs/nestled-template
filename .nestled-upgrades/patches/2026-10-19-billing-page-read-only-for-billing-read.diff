@@ -1,0 +1,638 @@
+diff --git a/apps/web/app/routes/settings/_layout.tsx b/apps/web/app/routes/settings/_layout.tsx
+index d5b945d..4f465fd 100644
+--- a/apps/web/app/routes/settings/_layout.tsx
++++ b/apps/web/app/routes/settings/_layout.tsx
+@@ -12,15 +12,15 @@ import {
+   UserCircleIcon,
+   UsersIcon,
+ } from '@heroicons/react/24/outline'
+-import { useGlobalCtx } from '@nestled-template/web'
+-import {
+-  MyOrganizationsWithMembers,
+-  type MeQuery,
+-  type MyOrganizationsWithMembersQuery,
+-} from '@nestled-template/shared/sdk'
+ import { Avatar } from '@nestled-template/web-ui'
+ import { cn } from '@nestled-template/shared/utils'
+-import { useQuery } from '@apollo/client/react'
++import type { MeQuery } from '@nestled-template/shared/sdk'
++import {
++  hasBillingAccess,
++  hasRolePermission,
++  useSettingsOrganization,
++  type SettingsOrganizationMember,
++} from './_settings-access'
+ 
+ interface NavItem {
+   name: string
+@@ -31,37 +31,11 @@ interface NavItem {
+   description: string
+ }
+ 
+-type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
+-  activeOrganizationId?: string | null
+-}
+-
+-type ActiveOrganizationMember = NonNullable<
+-  NonNullable<MyOrganizationsWithMembersQuery['myOrganizations'][number]['members']>[number]
+->
+-
+-function hasBillingAccess(
+-  user: MeQuery['me'] | null | undefined,
+-  member: ActiveOrganizationMember | null,
+-) {
+-  if (user?.isSuperAdmin) return true
+-  if (!member) return false
+-
+-  const roleName = member.role?.name
+-  if (roleName === 'Owner' || roleName === 'Admin') return true
+-
+-  return !!member.role?.permissions?.some(p => p.subject === 'billing' && p.action === 'read')
+-}
+-
+-function hasRolePermission(member: ActiveOrganizationMember | null, permission: string) {
+-  const [subject, action] = permission.split(':')
+-  return !!member?.role?.permissions?.some(p => p.subject === subject && p.action === action)
+-}
+-
+ function canViewSetting(
+   permission: string | undefined,
+   user: MeQuery['me'] | null | undefined,
+   hasActiveOrganization: boolean,
+-  activeOrganizationMember: ActiveOrganizationMember | null,
++  activeOrganizationMember: SettingsOrganizationMember | null,
+ ) {
+   if (!permission) return true
+   if (!hasActiveOrganization) return false
+@@ -73,18 +47,7 @@ function canViewSetting(
+ 
+ export default function SettingsLayout() {
+   const location = useLocation()
+-  const { user } = useGlobalCtx()
+-
+-  // Fetch user's organizations with member data
+-  const { data: orgsData } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers)
+-  const organizations = orgsData?.myOrganizations || []
+-  const userWithActiveOrganization: UserWithActiveOrganization | null | undefined = user
+-  const activeOrganization =
+-    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
+-    organizations[0] ||
+-    null
+-  const activeOrganizationMember =
+-    activeOrganization?.members?.find(member => member.userId === user?.id) || null
++  const { user, activeOrganization, activeOrganizationMember } = useSettingsOrganization()
+ 
+   const personalSettings: NavItem[] = [
+     {
+diff --git a/apps/web/app/routes/settings/_settings-access.ts b/apps/web/app/routes/settings/_settings-access.ts
+new file mode 100644
+index 0000000..ec137ca
+--- /dev/null
++++ b/apps/web/app/routes/settings/_settings-access.ts
+@@ -0,0 +1,70 @@
++import { useQuery } from '@apollo/client/react'
++import { useGlobalCtx } from '@nestled-template/web'
++import {
++  MyOrganizationsWithMembers,
++  type MeQuery,
++  type MyOrganizationsWithMembersQuery,
++} from '@nestled-template/shared/sdk'
++
++/**
++ * Who the signed-in user is in their active organization, as the settings area sees it.
++ *
++ * The settings layout decides which tabs to show from this, and the pages behind those tabs gate
++ * their own content on the same answer, so a tab never leads to a page that turns its user away.
++ */
++
++type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
++  activeOrganizationId?: string | null
++}
++
++export type SettingsOrganization = MyOrganizationsWithMembersQuery['myOrganizations'][number]
++
++export type SettingsOrganizationMember = NonNullable<
++  NonNullable<SettingsOrganization['members']>[number]
++>
++
++export function useSettingsOrganization() {
++  const { user } = useGlobalCtx()
++  const { data, loading } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers)
++  const organizations = data?.myOrganizations || []
++  const userWithActiveOrganization: UserWithActiveOrganization | null | undefined = user
++  const activeOrganization =
++    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
++    organizations[0] ||
++    null
++  const activeOrganizationMember =
++    activeOrganization?.members?.find(member => member.userId === user?.id) || null
++
++  return { user, activeOrganization, activeOrganizationMember, loading: loading && !data }
++}
++
++export function hasRolePermission(member: SettingsOrganizationMember | null, permission: string) {
++  const [subject, action] = permission.split(':')
++  return !!member?.role?.permissions?.some(p => p.subject === subject && p.action === action)
++}
++
++/** May view the organization's billing: `billing:read` or `billing:manage`. */
++export function hasBillingAccess(
++  user: MeQuery['me'] | null | undefined,
++  member: SettingsOrganizationMember | null,
++) {
++  if (user?.isSuperAdmin) return true
++  if (!member) return false
++
++  const roleName = member.role?.name
++  if (roleName === 'Owner' || roleName === 'Admin') return true
++
++  return hasRolePermission(member, 'billing:read') || hasRolePermission(member, 'billing:manage')
++}
++
++/**
++ * May change the organization's billing: subscribe, change plan, cancel, open the billing portal.
++ * Only `billing:manage` grants this, matching the API's mutations; a role's name never does.
++ */
++export function canManageBilling(
++  user: MeQuery['me'] | null | undefined,
++  member: SettingsOrganizationMember | null,
++) {
++  if (user?.isSuperAdmin) return true
++  return hasRolePermission(member, 'billing:manage')
++}
+diff --git a/apps/web/app/routes/settings/billing.tsx b/apps/web/app/routes/settings/billing.tsx
+index b39e933..a16c02e 100644
+--- a/apps/web/app/routes/settings/billing.tsx
++++ b/apps/web/app/routes/settings/billing.tsx
+@@ -2,19 +2,14 @@ import React, { useState } from 'react'
+ import { Link } from 'react-router'
+ import { CreditCardIcon, ArrowUpIcon, BanknotesIcon } from '@heroicons/react/24/outline'
+ import { useMutation } from '@apollo/client/react'
+-import {
+-  RequireOwner,
+-  useSubscription,
+-  useLimit,
+-  UpgradeModal,
+-  useGlobalCtx,
+-} from '@nestled-template/web'
++import { useSubscription, useLimit, UpgradeModal, useGlobalCtx } from '@nestled-template/web'
+ import {
+   CreatePortalSession,
+   CancelSubscription,
+   type CreatePortalSessionMutation,
+   type CancelSubscriptionMutation,
+ } from '@nestled-template/shared/sdk'
++import { canManageBilling, hasBillingAccess, useSettingsOrganization } from './_settings-access'
+ 
+ type OrganizationWithMemberCount = {
+   _count?: {
+@@ -23,6 +18,24 @@ type OrganizationWithMemberCount = {
+ }
+ 
+ // Helper function to determine progress bar color based on usage
++const noBillingAccess = (
++  <div className="rounded-xl border border-amber-500/20 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
++    <div className="flex items-center gap-3">
++      <div className="rounded-lg bg-amber-500/10 p-3">
++        <CreditCardIcon className="h-6 w-6 text-amber-500 dark:text-amber-400" />
++      </div>
++      <div>
++        <h3 className="text-lg font-semibold text-amber-600 dark:text-amber-300">
++          Permission Required
++        </h3>
++        <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
++          You need billing access in this organization to view its billing settings.
++        </p>
++      </div>
++    </div>
++  </div>
++)
++
+ const getProgressBarColor = (isAtLimit: boolean, percentUsed: number) => {
+   if (isAtLimit) return 'bg-rose-500'
+   if (percentUsed >= 80) return 'bg-amber-500'
+@@ -35,6 +48,11 @@ export default function BillingSettings() {
+   const [cancelLoading, setCancelLoading] = useState(false)
+ 
+   const { activeOrganization } = useGlobalCtx()
++  // Same source the settings layout uses to show the Billing tab. `billing:read` sees the page
++  // read-only; only `billing:manage` (what the API's billing mutations require) gets the actions.
++  const { user, activeOrganizationMember, loading: accessLoading } = useSettingsOrganization()
++  const canViewBilling = hasBillingAccess(user, activeOrganizationMember)
++  const canManage = canManageBilling(user, activeOrganizationMember)
+   const {
+     plan,
+     hasActiveSubscription,
+@@ -55,6 +73,7 @@ export default function BillingSettings() {
+   const storageLimit = useLimit('max_storage_gb', 0) // FUTURE: Implement storage tracking
+ 
+   const handleManageBilling = async () => {
++    if (!canManage) return
+     setPortalLoading(true)
+     try {
+       const result = await createPortalSession()
+@@ -71,6 +90,7 @@ export default function BillingSettings() {
+   }
+ 
+   const handleCancelSubscription = async () => {
++    if (!canManage) return
+     if (
+       !globalThis.confirm(
+         'Are you sure you want to cancel your subscription? You will retain access until the end of your billing period.',
+@@ -112,26 +132,11 @@ export default function BillingSettings() {
+     return badges[status] || badges.inactive
+   }
+ 
++  if (accessLoading) return null
++  if (!canViewBilling) return noBillingAccess
++
+   return (
+-    <RequireOwner
+-      fallback={
+-        <div className="rounded-xl border border-amber-500/20 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
+-          <div className="flex items-center gap-3">
+-            <div className="rounded-lg bg-amber-500/10 p-3">
+-              <CreditCardIcon className="h-6 w-6 text-amber-500 dark:text-amber-400" />
+-            </div>
+-            <div>
+-              <h3 className="text-lg font-semibold text-amber-600 dark:text-amber-300">
+-                Permission Required
+-              </h3>
+-              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
+-                Only organization owners can manage billing settings.
+-              </p>
+-            </div>
+-          </div>
+-        </div>
+-      }
+-    >
++    <>
+       <div className="space-y-6">
+         {/* Header */}
+         <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
+@@ -144,10 +149,21 @@ export default function BillingSettings() {
+                 Billing & Subscription
+               </h2>
+               <p className="text-sm text-zinc-600 dark:text-zinc-400">
+-                Manage your subscription, payment methods, and invoices
++                {canManage
++                  ? 'Manage your subscription, payment methods, and invoices'
++                  : "View your organization's subscription and usage"}
+               </p>
+             </div>
+           </div>
++          {!canManage && (
++            <p
++              role="status"
++              className="mt-4 rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300"
++            >
++              You have read-only access to billing. Changing the plan, cancelling, or updating
++              payment details needs the billing:manage permission.
++            </p>
++          )}
+         </div>
+ 
+         {/* Current Plan */}
+@@ -190,36 +206,40 @@ export default function BillingSettings() {
+               {!plan && (
+                 <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">
+                   You don't have an active subscription.{' '}
+-                  <Link
+-                    to="/pricing"
+-                    className="text-emerald-300 hover:text-emerald-200 transition"
+-                  >
+-                    Browse plans
+-                  </Link>
++                  {canManage && (
++                    <Link
++                      to="/pricing"
++                      className="text-emerald-300 hover:text-emerald-200 transition"
++                    >
++                      Browse plans
++                    </Link>
++                  )}
+                 </p>
+               )}
+             </div>
+ 
+-            <div className="flex flex-col gap-2">
+-              {!isCanceled && (
+-                <button
+-                  onClick={() => setShowUpgrade(true)}
+-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
+-                >
+-                  <ArrowUpIcon className="h-5 w-5" />
+-                  {hasActiveSubscription ? 'Change Plan' : 'Subscribe'}
+-                </button>
+-              )}
+-              {hasActiveSubscription && !isCanceled && (
+-                <button
+-                  onClick={handleCancelSubscription}
+-                  disabled={cancelLoading}
+-                  className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-5 py-2 font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:opacity-50"
+-                >
+-                  {cancelLoading ? 'Canceling...' : 'Cancel Subscription'}
+-                </button>
+-              )}
+-            </div>
++            {canManage && (
++              <div className="flex flex-col gap-2">
++                {!isCanceled && (
++                  <button
++                    onClick={() => setShowUpgrade(true)}
++                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
++                  >
++                    <ArrowUpIcon className="h-5 w-5" />
++                    {hasActiveSubscription ? 'Change Plan' : 'Subscribe'}
++                  </button>
++                )}
++                {hasActiveSubscription && !isCanceled && (
++                  <button
++                    onClick={handleCancelSubscription}
++                    disabled={cancelLoading}
++                    className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-5 py-2 font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:opacity-50"
++                  >
++                    {cancelLoading ? 'Canceling...' : 'Cancel Subscription'}
++                  </button>
++                )}
++              </div>
++            )}
+           </div>
+         </div>
+ 
+@@ -299,7 +319,7 @@ export default function BillingSettings() {
+         )}
+ 
+         {/* Stripe Customer Portal */}
+-        {hasActiveSubscription && (
++        {canManage && hasActiveSubscription && (
+           <div className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-6 shadow-2xl backdrop-blur">
+             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
+               Manage Billing
+@@ -331,26 +351,28 @@ export default function BillingSettings() {
+               Subscribe to a plan to unlock premium features, increase your limits, and get the most
+               out of your account.
+             </p>
+-            <div className="flex gap-3 justify-center">
+-              <Link
+-                to="/pricing"
+-                className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
+-              >
+-                View Plans
+-              </Link>
+-              <button
+-                onClick={() => setShowUpgrade(true)}
+-                className="rounded-lg border border-zinc-300 dark:border-white/15 bg-white dark:bg-white/5 px-5 py-2.5 font-semibold text-zinc-900 dark:text-white transition hover:bg-zinc-100 dark:hover:bg-white/10"
+-              >
+-                Quick Subscribe
+-              </button>
+-            </div>
++            {canManage && (
++              <div className="flex gap-3 justify-center">
++                <Link
++                  to="/pricing"
++                  className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-5 py-2.5 font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
++                >
++                  View Plans
++                </Link>
++                <button
++                  onClick={() => setShowUpgrade(true)}
++                  className="rounded-lg border border-zinc-300 dark:border-white/15 bg-white dark:bg-white/5 px-5 py-2.5 font-semibold text-zinc-900 dark:text-white transition hover:bg-zinc-100 dark:hover:bg-white/10"
++                >
++                  Quick Subscribe
++                </button>
++              </div>
++            )}
+           </div>
+         )}
+       </div>
+ 
+       {/* Upgrade Modal */}
+-      <UpgradeModal isOpen={showUpgrade} onClose={() => setShowUpgrade(false)} />
+-    </RequireOwner>
++      {canManage && <UpgradeModal isOpen={showUpgrade} onClose={() => setShowUpgrade(false)} />}
++    </>
+   )
+ }
+diff --git a/apps/web/tests/routes/settings/_layout.spec.tsx b/apps/web/tests/routes/settings/_layout.spec.tsx
+index 6302488..774fa38 100644
+--- a/apps/web/tests/routes/settings/_layout.spec.tsx
++++ b/apps/web/tests/routes/settings/_layout.spec.tsx
+@@ -383,6 +383,37 @@ describe('SettingsLayout Component', () => {
+       expect(screen.getByText('Billing')).toBeInTheDocument()
+     })
+ 
++    it('should show billing to members with only billing manage permission', () => {
++      vi.mocked(useQuery).mockReturnValue({
++        data: {
++          myOrganizations: [
++            {
++              ...mockOrganization,
++              members: [
++                {
++                  id: 'member-1',
++                  userId: 'user-123',
++                  role: {
++                    id: 'role-member',
++                    name: 'Member',
++                    permissions: [
++                      { subject: 'organization', action: 'read' },
++                      { subject: 'member', action: 'read' },
++                      { subject: 'billing', action: 'manage' },
++                    ],
++                  },
++                },
++              ],
++            },
++          ],
++        },
++      } as any)
++
++      renderWithRouter()
++
++      expect(screen.getByText('Billing')).toBeInTheDocument()
++    })
++
+     it('should allow super admins to access all settings', () => {
+       vi.mocked(useGlobalCtx).mockReturnValue({
+         user: { ...mockUser, isSuperAdmin: true } as any,
+diff --git a/apps/web/tests/routes/settings/billing.spec.tsx b/apps/web/tests/routes/settings/billing.spec.tsx
+index b585351..2c24ed7 100644
+--- a/apps/web/tests/routes/settings/billing.spec.tsx
++++ b/apps/web/tests/routes/settings/billing.spec.tsx
+@@ -9,10 +9,54 @@ import { useSubscription, useLimit, useGlobalCtx } from '@nestled-template/web'
+ 
+ // Mock Apollo Client
+ const mockUseMutation = vi.fn()
++const mockUseQuery = vi.fn()
+ vi.mock('@apollo/client/react', () => ({
+   useMutation: (...args: unknown[]) => mockUseMutation(...args),
++  useQuery: (...args: unknown[]) => mockUseQuery(...args),
+ }))
+ 
++// The seeded organization roles, as the settings area reads them (MyOrganizationsWithMembers).
++const permissionsOf = (...names: string[]) =>
++  names.map((name, index) => {
++    const [subject, action] = name.split(':')
++    return { id: `perm-${index}`, subject, action }
++  })
++const ROLES = {
++  Owner: permissionsOf(
++    'organization:read',
++    'organization:delete',
++    'billing:read',
++    'billing:manage',
++  ),
++  Admin: permissionsOf('organization:read', 'organization:update', 'billing:read'),
++  Member: permissionsOf('organization:read', 'member:read', 'role:read', 'team:read'),
++} as const
++type RoleName = keyof typeof ROLES
++
++const viewer = { id: 'user-123', activeOrganizationId: 'org-123', isSuperAdmin: false }
++
++const setRole = (roleName: RoleName) => {
++  mockUseQuery.mockReturnValue({
++    loading: false,
++    data: {
++      myOrganizations: [
++        {
++          id: 'org-123',
++          name: 'Example Org',
++          members: [
++            {
++              id: 'member-1',
++              userId: viewer.id,
++              roleId: `role-${roleName}`,
++              role: { id: `role-${roleName}`, name: roleName, permissions: ROLES[roleName] },
++            },
++          ],
++        },
++      ],
++    },
++  })
++}
++
+ // Mock SDK (for DocumentNode exports)
+ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
+   const actual = await importOriginal<typeof import('@nestled-template/shared/sdk')>()
+@@ -25,7 +69,6 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
+ 
+ // Mock web hooks and components
+ vi.mock('@nestled-template/web', () => ({
+-  RequireOwner: ({ children, fallback }: any) => children || fallback,
+   useSubscription: vi.fn(),
+   usePlan: vi.fn(),
+   useLimit: vi.fn(),
+@@ -54,6 +97,7 @@ describe('BillingSettings Component', () => {
+ 
+   beforeEach(() => {
+     mockUseMutation.mockClear()
++    setRole('Owner')
+ 
+     mockCreatePortalSession = vi.fn()
+     mockCancelSubscription = vi.fn()
+@@ -72,7 +116,7 @@ describe('BillingSettings Component', () => {
+ 
+     vi.mocked(useGlobalCtx).mockReturnValue({
+       activeOrganization: mockActiveOrganization,
+-      user: null,
++      user: viewer as any,
+       organizations: [],
+       activeOrganizationMember: null,
+     })
+@@ -802,18 +846,90 @@ describe('BillingSettings Component', () => {
+   })
+ 
+   describe('Permission Guards', () => {
+-    it('should render for owners', () => {
++    const subscribed = () =>
++      vi.mocked(useSubscription).mockReturnValue({
++        subscription: { id: 'sub-123' },
++        plan: { id: 'plan-pro', name: 'Pro Plan', price: '29.99', interval: 'month' },
++        hasActiveSubscription: true,
++        isTrialing: false,
++        isCanceled: false,
++        isPastDue: false,
++        periodEndsAt: new Date('2024-12-31'),
++        trialEndsAt: null,
++      } as any)
++
++    const actionButtons = [
++      'Change Plan',
++      'Subscribe',
++      'Cancel Subscription',
++      'Open Customer Portal',
++      'Quick Subscribe',
++    ]
++
++    it('gives an Owner (billing:manage) the page and every action', () => {
++      setRole('Owner')
++      subscribed()
+       renderWithRouter()
+ 
+-      expect(screen.getByText('Billing & Subscription')).toBeInTheDocument()
++      expect(screen.getByText('Pro Plan')).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'Change Plan' })).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'Cancel Subscription' })).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'Open Customer Portal' })).toBeInTheDocument()
++      expect(screen.queryByText(/read-only access to billing/i)).not.toBeInTheDocument()
+     })
+ 
+-    it('should show permission required fallback for non-owners', () => {
+-      // RequireOwner mock would render fallback
+-      // In the current mock, it renders children by default
++    it('gives an Admin (billing:read) the billing data read-only, with no actions', () => {
++      setRole('Admin')
++      subscribed()
+       renderWithRouter()
+ 
+       expect(screen.getByText('Billing & Subscription')).toBeInTheDocument()
++      expect(screen.getByText('Pro Plan')).toBeInTheDocument()
++      expect(screen.getByText('active')).toBeInTheDocument()
++      expect(screen.getByText('$29.99')).toBeInTheDocument()
++      expect(screen.getByText(/Next billing date:/i)).toBeInTheDocument()
++      expect(screen.getByText(/read-only access to billing/i)).toBeInTheDocument()
++      for (const name of actionButtons) {
++        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
++      }
++      expect(screen.queryByText('Manage Billing')).not.toBeInTheDocument()
++      expect(screen.queryByText('Permission Required')).not.toBeInTheDocument()
++    })
++
++    it('gives an Admin without a subscription no way to subscribe', () => {
++      setRole('Admin')
++      renderWithRouter()
++
++      expect(screen.getByText('No Plan')).toBeInTheDocument()
++      expect(screen.getByText('No Active Subscription')).toBeInTheDocument()
++      for (const name of actionButtons) {
++        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
++      }
++      expect(screen.queryByRole('link', { name: 'View Plans' })).not.toBeInTheDocument()
++      expect(screen.queryByRole('link', { name: 'Browse plans' })).not.toBeInTheDocument()
++      expect(screen.queryByTestId('upgrade-modal')).not.toBeInTheDocument()
++    })
++
++    it('shows a Member (no billing permission) the no-access state, not the page', () => {
++      setRole('Member')
++      subscribed()
++      renderWithRouter()
++
++      expect(screen.getByText('Permission Required')).toBeInTheDocument()
++      expect(screen.queryByText('Billing & Subscription')).not.toBeInTheDocument()
++      expect(screen.queryByText('Pro Plan')).not.toBeInTheDocument()
++      for (const name of actionButtons) {
++        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
++      }
++    })
++
++    it('renders nothing while the membership is loading', () => {
++      mockUseQuery.mockReturnValue({ loading: true, data: undefined })
++      const { container } = renderWithRouter()
++
++      expect(screen.queryByText('Permission Required')).not.toBeInTheDocument()
++      expect(screen.queryByText('Billing & Subscription')).not.toBeInTheDocument()
++      expect(container).toBeEmptyDOMElement()
+     })
+   })
+ })
