@@ -20,7 +20,7 @@ foundation up front so teams can focus on their product-specific features.
 
 Prerequisites:
 
-- Node 22 recommended
+- Node 22.23.4 (pinned in `.tool-versions` and `.nvmrc`; `engines` requires at least 22.23.4)
 - pnpm
 - PostgreSQL or Docker
 
