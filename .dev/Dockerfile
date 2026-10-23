@@ -1,7 +1,7 @@
 # When building, tag the image with your project name, e.g.:
 # docker build -f .dev/Dockerfile -t your-scope .
 
-FROM node:22-slim
+FROM node:22.23.4-slim
 
 WORKDIR /workspace
 
