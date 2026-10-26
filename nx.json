@@ -39,12 +39,7 @@
         "typecheckTargetName": "typecheck"
       }
     },
-    {
-      "plugin": "@nx/eslint/plugin",
-      "options": {
-        "targetName": "lint"
-      }
-    },
+    { "plugin": "@nx/eslint/plugin", "options": { "targetName": "lint" } },
     {
       "plugin": "@nx/vite/plugin",
       "options": {
@@ -76,12 +71,7 @@
         "watchDepsTargetName": "watch-deps"
       }
     },
-    {
-      "plugin": "@nx/vitest",
-      "options": {
-        "testTargetName": "vite:test"
-      }
-    },
+    { "plugin": "@nx/vitest", "options": { "testTargetName": "vite:test" } },
     "./tools/nx-plugins/typecheck.js"
   ],
   "targetDefaults": {
@@ -99,20 +89,10 @@
     "@nx/jest:jest": {
       "cache": true,
       "inputs": ["default", "^production", "{workspaceRoot}/jest.preset.js"],
-      "options": {
-        "passWithNoTests": true
-      },
-      "configurations": {
-        "ci": {
-          "ci": true,
-          "codeCoverage": true
-        }
-      }
+      "options": { "passWithNoTests": true },
+      "configurations": { "ci": { "ci": true, "codeCoverage": true } }
     },
-    "build": {
-      "cache": true,
-      "dependsOn": ["^build"]
-    },
+    "build": { "cache": true, "dependsOn": ["^build"] },
     "@nx/vite:build": {
       "cache": true,
       "dependsOn": ["^build"],
@@ -123,28 +103,15 @@
       "dependsOn": ["^build"],
       "inputs": ["production", "^production"]
     },
-    "@nx/vitest:test": {
-      "cache": true,
-      "inputs": ["default", "^production"]
-    }
+    "@nx/vitest:test": { "cache": true, "inputs": ["default", "^production"] }
   },
   "generators": {
     "@nx/react": {
-      "application": {
-        "babel": true,
-        "style": "none",
-        "linter": "eslint",
-        "bundler": "vite"
-      },
-      "component": {
-        "style": "none"
-      },
-      "library": {
-        "style": "none",
-        "linter": "eslint",
-        "unitTestRunner": "none"
-      }
+      "application": { "babel": true, "style": "none", "linter": "eslint", "bundler": "vite" },
+      "component": { "style": "none" },
+      "library": { "style": "none", "linter": "eslint", "unitTestRunner": "none" }
     }
   },
-  "analytics": true
+  "analytics": true,
+  "nxCloudId": "6adf2a28d5702d263a03370b"
 }
