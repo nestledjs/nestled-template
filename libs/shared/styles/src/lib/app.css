@@ -1,8 +1,8 @@
 @import 'tailwindcss';
 @source "../../../../";
 /* Packages consumed from npm ship Tailwind classes but no CSS, and Tailwind never scans node_modules. */
-@source "../../../../node_modules/@nestledjs/data-browser";
-@source "../../../../node_modules/@nestledjs/shared-components";
+@source "../../../../../node_modules/@nestledjs/data-browser";
+@source "../../../../../node_modules/@nestledjs/shared-components";
 @plugin "@tailwindcss/typography";
 
 /* Enable class-based dark mode in Tailwind v4 */

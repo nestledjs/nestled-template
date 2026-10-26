@@ -1,0 +1,44 @@
+id: 2026-10-26-tailwind-package-source-path
+title: >-
+  Correct the Tailwind @source paths for the data-browser and shared-components packages
+priority: normal
+area: ui
+type: correctness
+delivery: code-patch
+intent: >
+  Corrects step 2 of `2026-10-25-data-browser-1-0-25-filter-layout-and-tailwind-source`. That note
+  gave the two package `@source` lines with four `../`, which from
+  `libs/shared/styles/src/lib/app.css` resolves to `libs/node_modules`, a folder that does not
+  exist. Tailwind skips a missing path without warning, so the data browser stays half-styled.
+  The repository root is five levels up:
+
+      @source "../../../../../node_modules/@nestledjs/data-browser";
+      @source "../../../../../node_modules/@nestledjs/shared-components";
+
+  Fix the two package lines only. The existing `@source "../../../../";` line is unchanged.
+why: >
+  With the wrong path the package's Tailwind classes are never generated in a project that
+  installs @nestledjs/data-browser from npm, so the 1.0.25 filter-panel fixes don't show: labels
+  stay faint in dark mode, select chevrons sit on the left, "Create New" has no button background
+  and the table body is white in dark mode.
+affectedPaths:
+  - libs/shared/styles/src/lib/app.css
+skipIf:
+  - >
+    The project's Tailwind entry already points both package `@source` lines at the repository
+    root's `node_modules` (for example, it corrected the path when applying the earlier note).
+    Record `not-applicable`.
+  - >
+    The project embeds data-browser and shared-components as workspace libraries rather than
+    installing them from npm.
+verification:
+  - pnpm build:web
+  - >
+    The built CSS under apps/web/build/client/assets contains a data-browser class the project's
+    own code doesn't use, for example `grep -l 'hover\\:bg-green-700' apps/web/build/client/assets/*.css`
+    returns a file.
+agentHints:
+  - >
+    Resolve the path from the CSS file's own directory: `ls <css dir>/<path>` must list the
+    package. If the Tailwind entry lives elsewhere, count the levels to the repository root
+    rather than copying the template's string.
