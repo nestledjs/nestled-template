@@ -1,7 +1,7 @@
 schemaVersion: 1
 generatedAt: 2026-10-26
 channels:
-  canary: 2026.10.19
+  canary: 2026.10.20
   stable: 2026.10.18
 releases:
   - id: 2026.08.0
@@ -1039,3 +1039,19 @@ releases:
           - name: "@nestledjs/forms-native"
             targetVersion: 0.9.1
             versionRange: ^0.9.1
+  - id: 2026.10.20
+    date: 2026-10-26
+    title: Tailwind package @source path correction
+    templateCommit: aca533b
+    notes:
+      - id: 2026-10-26-tailwind-package-source-path
+        title: Correct the Tailwind @source paths for the data-browser and shared-components packages
+        delivery: code-patch
+        intent: "Corrects step 2 of `2026-10-25-data-browser-1-0-25-filter-layout-and-tailwind-source`. That note gave the two package `@source` lines with four `../`, which from `libs/shared/styles/src/lib/app.css` resolves to `libs/node_modules`, a folder that does not exist. Tailwind skips a missing path without warning, so the data browser stays half-styled. The repository root is five levels up: @source \"../../../../../node_modules/@nestledjs/data-browser\"; @source \"../../../../../node_modules/@nestledjs/shared-components\"; Fix the two package lines only. The existing `@source \"../../../../\";` line is unchanged."
+        area: ui
+        affectedPaths:
+          - libs/shared/styles/src/lib/app.css
+        verification:
+          - "pnpm build:web"
+          - "The built CSS under apps/web/build/client/assets contains a data-browser class the project's own code doesn't use, for example `grep -l 'hover\\\\:bg-green-700' apps/web/build/client/assets/*.css` returns a file."
+        patch: patches/2026-10-26-tailwind-package-source-path.diff
