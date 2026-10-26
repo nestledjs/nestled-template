@@ -53,6 +53,11 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       NX_DAEMON: false
+      # Nx Cloud remote cache, per Nx's recommendation: pushes to develop (a protected branch) use the
+      # read-write token; pull requests use the read-only token, which gives each PR its own scoped
+      # cache so PR code can never write into the cache develop trusts. A fork's PR gets no secrets
+      # and runs with the anonymous access the workspace allows (none).
+      NX_CLOUD_ACCESS_TOKEN: ${{ github.event_name == 'push' && secrets.NX_CLOUD_ACCESS_TOKEN || secrets.NX_CLOUD_ACCESS_TOKEN_READ }}
       # Surfaced at job scope so the SonarCloud steps below can gate on its presence.
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
@@ -88,6 +93,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+
+      # nestled-template is the clone source for new projects: an nxCloudId committed here would make every new
+      # project report to the template's Nx Cloud workspace. Its own CI authenticates with NX_CLOUD_ACCESS_TOKEN
+      # alone. Inert in every other repo, so this file stays identical across dev-template, template and apps.
+      - name: Template must not carry an Nx Cloud ID
+        if: github.repository == 'nestledjs/nestled-template'
+        run: |
+          if grep -q '"nxCloudId"' nx.json; then
+            echo "::error file=nx.json::nestled-template must not commit an nxCloudId (new projects clone it)."
+            exit 1
+          fi
 
       - name: Test public content guard
         run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
