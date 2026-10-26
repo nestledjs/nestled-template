@@ -1,0 +1,391 @@
+diff --git a/apps/api-e2e/src/support/sql-runner.mjs b/apps/api-e2e/src/support/sql-runner.mjs
+index 946fc76..eee5577 100644
+--- a/apps/api-e2e/src/support/sql-runner.mjs
++++ b/apps/api-e2e/src/support/sql-runner.mjs
+@@ -152,6 +152,27 @@ export async function runSql({ url, statement, variables = {} }) {
+   }
+ }
+ 
++/**
++ * A thrown value that is not an Error, as text: a string as it is, a number, boolean or bigint in
++ * its usual form, anything else as JSON. Empty when there is nothing to say (null, undefined, or a
++ * value JSON cannot represent), so the caller can fall back.
++ *
++ * @param {unknown} value
++ * @returns {string}
++ */
++function thrownValueText(value) {
++  if (typeof value === 'string') return value
++  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
++    return value.toString()
++  }
++  if (value === null || value === undefined) return ''
++  try {
++    return JSON.stringify(value) ?? ''
++  } catch {
++    return ''
++  }
++}
++
+ /**
+  * Why an operation failed, in words. pg rejects a refused connection with Node's AggregateError,
+  * whose own message is empty (one error per address tried, e.g. ::1 and 127.0.0.1): its nested
+@@ -162,12 +183,12 @@ export async function runSql({ url, statement, variables = {} }) {
+  * @returns {string}
+  */
+ export function errorReason(error) {
+-  if (!(error instanceof Error)) return String(error)
++  if (!(error instanceof Error)) return thrownValueText(error) || 'unknown error'
+   if (error.message) return error.message
+   const nested =
+     error instanceof AggregateError
+       ? error.errors
+-          .map(inner => (inner instanceof Error ? inner.message : String(inner ?? '')))
++          .map(inner => (inner instanceof Error ? inner.message : thrownValueText(inner)))
+           .filter(Boolean)
+       : []
+   if (nested.length > 0) return [...new Set(nested)].join('; ')
+diff --git a/apps/api-e2e/src/support/sql-runner.spec.ts b/apps/api-e2e/src/support/sql-runner.spec.ts
+index fa065d2..5532376 100644
+--- a/apps/api-e2e/src/support/sql-runner.spec.ts
++++ b/apps/api-e2e/src/support/sql-runner.spec.ts
+@@ -130,6 +130,10 @@ describe('sql runner errors', () => {
+     expect(errorReason(new Error('password authentication failed'))).toBe(
+       'password authentication failed',
+     )
++    expect(errorReason('plain')).toBe('plain')
++    expect(errorReason({ code: 'E1' })).toBe('{"code":"E1"}')
++    expect(errorReason(null)).toBe('unknown error')
++    expect(errorReason(new AggregateError(['a', null, { b: 1 }], ''))).toBe('a; {"b":1}')
+   })
+ 
+   it('reach stderr scrubbed when the database cannot be reached', () => {
+diff --git a/apps/web/app/routes/settings/_settings-access.ts b/apps/web/app/routes/settings/_settings-access.ts
+index ec137ca..36f2d36 100644
+--- a/apps/web/app/routes/settings/_settings-access.ts
++++ b/apps/web/app/routes/settings/_settings-access.ts
+@@ -38,9 +38,18 @@ export function useSettingsOrganization() {
+   return { user, activeOrganization, activeOrganizationMember, loading: loading && !data }
+ }
+ 
++/**
++ * Whether the member's role holds `permission`. `all:manage` holds every permission, as it does in
++ * the API's access policy (it grants `*`), so a role that carries only `all:manage` is not shown
++ * less than the API lets it do.
++ */
+ export function hasRolePermission(member: SettingsOrganizationMember | null, permission: string) {
+   const [subject, action] = permission.split(':')
+-  return !!member?.role?.permissions?.some(p => p.subject === subject && p.action === action)
++  return !!member?.role?.permissions?.some(
++    p =>
++      (p.subject === 'all' && p.action === 'manage') ||
++      (p.subject === subject && p.action === action),
++  )
+ }
+ 
+ /** May view the organization's billing: `billing:read` or `billing:manage`. */
+@@ -59,7 +68,8 @@ export function hasBillingAccess(
+ 
+ /**
+  * May change the organization's billing: subscribe, change plan, cancel, open the billing portal.
+- * Only `billing:manage` grants this, matching the API's mutations; a role's name never does.
++ * Only `billing:manage` (or `all:manage`, which holds it) grants this, matching the API's
++ * mutations; a role's name never does.
+  */
+ export function canManageBilling(
+   user: MeQuery['me'] | null | undefined,
+diff --git a/apps/web/app/routes/settings/billing.tsx b/apps/web/app/routes/settings/billing.tsx
+index a16c02e..de17dbb 100644
+--- a/apps/web/app/routes/settings/billing.tsx
++++ b/apps/web/app/routes/settings/billing.tsx
+@@ -156,13 +156,10 @@ export default function BillingSettings() {
+             </div>
+           </div>
+           {!canManage && (
+-            <p
+-              role="status"
+-              className="mt-4 rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300"
+-            >
++            <output className="mt-4 block rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300">
+               You have read-only access to billing. Changing the plan, cancelling, or updating
+               payment details needs the billing:manage permission.
+-            </p>
++            </output>
+           )}
+         </div>
+ 
+diff --git a/apps/web/tests/routes/settings/_layout.spec.tsx b/apps/web/tests/routes/settings/_layout.spec.tsx
+index 774fa38..ee69daf 100644
+--- a/apps/web/tests/routes/settings/_layout.spec.tsx
++++ b/apps/web/tests/routes/settings/_layout.spec.tsx
+@@ -474,6 +474,33 @@ describe('SettingsLayout Component', () => {
+       expect(screen.queryByText('AI & MCP')).not.toBeInTheDocument()
+     })
+ 
++    it('should treat all:manage as holding every permission, like the API does', () => {
++      vi.mocked(useQuery).mockReturnValue({
++        data: {
++          myOrganizations: [
++            {
++              ...mockOrganization,
++              members: [
++                {
++                  id: 'member-1',
++                  userId: 'user-123',
++                  role: {
++                    id: 'role-root',
++                    name: 'Root',
++                    permissions: [{ subject: 'all', action: 'manage' }],
++                  },
++                },
++              ],
++            },
++          ],
++        },
++      } as any)
++
++      renderWithRouter()
++      expect(screen.getByText('AI & MCP')).toBeInTheDocument()
++      expect(screen.getByText('Billing')).toBeInTheDocument()
++    })
++
+     it('should show AI & MCP to users with organization:update', () => {
+       renderWithRouter()
+       expect(screen.getByText('AI & MCP')).toBeInTheDocument()
+diff --git a/apps/web/tests/routes/settings/billing.spec.tsx b/apps/web/tests/routes/settings/billing.spec.tsx
+index 2c24ed7..f0636f4 100644
+--- a/apps/web/tests/routes/settings/billing.spec.tsx
++++ b/apps/web/tests/routes/settings/billing.spec.tsx
+@@ -30,6 +30,8 @@ const ROLES = {
+   ),
+   Admin: permissionsOf('organization:read', 'organization:update', 'billing:read'),
+   Member: permissionsOf('organization:read', 'member:read', 'role:read', 'team:read'),
++  // A role that carries only the universal grant, as some seeds give the Owner.
++  Root: permissionsOf('all:manage'),
+ } as const
+ type RoleName = keyof typeof ROLES
+ 
+@@ -878,6 +880,19 @@ describe('BillingSettings Component', () => {
+       expect(screen.queryByText(/read-only access to billing/i)).not.toBeInTheDocument()
+     })
+ 
++    it('gives a role holding only all:manage the page and every action', () => {
++      setRole('Root')
++      subscribed()
++      renderWithRouter()
++
++      expect(screen.getByText('Pro Plan')).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'Change Plan' })).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'Cancel Subscription' })).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'Open Customer Portal' })).toBeInTheDocument()
++      expect(screen.queryByText(/read-only access to billing/i)).not.toBeInTheDocument()
++      expect(screen.queryByText('Permission Required')).not.toBeInTheDocument()
++    })
++
+     it('gives an Admin (billing:read) the billing data read-only, with no actions', () => {
+       setRole('Admin')
+       subscribed()
+diff --git a/libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts b/libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
+index a1ff9f9..1ab99c6 100644
+--- a/libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
++++ b/libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
+@@ -85,6 +85,15 @@ describe('AuthCacheService Redis client options', () => {
+     expect(service.isEnabled()).toBe(true)
+   })
+ 
++  it('logs a non-Error connection rejection as an unknown error', async () => {
++    mockClient(() => Promise.reject({ host: 'redis.internal' }))
++
++    new AuthCacheService()
++    await flush()
++
++    expect(warn).toHaveBeenCalledWith('Auth cache Redis connection failed: unknown error')
++  })
++
+   it('creates no client for a local or missing URL', () => {
+     process.env['REDIS_URL'] = 'redis://localhost:6379'
+ 
+diff --git a/libs/api/utils/src/lib/services/auth-cache.service.ts b/libs/api/utils/src/lib/services/auth-cache.service.ts
+index c08b23f..448f049 100644
+--- a/libs/api/utils/src/lib/services/auth-cache.service.ts
++++ b/libs/api/utils/src/lib/services/auth-cache.service.ts
+@@ -89,7 +89,7 @@ export class AuthCacheService {
+       () => this.logger.log('Auth cache Redis connected'),
+       (error: unknown) =>
+         this.logger.warn(
+-          `Auth cache Redis connection failed: ${error instanceof Error ? error.message : String(error)}`,
++          `Auth cache Redis connection failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+         ),
+     )
+   }
+diff --git a/scripts/db-update-steps.mjs b/scripts/db-update-steps.mjs
+index 5fe1370..7440279 100644
+--- a/scripts/db-update-steps.mjs
++++ b/scripts/db-update-steps.mjs
+@@ -33,3 +33,27 @@ export function generateScriptEndsWithDoctor(script) {
+   const commands = script.split('&&').map(command => command.trim())
+   return /^(pnpm|npm|yarn)( run)? nestled-doctor\b/.test(commands.at(-1) ?? '')
+ }
++
++/**
++ * The warning db-update prints when `db-update:generate` still ends with a Doctor run, or null.
++ * Best-effort: db-update does not need package.json for anything else, so a manifest that is
++ * missing, unreadable or not JSON (db-update run in a bare folder, as some Docker tests do) gives
++ * null instead of stopping the run.
++ *
++ * @param {() => Promise<string>} readManifest
++ * @returns {Promise<string | null>}
++ */
++export async function trailingDoctorWarning(readManifest) {
++  let script
++  try {
++    script = JSON.parse(await readManifest())?.scripts?.['db-update:generate']
++  } catch {
++    return null
++  }
++  if (typeof script !== 'string' || !generateScriptEndsWithDoctor(script)) return null
++  return (
++    'package.json: db-update:generate still ends with nestled-doctor. That run checks the SDK ' +
++    'contract before api-schema.graphql is refreshed and can fail on the previous schema. ' +
++    'Remove the trailing "&& pnpm run nestled-doctor"; db-update runs Doctor after the SDK.'
++  )
++}
+diff --git a/scripts/db-update-steps.spec.mjs b/scripts/db-update-steps.spec.mjs
+index 749bcdc..96fa11f 100644
+--- a/scripts/db-update-steps.spec.mjs
++++ b/scripts/db-update-steps.spec.mjs
+@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs'
+ import { dirname, join } from 'node:path'
+ import { describe, it } from 'node:test'
+ import { fileURLToPath } from 'node:url'
+-import { generateScriptEndsWithDoctor, runDbUpdateSteps } from './db-update-steps.mjs'
++import {
++  generateScriptEndsWithDoctor,
++  runDbUpdateSteps,
++  trailingDoctorWarning,
++} from './db-update-steps.mjs'
+ 
+ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+ 
+@@ -103,4 +107,23 @@ describe('db-update:generate', () => {
+     assert.match(script, /^pnpm run nestled-doctor && /)
+     assert.equal(generateScriptEndsWithDoctor(script), false)
+   })
++
++  it('warns about a trailing Doctor run only when package.json can be read', async () => {
++    const manifest = (/** @type {string} */ script) => async () =>
++      JSON.stringify({ scripts: { 'db-update:generate': script } })
++    assert.match(
++      (await trailingDoctorWarning(manifest('nx g x && pnpm run nestled-doctor'))) ?? '',
++      /still ends with nestled-doctor/,
++    )
++    assert.equal(await trailingDoctorWarning(manifest('pnpm run nestled-doctor && nx g x')), null)
++    assert.equal(await trailingDoctorWarning(async () => JSON.stringify({})), null)
++    assert.equal(await trailingDoctorWarning(async () => 'not json'), null)
++    const missing = Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })
++    assert.equal(
++      await trailingDoctorWarning(async () => {
++        throw missing
++      }),
++      null,
++    )
++  })
+ })
+diff --git a/scripts/db-update.mjs b/scripts/db-update.mjs
+index 13cd0d9..db0586f 100644
+--- a/scripts/db-update.mjs
++++ b/scripts/db-update.mjs
+@@ -6,7 +6,7 @@ import { createServer } from 'node:net'
+ import { tmpdir } from 'node:os'
+ import { isAbsolute, join } from 'node:path'
+ import { spawn, spawnSync } from 'node:child_process'
+-import { generateScriptEndsWithDoctor, runDbUpdateSteps } from './db-update-steps.mjs'
++import { runDbUpdateSteps, trailingDoctorWarning } from './db-update-steps.mjs'
+ import { devDockerSettings } from './dev-checkout.mjs'
+ 
+ const root = await realpath(process.cwd())
+@@ -566,15 +566,8 @@ async function waitForSdkWatcher(watcher) {
+ }
+ 
+ async function warnOnTrailingDoctor() {
+-  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+-  const script = manifest.scripts?.['db-update:generate'] ?? ''
+-  if (generateScriptEndsWithDoctor(script)) {
+-    console.warn(
+-      'package.json: db-update:generate still ends with nestled-doctor. That run checks the SDK ' +
+-        'contract before api-schema.graphql is refreshed and can fail on the previous schema. ' +
+-        'Remove the trailing "&& pnpm run nestled-doctor"; db-update runs Doctor after the SDK.',
+-    )
+-  }
++  const warning = await trailingDoctorWarning(() => readFile(join(root, 'package.json'), 'utf8'))
++  if (warning) console.warn(warning)
+ }
+ 
+ async function main() {
+diff --git a/scripts/test-database.mjs b/scripts/test-database.mjs
+index 2d77d4e..7f9ba62 100644
+--- a/scripts/test-database.mjs
++++ b/scripts/test-database.mjs
+@@ -55,6 +55,27 @@ export function creatableTestDatabase(databaseUrl) {
+   }
+ }
+ 
++/**
++ * A thrown value that is not an Error, as text: a string as it is, a number, boolean or bigint in
++ * its usual form, anything else as JSON. Empty when there is nothing to say (null, undefined, or a
++ * value JSON cannot represent), so the caller can fall back.
++ *
++ * @param {unknown} value
++ * @returns {string}
++ */
++function thrownValueText(value) {
++  if (typeof value === 'string') return value
++  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
++    return value.toString()
++  }
++  if (value === null || value === undefined) return ''
++  try {
++    return JSON.stringify(value) ?? ''
++  } catch {
++    return ''
++  }
++}
++
+ /**
+  * Why an operation failed, in words. pg rejects a refused connection with Node's AggregateError,
+  * whose own message is empty (one error per address tried, e.g. ::1 and 127.0.0.1): its nested
+@@ -65,12 +86,12 @@ export function creatableTestDatabase(databaseUrl) {
+  * @returns {string}
+  */
+ export function errorReason(error) {
+-  if (!(error instanceof Error)) return String(error)
++  if (!(error instanceof Error)) return thrownValueText(error) || 'unknown error'
+   if (error.message) return error.message
+   const nested =
+     error instanceof AggregateError
+       ? error.errors
+-          .map(inner => (inner instanceof Error ? inner.message : String(inner ?? '')))
++          .map(inner => (inner instanceof Error ? inner.message : thrownValueText(inner)))
+           .filter(Boolean)
+       : []
+   if (nested.length > 0) return [...new Set(nested)].join('; ')
+diff --git a/scripts/test-database.spec.mjs b/scripts/test-database.spec.mjs
+index f366965..422ef2a 100644
+--- a/scripts/test-database.spec.mjs
++++ b/scripts/test-database.spec.mjs
+@@ -259,4 +259,15 @@ void describe('errorReason', () => {
+     assert.equal(errorReason(new Error('')), 'Error')
+     assert.equal(errorReason('plain'), 'plain')
+   })
++
++  void it('describes a thrown non-Error value without String() on an unknown', () => {
++    assert.equal(errorReason(42), '42')
++    assert.equal(errorReason({ code: 'E1' }), '{"code":"E1"}')
++    assert.equal(errorReason(null), 'unknown error')
++    assert.equal(errorReason(undefined), 'unknown error')
++    const circular = /** @type {Record<string, unknown>} */ ({})
++    circular.self = circular
++    assert.equal(errorReason(circular), 'unknown error')
++    assert.equal(errorReason(new AggregateError(['a', null, { b: 1 }], '')), 'a; {"b":1}')
++  })
+ })

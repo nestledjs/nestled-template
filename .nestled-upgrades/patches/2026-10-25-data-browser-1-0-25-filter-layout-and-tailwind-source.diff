@@ -1,0 +1,13 @@
+diff --git a/libs/shared/styles/src/lib/app.css b/libs/shared/styles/src/lib/app.css
+index 5c482b3..3ef3397 100644
+--- a/libs/shared/styles/src/lib/app.css
++++ b/libs/shared/styles/src/lib/app.css
+@@ -1,5 +1,8 @@
+ @import 'tailwindcss';
+ @source "../../../../";
++/* Packages consumed from npm ship Tailwind classes but no CSS, and Tailwind never scans node_modules. */
++@source "../../../../node_modules/@nestledjs/data-browser";
++@source "../../../../node_modules/@nestledjs/shared-components";
+ @plugin "@tailwindcss/typography";
+ 
+ /* Enable class-based dark mode in Tailwind v4 */

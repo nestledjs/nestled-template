@@ -1,0 +1,2279 @@
+diff --git a/.nestled-updates/security/guard-baseline.json b/.nestled-updates/security/guard-baseline.json
+index 28799d8..85fd8e7 100644
+--- a/.nestled-updates/security/guard-baseline.json
++++ b/.nestled-updates/security/guard-baseline.json
+@@ -142,6 +142,8 @@
+     "getJwks": [],
+     "register": [],
+     "authorize": [],
++    "getPendingAuthorization": [],
++    "decideAuthorization": [],
+     "token": []
+   },
+   "libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts": {
+diff --git a/.nestled-updates/security/public-operations.json b/.nestled-updates/security/public-operations.json
+index 006925c..df77f33 100644
+--- a/.nestled-updates/security/public-operations.json
++++ b/.nestled-updates/security/public-operations.json
+@@ -34,7 +34,9 @@
+     "getProtectedResourceMetadata": "Public OAuth protected-resource metadata required before a client can authenticate.",
+     "getJwks": "Public OAuth key-discovery endpoint; returns public verification material only.",
+     "register": "Public RFC 7591 dynamic client registration endpoint.",
+-    "authorize": "Pre-authentication OAuth authorization endpoint. Validates the client, redirect URI, session cookie, organization membership, and PKCE challenge internally.",
++    "authorize": "Pre-authentication OAuth authorization endpoint. Validates the client, the redirect URI scheme, the S256 PKCE challenge and the session cookie internally, and never issues a code: it stores a pending authorization bound to the session and sends the user to the consent page.",
++    "getPendingAuthorization": "Consent page details for a pending OAuth authorization. Authenticates the session cookie internally and answers only the session the request is bound to; read server-side by the web app.",
++    "decideAuthorization": "Consent decision for a pending OAuth authorization. Authenticates the session cookie internally, requires the bound session and the record's single-use CSRF token, and uses the record up on every attempt.",
+     "token": "Pre-authentication OAuth token exchange. Authorized by a single-use authorization code and PKCE verifier."
+   },
+   "libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts": {
+diff --git a/apps/web/app/routes/mcp-connect.tsx b/apps/web/app/routes/mcp-connect.tsx
+index 8a7b208..9a91d0d 100644
+--- a/apps/web/app/routes/mcp-connect.tsx
++++ b/apps/web/app/routes/mcp-connect.tsx
+@@ -1,94 +1,279 @@
+-import { LoaderFunctionArgs, redirect, useLoaderData } from 'react-router'
+-import { useQuery } from '@apollo/client/react'
++import {
++  type ActionFunctionArgs,
++  type LoaderFunctionArgs,
++  redirect,
++  useActionData,
++  useLoaderData,
++} from 'react-router'
++import type { ReactNode } from 'react'
++import { ExclamationTriangleIcon, ShieldCheckIcon } from '@heroicons/react/24/outline'
+ import { getCookie, getSessionCookieName } from '@nestled-template/shared/utils'
+-import { MyOrganizations, type MyOrganizationsQuery } from '@nestled-template/shared/sdk'
++import { toApiBase } from './settings/_mcp-shared'
+ 
+-export async function loader({ request }: LoaderFunctionArgs) {
+-  const url = new URL(request.url)
+-  const back = url.searchParams.get('back')
++/**
++ * MCP OAuth consent page. The API's /api/mcp/authorize never issues a code by itself: it stores
++ * the request as a pending authorization bound to the caller's session and sends them here. This
++ * page shows which client is asking, where the code would go and what would be granted, and
++ * nothing is issued until the user presses Approve. The form posts to this route's action, which
++ * forwards the decision to the API with the pending record's CSRF token.
++ */
++
++export interface McpConsentDetails {
++  request: string
++  csrfToken: string
++  expiresAt: string
++  client: { name: string; verified: boolean }
++  redirectUri: string
++  redirectHost: string
++  account: { name: string | null; email: string | null }
++  organizations: Array<{ id: string; name: string }>
++  selectedOrganizationId: string | null
++}
++
++type LoaderData =
++  { status: 'ready'; consent: McpConsentDetails } | { status: 'error'; message: string }
++
++type ActionData = { error: string }
++
++const EXPIRED_MESSAGE =
++  'This connection request has expired or was already used. Return to your AI assistant and start the connection again.'
++
++// Loaders and actions run on the server, where the API is reached directly.
++function serverApiBase(): string {
++  return toApiBase(process.env['VITE_API_URL'] || (import.meta.env.VITE_API_URL as string))
++}
+ 
+-  if (!back) throw redirect('/')
++function loginRedirect(url: URL) {
++  // Same-origin relative path, consistent with every other return_url producer.
++  return redirect(`/login?return_url=${encodeURIComponent(url.pathname + url.search)}`)
++}
+ 
++function sessionCookieHeader(request: Request): string | null {
+   const token = getCookie(request.headers, getSessionCookieName())
+-  if (!token) {
+-    // Same-origin relative path, consistent with every other return_url producer.
+-    throw redirect(`/login?return_url=${encodeURIComponent(url.pathname + url.search)}`)
++  return token ? `${getSessionCookieName()}=${token}` : null
++}
++
++async function readError(response: Response): Promise<string | null> {
++  try {
++    const body = (await response.json()) as { error_description?: unknown }
++    return typeof body.error_description === 'string' ? body.error_description : null
++  } catch {
++    return null
+   }
++}
+ 
+-  return { back }
++export function headers() {
++  return {
++    // The consent page must never be framed (clickjacking) or cached, and must not leak its URL.
++    'X-Frame-Options': 'DENY',
++    'Content-Security-Policy': "frame-ancestors 'none'",
++    'Cache-Control': 'no-store',
++    'Referrer-Policy': 'no-referrer',
++  }
+ }
+ 
+-export default function McpConnectPage() {
+-  const { back } = useLoaderData<typeof loader>()
+-  const { data, loading } = useQuery<MyOrganizationsQuery>(MyOrganizations)
++export async function loader({ request }: LoaderFunctionArgs): Promise<LoaderData> {
++  const url = new URL(request.url)
++  const requestId = url.searchParams.get('request')
++  if (!requestId) throw redirect('/')
++
++  const cookie = sessionCookieHeader(request)
++  if (!cookie) throw loginRedirect(url)
+ 
+-  const organizations = data?.myOrganizations ?? []
++  const response = await fetch(
++    `${serverApiBase()}/api/mcp/authorize/pending?request=${encodeURIComponent(requestId)}`,
++    { headers: { cookie, accept: 'application/json' } },
++  )
++  if (response.status === 401) throw loginRedirect(url)
++  if (!response.ok) {
++    const message = response.status === 404 ? EXPIRED_MESSAGE : await readError(response)
++    return { status: 'error', message: message ?? EXPIRED_MESSAGE }
++  }
++  return { status: 'ready', consent: (await response.json()) as McpConsentDetails }
++}
++
++export async function action({ request }: ActionFunctionArgs): Promise<ActionData | Response> {
++  const cookie = sessionCookieHeader(request)
++  if (!cookie) return loginRedirect(new URL(request.url))
+ 
+-  function selectOrg(orgId: string) {
+-    const separator = back.includes('?') ? '&' : '?'
+-    globalThis.location.href = `${back}${separator}org=${encodeURIComponent(orgId)}`
++  const form = await request.formData()
++  const field = (name: string) => {
++    const value = form.get(name)
++    return typeof value === 'string' ? value : undefined
+   }
+ 
++  const response = await fetch(`${serverApiBase()}/api/mcp/authorize/decision`, {
++    method: 'POST',
++    headers: { cookie, 'content-type': 'application/json', accept: 'application/json' },
++    body: JSON.stringify({
++      request: field('request'),
++      csrf_token: field('csrf_token'),
++      decision: field('decision'),
++      organization_id: field('organization_id'),
++    }),
++  })
++
++  if (response.ok) {
++    const body = (await response.json()) as { redirect_to?: unknown }
++    if (typeof body.redirect_to === 'string') return redirect(body.redirect_to)
++  }
++  return { error: (await readError(response)) ?? EXPIRED_MESSAGE }
++}
++
++function Card({ children }: Readonly<{ children: ReactNode }>) {
+   return (
+     <main className="min-h-dvh bg-zinc-950 flex items-center justify-center p-6">
+       <div className="w-full max-w-md rounded-xl bg-zinc-900 ring-1 ring-white/10 shadow-xl">
+-        <div className="p-8">
+-          <h1 className="text-base font-semibold text-white">Connect AI Assistant</h1>
+-          <p className="mt-1 text-sm text-zinc-400">
+-            Choose which organization to give your AI assistant access to.
+-          </p>
++        <div className="p-8">{children}</div>
++      </div>
++    </main>
++  )
++}
+ 
+-          <div className="mt-6 space-y-2">
+-            {loading && (
+-              <div className="flex items-center justify-center py-8 text-sm text-zinc-500">
+-                Loading organizations…
+-              </div>
+-            )}
+-
+-            {!loading && organizations.length === 0 && (
+-              <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-4 text-sm text-zinc-400 text-center">
+-                No organizations found. Create one first.
+-              </div>
+-            )}
+-
+-            {organizations.map(org => (
+-              <button
+-                key={org.id}
+-                onClick={() => selectOrg(org.id)}
+-                className="flex w-full items-center gap-4 rounded-lg px-4 py-3 text-left ring-1 ring-white/10 transition hover:ring-white/20 hover:bg-white/5 focus:outline-2 focus:-outline-offset-1 focus:outline-emerald-500"
+-              >
+-                {org.logo?.publicUrl ? (
+-                  <img
+-                    src={org.logo.publicUrl}
+-                    alt={org.name}
+-                    className="h-10 w-10 rounded-full object-cover flex-shrink-0"
+-                  />
+-                ) : (
+-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-zinc-700 text-sm font-semibold text-zinc-300">
+-                    {org.name.charAt(0).toUpperCase()}
+-                  </div>
+-                )}
+-                <p className="flex-1 text-sm font-medium text-white truncate">{org.name}</p>
+-                <svg
+-                  aria-hidden="true"
+-                  focusable="false"
+-                  className="h-4 w-4 flex-shrink-0 text-zinc-500"
+-                  fill="none"
+-                  stroke="currentColor"
+-                  viewBox="0 0 24 24"
+-                >
+-                  <path
+-                    strokeLinecap="round"
+-                    strokeLinejoin="round"
+-                    strokeWidth={2}
+-                    d="M9 5l7 7-7 7"
+-                  />
+-                </svg>
+-              </button>
+-            ))}
+-          </div>
++function ErrorState({ message }: Readonly<{ message: string }>) {
++  return (
++    <Card>
++      <div className="flex items-start gap-3">
++        <ExclamationTriangleIcon
++          aria-hidden="true"
++          className="h-6 w-6 flex-shrink-0 text-amber-400"
++        />
++        <div>
++          <h1 className="text-base font-semibold text-white">Can't connect AI assistant</h1>
++          <p className="mt-1 text-sm text-zinc-400">{message}</p>
+         </div>
+       </div>
+-    </main>
++    </Card>
++  )
++}
++
++function OrganizationChoice({ consent }: Readonly<{ consent: McpConsentDetails }>) {
++  const { organizations, selectedOrganizationId } = consent
++
++  if (organizations.length === 0) {
++    return (
++      <p className="text-sm text-zinc-300">
++        Your account only. You don't belong to an organization.
++      </p>
++    )
++  }
++
++  if (organizations.length === 1) {
++    const [org] = organizations
++    return (
++      <>
++        <input type="hidden" name="organization_id" value={org.id} />
++        <p className="text-sm font-medium text-white">{org.name}</p>
++      </>
++    )
++  }
++
++  return (
++    <fieldset className="space-y-2">
++      <legend className="sr-only">Organization</legend>
++      {organizations.map(org => (
++        <label
++          key={org.id}
++          className="flex w-full cursor-pointer items-center gap-4 rounded-lg px-4 py-3 ring-1 ring-white/10 transition hover:ring-white/20 hover:bg-white/5 has-[:checked]:ring-emerald-500"
++        >
++          <input
++            type="radio"
++            name="organization_id"
++            value={org.id}
++            required
++            defaultChecked={org.id === selectedOrganizationId}
++            className="h-4 w-4 accent-emerald-500"
++          />
++          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-zinc-700 text-sm font-semibold text-zinc-300">
++            {org.name.charAt(0).toUpperCase()}
++          </div>
++          <span className="flex-1 text-sm font-medium text-white truncate">{org.name}</span>
++        </label>
++      ))}
++    </fieldset>
++  )
++}
++
++export default function McpConnectPage() {
++  const data = useLoaderData<typeof loader>()
++  const actionData = useActionData<ActionData>()
++
++  // A failed decision has already used the request up, so its reason comes before the loader's.
++  if (actionData?.error) return <ErrorState message={actionData.error} />
++  if (data.status === 'error') return <ErrorState message={data.message} />
++
++  const { consent } = data
++  const accountLabel = consent.account.email ?? consent.account.name ?? 'your account'
++
++  return (
++    <Card>
++      <div className="flex items-center gap-3">
++        <ShieldCheckIcon aria-hidden="true" className="h-6 w-6 flex-shrink-0 text-emerald-400" />
++        <h1 className="text-base font-semibold text-white">Connect AI Assistant</h1>
++      </div>
++
++      <p className="mt-4 text-sm text-zinc-300">
++        <span className="font-semibold text-white">{consent.client.name}</span> wants access to your
++        account.
++      </p>
++      {!consent.client.verified && (
++        <p className="mt-1 text-xs text-amber-400">
++          Unverified: this name was supplied by the application itself and has not been checked.
++        </p>
++      )}
++
++      <div className="mt-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
++        <p className="text-xs font-medium uppercase tracking-wide text-amber-300">
++          Access will be sent to
++        </p>
++        <p className="mt-1 break-all text-lg font-semibold text-white">{consent.redirectHost}</p>
++        <p className="mt-1 break-all text-xs text-zinc-400">{consent.redirectUri}</p>
++        <p className="mt-2 text-xs text-zinc-400">
++          Only approve if you started this connection and recognise this address.
++        </p>
++      </div>
++
++      <form method="post" className="mt-6 space-y-6">
++        <input type="hidden" name="request" value={consent.request} />
++        <input type="hidden" name="csrf_token" value={consent.csrfToken} />
++
++        <div>
++          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Signed in as</p>
++          <p className="mt-1 text-sm font-medium text-white">{accountLabel}</p>
++        </div>
++
++        <div>
++          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
++            Organization it can access
++          </p>
++          <OrganizationChoice consent={consent} />
++        </div>
++
++        <p className="text-xs text-zinc-500">
++          Approving creates an API token that can act as you in this organization. You can revoke it
++          at any time in your settings.
++        </p>
++
++        <div className="flex gap-3">
++          <button
++            type="submit"
++            name="decision"
++            value="deny"
++            formNoValidate
++            className="flex-1 rounded-md px-3 py-2 text-sm font-semibold text-white ring-1 ring-white/20 hover:bg-white/5 focus:outline-2 focus:outline-offset-2 focus:outline-zinc-400"
++          >
++            Deny
++          </button>
++          <button
++            type="submit"
++            name="decision"
++            value="approve"
++            className="flex-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 focus:outline-2 focus:outline-offset-2 focus:outline-emerald-500"
++          >
++            Approve
++          </button>
++        </div>
++      </form>
++    </Card>
+   )
+ }
+diff --git a/apps/web/app/routes/settings/_mcp-shared.tsx b/apps/web/app/routes/settings/_mcp-shared.tsx
+index 55da97b..a2c4097 100644
+--- a/apps/web/app/routes/settings/_mcp-shared.tsx
++++ b/apps/web/app/routes/settings/_mcp-shared.tsx
+@@ -3,12 +3,15 @@ import type { FormEvent } from 'react'
+ import { ClipboardIcon, XMarkIcon } from '@heroicons/react/24/outline'
+ import { CheckIcon } from '@heroicons/react/24/solid'
+ 
+-export const apiBase = (
+-  (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3000'
+-)
+-  .replace(/\/graphql\/?$/, '')
+-  .replace(/\/api\/?$/, '')
+-  .replace(/\/$/, '')
++/** The API origin from a configured API URL, which may end in `/graphql` or `/api`. */
++export function toApiBase(apiUrl: string | undefined): string {
++  return (apiUrl || 'http://localhost:3000')
++    .replace(/\/graphql\/?$/, '')
++    .replace(/\/api\/?$/, '')
++    .replace(/\/$/, '')
++}
++
++export const apiBase = toApiBase(import.meta.env.VITE_API_URL as string | undefined)
+ 
+ export const MCP_SERVER_URL = `${apiBase}/api/mcp`
+ 
+diff --git a/apps/web/tests/routes/mcp-connect.spec.tsx b/apps/web/tests/routes/mcp-connect.spec.tsx
+new file mode 100644
+index 0000000..e2b74b2
+--- /dev/null
++++ b/apps/web/tests/routes/mcp-connect.spec.tsx
+@@ -0,0 +1,269 @@
++import React from 'react'
++import { render, screen } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import McpConnectPage, {
++  action,
++  headers,
++  loader,
++  type McpConsentDetails,
++} from '../../app/routes/mcp-connect'
++
++let loaderData: any = {}
++let actionData: any
++
++vi.mock('react-router', async importOriginal => {
++  const actual = await importOriginal<typeof import('react-router')>()
++  return {
++    ...actual,
++    useLoaderData: () => loaderData,
++    useActionData: () => actionData,
++  }
++})
++
++// Obviously fake placeholder; the API is mocked and never verifies it.
++const COOKIE = '__session=fake-session'
++
++const consent = (overrides: Partial<McpConsentDetails> = {}): McpConsentDetails => ({
++  request: 'req-1',
++  csrfToken: 'csrf-1',
++  expiresAt: '2026-01-01T00:00:00.000Z',
++  client: { name: 'Some MCP Client', verified: false },
++  redirectUri: 'https://client.example.com/callback',
++  redirectHost: 'client.example.com',
++  account: { name: 'Ada Lovelace', email: 'ada@example.com' },
++  organizations: [{ id: 'org-1', name: 'Acme' }],
++  selectedOrganizationId: null,
++  ...overrides,
++})
++
++const jsonResponse = (status: number, body: unknown) =>
++  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
++
++async function thrown(promise: Promise<unknown>): Promise<Response> {
++  try {
++    await promise
++  } catch (error) {
++    return error as Response
++  }
++  throw new Error('expected a thrown response')
++}
++
++describe('mcp-connect consent route', () => {
++  const fetchMock = vi.fn()
++
++  beforeEach(() => {
++    process.env.VITE_COOKIE_NAME = '__session'
++    process.env.VITE_API_URL = 'https://api.example.com'
++    vi.stubGlobal('fetch', fetchMock)
++    fetchMock.mockReset()
++    loaderData = {}
++    actionData = undefined
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++  })
++
++  describe('headers', () => {
++    it('forbids framing and caching', () => {
++      expect(headers()).toEqual(
++        expect.objectContaining({
++          'X-Frame-Options': 'DENY',
++          'Content-Security-Policy': "frame-ancestors 'none'",
++          'Cache-Control': 'no-store',
++        }),
++      )
++    })
++  })
++
++  describe('loader', () => {
++    it('sends a request with no pending id home', async () => {
++      const response = await thrown(
++        loader({ request: new Request('https://app.example.com/mcp-connect') } as any),
++      )
++      expect(response.headers.get('Location')).toBe('/')
++    })
++
++    it('sends a signed-out user to login and back', async () => {
++      const response = await thrown(
++        loader({
++          request: new Request('https://app.example.com/mcp-connect?request=req-1'),
++        } as any),
++      )
++      expect(response.headers.get('Location')).toBe(
++        `/login?return_url=${encodeURIComponent('/mcp-connect?request=req-1')}`,
++      )
++      expect(fetchMock).not.toHaveBeenCalled()
++    })
++
++    it('loads the pending request from the API with the session cookie', async () => {
++      fetchMock.mockResolvedValue(jsonResponse(200, consent()))
++      const result = await loader({
++        request: new Request('https://app.example.com/mcp-connect?request=req-1', {
++          headers: { cookie: COOKIE },
++        }),
++      } as any)
++
++      expect(fetchMock).toHaveBeenCalledWith(
++        'https://api.example.com/api/mcp/authorize/pending?request=req-1',
++        expect.objectContaining({ headers: expect.objectContaining({ cookie: COOKIE }) }),
++      )
++      expect(result).toEqual({ status: 'ready', consent: consent() })
++    })
++
++    it('reports an expired request', async () => {
++      fetchMock.mockResolvedValue(jsonResponse(404, { error: 'invalid_request' }))
++      const result = await loader({
++        request: new Request('https://app.example.com/mcp-connect?request=req-1', {
++          headers: { cookie: COOKIE },
++        }),
++      } as any)
++      expect(result).toEqual({ status: 'error', message: expect.stringContaining('expired') })
++    })
++
++    it('reports a request that belongs to another session', async () => {
++      fetchMock.mockResolvedValue(
++        jsonResponse(403, { error_description: 'belongs to a different session' }),
++      )
++      const result = await loader({
++        request: new Request('https://app.example.com/mcp-connect?request=req-1', {
++          headers: { cookie: COOKIE },
++        }),
++      } as any)
++      expect(result).toEqual({ status: 'error', message: 'belongs to a different session' })
++    })
++
++    it('sends the user to login when the API says the session is gone', async () => {
++      fetchMock.mockResolvedValue(jsonResponse(401, { error: 'login_required' }))
++      const response = await thrown(
++        loader({
++          request: new Request('https://app.example.com/mcp-connect?request=req-1', {
++            headers: { cookie: COOKIE },
++          }),
++        } as any),
++      )
++      expect(response.headers.get('Location')).toContain('/login?return_url=')
++    })
++  })
++
++  describe('action', () => {
++    const post = (fields: Record<string, string>, cookie: string | null = COOKIE) =>
++      new Request('https://app.example.com/mcp-connect?request=req-1', {
++        method: 'POST',
++        headers: cookie ? { cookie } : {},
++        body: new URLSearchParams(fields),
++      })
++
++    it('forwards the decision and CSRF token, then follows the API redirect', async () => {
++      fetchMock.mockResolvedValue(
++        jsonResponse(200, { redirect_to: 'https://client.example.com/callback?code=c&state=s' }),
++      )
++
++      const response = (await action({
++        request: post({
++          request: 'req-1',
++          csrf_token: 'csrf-1',
++          decision: 'approve',
++          organization_id: 'org-1',
++        }),
++      } as any)) as Response
++
++      const [url, init] = fetchMock.mock.calls[0]
++      expect(url).toBe('https://api.example.com/api/mcp/authorize/decision')
++      expect(init.method).toBe('POST')
++      expect(init.headers.cookie).toBe(COOKIE)
++      expect(JSON.parse(init.body)).toEqual({
++        request: 'req-1',
++        csrf_token: 'csrf-1',
++        decision: 'approve',
++        organization_id: 'org-1',
++      })
++      expect(response.status).toBe(302)
++      expect(response.headers.get('Location')).toBe(
++        'https://client.example.com/callback?code=c&state=s',
++      )
++    })
++
++    it('shows the API error when the decision is refused', async () => {
++      fetchMock.mockResolvedValue(
++        jsonResponse(403, { error_description: 'Invalid or missing CSRF token' }),
++      )
++      const result = await action({
++        request: post({ request: 'req-1', csrf_token: 'nope', decision: 'approve' }),
++      } as any)
++      expect(result).toEqual({ error: 'Invalid or missing CSRF token' })
++    })
++
++    it('does not call the API without a session', async () => {
++      const response = (await action({
++        request: post({ request: 'req-1', decision: 'approve' }, null),
++      } as any)) as Response
++      expect(response.headers.get('Location')).toContain('/login?return_url=')
++      expect(fetchMock).not.toHaveBeenCalled()
++    })
++  })
++
++  describe('page', () => {
++    it('shows the unverified client, the redirect host, the account and the organization', () => {
++      loaderData = { status: 'ready', consent: consent() }
++      render(<McpConnectPage />)
++
++      expect(screen.getByText('Some MCP Client')).toBeInTheDocument()
++      expect(screen.getByText(/Unverified/)).toBeInTheDocument()
++      expect(screen.getByText('client.example.com')).toBeInTheDocument()
++      expect(screen.getByText('ada@example.com')).toBeInTheDocument()
++      expect(screen.getByText('Acme')).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'Approve' })).toHaveAttribute('value', 'approve')
++      expect(screen.getByRole('button', { name: 'Deny' })).toHaveAttribute('value', 'deny')
++
++      const form = screen
++        .getByRole('button', { name: 'Approve' })
++        .closest('form') as HTMLFormElement
++      expect(form.method).toBe('post')
++      const fields = new FormData(form)
++      expect(fields.get('request')).toBe('req-1')
++      expect(fields.get('csrf_token')).toBe('csrf-1')
++      expect(fields.get('organization_id')).toBe('org-1')
++    })
++
++    it('lets a multi-organization user choose, preselecting a requested organization', () => {
++      loaderData = {
++        status: 'ready',
++        consent: consent({
++          organizations: [
++            { id: 'org-1', name: 'Acme' },
++            { id: 'org-2', name: 'Globex' },
++          ],
++          selectedOrganizationId: 'org-2',
++        }),
++      }
++      render(<McpConnectPage />)
++
++      const radios = screen.getAllByRole('radio') as HTMLInputElement[]
++      expect(radios.map(r => r.value)).toEqual(['org-1', 'org-2'])
++      expect(radios.map(r => r.checked)).toEqual([false, true])
++      expect(radios.every(r => r.required)).toBe(true)
++    })
++
++    it('tells an organization-less user only their account is shared', () => {
++      loaderData = { status: 'ready', consent: consent({ organizations: [] }) }
++      render(<McpConnectPage />)
++      expect(screen.getByText(/You don't belong to an organization/)).toBeInTheDocument()
++      expect(screen.queryByRole('radio')).not.toBeInTheDocument()
++    })
++
++    it('shows the loader error and no form', () => {
++      loaderData = { status: 'error', message: 'This connection request has expired.' }
++      render(<McpConnectPage />)
++      expect(screen.getByText('This connection request has expired.')).toBeInTheDocument()
++      expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
++    })
++
++    it('shows a refused decision ahead of the loader result', () => {
++      loaderData = { status: 'error', message: 'expired' }
++      actionData = { error: 'Invalid or missing CSRF token' }
++      render(<McpConnectPage />)
++      expect(screen.getByText('Invalid or missing CSRF token')).toBeInTheDocument()
++    })
++  })
++})
+diff --git a/apps/web/tests/routes/sonar-coverage-routes.spec.tsx b/apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+index ffdfc83..4cca851 100644
+--- a/apps/web/tests/routes/sonar-coverage-routes.spec.tsx
++++ b/apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
+ import { createTestRouter } from '../helpers/createTestRouter'
+ import AdminAnalyticsPage from '../../app/routes/admin/analytics/_index'
+ import ForceLogoutRoute, { loader as forceLogoutLoader } from '../../app/routes/force-logout'
+-import McpConnectPage, { loader as mcpConnectLoader } from '../../app/routes/mcp-connect'
+ 
+ const useQuery = vi.fn()
+ let loaderData: any = {}
+@@ -26,7 +25,6 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
+   return {
+     ...actual,
+     AdminAnalytics: { kind: 'Document', definitions: [] },
+-    MyOrganizations: { kind: 'Document', definitions: [] },
+   }
+ })
+ 
+@@ -52,30 +50,6 @@ describe('additional route coverage', () => {
+     expect(container.innerHTML).toBe('')
+   })
+ 
+-  it('loads and renders MCP organization selection', async () => {
+-    const tokenPayload = Buffer.from(JSON.stringify({ iat: 1 })).toString('base64url')
+-    const request = new Request(
+-      'https://app.example.com/mcp-connect?back=https://mcp.example.com/cb',
+-      {
+-        headers: { cookie: `__session=header.${tokenPayload}.signature` },
+-      },
+-    )
+-
+-    await expect(mcpConnectLoader({ request, params: {}, context: {} } as any)).resolves.toEqual({
+-      back: 'https://mcp.example.com/cb',
+-    })
+-
+-    loaderData = { back: 'https://mcp.example.com/cb' }
+-    useQuery.mockReturnValue({
+-      data: { myOrganizations: [{ id: 'org-1', name: 'Acme', logo: null }] },
+-      loading: false,
+-    })
+-
+-    render(<McpConnectPage />)
+-    fireEvent.click(screen.getByRole('button', { name: /Acme/ }))
+-    expect(screen.getByRole('button', { name: /Acme/ })).toBeInTheDocument()
+-  })
+-
+   it('renders admin analytics metrics and errors', () => {
+     const refetch = vi.fn()
+     useQuery.mockReturnValue({
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+index ba8c136..75aa46e 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+@@ -1,274 +1,597 @@
+ import { ConfigService } from '@nestjs/config'
+ import { JwtService } from '@nestjs/jwt'
++import { createHash } from 'node:crypto'
+ import { McpOAuthController } from './mcp-oauth.controller'
+ import { McpOAuthService } from './mcp-oauth.service'
++import { ApiTokensService } from '../api-tokens/api-tokens.service'
++import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
++
++// Obviously fake placeholders: the session "cookie" is never a real token, the JWT service is
++// mocked to map it to claims.
++const SESSION_COOKIE = 'fake-session'
++const OTHER_SESSION_COOKIE = 'fake-other-session'
++const VERIFIER = 'fake-pkce-verifier-for-tests-only-0000000000000'
++const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url')
++const REDIRECT_URI = 'https://client.example.com/callback'
++
++type Claims = {
++  userId: string
++  sessionId?: string
++  authGeneration?: number
++  isEmulating?: boolean
++  originalAdminId?: string
++}
+ 
+ describe('McpOAuthController', () => {
+   let controller: McpOAuthController
+-  let oauth: jest.Mocked<McpOAuthService>
+-  let config: jest.Mocked<ConfigService>
+-  let jwtService: jest.Mocked<JwtService>
++  let oauth: McpOAuthService
++  let data: any
++  let apiTokens: { generateApiToken: jest.Mock }
++  let jwtService: { verify: jest.Mock }
++  let sessions: Record<string, Claims>
++  let memberships: Array<{ organization: { id: string; name: string } }>
++  let clientId: string
+ 
+-  const req = {
+-    cookies: {},
+-  } as any
++  const createResponse = () => {
++    const res: any = {
++      status: jest.fn(() => res),
++      json: jest.fn(() => res),
++      redirect: jest.fn(() => res),
++      setHeader: jest.fn(() => res),
++    }
++    return res
++  }
++
++  const requestWith = (cookie?: string) =>
++    ({
++      cookies: cookie ? { __session: cookie } : {},
++      protocol: 'https',
++      get: (name: string) => (name === 'host' ? 'api.example.com' : undefined),
++    }) as any
+ 
+-  const createResponse = () =>
++  const authorizeQuery = (overrides: Record<string, string | undefined> = {}) =>
+     ({
+-      status: jest.fn().mockReturnThis(),
+-      json: jest.fn().mockReturnThis(),
+-      redirect: jest.fn().mockReturnThis(),
++      client_id: clientId,
++      redirect_uri: REDIRECT_URI,
++      code_challenge: CHALLENGE,
++      code_challenge_method: 'S256',
++      state: 'state-123',
++      ...overrides,
+     }) as any
+ 
++  /** Runs /authorize for the signed-in session and returns the pending request id it created. */
++  async function startAuthorization(cookie = SESSION_COOKIE, overrides = {}): Promise<string> {
++    const res = createResponse()
++    await controller.authorize(authorizeQuery(overrides), requestWith(cookie), res)
++    const location = res.redirect.mock.calls[0]?.[0] as string
++    expect(location).toMatch(/^https:\/\/app\.example\.com\/mcp-connect\?request=/)
++    return new URL(location).searchParams.get('request') as string
++  }
++
++  async function readPending(requestId: string, cookie = SESSION_COOKIE) {
++    const res = createResponse()
++    await controller.getPendingAuthorization(requestId, requestWith(cookie), res)
++    return res
++  }
++
++  async function decide(body: Record<string, unknown>, cookie = SESSION_COOKIE) {
++    const res = createResponse()
++    await controller.decideAuthorization(body, requestWith(cookie), res)
++    return res
++  }
++
+   beforeEach(() => {
+-    oauth = {
+-      getMcpBaseUrl: jest.fn().mockReturnValue('https://api.example.com/mcp'),
+-      registerClient: jest.fn().mockReturnValue({
+-        clientId: 'client-123',
+-        clientName: 'MCP Client',
+-        redirectUris: ['https://client.example.com/callback'],
+-      }),
+-      getClient: jest.fn(),
+-      validateOrgMembership: jest.fn(),
+-      countUserOrganizations: jest.fn(),
+-      resolveOrganizationId: jest.fn(),
+-      createAuthCode: jest.fn().mockReturnValue('auth-code-123'),
+-      consumeAuthCode: jest.fn(),
+-      verifyPkce: jest.fn(),
+-      createAccessToken: jest.fn(),
+-      isSessionTokenCurrent: jest.fn().mockResolvedValue(true),
+-    } as any
+-    config = {
++    sessions = {
++      [SESSION_COOKIE]: { userId: 'user-123', sessionId: 'session-1', authGeneration: 3 },
++      [OTHER_SESSION_COOKIE]: { userId: 'user-123', sessionId: 'session-2', authGeneration: 3 },
++    }
++    memberships = [{ organization: { id: 'org-123', name: 'Acme' } }]
++    data = {
++      user: {
++        findUnique: jest.fn(({ select }: any) =>
++          select.emails
++            ? { firstName: 'Ada', lastName: 'Lovelace', emails: [{ email: 'ada@example.com' }] }
++            : { id: 'user-123', authGeneration: 3 },
++        ),
++      },
++      userSession: {
++        findUnique: jest.fn().mockResolvedValue({ isValid: true, userId: 'user-123' }),
++      },
++      organizationMember: {
++        findMany: jest.fn(async () => memberships),
++        findFirst: jest.fn(async ({ where }: any) =>
++          memberships.some(m => m.organization.id === where.organizationId) ? { id: 'm-1' } : null,
++        ),
++      },
++    }
++    apiTokens = { generateApiToken: jest.fn().mockResolvedValue({ token: 'fake-api-token' }) }
++    const config = {
+       get: jest.fn((key: string) => (key === 'siteUrl' ? 'https://app.example.com' : undefined)),
+-    } as any
++    } as unknown as ConfigService
+     jwtService = {
+-      verify: jest.fn(),
+-    } as any
+-    controller = new McpOAuthController(oauth, config, jwtService)
+-  })
+-
+-  it('returns OAuth metadata and protected resource metadata', () => {
+-    expect(controller.getOidcConfig(req)).toEqual(
+-      expect.objectContaining({
+-        issuer: 'https://api.example.com/mcp',
+-        authorization_endpoint: 'https://api.example.com/mcp/authorize',
+-        token_endpoint: 'https://api.example.com/mcp/token',
+-      }),
+-    )
+-    expect(controller.getOAuthServerMetadata(req)).toEqual(
+-      expect.objectContaining({
+-        registration_endpoint: 'https://api.example.com/mcp/register',
++      verify: jest.fn((token: string) => {
++        const claims = sessions[token]
++        if (!claims) throw new Error('invalid token')
++        return claims
+       }),
++    }
++    oauth = new McpOAuthService(
++      config,
++      apiTokens as unknown as ApiTokensService,
++      data as ApiCoreDataAccessService,
+     )
+-    expect(controller.getProtectedResourceMetadata(req)).toEqual({
+-      resource: 'https://api.example.com/mcp',
+-      authorization_servers: ['https://api.example.com/mcp'],
+-      bearer_methods_supported: ['header'],
+-    })
+-    expect(controller.getJwks()).toEqual({ keys: [] })
++    controller = new McpOAuthController(oauth, config, jwtService as unknown as JwtService)
++    clientId = oauth.registerClient('Some MCP Client', [REDIRECT_URI]).clientId
+   })
+ 
+-  it('registers dynamic clients with defaults', () => {
+-    const result = controller.register({})
++  describe('discovery and registration', () => {
++    it('returns OAuth metadata and protected resource metadata', () => {
++      const req = requestWith()
++      expect(controller.getOidcConfig(req)).toEqual(
++        expect.objectContaining({
++          issuer: 'https://api.example.com/api/mcp',
++          authorization_endpoint: 'https://api.example.com/api/mcp/authorize',
++          token_endpoint: 'https://api.example.com/api/mcp/token',
++          code_challenge_methods_supported: ['S256'],
++        }),
++      )
++      expect(controller.getOAuthServerMetadata(req)).toEqual(
++        expect.objectContaining({
++          registration_endpoint: 'https://api.example.com/api/mcp/register',
++        }),
++      )
++      expect(controller.getProtectedResourceMetadata(req)).toEqual({
++        resource: 'https://api.example.com/api/mcp',
++        authorization_servers: ['https://api.example.com/api/mcp'],
++        bearer_methods_supported: ['header'],
++      })
++      expect(controller.getJwks()).toEqual({ keys: [] })
++    })
+ 
+-    expect(oauth.registerClient).toHaveBeenCalledWith('MCP Client', [])
+-    expect(result).toEqual(
+-      expect.objectContaining({
+-        client_id: 'client-123',
+-        client_name: 'MCP Client',
+-        token_endpoint_auth_method: 'none',
+-      }),
+-    )
++    it('registers dynamic clients with defaults', () => {
++      const result = controller.register({})
++      expect(result).toEqual(
++        expect.objectContaining({
++          client_name: 'MCP Client',
++          redirect_uris: [],
++          token_endpoint_auth_method: 'none',
++        }),
++      )
++    })
+   })
+ 
+-  it('rejects authorize requests with missing required parameters', async () => {
+-    const res = createResponse()
++  describe('authorize', () => {
++    it('rejects requests with missing required parameters', async () => {
++      const res = createResponse()
++      await controller.authorize({ client_id: clientId } as any, requestWith(SESSION_COOKIE), res)
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
++    })
+ 
+-    await controller.authorize({ client_id: 'client-123' } as any, req, res)
++    it.each([
++      ['plain', { code_challenge_method: 'plain', code_challenge: VERIFIER }],
++      ['a missing code_challenge_method', { code_challenge_method: undefined }],
++      ['a missing code_challenge', { code_challenge: undefined }],
++      ['a malformed code_challenge', { code_challenge: 'short' }],
++    ])('rejects PKCE with %s as invalid_request', async (_label, overrides) => {
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(overrides), requestWith(SESSION_COOKIE), res)
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
++      expect(res.redirect).not.toHaveBeenCalled()
++    })
+ 
+-    expect(res.status).toHaveBeenCalledWith(400)
+-    expect(res.json).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        error: 'invalid_request',
+-      }),
+-    )
+-  })
++    it('rejects a repeated parameter', async () => {
++      const res = createResponse()
++      await controller.authorize(
++        authorizeQuery({ redirect_uri: [REDIRECT_URI, 'https://evil.example.com/cb'] as any }),
++        requestWith(SESSION_COOKIE),
++        res,
++      )
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.redirect).not.toHaveBeenCalled()
++    })
+ 
+-  it('redirects unauthenticated users to login with the authorize URL', async () => {
+-    const res = createResponse()
+-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+-
+-    await controller.authorize(
+-      {
+-        client_id: 'client-123',
+-        redirect_uri: 'https://client.example.com/callback',
+-        code_challenge: 'challenge',
+-        state: 'state-123',
+-      },
+-      req,
+-      res,
+-    )
++    it('rejects an unknown client', async () => {
++      const res = createResponse()
++      await controller.authorize(
++        authorizeQuery({ client_id: 'unknown' }),
++        requestWith(SESSION_COOKIE),
++        res,
++      )
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_client' }))
++    })
+ 
+-    expect(res.redirect).toHaveBeenCalledWith(
+-      expect.stringContaining('https://app.example.com/login?redirect='),
+-    )
+-  })
++    it('rejects a redirect_uri with a script scheme', async () => {
++      const res = createResponse()
++      await controller.authorize(
++        authorizeQuery({ redirect_uri: 'javascript:alert(1)' }),
++        requestWith(SESSION_COOKIE),
++        res,
++      )
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.redirect).not.toHaveBeenCalled()
++    })
+ 
+-  it('issues an auth code for a valid authenticated user and organization', async () => {
+-    const res = createResponse()
+-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+-    oauth.validateOrgMembership.mockResolvedValue(true)
+-    jwtService.verify.mockReturnValue({ userId: 'user-123', authGeneration: 3 } as any)
+-
+-    await controller.authorize(
+-      {
+-        client_id: 'client-123',
+-        redirect_uri: 'https://client.example.com/callback',
+-        code_challenge: 'challenge',
+-        org: 'org-123',
+-      },
+-      { ...req, cookies: { __session: 'cookie-token' } } as any,
+-      res,
+-    )
++    it('redirects unauthenticated users to login with the authorize URL', async () => {
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(), requestWith(), res)
++      const location = res.redirect.mock.calls[0][0] as string
++      expect(location).toContain('https://app.example.com/login?redirect=')
++      const back = new URL(new URL(location).searchParams.get('redirect') as string)
++      expect(back.searchParams.get('code_challenge_method')).toBe('S256')
++      expect(back.searchParams.get('state')).toBe('state-123')
++    })
+ 
+-    expect(oauth.createAuthCode).toHaveBeenCalledWith(
+-      expect.objectContaining({
++    it('sends the user to login when the cookie session is no longer current', async () => {
++      data.userSession.findUnique.mockResolvedValue({ isValid: false, userId: 'user-123' })
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
++      expect(res.redirect).toHaveBeenCalledWith(
++        expect.stringContaining('https://app.example.com/login?redirect='),
++      )
++    })
++
++    it('refuses to authorize a client from an emulation session', async () => {
++      sessions[SESSION_COOKIE] = {
+         userId: 'user-123',
+-        authGeneration: 3,
+-        organizationId: 'org-123',
+-        clientId: 'client-123',
+-      }),
+-    )
+-    expect(res.redirect).toHaveBeenCalledWith(
+-      'https://client.example.com/callback?code=auth-code-123',
+-    )
+-  })
++        sessionId: 'emulation-session',
++        isEmulating: true,
++        originalAdminId: 'admin-1',
++      }
++      // The emulation session itself is current; what is refused is authorizing from it.
++      jest.spyOn(oauth, 'isSessionTokenCurrent').mockResolvedValue(true)
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
++      expect(res.status).toHaveBeenCalledWith(403)
++      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'access_denied' }))
++      expect(res.redirect).not.toHaveBeenCalled()
++    })
+ 
+-  it('refuses to authorize a client from an emulation session', async () => {
+-    const res = createResponse()
+-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+-    oauth.validateOrgMembership.mockResolvedValue(true)
+-    jwtService.verify.mockReturnValue({
+-      userId: 'user-123',
+-      sessionId: 'emulation-session',
+-      isEmulating: true,
+-      originalAdminId: 'admin-1',
+-    } as any)
+-
+-    await controller.authorize(
+-      {
+-        client_id: 'client-123',
+-        redirect_uri: 'https://client.example.com/callback',
+-        code_challenge: 'challenge',
+-        org: 'org-123',
+-      },
+-      { ...req, cookies: { __session: 'cookie-token' } } as any,
+-      res,
+-    )
++    it('rejects an org= the user does not belong to', async () => {
++      const res = createResponse()
++      await controller.authorize(
++        authorizeQuery({ org: 'org-other' }),
++        requestWith(SESSION_COOKIE),
++        res,
++      )
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.redirect).not.toHaveBeenCalled()
++    })
++
++    it.each([
++      ['single-organization', [{ organization: { id: 'org-123', name: 'Acme' } }]],
++      [
++        'multi-organization',
++        [
++          { organization: { id: 'org-123', name: 'Acme' } },
++          { organization: { id: 'org-456', name: 'Globex' } },
++        ],
++      ],
++      ['organization-less', []],
++    ])('issues no code to a %s user without approval', async (_label, orgs) => {
++      memberships = orgs
++      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
++      const res = createResponse()
+ 
+-    expect(oauth.createAuthCode).not.toHaveBeenCalled()
+-    expect(res.status).toHaveBeenCalledWith(403)
+-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'access_denied' }))
++      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
++
++      expect(createAuthCode).not.toHaveBeenCalled()
++      const location = res.redirect.mock.calls[0][0] as string
++      expect(location).toMatch(/^https:\/\/app\.example\.com\/mcp-connect\?request=[\w-]{43}$/)
++      expect(location).not.toContain(REDIRECT_URI)
++      expect(location).not.toContain('code=')
++    })
+   })
+ 
+-  it('sends the user to login when the cookie session is no longer current', async () => {
+-    const res = createResponse()
+-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+-    oauth.validateOrgMembership.mockResolvedValue(true)
+-    jwtService.verify.mockReturnValue({ userId: 'user-123', sessionId: 'session-1' } as any)
+-    oauth.isSessionTokenCurrent.mockResolvedValue(false)
+-
+-    await controller.authorize(
+-      {
+-        client_id: 'client-123',
+-        redirect_uri: 'https://client.example.com/callback',
+-        code_challenge: 'challenge',
+-        org: 'org-123',
+-      },
+-      { ...req, cookies: { __session: 'cookie-token' } } as any,
+-      res,
+-    )
++  describe('pending authorization details', () => {
++    it('shows the client as unverified, the redirect host, the account and the organizations', async () => {
++      const requestId = await startAuthorization(SESSION_COOKIE, { org: 'org-123' })
++      const res = await readPending(requestId)
+ 
+-    expect(oauth.isSessionTokenCurrent).toHaveBeenCalledWith({
+-      userId: 'user-123',
+-      sessionId: 'session-1',
++      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store')
++      expect(res.json).toHaveBeenCalledWith(
++        expect.objectContaining({
++          request: requestId,
++          csrfToken: expect.any(String),
++          client: { name: 'Some MCP Client', verified: false },
++          redirectUri: REDIRECT_URI,
++          redirectHost: 'client.example.com',
++          account: { name: 'Ada Lovelace', email: 'ada@example.com' },
++          organizations: [{ id: 'org-123', name: 'Acme' }],
++          selectedOrganizationId: 'org-123',
++        }),
++      )
++    })
++
++    it('requires a session', async () => {
++      const requestId = await startAuthorization()
++      const res = await readPending(requestId, '')
++      expect(res.status).toHaveBeenCalledWith(401)
++    })
++
++    it('is not shown to a different session of the same user', async () => {
++      const requestId = await startAuthorization()
++      const res = await readPending(requestId, OTHER_SESSION_COOKIE)
++      expect(res.status).toHaveBeenCalledWith(403)
++      expect(res.json).not.toHaveBeenCalledWith(
++        expect.objectContaining({ csrfToken: expect.anything() }),
++      )
++    })
++
++    it('answers 404 for an unknown or expired request', async () => {
++      expect((await readPending('no-such-request')).status).toHaveBeenCalledWith(404)
++
++      const requestId = await startAuthorization()
++      const later = Date.now() + oauth.PENDING_TTL_MS + 1000
++      const now = jest.spyOn(Date, 'now').mockReturnValue(later)
++      try {
++        expect((await readPending(requestId)).status).toHaveBeenCalledWith(404)
++      } finally {
++        now.mockRestore()
++      }
+     })
+-    expect(oauth.createAuthCode).not.toHaveBeenCalled()
+-    expect(res.redirect).toHaveBeenCalledWith(
+-      expect.stringContaining('https://app.example.com/login?redirect='),
+-    )
+   })
+ 
+-  it('redirects multi-organization users to organization selection', async () => {
+-    const res = createResponse()
+-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+-    oauth.countUserOrganizations.mockResolvedValue(2)
+-    jwtService.verify.mockReturnValue({ userId: 'user-123' } as any)
+-
+-    await controller.authorize(
+-      {
+-        client_id: 'client-123',
+-        redirect_uri: 'https://client.example.com/callback',
+-        code_challenge: 'challenge',
+-      },
+-      { ...req, cookies: { __session: 'cookie-token' } } as any,
+-      res,
+-    )
++  describe('decision', () => {
++    async function pendingWithCsrf(cookie = SESSION_COOKIE) {
++      const requestId = await startAuthorization(cookie)
++      const res = await readPending(requestId, cookie)
++      return { requestId, csrfToken: res.json.mock.calls[0][0].csrfToken as string }
++    }
+ 
+-    expect(res.redirect).toHaveBeenCalledWith(
+-      expect.stringContaining('https://app.example.com/mcp-connect?back='),
+-    )
+-    expect(oauth.createAuthCode).not.toHaveBeenCalled()
++    it('redirects a denial with access_denied and the state', async () => {
++      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
++      const { requestId, csrfToken } = await pendingWithCsrf()
++
++      const res = await decide({ request: requestId, csrf_token: csrfToken, decision: 'deny' })
++
++      expect(createAuthCode).not.toHaveBeenCalled()
++      expect(res.json).toHaveBeenCalledWith({
++        redirect_to: `${REDIRECT_URI}?error=access_denied&state=state-123`,
++      })
++    })
++
++    it('rejects approval without a pending record', async () => {
++      const res = await decide({ request: 'no-such-request', csrf_token: 'x', decision: 'approve' })
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.json).not.toHaveBeenCalledWith(
++        expect.objectContaining({ redirect_to: expect.anything() }),
++      )
++    })
++
++    it.each([
++      ['a missing CSRF token', undefined],
++      ['a wrong CSRF token', 'fake-wrong-csrf-token'],
++    ])('rejects approval with %s', async (_label, csrf) => {
++      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
++      const { requestId } = await pendingWithCsrf()
++
++      const res = await decide({
++        request: requestId,
++        csrf_token: csrf,
++        decision: 'approve',
++        organization_id: 'org-123',
++      })
++
++      expect(res.status).toHaveBeenCalledWith(403)
++      expect(createAuthCode).not.toHaveBeenCalled()
++    })
++
++    it('rejects approval without a session', async () => {
++      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
++      const { requestId, csrfToken } = await pendingWithCsrf()
++
++      const res = await decide(
++        {
++          request: requestId,
++          csrf_token: csrfToken,
++          decision: 'approve',
++          organization_id: 'org-123',
++        },
++        '',
++      )
++
++      expect(res.status).toHaveBeenCalledWith(401)
++      expect(createAuthCode).not.toHaveBeenCalled()
++    })
++
++    it('rejects approval from a session other than the one that made the request', async () => {
++      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
++      const { requestId, csrfToken } = await pendingWithCsrf()
++
++      const res = await decide(
++        {
++          request: requestId,
++          csrf_token: csrfToken,
++          decision: 'approve',
++          organization_id: 'org-123',
++        },
++        OTHER_SESSION_COOKIE,
++      )
++
++      expect(res.status).toHaveBeenCalledWith(403)
++      expect(createAuthCode).not.toHaveBeenCalled()
++    })
++
++    it('rejects approval from an emulation session', async () => {
++      const { requestId, csrfToken } = await pendingWithCsrf()
++      sessions[SESSION_COOKIE] = {
++        ...sessions[SESSION_COOKIE],
++        isEmulating: true,
++        originalAdminId: 'admin-1',
++      }
++      jest.spyOn(oauth, 'isSessionTokenCurrent').mockResolvedValue(true)
++
++      const res = await decide({ request: requestId, csrf_token: csrfToken, decision: 'approve' })
++
++      expect(res.status).toHaveBeenCalledWith(403)
++    })
++
++    it('cannot be replayed', async () => {
++      const { requestId, csrfToken } = await pendingWithCsrf()
++      const body = {
++        request: requestId,
++        csrf_token: csrfToken,
++        decision: 'approve',
++        organization_id: 'org-123',
++      }
++
++      const first = await decide(body)
++      expect(first.json).toHaveBeenCalledWith({ redirect_to: expect.stringContaining('code=') })
++
++      const second = await decide(body)
++      expect(second.status).toHaveBeenCalledWith(400)
++      expect(second.json).not.toHaveBeenCalledWith(
++        expect.objectContaining({ redirect_to: expect.anything() }),
++      )
++    })
++
++    it('is used up by a failed attempt, so a guessed CSRF token cannot be retried', async () => {
++      const { requestId, csrfToken } = await pendingWithCsrf()
++      await decide({ request: requestId, csrf_token: 'fake-guess', decision: 'approve' })
++
++      const res = await decide({
++        request: requestId,
++        csrf_token: csrfToken,
++        decision: 'approve',
++        organization_id: 'org-123',
++      })
++
++      expect(res.status).toHaveBeenCalledWith(400)
++    })
++
++    it('rejects an organization the user does not belong to', async () => {
++      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
++      const { requestId, csrfToken } = await pendingWithCsrf()
++
++      const res = await decide({
++        request: requestId,
++        csrf_token: csrfToken,
++        decision: 'approve',
++        organization_id: 'org-other',
++      })
++
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(createAuthCode).not.toHaveBeenCalled()
++    })
++
++    it('rejects an unknown decision', async () => {
++      const { requestId, csrfToken } = await pendingWithCsrf()
++      const res = await decide({ request: requestId, csrf_token: csrfToken, decision: 'yes' })
++      expect(res.status).toHaveBeenCalledWith(400)
++    })
+   })
+ 
+-  it('rejects token requests with invalid grant data', async () => {
+-    const res = createResponse()
++  describe('full flow', () => {
++    async function approveAndExchange(organizationId: string | undefined) {
++      const requestId = await startAuthorization()
++      const pending = await readPending(requestId)
++      const { csrfToken } = pending.json.mock.calls[0][0]
+ 
+-    await controller.token({ grant_type: 'client_credentials' }, res)
+-    expect(res.status).toHaveBeenCalledWith(400)
+-    expect(res.json).toHaveBeenCalledWith({ error: 'unsupported_grant_type' })
++      const decision = await decide({
++        request: requestId,
++        csrf_token: csrfToken,
++        decision: 'approve',
++        organization_id: organizationId,
++      })
++      const redirectTo = new URL(decision.json.mock.calls[0][0].redirect_to)
++      expect(`${redirectTo.origin}${redirectTo.pathname}`).toBe(REDIRECT_URI)
++      expect(redirectTo.searchParams.get('state')).toBe('state-123')
++      const code = redirectTo.searchParams.get('code') as string
++      expect(code).toBeTruthy()
+ 
+-    jest.clearAllMocks()
+-    await controller.token({ grant_type: 'authorization_code' }, res)
+-    expect(res.status).toHaveBeenCalledWith(400)
+-    expect(res.json).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        error: 'invalid_request',
+-      }),
+-    )
++      const tokenRes = createResponse()
++      await controller.token(
++        {
++          grant_type: 'authorization_code',
++          code,
++          redirect_uri: REDIRECT_URI,
++          code_verifier: VERIFIER,
++          client_id: clientId,
++        },
++        tokenRes,
++      )
++      return tokenRes
++    }
++
++    it('issues a code on approval and exchanges it for a token', async () => {
++      const tokenRes = await approveAndExchange('org-123')
++
++      expect(apiTokens.generateApiToken).toHaveBeenCalledWith(
++        'user-123',
++        expect.objectContaining({ organizationId: 'org-123' }),
++        3,
++      )
++      expect(tokenRes.json).toHaveBeenCalledWith({
++        access_token: 'fake-api-token',
++        token_type: 'bearer',
++        scope: 'openid',
++      })
++    })
++
++    it('lets a multi-organization user choose the organization', async () => {
++      memberships = [
++        { organization: { id: 'org-123', name: 'Acme' } },
++        { organization: { id: 'org-456', name: 'Globex' } },
++      ]
++      await approveAndExchange('org-456')
++      expect(apiTokens.generateApiToken).toHaveBeenCalledWith(
++        'user-123',
++        expect.objectContaining({ organizationId: 'org-456' }),
++        3,
++      )
++    })
++
++    it('grants an organization-less user a token with no organization', async () => {
++      memberships = []
++      await approveAndExchange(undefined)
++      expect(apiTokens.generateApiToken).toHaveBeenCalledWith(
++        'user-123',
++        expect.objectContaining({ organizationId: undefined }),
++        3,
++      )
++    })
++
++    it('refuses the code with the wrong PKCE verifier', async () => {
++      const requestId = await startAuthorization()
++      const { csrfToken } = (await readPending(requestId)).json.mock.calls[0][0]
++      const decision = await decide({
++        request: requestId,
++        csrf_token: csrfToken,
++        decision: 'approve',
++        organization_id: 'org-123',
++      })
++      const code = new URL(decision.json.mock.calls[0][0].redirect_to).searchParams.get('code')
++
++      const tokenRes = createResponse()
++      await controller.token(
++        {
++          grant_type: 'authorization_code',
++          code: code as string,
++          redirect_uri: REDIRECT_URI,
++          code_verifier: 'fake-wrong-verifier',
++          client_id: clientId,
++        },
++        tokenRes,
++      )
++      expect(tokenRes.status).toHaveBeenCalledWith(400)
++      expect(apiTokens.generateApiToken).not.toHaveBeenCalled()
++    })
+   })
+ 
+-  it('exchanges a valid authorization code for an access token', async () => {
+-    const res = createResponse()
+-    oauth.consumeAuthCode.mockReturnValue({
+-      clientId: 'client-123',
+-      redirectUri: 'https://client.example.com/callback',
+-      codeChallenge: 'challenge',
+-      codeChallengeMethod: 'S256',
+-      userId: 'user-123',
+-      authGeneration: 3,
+-      organizationId: 'org-123',
+-      scope: 'openid',
+-    } as any)
+-    oauth.verifyPkce.mockReturnValue(true)
+-    oauth.createAccessToken.mockResolvedValue('api-token-123')
+-
+-    await controller.token(
+-      {
+-        grant_type: 'authorization_code',
+-        code: 'auth-code-123',
+-        redirect_uri: 'https://client.example.com/callback',
+-        code_verifier: 'verifier',
+-        client_id: 'client-123',
+-      },
+-      res,
+-    )
++  describe('token', () => {
++    it('rejects token requests with invalid grant data', async () => {
++      const res = createResponse()
++      await controller.token({ grant_type: 'client_credentials' }, res)
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(res.json).toHaveBeenCalledWith({ error: 'unsupported_grant_type' })
+ 
+-    expect(oauth.createAccessToken).toHaveBeenCalledWith('user-123', 'org-123', 3)
+-    expect(res.json).toHaveBeenCalledWith({
+-      access_token: 'api-token-123',
+-      token_type: 'bearer',
+-      scope: 'openid',
++      const res2 = createResponse()
++      await controller.token({ grant_type: 'authorization_code' }, res2)
++      expect(res2.status).toHaveBeenCalledWith(400)
++      expect(res2.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
+     })
+   })
+ })
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+index 63b07d6..61e373f 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+@@ -2,7 +2,7 @@ import { Controller, Get, Post, Query, Body, Req, Res, HttpCode, Logger } from '
+ import { JwtService } from '@nestjs/jwt'
+ import { Request, Response } from 'express'
+ import { ConfigService } from '@nestjs/config'
+-import { McpOAuthService } from './mcp-oauth.service'
++import { McpOAuthService, PKCE_METHOD } from './mcp-oauth.service'
+ import { Public } from '@nestled-template/api/utils'
+ import { AuthTokenClaims, claimedAuthGeneration } from '../auth/auth-token-claims'
+ 
+@@ -16,7 +16,40 @@ interface AuthorizeQuery {
+   org?: string
+ }
+ 
+-// OAuth discovery and token exchange, by definition pre-auth.
++const EMULATION_REFUSED = {
++  error: 'access_denied',
++  error_description: 'Clients cannot be authorized while emulating a user',
++}
++const EXPIRED_REQUEST = {
++  error: 'invalid_request',
++  error_description: 'This authorization request has expired or was already used',
++}
++const OTHER_SESSION = {
++  error: 'access_denied',
++  error_description: 'This authorization request belongs to a different session',
++}
++
++/** The host a redirect URI points at, or its scheme for a private-use URI with no host. */
++function redirectHostOf(redirectUri: string): string {
++  const url = new URL(redirectUri)
++  return url.host || url.protocol
++}
++
++/** `redirectUri` with `params` (and `state`, when the client sent one) added to its query. */
++function withParams(
++  redirectUri: string,
++  params: Record<string, string>,
++  state: string | null,
++): string {
++  const query = new URLSearchParams(params)
++  if (state) query.set('state', state)
++  const separator = redirectUri.includes('?') ? '&' : '?'
++  return `${redirectUri}${separator}${query.toString()}`
++}
++
++// OAuth discovery, authorization and token exchange, by definition pre-auth. The consent
++// endpoints (authorize/pending, authorize/decision) authenticate the session cookie themselves
++// and bind every decision to the session that made the request.
+ @Public()
+ @Controller('mcp')
+ export class McpOAuthController {
+@@ -77,8 +110,12 @@ export class McpOAuthController {
+ 
+   /**
+    * OAuth 2.0 Authorization Endpoint.
+-   * If the user has a valid session cookie, issues an auth code and redirects.
+-   * If the user belongs to multiple orgs, redirects to /mcp-connect for org selection.
++   *
++   * Never issues a code. A signed-in caller's request is stored as a pending authorization bound
++   * to their session, and they are sent to the web app's consent page (/mcp-connect), which shows
++   * who is asking, where the code would go and what would be granted. Only an explicit approval
++   * there, through POST authorize/decision, issues a code. A caller without a session is sent to
++   * login first and comes back here.
+    */
+   @Get('authorize')
+   async authorize(@Query() query: AuthorizeQuery, @Req() req: Request, @Res() res: Response) {
+@@ -100,6 +137,22 @@ export class McpOAuthController {
+         .json({ error: 'invalid_request', error_description: 'Missing required parameters' })
+     }
+ 
++    // A repeated query parameter arrives as an array; every parameter here must be a single value.
++    if (Object.values(query).some(value => value !== undefined && typeof value !== 'string')) {
++      return res
++        .status(400)
++        .json({ error: 'invalid_request', error_description: 'Repeated parameters' })
++    }
++
++    // PKCE is mandatory for every client and only S256 is accepted. A missing method means
++    // `plain` (RFC 7636 section 4.3), so it is refused too.
++    if (!this.oauth.isAcceptablePkce(codeChallenge, codeChallengeMethod)) {
++      return res.status(400).json({
++        error: 'invalid_request',
++        error_description: 'code_challenge_method must be S256 with a valid code_challenge',
++      })
++    }
++
+     const client = this.oauth.getClient(clientId)
+     if (!client) {
+       return res
+@@ -107,83 +160,192 @@ export class McpOAuthController {
+         .json({ error: 'invalid_client', error_description: 'Unknown client_id' })
+     }
+ 
++    if (!this.oauth.isSafeRedirectUri(redirectUri)) {
++      return res
++        .status(400)
++        .json({ error: 'invalid_request', error_description: 'Unacceptable redirect_uri' })
++    }
++
+     const session = await this.getSessionFromCookie(req)
+     const userId = session?.userId
+ 
+-    const authorizeParams = new URLSearchParams({
+-      client_id: clientId,
+-      redirect_uri: redirectUri,
+-      code_challenge: codeChallenge,
+-      code_challenge_method: codeChallengeMethod ?? 'S256',
+-      ...(state ? { state } : {}),
+-      ...(scope ? { scope } : {}),
+-    })
+-    const authorizeUrl = `${mcpBase}/authorize?${authorizeParams.toString()}`
+-
+     if (!session || !userId) {
++      const authorizeParams = new URLSearchParams({
++        client_id: clientId,
++        redirect_uri: redirectUri,
++        code_challenge: codeChallenge,
++        code_challenge_method: PKCE_METHOD,
++        ...(state ? { state } : {}),
++        ...(scope ? { scope } : {}),
++        ...(orgId ? { org: orgId } : {}),
++      })
++      const authorizeUrl = `${mcpBase}/authorize?${authorizeParams.toString()}`
+       return res.redirect(`${siteUrl}/login?redirect=${encodeURIComponent(authorizeUrl)}`)
+     }
+ 
+     // A client authorized here gets a long-lived credential of its own. Under emulation that would
+     // be a credential for the emulated user that outlives the emulation, so it is refused.
+     if (session.isEmulating) {
+-      return res.status(403).json({
+-        error: 'access_denied',
+-        error_description: 'Clients cannot be authorized while emulating a user',
+-      })
++      return res.status(403).json(EMULATION_REFUSED)
+     }
+ 
+-    const organizationId = await this.resolveOrganizationId(
+-      userId,
+-      orgId,
+-      siteUrl,
+-      authorizeUrl,
+-      res,
+-    )
+-    if (organizationId === null) return
++    if (orgId && !(await this.oauth.validateOrgMembership(userId, orgId))) {
++      return res.status(400).json({
++        error: 'invalid_request',
++        error_description: 'Not a member of that organization',
++      })
++    }
+ 
+-    const code = this.oauth.createAuthCode({
++    const pending = this.oauth.createPendingAuthorization({
+       userId,
++      sessionId: session.sessionId ?? null,
+       authGeneration: claimedAuthGeneration(session.authGeneration),
+-      organizationId,
+       clientId,
++      clientName: client.clientName,
+       redirectUri,
++      state: state ?? null,
+       codeChallenge,
+-      codeChallengeMethod: codeChallengeMethod ?? 'S256',
+       scope: scope ?? 'openid',
++      requestedOrganizationId: orgId ?? null,
+     })
+ 
+-    const params = new URLSearchParams({ code })
+-    if (state) params.set('state', state)
+-    return res.redirect(`${redirectUri}?${params.toString()}`)
++    return res.redirect(`${siteUrl}/mcp-connect?request=${encodeURIComponent(pending.id)}`)
++  }
++
++  /**
++   * What the consent page shows for a pending authorization, and the CSRF token its form must
++   * send back. Called server-side by the web app with the browser's session cookie. Only the
++   * session the request is bound to can read it, and CORS keeps other origins from reading it.
++   */
++  @Get('authorize/pending')
++  async getPendingAuthorization(
++    @Query('request') requestId: string | undefined,
++    @Req() req: Request,
++    @Res() res: Response,
++  ) {
++    res.setHeader('Cache-Control', 'no-store')
++
++    const session = await this.getSessionFromCookie(req)
++    if (!session) {
++      return res
++        .status(401)
++        .json({ error: 'login_required', error_description: 'Sign in to continue' })
++    }
++    if (session.isEmulating) {
++      return res.status(403).json(EMULATION_REFUSED)
++    }
++
++    const pending = requestId ? this.oauth.getPendingAuthorization(requestId) : null
++    if (!pending) {
++      return res.status(404).json(EXPIRED_REQUEST)
++    }
++    if (!this.oauth.isPendingBoundTo(pending, session)) {
++      return res.status(403).json(OTHER_SESSION)
++    }
++
++    const [account, organizations] = await Promise.all([
++      this.oauth.getAccountSummary(pending.userId),
++      this.oauth.listUserOrganizations(pending.userId),
++    ])
++
++    return res.json({
++      request: pending.id,
++      csrfToken: pending.csrfToken,
++      expiresAt: pending.expiresAt.toISOString(),
++      client: {
++        name: pending.clientName,
++        // Every client here came from dynamic registration, so its name is whatever it said.
++        verified: false,
++      },
++      redirectUri: pending.redirectUri,
++      redirectHost: redirectHostOf(pending.redirectUri),
++      account,
++      organizations,
++      selectedOrganizationId: pending.requestedOrganizationId,
++    })
+   }
+ 
+-  private async resolveOrganizationId(
+-    userId: string,
+-    orgId: string | undefined,
+-    siteUrl: string,
+-    authorizeUrl: string,
+-    res: Response,
+-  ): Promise<string | null> {
+-    if (orgId) {
+-      const isMember = await this.oauth.validateOrgMembership(userId, orgId)
+-      if (!isMember) {
+-        res.status(400).json({
++  /**
++   * The consent decision. Uses the pending record up whatever the outcome, then requires the
++   * same session that made the request and the record's CSRF token. Deny answers the client with
++   * `access_denied`; approve issues a single-use authorization code for the chosen organization.
++   * Returns the URL to send the browser to rather than redirecting, because the web app's consent
++   * page calls it server-side.
++   */
++  @Post('authorize/decision')
++  @HttpCode(200)
++  async decideAuthorization(
++    @Body() body: Record<string, unknown>,
++    @Req() req: Request,
++    @Res() res: Response,
++  ) {
++    res.setHeader('Cache-Control', 'no-store')
++
++    const requestId = typeof body['request'] === 'string' ? body['request'] : ''
++    const pending = requestId ? this.oauth.takePendingAuthorization(requestId) : null
++    if (!pending) {
++      return res.status(400).json(EXPIRED_REQUEST)
++    }
++
++    const session = await this.getSessionFromCookie(req)
++    if (!session) {
++      return res
++        .status(401)
++        .json({ error: 'login_required', error_description: 'Sign in to continue' })
++    }
++    if (session.isEmulating) {
++      return res.status(403).json(EMULATION_REFUSED)
++    }
++    if (!this.oauth.isPendingBoundTo(pending, session)) {
++      return res.status(403).json(OTHER_SESSION)
++    }
++    if (!this.oauth.isCsrfTokenValid(pending, body['csrf_token'])) {
++      return res
++        .status(403)
++        .json({ error: 'access_denied', error_description: 'Invalid or missing CSRF token' })
++    }
++
++    const decision = body['decision']
++    if (decision === 'deny') {
++      this.logger.log(`MCP OAuth consent denied by user ${pending.userId} for ${pending.clientId}`)
++      return res.json({
++        redirect_to: withParams(pending.redirectUri, { error: 'access_denied' }, pending.state),
++      })
++    }
++    if (decision !== 'approve') {
++      return res
++        .status(400)
++        .json({ error: 'invalid_request', error_description: 'decision must be approve or deny' })
++    }
++
++    const organizations = await this.oauth.listUserOrganizations(pending.userId)
++    let organizationId: string | null = null
++    if (organizations.length > 0) {
++      const chosen = typeof body['organization_id'] === 'string' ? body['organization_id'] : ''
++      if (!organizations.some(org => org.id === chosen)) {
++        return res.status(400).json({
+           error: 'invalid_request',
+-          error_description: 'Not a member of that organization',
++          error_description: 'Choose an organization you belong to',
+         })
+-        return null
+       }
+-      return orgId
++      organizationId = chosen
+     }
+ 
+-    const orgCount = await this.oauth.countUserOrganizations(userId)
+-    if (orgCount > 1) {
+-      res.redirect(`${siteUrl}/mcp-connect?back=${encodeURIComponent(authorizeUrl)}`)
+-      return null
+-    }
++    const code = this.oauth.createAuthCode({
++      userId: pending.userId,
++      authGeneration: pending.authGeneration,
++      organizationId,
++      clientId: pending.clientId,
++      redirectUri: pending.redirectUri,
++      codeChallenge: pending.codeChallenge,
++      codeChallengeMethod: PKCE_METHOD,
++      scope: pending.scope,
++    })
++    this.logger.log(
++      `MCP OAuth consent approved by user ${pending.userId} for ${pending.clientId} org=${organizationId}`,
++    )
+ 
+-    return this.oauth.resolveOrganizationId(userId)
++    return res.json({ redirect_to: withParams(pending.redirectUri, { code }, pending.state) })
+   }
+ 
+   /** OAuth 2.0 Token Endpoint — exchanges auth code for an API token */
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+index d0ec7f5..8a1e534 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+@@ -14,9 +14,12 @@ describe('McpOAuthService', () => {
+   beforeEach(async () => {
+     mockData = {
+       organizationMember: {
+-        count: jest.fn(),
++        findMany: jest.fn(),
+         findFirst: jest.fn(),
+       },
++      user: {
++        findUnique: jest.fn(),
++      },
+     }
+     mockApiTokensService = {
+       generateApiToken: jest.fn(),
+@@ -67,7 +70,7 @@ describe('McpOAuthService', () => {
+       clientId: 'client-1',
+       redirectUri: 'https://example.com/cb',
+       codeChallenge: 'challenge',
+-      codeChallengeMethod: 'plain',
++      codeChallengeMethod: 'S256',
+       scope: 'openid',
+     }
+ 
+@@ -115,34 +118,119 @@ describe('McpOAuthService', () => {
+       expect(service.verifyPkce('wrong', challenge, 'S256')).toBe(false)
+     })
+ 
+-    it('should verify plain code challenge correctly', () => {
+-      expect(service.verifyPkce('secret', 'secret', 'plain')).toBe(true)
++    it('should refuse the plain method even when verifier equals challenge', () => {
++      expect(service.verifyPkce('secret', 'secret', 'plain')).toBe(false)
+     })
+ 
+-    it('should reject wrong verifier for plain', () => {
+-      expect(service.verifyPkce('wrong', 'secret', 'plain')).toBe(false)
++    it('should accept only S256 with a well-formed challenge', () => {
++      const challenge = createHash('sha256').update('verifier').digest('base64url')
++      expect(service.isAcceptablePkce(challenge, 'S256')).toBe(true)
++      expect(service.isAcceptablePkce(challenge, 'plain')).toBe(false)
++      expect(service.isAcceptablePkce(challenge, undefined)).toBe(false)
++      expect(service.isAcceptablePkce(undefined, 'S256')).toBe(false)
++      expect(service.isAcceptablePkce('too-short', 'S256')).toBe(false)
+     })
+   })
+ 
+-  describe('Organization Resolution', () => {
+-    it('should count user organizations', async () => {
+-      mockData.organizationMember.count.mockResolvedValue(3)
+-      const count = await service.countUserOrganizations('user-1')
+-      expect(count).toBe(3)
+-      expect(mockData.organizationMember.count).toHaveBeenCalledWith({
+-        where: { userId: 'user-1' },
+-      })
++  describe('Pending Authorizations', () => {
++    const params = {
++      userId: 'user-1',
++      sessionId: 'session-1',
++      authGeneration: 2,
++      clientId: 'client-1',
++      clientName: 'Client',
++      redirectUri: 'https://example.com/cb',
++      state: null,
++      codeChallenge: 'challenge',
++      scope: 'openid',
++      requestedOrganizationId: null,
++    }
++
++    it('should create a record with distinct random id and CSRF token and a 10 minute TTL', () => {
++      const before = Date.now()
++      const pending = service.createPendingAuthorization(params)
++      expect(pending.id).not.toBe(pending.csrfToken)
++      expect(pending.id.length).toBeGreaterThanOrEqual(43)
++      expect(pending.expiresAt.getTime() - before).toBeGreaterThanOrEqual(service.PENDING_TTL_MS)
++      expect(pending.expiresAt.getTime() - before).toBeLessThan(service.PENDING_TTL_MS + 1000)
++      expect(service.getPendingAuthorization(pending.id)).toBe(pending)
+     })
+ 
+-    it('should resolve organization id for single-org user', async () => {
+-      mockData.organizationMember.findFirst.mockResolvedValue({ organizationId: 'org-abc' })
+-      const orgId = await service.resolveOrganizationId('user-1')
+-      expect(orgId).toBe('org-abc')
++    it('should be taken at most once', () => {
++      const pending = service.createPendingAuthorization(params)
++      expect(service.takePendingAuthorization(pending.id)).toBe(pending)
++      expect(service.takePendingAuthorization(pending.id)).toBeNull()
++      expect(service.getPendingAuthorization(pending.id)).toBeNull()
+     })
+ 
+-    it('should return null when user has no organizations', async () => {
+-      mockData.organizationMember.findFirst.mockResolvedValue(null)
+-      expect(await service.resolveOrganizationId('user-1')).toBeNull()
++    it('should expire', () => {
++      const pending = service.createPendingAuthorization(params)
++      const now = jest.spyOn(Date, 'now').mockReturnValue(pending.expiresAt.getTime())
++      try {
++        expect(service.takePendingAuthorization(pending.id)).toBeNull()
++      } finally {
++        now.mockRestore()
++      }
++    })
++
++    it('should bind to the user, session and auth generation that made it', () => {
++      const pending = service.createPendingAuthorization(params)
++      const claims = { userId: 'user-1', sessionId: 'session-1', authGeneration: 2 }
++      expect(service.isPendingBoundTo(pending, claims)).toBe(true)
++      expect(service.isPendingBoundTo(pending, { ...claims, userId: 'user-2' })).toBe(false)
++      expect(service.isPendingBoundTo(pending, { ...claims, sessionId: 'session-2' })).toBe(false)
++      expect(service.isPendingBoundTo(pending, { ...claims, sessionId: undefined })).toBe(false)
++      expect(service.isPendingBoundTo(pending, { ...claims, authGeneration: 3 })).toBe(false)
++    })
++
++    it('should compare the CSRF token exactly', () => {
++      const pending = service.createPendingAuthorization(params)
++      expect(service.isCsrfTokenValid(pending, pending.csrfToken)).toBe(true)
++      expect(service.isCsrfTokenValid(pending, `${pending.csrfToken}x`)).toBe(false)
++      expect(service.isCsrfTokenValid(pending, '')).toBe(false)
++      expect(service.isCsrfTokenValid(pending, undefined)).toBe(false)
++    })
++  })
++
++  describe('Redirect URI safety', () => {
++    it.each(['https://example.com/cb', 'http://127.0.0.1:3333/cb', 'cursor://anysphere/cb'])(
++      'should accept %s',
++      uri => expect(service.isSafeRedirectUri(uri)).toBe(true),
++    )
++
++    it.each([
++      'javascript:alert(1)',
++      'data:text/html,x',
++      'not a url',
++      'https://example.com/cb#frag',
++    ])('should refuse %s', uri => expect(service.isSafeRedirectUri(uri)).toBe(false))
++  })
++
++  describe('Organization Resolution', () => {
++    it('should list the user organizations oldest membership first', async () => {
++      mockData.organizationMember.findMany.mockResolvedValue([
++        { organization: { id: 'org-a', name: 'A' } },
++        { organization: { id: 'org-b', name: 'B' } },
++      ])
++      await expect(service.listUserOrganizations('user-1')).resolves.toEqual([
++        { id: 'org-a', name: 'A' },
++        { id: 'org-b', name: 'B' },
++      ])
++      expect(mockData.organizationMember.findMany).toHaveBeenCalledWith(
++        expect.objectContaining({ where: { userId: 'user-1' }, orderBy: { createdAt: 'asc' } }),
++      )
++    })
++
++    it('should summarise the account with its primary email', async () => {
++      mockData.user.findUnique.mockResolvedValue({
++        firstName: 'Ada',
++        lastName: null,
++        emails: [{ email: 'ada@example.com' }],
++      })
++      await expect(service.getAccountSummary('user-1')).resolves.toEqual({
++        name: 'Ada',
++        email: 'ada@example.com',
++      })
+     })
+ 
+     it('should validate org membership when member exists', async () => {
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+index 7fc546d..68db152 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+@@ -1,9 +1,13 @@
+ import { Injectable, Logger } from '@nestjs/common'
+ import { ConfigService } from '@nestjs/config'
+-import { randomBytes, createHash } from 'node:crypto'
++import { randomBytes, createHash, timingSafeEqual } from 'node:crypto'
+ import { ApiTokensService } from '../api-tokens/api-tokens.service'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+-import { AuthTokenClaims, isAuthTokenCurrent } from '../auth/auth-token-claims'
++import {
++  AuthTokenClaims,
++  claimedAuthGeneration,
++  isAuthTokenCurrent,
++} from '../auth/auth-token-claims'
+ 
+ export interface StoredAuthCode {
+   userId: string
+@@ -24,12 +28,61 @@ export interface OAuthClient {
+   redirectUris: string[]
+ }
+ 
++/**
++ * An /authorize request waiting for the signed-in user to approve or deny it on the consent page.
++ * Bound to the session that made the request; single use; short-lived.
++ */
++export interface PendingAuthorization {
++  /** Opaque, unguessable id carried in the consent page URL. */
++  id: string
++  /** Second secret, only handed to the session the record is bound to, and required to decide. */
++  csrfToken: string
++  userId: string
++  /** The session that made the request, when the session token names one. */
++  sessionId: string | null
++  authGeneration: number
++  clientId: string
++  clientName: string
++  redirectUri: string
++  state: string | null
++  codeChallenge: string
++  scope: string
++  /** An organization the client asked for with `org=`, already checked for membership. */
++  requestedOrganizationId: string | null
++  expiresAt: Date
++}
++
++export interface ConsentOrganization {
++  id: string
++  name: string
++}
++
++/** The only PKCE method accepted: RFC 7636 S256. `plain` and a missing method are refused. */
++export const PKCE_METHOD = 'S256'
++
++// RFC 7636 section 4.2: a code challenge is 43-128 characters of the unreserved set; an S256
++// challenge is the 43-character base64url SHA-256 of the verifier.
++const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/
++
++// Schemes a browser must never be sent to with an authorization code or an error.
++const FORBIDDEN_REDIRECT_SCHEMES = new Set([
++  'javascript:',
++  'data:',
++  'vbscript:',
++  'file:',
++  'blob:',
++  'about:',
++])
++
+ @Injectable()
+ export class McpOAuthService {
+   private readonly logger = new Logger(McpOAuthService.name)
+   private readonly authCodes = new Map<string, StoredAuthCode>()
+   private readonly clients = new Map<string, OAuthClient>()
++  private readonly pendingAuthorizations = new Map<string, PendingAuthorization>()
+   private readonly CODE_TTL_MS = 5 * 60 * 1000 // 5 minutes
++  /** How long the consent page stays usable before the client must start again. */
++  readonly PENDING_TTL_MS = 10 * 60 * 1000 // 10 minutes
+ 
+   constructor(
+     private readonly config: ConfigService,
+@@ -98,25 +151,121 @@ export class McpOAuthService {
+     return authCode
+   }
+ 
++  /** Whether `method` and `challenge` are an acceptable PKCE request: S256 only. */
++  isAcceptablePkce(challenge: string | undefined, method: string | undefined): boolean {
++    return (
++      method === PKCE_METHOD &&
++      typeof challenge === 'string' &&
++      PKCE_CHALLENGE_PATTERN.test(challenge)
++    )
++  }
++
+   verifyPkce(codeVerifier: string, codeChallenge: string, method: string): boolean {
+-    if (method === 'S256') {
+-      const hash = createHash('sha256').update(codeVerifier).digest('base64url')
+-      return hash === codeChallenge
++    if (method !== PKCE_METHOD || typeof codeVerifier !== 'string') return false
++    const hash = createHash('sha256').update(codeVerifier).digest('base64url')
++    return hash === codeChallenge
++  }
++
++  /** Whether `redirectUri` is an absolute URL with a scheme a browser may safely be sent to. */
++  isSafeRedirectUri(redirectUri: string): boolean {
++    let url: URL
++    try {
++      url = new URL(redirectUri)
++    } catch {
++      return false
++    }
++    return !url.hash && !FORBIDDEN_REDIRECT_SCHEMES.has(url.protocol)
++  }
++
++  /**
++   * Store a request for the consent page. Nothing is issued until the bound session approves it
++   * through {@link takePendingAuthorization}.
++   */
++  createPendingAuthorization(
++    params: Omit<PendingAuthorization, 'id' | 'csrfToken' | 'expiresAt'>,
++  ): PendingAuthorization {
++    this.sweepExpiredPendingAuthorizations()
++    const pending: PendingAuthorization = {
++      ...params,
++      id: randomBytes(32).toString('base64url'),
++      csrfToken: randomBytes(32).toString('base64url'),
++      expiresAt: new Date(Date.now() + this.PENDING_TTL_MS),
+     }
+-    return codeVerifier === codeChallenge
++    this.pendingAuthorizations.set(pending.id, pending)
++    return pending
+   }
+ 
+-  async countUserOrganizations(userId: string): Promise<number> {
+-    return this.data.organizationMember.count({ where: { userId } })
++  /** The pending request, without using it up, or null when it is unknown or expired. */
++  getPendingAuthorization(id: string): PendingAuthorization | null {
++    const pending = this.pendingAuthorizations.get(id)
++    if (!pending) return null
++    if (pending.expiresAt.getTime() <= Date.now()) {
++      this.pendingAuthorizations.delete(id)
++      return null
++    }
++    return pending
+   }
+ 
+-  async resolveOrganizationId(userId: string): Promise<string | null> {
+-    const membership = await this.data.organizationMember.findFirst({
++  /**
++   * Remove and return the pending request. Every decision attempt uses the record up, whether or
++   * not it then succeeds, so a record can be decided at most once.
++   */
++  takePendingAuthorization(id: string): PendingAuthorization | null {
++    const pending = this.getPendingAuthorization(id)
++    if (pending) this.pendingAuthorizations.delete(id)
++    return pending
++  }
++
++  /** Whether the verified session `claims` are the session the pending request is bound to. */
++  isPendingBoundTo(pending: PendingAuthorization, claims: AuthTokenClaims): boolean {
++    return (
++      pending.userId === claims.userId &&
++      pending.sessionId === (claims.sessionId ?? null) &&
++      pending.authGeneration === claimedAuthGeneration(claims.authGeneration)
++    )
++  }
++
++  /** Constant-time comparison of the submitted CSRF token with the record's. */
++  isCsrfTokenValid(pending: PendingAuthorization, submitted: unknown): boolean {
++    if (typeof submitted !== 'string' || submitted.length === 0) return false
++    const expected = Buffer.from(pending.csrfToken)
++    const actual = Buffer.from(submitted)
++    return expected.length === actual.length && timingSafeEqual(expected, actual)
++  }
++
++  private sweepExpiredPendingAuthorizations(): void {
++    const now = Date.now()
++    for (const [id, pending] of this.pendingAuthorizations) {
++      if (pending.expiresAt.getTime() <= now) this.pendingAuthorizations.delete(id)
++    }
++  }
++
++  /** The organizations the user can grant a client access to, oldest membership first. */
++  async listUserOrganizations(userId: string): Promise<ConsentOrganization[]> {
++    const memberships = await this.data.organizationMember.findMany({
+       where: { userId },
+       orderBy: { createdAt: 'asc' },
+-      select: { organizationId: true },
++      select: { organization: { select: { id: true, name: true } } },
++    })
++    return memberships.map(m => ({ id: m.organization.id, name: m.organization.name }))
++  }
++
++  /** Who is signed in, for the consent page: display name and primary email. */
++  async getAccountSummary(userId: string): Promise<{ name: string | null; email: string | null }> {
++    const user = await this.data.user.findUnique({
++      where: { id: userId },
++      select: {
++        firstName: true,
++        lastName: true,
++        emails: {
++          orderBy: [{ primary: 'desc' }, { createdAt: 'asc' }],
++          take: 1,
++          select: { email: true },
++        },
++      },
+     })
+-    return membership?.organizationId ?? null
++    const name = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim()
++    return { name: name || null, email: user?.emails[0]?.email ?? null }
+   }
+ 
+   async validateOrgMembership(userId: string, organizationId: string): Promise<boolean> {
