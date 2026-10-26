@@ -6,7 +6,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
-import { generateScriptEndsWithDoctor, runDbUpdateSteps } from './db-update-steps.mjs'
+import { runDbUpdateSteps, trailingDoctorWarning } from './db-update-steps.mjs'
 import { devDockerSettings } from './dev-checkout.mjs'
 
 const root = await realpath(process.cwd())
@@ -566,15 +566,8 @@ async function waitForSdkWatcher(watcher) {
 }
 
 async function warnOnTrailingDoctor() {
-  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
-  const script = manifest.scripts?.['db-update:generate'] ?? ''
-  if (generateScriptEndsWithDoctor(script)) {
-    console.warn(
-      'package.json: db-update:generate still ends with nestled-doctor. That run checks the SDK ' +
-        'contract before api-schema.graphql is refreshed and can fail on the previous schema. ' +
-        'Remove the trailing "&& pnpm run nestled-doctor"; db-update runs Doctor after the SDK.',
-    )
-  }
+  const warning = await trailingDoctorWarning(() => readFile(join(root, 'package.json'), 'utf8'))
+  if (warning) console.warn(warning)
 }
 
 async function main() {

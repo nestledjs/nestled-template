@@ -85,6 +85,15 @@ describe('AuthCacheService Redis client options', () => {
     expect(service.isEnabled()).toBe(true)
   })
 
+  it('logs a non-Error connection rejection as an unknown error', async () => {
+    mockClient(() => Promise.reject({ host: 'redis.internal' }))
+
+    new AuthCacheService()
+    await flush()
+
+    expect(warn).toHaveBeenCalledWith('Auth cache Redis connection failed: unknown error')
+  })
+
   it('creates no client for a local or missing URL', () => {
     process.env['REDIS_URL'] = 'redis://localhost:6379'
 

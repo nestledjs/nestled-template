@@ -33,3 +33,27 @@ export function generateScriptEndsWithDoctor(script) {
   const commands = script.split('&&').map(command => command.trim())
   return /^(pnpm|npm|yarn)( run)? nestled-doctor\b/.test(commands.at(-1) ?? '')
 }
+
+/**
+ * The warning db-update prints when `db-update:generate` still ends with a Doctor run, or null.
+ * Best-effort: db-update does not need package.json for anything else, so a manifest that is
+ * missing, unreadable or not JSON (db-update run in a bare folder, as some Docker tests do) gives
+ * null instead of stopping the run.
+ *
+ * @param {() => Promise<string>} readManifest
+ * @returns {Promise<string | null>}
+ */
+export async function trailingDoctorWarning(readManifest) {
+  let script
+  try {
+    script = JSON.parse(await readManifest())?.scripts?.['db-update:generate']
+  } catch {
+    return null
+  }
+  if (typeof script !== 'string' || !generateScriptEndsWithDoctor(script)) return null
+  return (
+    'package.json: db-update:generate still ends with nestled-doctor. That run checks the SDK ' +
+    'contract before api-schema.graphql is refreshed and can fail on the previous schema. ' +
+    'Remove the trailing "&& pnpm run nestled-doctor"; db-update runs Doctor after the SDK.'
+  )
+}

@@ -14,8 +14,11 @@ describe('McpOAuthService', () => {
   beforeEach(async () => {
     mockData = {
       organizationMember: {
-        count: jest.fn(),
+        findMany: jest.fn(),
         findFirst: jest.fn(),
+      },
+      user: {
+        findUnique: jest.fn(),
       },
     }
     mockApiTokensService = {
@@ -67,7 +70,7 @@ describe('McpOAuthService', () => {
       clientId: 'client-1',
       redirectUri: 'https://example.com/cb',
       codeChallenge: 'challenge',
-      codeChallengeMethod: 'plain',
+      codeChallengeMethod: 'S256',
       scope: 'openid',
     }
 
@@ -115,34 +118,119 @@ describe('McpOAuthService', () => {
       expect(service.verifyPkce('wrong', challenge, 'S256')).toBe(false)
     })
 
-    it('should verify plain code challenge correctly', () => {
-      expect(service.verifyPkce('secret', 'secret', 'plain')).toBe(true)
+    it('should refuse the plain method even when verifier equals challenge', () => {
+      expect(service.verifyPkce('secret', 'secret', 'plain')).toBe(false)
     })
 
-    it('should reject wrong verifier for plain', () => {
-      expect(service.verifyPkce('wrong', 'secret', 'plain')).toBe(false)
+    it('should accept only S256 with a well-formed challenge', () => {
+      const challenge = createHash('sha256').update('verifier').digest('base64url')
+      expect(service.isAcceptablePkce(challenge, 'S256')).toBe(true)
+      expect(service.isAcceptablePkce(challenge, 'plain')).toBe(false)
+      expect(service.isAcceptablePkce(challenge, undefined)).toBe(false)
+      expect(service.isAcceptablePkce(undefined, 'S256')).toBe(false)
+      expect(service.isAcceptablePkce('too-short', 'S256')).toBe(false)
     })
   })
 
+  describe('Pending Authorizations', () => {
+    const params = {
+      userId: 'user-1',
+      sessionId: 'session-1',
+      authGeneration: 2,
+      clientId: 'client-1',
+      clientName: 'Client',
+      redirectUri: 'https://example.com/cb',
+      state: null,
+      codeChallenge: 'challenge',
+      scope: 'openid',
+      requestedOrganizationId: null,
+    }
+
+    it('should create a record with distinct random id and CSRF token and a 10 minute TTL', () => {
+      const before = Date.now()
+      const pending = service.createPendingAuthorization(params)
+      expect(pending.id).not.toBe(pending.csrfToken)
+      expect(pending.id.length).toBeGreaterThanOrEqual(43)
+      expect(pending.expiresAt.getTime() - before).toBeGreaterThanOrEqual(service.PENDING_TTL_MS)
+      expect(pending.expiresAt.getTime() - before).toBeLessThan(service.PENDING_TTL_MS + 1000)
+      expect(service.getPendingAuthorization(pending.id)).toBe(pending)
+    })
+
+    it('should be taken at most once', () => {
+      const pending = service.createPendingAuthorization(params)
+      expect(service.takePendingAuthorization(pending.id)).toBe(pending)
+      expect(service.takePendingAuthorization(pending.id)).toBeNull()
+      expect(service.getPendingAuthorization(pending.id)).toBeNull()
+    })
+
+    it('should expire', () => {
+      const pending = service.createPendingAuthorization(params)
+      const now = jest.spyOn(Date, 'now').mockReturnValue(pending.expiresAt.getTime())
+      try {
+        expect(service.takePendingAuthorization(pending.id)).toBeNull()
+      } finally {
+        now.mockRestore()
+      }
+    })
+
+    it('should bind to the user, session and auth generation that made it', () => {
+      const pending = service.createPendingAuthorization(params)
+      const claims = { userId: 'user-1', sessionId: 'session-1', authGeneration: 2 }
+      expect(service.isPendingBoundTo(pending, claims)).toBe(true)
+      expect(service.isPendingBoundTo(pending, { ...claims, userId: 'user-2' })).toBe(false)
+      expect(service.isPendingBoundTo(pending, { ...claims, sessionId: 'session-2' })).toBe(false)
+      expect(service.isPendingBoundTo(pending, { ...claims, sessionId: undefined })).toBe(false)
+      expect(service.isPendingBoundTo(pending, { ...claims, authGeneration: 3 })).toBe(false)
+    })
+
+    it('should compare the CSRF token exactly', () => {
+      const pending = service.createPendingAuthorization(params)
+      expect(service.isCsrfTokenValid(pending, pending.csrfToken)).toBe(true)
+      expect(service.isCsrfTokenValid(pending, `${pending.csrfToken}x`)).toBe(false)
+      expect(service.isCsrfTokenValid(pending, '')).toBe(false)
+      expect(service.isCsrfTokenValid(pending, undefined)).toBe(false)
+    })
+  })
+
+  describe('Redirect URI safety', () => {
+    it.each(['https://example.com/cb', 'http://127.0.0.1:3333/cb', 'cursor://anysphere/cb'])(
+      'should accept %s',
+      uri => expect(service.isSafeRedirectUri(uri)).toBe(true),
+    )
+
+    it.each([
+      'javascript:alert(1)',
+      'data:text/html,x',
+      'not a url',
+      'https://example.com/cb#frag',
+    ])('should refuse %s', uri => expect(service.isSafeRedirectUri(uri)).toBe(false))
+  })
+
   describe('Organization Resolution', () => {
-    it('should count user organizations', async () => {
-      mockData.organizationMember.count.mockResolvedValue(3)
-      const count = await service.countUserOrganizations('user-1')
-      expect(count).toBe(3)
-      expect(mockData.organizationMember.count).toHaveBeenCalledWith({
-        where: { userId: 'user-1' },
+    it('should list the user organizations oldest membership first', async () => {
+      mockData.organizationMember.findMany.mockResolvedValue([
+        { organization: { id: 'org-a', name: 'A' } },
+        { organization: { id: 'org-b', name: 'B' } },
+      ])
+      await expect(service.listUserOrganizations('user-1')).resolves.toEqual([
+        { id: 'org-a', name: 'A' },
+        { id: 'org-b', name: 'B' },
+      ])
+      expect(mockData.organizationMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'user-1' }, orderBy: { createdAt: 'asc' } }),
+      )
+    })
+
+    it('should summarise the account with its primary email', async () => {
+      mockData.user.findUnique.mockResolvedValue({
+        firstName: 'Ada',
+        lastName: null,
+        emails: [{ email: 'ada@example.com' }],
       })
-    })
-
-    it('should resolve organization id for single-org user', async () => {
-      mockData.organizationMember.findFirst.mockResolvedValue({ organizationId: 'org-abc' })
-      const orgId = await service.resolveOrganizationId('user-1')
-      expect(orgId).toBe('org-abc')
-    })
-
-    it('should return null when user has no organizations', async () => {
-      mockData.organizationMember.findFirst.mockResolvedValue(null)
-      expect(await service.resolveOrganizationId('user-1')).toBeNull()
+      await expect(service.getAccountSummary('user-1')).resolves.toEqual({
+        name: 'Ada',
+        email: 'ada@example.com',
+      })
     })
 
     it('should validate org membership when member exists', async () => {

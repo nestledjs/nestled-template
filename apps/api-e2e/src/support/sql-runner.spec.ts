@@ -130,6 +130,10 @@ describe('sql runner errors', () => {
     expect(errorReason(new Error('password authentication failed'))).toBe(
       'password authentication failed',
     )
+    expect(errorReason('plain')).toBe('plain')
+    expect(errorReason({ code: 'E1' })).toBe('{"code":"E1"}')
+    expect(errorReason(null)).toBe('unknown error')
+    expect(errorReason(new AggregateError(['a', null, { b: 1 }], ''))).toBe('a; {"b":1}')
   })
 
   it('reach stderr scrubbed when the database cannot be reached', () => {

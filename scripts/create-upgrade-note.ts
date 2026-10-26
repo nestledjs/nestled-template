@@ -43,7 +43,9 @@ const title = id
 
 writeFileSync(
   path,
-  `id: ${id}
+  `# Before publishing, work through "Before you publish a note" in
+# .nestled-updates/upgrade-notes/README.md: affectedPaths, --skip-nx-cache, image tags, redeploys.
+id: ${id}
 title: ${title}
 priority: normal
 area: api

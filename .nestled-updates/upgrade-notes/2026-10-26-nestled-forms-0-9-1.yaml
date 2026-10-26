@@ -1,0 +1,103 @@
+id: 2026-10-26-nestled-forms-0-9-1
+title: >-
+  @nestledjs/forms 0.9.1: pasted, autofilled and dropped values register, standalone RenderFormField
+  shows its errors, and dotted keys validate
+priority: normal
+area: web
+type: correctness
+delivery: package-release
+intent: >
+  Move @nestledjs/forms, @nestledjs/forms-core and @nestledjs/forms-native (where the project uses
+  it) together from 0.9.0 to 0.9.1. The template's root package.json pins `"@nestledjs/forms":
+  "0.9.1"` and `"@nestledjs/forms-core": "0.9.1"`; re-resolve the lockfile with `pnpm install`.
+  No application source change is required.
+
+  What 0.9.1 fixes:
+
+  1. Paste, autofill and drag-drop now register. A value set by a script (a password manager, a
+  browser extension, autofill) or dropped into a field assigns the element's `.value` before the
+  `input` event fires, so React's value tracker swallowed the event and the form state never saw
+  the value: the field showed text, and a `required` rule still blocked the submit. Text, email,
+  password, url and textarea fields now also sync from the native `input` and `change` events,
+  `<Form>` reads those fields' DOM values at submit as a last resort for autofill that fires no
+  event at all, and a blocked submit moves focus to the first invalid field in document order,
+  including controlled fields.
+
+  2. A standalone `RenderFormField` (one placed under the project's own `FormContext.Provider`
+  rather than inside `<Form>`) now shows its validation errors. It read `formState.errors` without
+  a subscription of its own, so its message only appeared when something above it happened to
+  re-render. It now reads its error through the new `useFieldError(name)` hook exported by
+  @nestledjs/forms-core, which subscribes to that one field with `useFormState({ name })`.
+  `useFieldError` returns `{ error, errorMessage }` and is available to custom fields too.
+
+  3. Nested dotted keys such as `address.city` validate correctly. The field resolver read
+  `values[key]` and wrote `errors[key]` flat, so a filled nested required field was always
+  validated as empty and could never submit, and its error was never found. Values are now read
+  with react-hook-form's `get()` and errors written with `set()`.
+
+  4. The @nestledjs/forms README has a new Validation section: when validation runs, Zod setup
+  (Zod 3 through @hookform/resolvers, both peer dependencies the app installs), field rules, and
+  how to use `RenderFormField` without `<Form>` (pass `buildFieldsResolver({ fields })` to your own
+  `useForm` so `required` and the other field rules are enforced).
+why: >
+  Login and signup forms filled by a password manager or browser autofill looked complete but
+  submitted as empty or were blocked as "required", which users report as "the form won't submit".
+  Fields keyed with a dotted path could never pass a required rule, and a standalone
+  RenderFormField could fail validation silently with no message shown. All three are defects in
+  the published packages, so projects take them by moving the dependency, not by copying source.
+packageReleases:
+  - name: '@nestledjs/forms'
+    targetVersion: 0.9.1
+    versionRange: ^0.9.1
+  - name: '@nestledjs/forms-core'
+    targetVersion: 0.9.1
+    versionRange: ^0.9.1
+  - name: '@nestledjs/forms-native'
+    targetVersion: 0.9.1
+    versionRange: ^0.9.1
+skipIf:
+  - The project does not use @nestledjs/forms, @nestledjs/forms-core or @nestledjs/forms-native.
+  - The project already runs all of the forms packages it declares at 0.9.1 or later.
+verification:
+  - pnpm install
+  - pnpm install --frozen-lockfile
+  - pnpm typecheck:workspace
+  - pnpm build:web
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm run nestled-doctor
+  - >
+    In a running web app, fill the login form with the browser's or a password manager's autofill
+    and submit without typing: the form submits. Submit a form with a required field empty: focus
+    moves to that field and its message shows.
+agentHints:
+  - >
+    Bump every @nestledjs/forms* package the project declares, in each manifest that declares it
+    (root and app package.json files), to 0.9.1 in one change, keeping the project's own range
+    style (exact pin or caret). @nestledjs/forms 0.9.1 and @nestledjs/forms-native 0.9.1 each
+    depend on @nestledjs/forms-core at exactly 0.9.1, so the packages only install cleanly when
+    all of them move together; a mixed 0.9.0/0.9.1 set leaves two forms-core copies and two
+    form contexts.
+  - >
+    @nestledjs/data-browser declares its forms peers as ^0.9.0, which admits 0.9.1; no
+    data-browser change is needed for this note. Do not copy files from the forms repository or
+    from libs/data-browser into the project.
+  - >
+    A project-local workaround for standalone RenderFormField errors can be removed after the
+    upgrade: code that reads `useFormContext().formState.errors` itself to show a field's message,
+    or a wrapper component that renders the error under the field. Remove it only where the field
+    now shows the same message on its own (check once in the browser), otherwise the message
+    appears twice. A custom field that needs its own error can use `useFieldError(name)` from
+    @nestledjs/forms-core instead of reading formState.errors.
+  - >
+    Likewise, a workaround for autofill (a manual `setValue` from an `onAnimationStart` or
+    `onInput` handler, or a submit handler that reads input values from the DOM) is no longer
+    needed for text, email, password, url and textarea fields; remove it once autofill is
+    confirmed working.
+  - >
+    Zod 4 is still not supported. The forms packages' peer range stays `zod@^3`; do not move zod
+    to 4 under this note.
+  - >
+    This note changes package.json and the lockfile, which can trigger an automatic deploy of
+    every service that watches them. A project with a long-running worker should confirm it is
+    idle (or that an interrupted job is safe) before merging, and say in its report which services
+    the merge restarts.

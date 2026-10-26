@@ -38,9 +38,18 @@ export function useSettingsOrganization() {
   return { user, activeOrganization, activeOrganizationMember, loading: loading && !data }
 }
 
+/**
+ * Whether the member's role holds `permission`. `all:manage` holds every permission, as it does in
+ * the API's access policy (it grants `*`), so a role that carries only `all:manage` is not shown
+ * less than the API lets it do.
+ */
 export function hasRolePermission(member: SettingsOrganizationMember | null, permission: string) {
   const [subject, action] = permission.split(':')
-  return !!member?.role?.permissions?.some(p => p.subject === subject && p.action === action)
+  return !!member?.role?.permissions?.some(
+    p =>
+      (p.subject === 'all' && p.action === 'manage') ||
+      (p.subject === subject && p.action === action),
+  )
 }
 
 /** May view the organization's billing: `billing:read` or `billing:manage`. */
@@ -59,7 +68,8 @@ export function hasBillingAccess(
 
 /**
  * May change the organization's billing: subscribe, change plan, cancel, open the billing portal.
- * Only `billing:manage` grants this, matching the API's mutations; a role's name never does.
+ * Only `billing:manage` (or `all:manage`, which holds it) grants this, matching the API's
+ * mutations; a role's name never does.
  */
 export function canManageBilling(
   user: MeQuery['me'] | null | undefined,

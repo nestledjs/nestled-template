@@ -259,4 +259,15 @@ void describe('errorReason', () => {
     assert.equal(errorReason(new Error('')), 'Error')
     assert.equal(errorReason('plain'), 'plain')
   })
+
+  void it('describes a thrown non-Error value without String() on an unknown', () => {
+    assert.equal(errorReason(42), '42')
+    assert.equal(errorReason({ code: 'E1' }), '{"code":"E1"}')
+    assert.equal(errorReason(null), 'unknown error')
+    assert.equal(errorReason(undefined), 'unknown error')
+    const circular = /** @type {Record<string, unknown>} */ ({})
+    circular.self = circular
+    assert.equal(errorReason(circular), 'unknown error')
+    assert.equal(errorReason(new AggregateError(['a', null, { b: 1 }], '')), 'a; {"b":1}')
+  })
 })

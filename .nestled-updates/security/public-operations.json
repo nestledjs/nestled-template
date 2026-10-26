@@ -34,7 +34,9 @@
     "getProtectedResourceMetadata": "Public OAuth protected-resource metadata required before a client can authenticate.",
     "getJwks": "Public OAuth key-discovery endpoint; returns public verification material only.",
     "register": "Public RFC 7591 dynamic client registration endpoint.",
-    "authorize": "Pre-authentication OAuth authorization endpoint. Validates the client, redirect URI, session cookie, organization membership, and PKCE challenge internally.",
+    "authorize": "Pre-authentication OAuth authorization endpoint. Validates the client, the redirect URI scheme, the S256 PKCE challenge and the session cookie internally, and never issues a code: it stores a pending authorization bound to the session and sends the user to the consent page.",
+    "getPendingAuthorization": "Consent page details for a pending OAuth authorization. Authenticates the session cookie internally and answers only the session the request is bound to; read server-side by the web app.",
+    "decideAuthorization": "Consent decision for a pending OAuth authorization. Authenticates the session cookie internally, requires the bound session and the record's single-use CSRF token, and uses the record up on every attempt.",
     "token": "Pre-authentication OAuth token exchange. Authorized by a single-use authorization code and PKCE verifier."
   },
   "libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts": {

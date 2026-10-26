@@ -153,6 +153,27 @@ export async function runSql({ url, statement, variables = {} }) {
 }
 
 /**
+ * A thrown value that is not an Error, as text: a string as it is, a number, boolean or bigint in
+ * its usual form, anything else as JSON. Empty when there is nothing to say (null, undefined, or a
+ * value JSON cannot represent), so the caller can fall back.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function thrownValueText(value) {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return value.toString()
+  }
+  if (value === null || value === undefined) return ''
+  try {
+    return JSON.stringify(value) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Why an operation failed, in words. pg rejects a refused connection with Node's AggregateError,
  * whose own message is empty (one error per address tried, e.g. ::1 and 127.0.0.1): its nested
  * messages say why, and its `code` (ECONNREFUSED) when they are missing too. The result is not yet
@@ -162,12 +183,12 @@ export async function runSql({ url, statement, variables = {} }) {
  * @returns {string}
  */
 export function errorReason(error) {
-  if (!(error instanceof Error)) return String(error)
+  if (!(error instanceof Error)) return thrownValueText(error) || 'unknown error'
   if (error.message) return error.message
   const nested =
     error instanceof AggregateError
       ? error.errors
-          .map(inner => (inner instanceof Error ? inner.message : String(inner ?? '')))
+          .map(inner => (inner instanceof Error ? inner.message : thrownValueText(inner)))
           .filter(Boolean)
       : []
   if (nested.length > 0) return [...new Set(nested)].join('; ')

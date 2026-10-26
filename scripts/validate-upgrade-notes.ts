@@ -45,13 +45,17 @@ const deliveries = new Set(['code-patch', 'package-release', 'hybrid'])
 // package name -> the path IN THIS REPO where its source lives, or null when the package is
 // published from a different repository. @nestledjs/doctor and @nestledjs/generators are of the
 // latter kind: their source is the nestled monorepo, so there is no in-repo path a note could name,
-// and demanding one would force every adopter to invent a lie.
+// and demanding one would force every adopter to invent a lie. The @nestledjs/forms packages are
+// published from the separate nestled-forms repository, so they carry no sourcePath either.
 const upstreamPublishedPackages = new Map<string, string | null>([
   ['@nestledjs/data-browser', 'libs/data-browser'],
   ['@nestledjs/shared-components', 'libs/shared-components'],
   ['@nestledjs/access-control', 'libs/access-control'],
   ['@nestledjs/doctor', null],
   ['@nestledjs/generators', null],
+  ['@nestledjs/forms', null],
+  ['@nestledjs/forms-core', null],
+  ['@nestledjs/forms-native', null],
 ])
 
 const isNonEmptyString = (value: unknown): value is string =>

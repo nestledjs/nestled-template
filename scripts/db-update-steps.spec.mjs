@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { generateScriptEndsWithDoctor, runDbUpdateSteps } from './db-update-steps.mjs'
+import {
+  generateScriptEndsWithDoctor,
+  runDbUpdateSteps,
+  trailingDoctorWarning,
+} from './db-update-steps.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -102,5 +106,24 @@ describe('db-update:generate', () => {
     const script = manifest.scripts['db-update:generate']
     assert.match(script, /^pnpm run nestled-doctor && /)
     assert.equal(generateScriptEndsWithDoctor(script), false)
+  })
+
+  it('warns about a trailing Doctor run only when package.json can be read', async () => {
+    const manifest = (/** @type {string} */ script) => async () =>
+      JSON.stringify({ scripts: { 'db-update:generate': script } })
+    assert.match(
+      (await trailingDoctorWarning(manifest('nx g x && pnpm run nestled-doctor'))) ?? '',
+      /still ends with nestled-doctor/,
+    )
+    assert.equal(await trailingDoctorWarning(manifest('pnpm run nestled-doctor && nx g x')), null)
+    assert.equal(await trailingDoctorWarning(async () => JSON.stringify({})), null)
+    assert.equal(await trailingDoctorWarning(async () => 'not json'), null)
+    const missing = Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })
+    assert.equal(
+      await trailingDoctorWarning(async () => {
+        throw missing
+      }),
+      null,
+    )
   })
 })

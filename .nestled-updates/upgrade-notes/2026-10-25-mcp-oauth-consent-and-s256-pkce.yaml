@@ -1,0 +1,140 @@
+id: 2026-10-25-mcp-oauth-consent-and-s256-pkce
+title: >-
+  MCP OAuth /authorize always asks the user to approve on a consent page, and PKCE accepts S256
+  only
+priority: high
+area: auth
+type: security
+delivery: code-patch
+intent: >
+  Security fix. GET /api/mcp/authorize no longer issues an authorization code. For a signed-in
+  caller it stores a pending authorization and redirects to the web app's consent page,
+  /mcp-connect?request=<id>. Only an explicit Approve there issues a code, whatever the user's
+  organization count. The old organization picker on /mcp-connect is folded into the same page, so
+  no path skips consent.
+
+
+  API (libs/api/custom/src/lib/plugins/mcp/). McpOAuthService keeps pending authorizations in an
+  in-process Map next to the existing auth codes and DCR clients: no migration and no Redis
+  dependency. A record holds the user, the session id and auth generation of the session that made
+  the request, the client, redirect URI, state, PKCE challenge, scope and any requested `org`,
+  plus a random id and a separate random CSRF token (32 bytes each, base64url). It lives
+  PENDING_TTL_MS = 10 minutes and is single use: takePendingAuthorization deletes it on every
+  decision attempt, successful or not. Expired records are swept when a new one is created.
+  McpOAuthController gains two routes on the same @Public() controller, each authenticating the
+  session cookie itself with the existing getSessionFromCookie (verified and still current):
+  GET authorize/pending?request=<id> returns, to the bound session only, the client name with
+  `verified: false` (every client here is self-registered through DCR), the redirect URI and its
+  host, the account's name and primary email, the user's organizations, the requested
+  organization, and the CSRF token; POST authorize/decision takes `request`, `csrf_token`,
+  `decision` (approve or deny) and `organization_id`, and answers `{ redirect_to }`. Deny sends
+  the client `error=access_denied` with its `state`. Approve requires an organization the user
+  belongs to (none for a user without one), issues the code and sends `code` with `state`. Both
+  refuse emulation sessions, a different session of the same user (403), a missing session (401),
+  a missing or wrong CSRF token (403), and an unknown, expired or already-used record. Both set
+  Cache-Control: no-store. /authorize also refuses a redirect_uri that is not an absolute URL, has
+  a fragment, or uses javascript:, data:, vbscript:, file:, blob: or about:.
+
+
+  PKCE. /authorize requires `code_challenge_method=S256` and a well-formed challenge (43-128
+  characters of the RFC 7636 unreserved set). `plain`, a missing method (which RFC 7636 defines as
+  plain) and a missing challenge get 400 invalid_request. verifyPkce accepts S256 only, and every
+  stored code is S256. countUserOrganizations and resolveOrganizationId are replaced by
+  listUserOrganizations and getAccountSummary.
+
+
+  Web. apps/web/app/routes/mcp-connect.tsx is now the consent page. Its loader reads
+  `?request=`, sends a signed-out user to /login?return_url=..., and fetches authorize/pending
+  server-side with the session cookie. The page shows the client name marked unverified, the
+  redirect host in a prominent box with the full URI beneath, the signed-in account, the
+  organization (a required radio list when there are several, preselecting a requested `org`),
+  and Approve and Deny buttons in a plain `<form method="post">` carrying the request id and CSRF
+  token. Its action forwards the decision to authorize/decision server-side with the cookie and
+  redirects to the returned URL. A `headers` export sets X-Frame-Options: DENY,
+  `frame-ancestors 'none'`, Cache-Control: no-store and Referrer-Policy: no-referrer.
+  apps/web/app/routes/settings/_mcp-shared.tsx exports toApiBase(), the API-URL normaliser that
+  `apiBase` already used, so the route can apply it to the server's runtime VITE_API_URL.
+
+
+  Security baselines. public-operations.json records reasons for getPendingAuthorization and
+  decideAuthorization and corrects the authorize reason; guard-baseline.json lists both routes
+  with no guard, as before for this controller.
+
+
+  Tests. mcp-oauth.controller.spec.ts drives the real McpOAuthService with mocked data access:
+  no code without approval for single-, multi- and no-organization users; Deny gives
+  access_denied with state; approval without a pending record, CSRF token or session, or from
+  another session or an emulation session, is refused; a record cannot be replayed and a failed
+  attempt uses it up; the full authorize, consent, approve and token exchange issues a token;
+  plain, missing-method, missing and malformed PKCE challenges are refused.
+  mcp-oauth.service.spec.ts covers the pending record, S256-only PKCE and the redirect checks.
+  apps/web/tests/routes/mcp-connect.spec.tsx covers the loader, action, headers and page; the
+  old mcp-connect case is removed from sonar-coverage-routes.spec.tsx.
+why: >
+  /authorize issued a code with no user interaction whenever the signed-in user belonged to a
+  single organization. Anyone can register a client through dynamic client registration, so an
+  attacker could register a client with their own redirect URI, send a signed-in user a link, and
+  receive a code and then an API token for that user without the user ever being asked. The MCP
+  2026-07-28 authorization specification requires the authorization server to show the user which
+  client is asking and where the redirect goes. PKCE also accepted `plain`, and treated a missing
+  method as S256.
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+  - apps/web/app/routes/mcp-connect.tsx
+  - apps/web/app/routes/settings/_mcp-shared.tsx
+  - apps/web/tests/routes/mcp-connect.spec.tsx
+  - apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+  - .nestled-updates/security/public-operations.json
+  - .nestled-updates/security/guard-baseline.json
+skipIf:
+  - >
+    The project has no MCP OAuth controller (no `@Get('authorize')` handler under
+    libs/api/custom/src/lib/plugins/mcp/ or wherever its MCP plugin lives, and no /mcp/authorize
+    route). Record not-applicable with that reason.
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm build:web
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    The requirement, not the code, is what must hold: no request to the authorization endpoint
+    may issue a code or a token until the signed-in user explicitly approves on a page that names
+    the client (marked unverified when it was self-registered), shows the redirect host
+    prominently, and says which account and organization are granted. Approval must be a POST
+    that needs a single-use, short-lived, server-side record bound to the session that made the
+    request plus a CSRF token only that session can read. Check every branch of the project's
+    /authorize, including any `org=` shortcut, any "already authorized this client" shortcut and
+    any auto-approve for single-organization users; each one must go through consent.
+  - >
+    If the project's OAuth code has drifted (a persisted client table, a Redis-backed code store,
+    a different web route or framework for the picker, extra scopes), keep its structure and add
+    consent to it. A project that already stores codes or clients in Redis or a table should keep
+    pending authorizations in the same store with a TTL of a few minutes and delete-on-read, not
+    in memory. A project running several API instances without sticky routing already needs a
+    shared store for codes; the same applies to pending records.
+  - >
+    The web route calls the API server-to-server with the browser's session cookie, and the
+    API reads the cookie, not an Authorization header. If the project's web server cannot reach
+    the API URL in VITE_API_URL at runtime (a private network address is set elsewhere), point
+    serverApiBase() at that address. If the project renders the picker client-side or posts the
+    form straight to the API, check the session cookie's SameSite setting reaches the API on that
+    POST, and keep the CSRF token and session binding either way.
+  - >
+    PKCE: accept only S256 and refuse plain and a missing method or challenge, unless the
+    project's own code and tests show PKCE is deliberately optional or plain for a specific client
+    type. Then keep that behaviour, scope it to that client type only, and say so in the upgrade
+    log entry.
+  - >
+    The project's own clients (a CLI, a desktop or IDE integration) that drove /authorize
+    headlessly with a session cookie and expected an immediate redirect with a code will now land
+    on the consent page. Search for callers of /mcp/authorize outside the browser before merging.
+  - >
+    Keep the controller's authorization comments, .nestled-updates/security/public-operations.json
+    and guard-baseline.json in step with the new routes, so the doctor's public-operation and
+    guard-baseline checks pass. Add the two routes to the existing entries; do not regenerate the
+    whole baseline unless the project already does.

@@ -1,9 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { randomBytes, createHash } from 'node:crypto'
+import { randomBytes, createHash, timingSafeEqual } from 'node:crypto'
 import { ApiTokensService } from '../api-tokens/api-tokens.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
-import { AuthTokenClaims, isAuthTokenCurrent } from '../auth/auth-token-claims'
+import {
+  AuthTokenClaims,
+  claimedAuthGeneration,
+  isAuthTokenCurrent,
+} from '../auth/auth-token-claims'
 
 export interface StoredAuthCode {
   userId: string
@@ -24,12 +28,61 @@ export interface OAuthClient {
   redirectUris: string[]
 }
 
+/**
+ * An /authorize request waiting for the signed-in user to approve or deny it on the consent page.
+ * Bound to the session that made the request; single use; short-lived.
+ */
+export interface PendingAuthorization {
+  /** Opaque, unguessable id carried in the consent page URL. */
+  id: string
+  /** Second secret, only handed to the session the record is bound to, and required to decide. */
+  csrfToken: string
+  userId: string
+  /** The session that made the request, when the session token names one. */
+  sessionId: string | null
+  authGeneration: number
+  clientId: string
+  clientName: string
+  redirectUri: string
+  state: string | null
+  codeChallenge: string
+  scope: string
+  /** An organization the client asked for with `org=`, already checked for membership. */
+  requestedOrganizationId: string | null
+  expiresAt: Date
+}
+
+export interface ConsentOrganization {
+  id: string
+  name: string
+}
+
+/** The only PKCE method accepted: RFC 7636 S256. `plain` and a missing method are refused. */
+export const PKCE_METHOD = 'S256'
+
+// RFC 7636 section 4.2: a code challenge is 43-128 characters of the unreserved set; an S256
+// challenge is the 43-character base64url SHA-256 of the verifier.
+const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/
+
+// Schemes a browser must never be sent to with an authorization code or an error.
+const FORBIDDEN_REDIRECT_SCHEMES = new Set([
+  'javascript:',
+  'data:',
+  'vbscript:',
+  'file:',
+  'blob:',
+  'about:',
+])
+
 @Injectable()
 export class McpOAuthService {
   private readonly logger = new Logger(McpOAuthService.name)
   private readonly authCodes = new Map<string, StoredAuthCode>()
   private readonly clients = new Map<string, OAuthClient>()
+  private readonly pendingAuthorizations = new Map<string, PendingAuthorization>()
   private readonly CODE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+  /** How long the consent page stays usable before the client must start again. */
+  readonly PENDING_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
   constructor(
     private readonly config: ConfigService,
@@ -98,25 +151,121 @@ export class McpOAuthService {
     return authCode
   }
 
+  /** Whether `method` and `challenge` are an acceptable PKCE request: S256 only. */
+  isAcceptablePkce(challenge: string | undefined, method: string | undefined): boolean {
+    return (
+      method === PKCE_METHOD &&
+      typeof challenge === 'string' &&
+      PKCE_CHALLENGE_PATTERN.test(challenge)
+    )
+  }
+
   verifyPkce(codeVerifier: string, codeChallenge: string, method: string): boolean {
-    if (method === 'S256') {
-      const hash = createHash('sha256').update(codeVerifier).digest('base64url')
-      return hash === codeChallenge
+    if (method !== PKCE_METHOD || typeof codeVerifier !== 'string') return false
+    const hash = createHash('sha256').update(codeVerifier).digest('base64url')
+    return hash === codeChallenge
+  }
+
+  /** Whether `redirectUri` is an absolute URL with a scheme a browser may safely be sent to. */
+  isSafeRedirectUri(redirectUri: string): boolean {
+    let url: URL
+    try {
+      url = new URL(redirectUri)
+    } catch {
+      return false
     }
-    return codeVerifier === codeChallenge
+    return !url.hash && !FORBIDDEN_REDIRECT_SCHEMES.has(url.protocol)
   }
 
-  async countUserOrganizations(userId: string): Promise<number> {
-    return this.data.organizationMember.count({ where: { userId } })
+  /**
+   * Store a request for the consent page. Nothing is issued until the bound session approves it
+   * through {@link takePendingAuthorization}.
+   */
+  createPendingAuthorization(
+    params: Omit<PendingAuthorization, 'id' | 'csrfToken' | 'expiresAt'>,
+  ): PendingAuthorization {
+    this.sweepExpiredPendingAuthorizations()
+    const pending: PendingAuthorization = {
+      ...params,
+      id: randomBytes(32).toString('base64url'),
+      csrfToken: randomBytes(32).toString('base64url'),
+      expiresAt: new Date(Date.now() + this.PENDING_TTL_MS),
+    }
+    this.pendingAuthorizations.set(pending.id, pending)
+    return pending
   }
 
-  async resolveOrganizationId(userId: string): Promise<string | null> {
-    const membership = await this.data.organizationMember.findFirst({
+  /** The pending request, without using it up, or null when it is unknown or expired. */
+  getPendingAuthorization(id: string): PendingAuthorization | null {
+    const pending = this.pendingAuthorizations.get(id)
+    if (!pending) return null
+    if (pending.expiresAt.getTime() <= Date.now()) {
+      this.pendingAuthorizations.delete(id)
+      return null
+    }
+    return pending
+  }
+
+  /**
+   * Remove and return the pending request. Every decision attempt uses the record up, whether or
+   * not it then succeeds, so a record can be decided at most once.
+   */
+  takePendingAuthorization(id: string): PendingAuthorization | null {
+    const pending = this.getPendingAuthorization(id)
+    if (pending) this.pendingAuthorizations.delete(id)
+    return pending
+  }
+
+  /** Whether the verified session `claims` are the session the pending request is bound to. */
+  isPendingBoundTo(pending: PendingAuthorization, claims: AuthTokenClaims): boolean {
+    return (
+      pending.userId === claims.userId &&
+      pending.sessionId === (claims.sessionId ?? null) &&
+      pending.authGeneration === claimedAuthGeneration(claims.authGeneration)
+    )
+  }
+
+  /** Constant-time comparison of the submitted CSRF token with the record's. */
+  isCsrfTokenValid(pending: PendingAuthorization, submitted: unknown): boolean {
+    if (typeof submitted !== 'string' || submitted.length === 0) return false
+    const expected = Buffer.from(pending.csrfToken)
+    const actual = Buffer.from(submitted)
+    return expected.length === actual.length && timingSafeEqual(expected, actual)
+  }
+
+  private sweepExpiredPendingAuthorizations(): void {
+    const now = Date.now()
+    for (const [id, pending] of this.pendingAuthorizations) {
+      if (pending.expiresAt.getTime() <= now) this.pendingAuthorizations.delete(id)
+    }
+  }
+
+  /** The organizations the user can grant a client access to, oldest membership first. */
+  async listUserOrganizations(userId: string): Promise<ConsentOrganization[]> {
+    const memberships = await this.data.organizationMember.findMany({
       where: { userId },
       orderBy: { createdAt: 'asc' },
-      select: { organizationId: true },
+      select: { organization: { select: { id: true, name: true } } },
     })
-    return membership?.organizationId ?? null
+    return memberships.map(m => ({ id: m.organization.id, name: m.organization.name }))
+  }
+
+  /** Who is signed in, for the consent page: display name and primary email. */
+  async getAccountSummary(userId: string): Promise<{ name: string | null; email: string | null }> {
+    const user = await this.data.user.findUnique({
+      where: { id: userId },
+      select: {
+        firstName: true,
+        lastName: true,
+        emails: {
+          orderBy: [{ primary: 'desc' }, { createdAt: 'asc' }],
+          take: 1,
+          select: { email: true },
+        },
+      },
+    })
+    const name = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim()
+    return { name: name || null, email: user?.emails[0]?.email ?? null }
   }
 
   async validateOrgMembership(userId: string, organizationId: string): Promise<boolean> {
