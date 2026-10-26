@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestRouter } from '../helpers/createTestRouter'
 import AdminAnalyticsPage from '../../app/routes/admin/analytics/_index'
 import ForceLogoutRoute, { loader as forceLogoutLoader } from '../../app/routes/force-logout'
-import McpConnectPage, { loader as mcpConnectLoader } from '../../app/routes/mcp-connect'
 
 const useQuery = vi.fn()
 let loaderData: any = {}
@@ -26,7 +25,6 @@ vi.mock('@nestled-template/shared/sdk', async importOriginal => {
   return {
     ...actual,
     AdminAnalytics: { kind: 'Document', definitions: [] },
-    MyOrganizations: { kind: 'Document', definitions: [] },
   }
 })
 
@@ -50,30 +48,6 @@ describe('additional route coverage', () => {
 
     const { container } = render(<ForceLogoutRoute />)
     expect(container.innerHTML).toBe('')
-  })
-
-  it('loads and renders MCP organization selection', async () => {
-    const tokenPayload = Buffer.from(JSON.stringify({ iat: 1 })).toString('base64url')
-    const request = new Request(
-      'https://app.example.com/mcp-connect?back=https://mcp.example.com/cb',
-      {
-        headers: { cookie: `__session=header.${tokenPayload}.signature` },
-      },
-    )
-
-    await expect(mcpConnectLoader({ request, params: {}, context: {} } as any)).resolves.toEqual({
-      back: 'https://mcp.example.com/cb',
-    })
-
-    loaderData = { back: 'https://mcp.example.com/cb' }
-    useQuery.mockReturnValue({
-      data: { myOrganizations: [{ id: 'org-1', name: 'Acme', logo: null }] },
-      loading: false,
-    })
-
-    render(<McpConnectPage />)
-    fireEvent.click(screen.getByRole('button', { name: /Acme/ }))
-    expect(screen.getByRole('button', { name: /Acme/ })).toBeInTheDocument()
   })
 
   it('renders admin analytics metrics and errors', () => {

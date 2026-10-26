@@ -474,6 +474,33 @@ describe('SettingsLayout Component', () => {
       expect(screen.queryByText('AI & MCP')).not.toBeInTheDocument()
     })
 
+    it('should treat all:manage as holding every permission, like the API does', () => {
+      vi.mocked(useQuery).mockReturnValue({
+        data: {
+          myOrganizations: [
+            {
+              ...mockOrganization,
+              members: [
+                {
+                  id: 'member-1',
+                  userId: 'user-123',
+                  role: {
+                    id: 'role-root',
+                    name: 'Root',
+                    permissions: [{ subject: 'all', action: 'manage' }],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      } as any)
+
+      renderWithRouter()
+      expect(screen.getByText('AI & MCP')).toBeInTheDocument()
+      expect(screen.getByText('Billing')).toBeInTheDocument()
+    })
+
     it('should show AI & MCP to users with organization:update', () => {
       renderWithRouter()
       expect(screen.getByText('AI & MCP')).toBeInTheDocument()

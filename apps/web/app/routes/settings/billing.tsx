@@ -156,13 +156,10 @@ export default function BillingSettings() {
             </div>
           </div>
           {!canManage && (
-            <p
-              role="status"
-              className="mt-4 rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300"
-            >
+            <output className="mt-4 block rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300">
               You have read-only access to billing. Changing the plan, cancelling, or updating
               payment details needs the billing:manage permission.
-            </p>
+            </output>
           )}
         </div>
 

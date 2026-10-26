@@ -20,6 +20,35 @@ where a problem was found ("a downstream project hit this" is enough), and never
 private repo, pull request or commit. A security note describes the fix only after it has
 shipped; the details belong in the security advisory.
 
+## Before you publish a note
+
+Notes are read by agents in projects that differ from this repository. Check these before a note
+goes out; each one has cost a downstream rollout time.
+
+- **`affectedPaths` lists only files a downstream project can have.** This repository carries
+  dev-template-only files that promotion does not copy to `nestled-template` (for example
+  `agents/**`, including `agents/debugging-playbook.md`, `docs/dev/**` and `ai-docs/**`). Do not
+  list one as an affected path. If the change also updates such a file, say in the intent that it
+  is a dev-template-only file and needs no downstream action.
+- **Verification proves the change, not the cache.** A change Nx does not hash (a Node or
+  toolchain version, an environment default, a file outside a project's inputs) leaves earlier
+  results cached, and a cached green run proves nothing. Whenever the change could be invisible
+  to the cache, add `--skip-nx-cache` to the test and build steps, for example
+  `pnpm exec nx test api-utils --skip-nx-cache`.
+- **A pinned image tag must exist.** When a note pins a Docker image (`FROM node:<version>-<variant>`,
+  a Playwright or Postgres image), check that every tag and variant it names has been published,
+  for example with `https://hub.docker.com/v2/repositories/library/node/tags/<tag>`, and tell
+  agents to check the variant their own Dockerfiles use.
+- **Say what a merge redeploys.** A change to a Dockerfile, `package.json` or the lockfile can
+  trigger an automatic deploy of every service that watches it, including long-running workers.
+  When a note touches those files, add an agent hint that a project with such a worker should
+  confirm it is idle (or that an interrupted job is safe) before merging, and should say in its
+  report which services the merge restarts.
+- **`package.json` and lockfiles are not mirrored by promotion.** A note that changes them must
+  spell out each version, script or override change, so a project can apply it by hand.
+
+Already-published notes are not rewritten to follow these rules; they apply to new notes.
+
 ## File Naming
 
 Use a stable, date-prefixed slug:

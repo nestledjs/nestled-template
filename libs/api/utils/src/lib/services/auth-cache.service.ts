@@ -89,7 +89,7 @@ export class AuthCacheService {
       () => this.logger.log('Auth cache Redis connected'),
       (error: unknown) =>
         this.logger.warn(
-          `Auth cache Redis connection failed: ${error instanceof Error ? error.message : String(error)}`,
+          `Auth cache Redis connection failed: ${error instanceof Error ? error.message : 'unknown error'}`,
         ),
     )
   }

@@ -1,0 +1,79 @@
+id: 2026-10-25-settings-all-manage-and-sonar-follow-ups
+title: >-
+  Settings honour all:manage; the billing read-only notice and error fallbacks pass Sonar; db-update's Doctor warning is best-effort
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+intent: >
+  Four small follow-ups to the 2026.10.17 changes.
+
+  1. `apps/web/app/routes/settings/_settings-access.ts`: `hasRolePermission` also counts
+  `all:manage` as holding the asked-for permission. The API's access policy already treats
+  `all:manage` as `*` (every permission), so a role that carries only `all:manage`, as older seeds
+  gave the Owner, can use every billing mutation but was shown the billing page read-only and had
+  the Roles and AI tabs hidden. With the change the settings area shows such a role exactly what the
+  API lets it do. Nothing else changes: `hasBillingAccess` keeps its Owner/Admin role-name rule for
+  viewing, `canManageBilling` still needs `billing:manage` (now also met by `all:manage`), and no
+  role without `all:manage` sees more or less than before.
+
+  2. `apps/web/app/routes/settings/billing.tsx`: the read-only notice is an `<output>` (with
+  `block`) instead of `<p role="status">`, which is the same live region without Sonar S6819.
+
+  3. `errorReason` in `scripts/test-database.mjs` and `apps/api-e2e/src/support/sql-runner.mjs`
+  no longer calls `String()` on an unknown thrown value (Sonar S6551). A new `thrownValueText`
+  returns a string as it is, a number, boolean or bigint as text, anything else as JSON, and
+  nothing for null, undefined or a value JSON cannot represent; `errorReason` then falls back to
+  `unknown error`. `AuthCacheService.reportConnectionStatus` in
+  `libs/api/utils/src/lib/services/auth-cache.service.ts` logs `unknown error` for a non-Error
+  rejection instead of `String(error)`.
+
+  4. `scripts/db-update.mjs`: the warning about a trailing Doctor run in `db-update:generate` moves
+  to `trailingDoctorWarning` in `scripts/db-update-steps.mjs` and is best-effort. A missing,
+  unreadable or non-JSON package.json gives no warning instead of stopping db-update before any
+  step runs (db-update run in a bare folder, as some Docker tests do, failed with ENOENT).
+why: >
+  The all:manage gap made the settings area disagree with the API for roles that hold only the
+  universal grant: an Owner who could change billing through the API was shown no billing actions.
+  The two Sonar findings were in template code, so every project that took the 2026.10.17 notes
+  got the same new issues on its pull-request gate. The unconditional package.json read broke a
+  Docker-based db-update test outright.
+affectedPaths:
+  - apps/web/app/routes/settings/_settings-access.ts
+  - apps/web/app/routes/settings/billing.tsx
+  - apps/web/tests/routes/settings/_layout.spec.tsx
+  - apps/web/tests/routes/settings/billing.spec.tsx
+  - libs/api/utils/src/lib/services/auth-cache.service.ts
+  - libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
+  - scripts/test-database.mjs
+  - scripts/test-database.spec.mjs
+  - apps/api-e2e/src/support/sql-runner.mjs
+  - apps/api-e2e/src/support/sql-runner.spec.ts
+  - scripts/db-update.mjs
+  - scripts/db-update-steps.mjs
+  - scripts/db-update-steps.spec.mjs
+skipIf:
+  - >
+    The project has no `apps/web/app/routes/settings/_settings-access.ts` (no template billing
+    page): parts 1 and 2 are not-applicable; apply 3 and 4 where the files exist.
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec vitest run --config apps/api-e2e/vitest.support.config.mts
+  - node --test scripts/*.spec.mjs
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    Part 1 must stay a strict superset check: `all:manage` holds every permission, and nothing else
+    changes. If the project's own settings access rules differ (a local `all:manage` rule already,
+    role-name rules of its own, billing under another route), keep them and only add the
+    `all:manage` case where it is missing; record `adapted` or `superseded`. Check first whether
+    the project's API also treats `all:manage` as every permission (`organizationGrants` in
+    `access-policy.guard.ts`); if it does not, record part 1 not-applicable rather than show the
+    web more than the API allows.
+  - >
+    A project that already fixed S6551 locally (for example a string-or-JSON fallback) keeps its
+    version if it avoids `String()` on an unknown; record `adapted`.
+  - >
+    Run `node --test scripts/*.spec.mjs` and the db-update spec too if the project has its own
+    Docker or bare-folder db-update test; it should now pass without a package.json.

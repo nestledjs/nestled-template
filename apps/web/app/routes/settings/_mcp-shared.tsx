@@ -3,12 +3,15 @@ import type { FormEvent } from 'react'
 import { ClipboardIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { CheckIcon } from '@heroicons/react/24/solid'
 
-export const apiBase = (
-  (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3000'
-)
-  .replace(/\/graphql\/?$/, '')
-  .replace(/\/api\/?$/, '')
-  .replace(/\/$/, '')
+/** The API origin from a configured API URL, which may end in `/graphql` or `/api`. */
+export function toApiBase(apiUrl: string | undefined): string {
+  return (apiUrl || 'http://localhost:3000')
+    .replace(/\/graphql\/?$/, '')
+    .replace(/\/api\/?$/, '')
+    .replace(/\/$/, '')
+}
+
+export const apiBase = toApiBase(import.meta.env.VITE_API_URL as string | undefined)
 
 export const MCP_SERVER_URL = `${apiBase}/api/mcp`
 

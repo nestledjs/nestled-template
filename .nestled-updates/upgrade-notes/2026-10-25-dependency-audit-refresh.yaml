@@ -1,0 +1,124 @@
+id: 2026-10-25-dependency-audit-refresh
+title: >-
+  Dependency audit refresh: no critical advisories and two stated highs left, Playwright 1.64, Docker pnpm 10.33.0
+priority: high
+area: infra
+type: security
+delivery: code-patch
+intent: >
+  The root package.json, apps/web/package.json, pnpm-lock.yaml and .dev/Dockerfile move every
+  dependency with a critical or high `pnpm audit` advisory to a fixed version, by a direct
+  version bump where the package is a direct dependency and by a targeted pnpm.overrides entry
+  where it is only reached transitively. Each project applies the same bumps and overrides to its
+  own manifests and re-resolves its own lockfile; the template's lockfile is not copied.
+
+  Direct dependency bumps (root package.json unless noted):
+  nx and every @nx/* package (including @nx/devkit) 22.7.8 -> 22.7.12;
+  storybook, @storybook/addon-a11y, @storybook/addon-docs, @storybook/addon-vitest,
+  @storybook/react-vite and eslint-plugin-storybook 10.5.7 -> 10.6.3;
+  @nestjs/common, @nestjs/core, @nestjs/platform-express and @nestjs/testing ^11.1.29 -> ^11.2.8;
+  prisma, @prisma/client, @prisma/adapter-pg and @prisma/internals ^7.9.1 -> ^7.10.1;
+  vite 7.3.6 -> 7.3.7; axios ^1.19.0 -> ^1.20.0; joi ^18.2.3 -> ^18.3.0;
+  nodemailer ^9.0.5 -> ^10.2.1; compression ^1.8.1 -> ^1.8.2; happy-dom ^20.11.2 -> ^21.0.4;
+  @faker-js/faker ^8.4.1 -> ^10.6.0; @playwright/test ^1.62.1 -> ^1.64.1;
+  remark-mdx-frontmatter ^5.2.0 -> ^6.0.0 (root and apps/web/package.json);
+  js-yaml in apps/web/package.json ^4.3.1 -> ^4.3.2.
+
+  pnpm.overrides changes. Four existing entries are widened to the new fixed version:
+  `"js-yaml@>=4.0.0 <4.3.2": "4.3.2"` (was `<4.3.1` -> 4.3.1),
+  `"nx@>=17.0.4 <22.7.9": "22.7.12"` (was `<22.7.7` -> 22.7.8),
+  `"brace-expansion@>=4.0.0 <5.0.11": "5.0.12"` (was `<5.0.9` -> 5.0.9) and
+  `"shell-quote@<1.11.0": "1.12.0"` (was `<1.9.0` -> 1.9.0).
+  New entries:
+  `"js-yaml@>=3.0.0 <3.15.2": "3.15.2"`,
+  `"brace-expansion@<1.1.20": "1.1.21"`,
+  `"brace-expansion@>=2.0.0 <2.1.6": "2.1.7"`,
+  `"piscina@<4.9.4": "4.9.4"`,
+  `"multer@<2.5.0": "2.5.0"`,
+  `"body-parser@<1.20.9": "1.20.9"`,
+  `"body-parser@>=2.0.0 <2.4.0": "2.4.0"`,
+  `"fast-uri@>=3.0.0 <3.1.7": "3.1.7"`,
+  `"svgo@>=3.0.0 <3.3.5": "3.3.5"`,
+  `"svgo@>=4.0.0 <4.1.0": "4.1.0"`,
+  `"smol-toml@<1.7.1": "1.9.1"`,
+  `"adm-zip@<0.6.1": "0.6.1"`,
+  `"undici@>=7.0.0 <7.30.1": "7.30.1"`,
+  `"source-map-js@>=1.0.0 <1.2.2": "1.2.2"`,
+  `"follow-redirects@<1.16.1": "1.16.1"`,
+  `"launch-editor@<2.14.2": "2.14.2"`,
+  `"@fastify/busboy@>=1.0.0 <3.2.1": "3.2.4"`,
+  `"@nx/docker@<22.7.8": "22.7.12"`,
+  `"@graphql-tools/executor-legacy-ws@<1.1.35": "1.1.39"`,
+  `"axios@>=1.13.0 <1.20.0": "1.20.0"`,
+  `"compression@<1.8.2": "1.8.2"` and
+  `"@graphql-tools/utils@>=10.10.1 <12.0.2": "12.1.0"`.
+  All other existing overrides stay as they are.
+
+  Why an override rather than a bump: @nestjs/platform-express 11.2.8 pins multer 2.4.0; nx
+  22.7.12 pins axios 1.18.1; verdaccio pins compression 1.8.1; @nestledjs/generators reaches
+  @nx/docker through its own @nx/nest 22.0.2; and the @graphql-codegen 5/6 family resolves
+  @graphql-tools/utils 11. The utils override crosses a major of a transitive package; the
+  template's `pnpm sdk` output is byte-identical with it. The other overrides are patch or minor
+  moves of packages that no direct dependency exposes.
+
+  .dev/Dockerfile runs `corepack prepare pnpm@10.33.0` instead of the stale pnpm@9.8.0, matching
+  the root `packageManager` and `engines.pnpm`.
+
+  Audit counts in the template. `pnpm audit` (full) went from 158 (4 critical, 74 high, 70
+  moderate, 10 low) to 28 (0 critical, 2 high, 23 moderate, 3 low). `pnpm audit --prod` went from
+  135 (2 critical, 63 high, 61 moderate, 9 low) to 26 (0 critical, 2 high, 22 moderate, 2 low).
+  The two highs left have stated reasons. http-cache-semantics (GHSA-ch52-4w7c-c8xp) has no
+  patched release at all; it is reached only through @swc/cli's binary downloader (got ->
+  cacheable-request), which is build tooling and never in the api or web output. zod
+  (GHSA-mrhx-c7xc-m3w5) is fixed only in 4.6.6, a major move from the pinned 3.25.56; zod is used
+  only by the MCP plugin's tool schemas, and the move to zod 4 belongs with the MCP SDK v2
+  change, not this note. Moderate and low advisories are not in scope.
+why: >
+  Advisories published since the last audit put four critical and 74 high findings in the
+  template's dependency tree, among them code injection in the Storybook dev server and preview,
+  a prototype-pollution RCE gadget in piscina, command injection in shell-quote's quote(), several
+  axios request-smuggling and DoS issues, DoS in multer, body-parser and compression on the api's
+  request path, nodemailer address-parser backtracking, and the Nx daemon socket exposure. The
+  template prescribes a dependency and vulnerability refresh to every project; it should audit
+  clean of critical and high findings itself.
+affectedPaths:
+  - package.json
+  - apps/web/package.json
+  - pnpm-lock.yaml
+  - .dev/Dockerfile
+verification:
+  - pnpm audit --audit-level=high # before and after; record both counts in the upgrade log entry
+  - pnpm audit --prod --audit-level=high # only the two stated highs (http-cache-semantics, zod) may remain
+  - pnpm install --frozen-lockfile
+  - pnpm typecheck:workspace
+  - pnpm exec nx build api
+  - pnpm build:web
+  - pnpm sdk && git diff --exit-code libs/shared/sdk/src/generated # the @graphql-tools/utils override must not change generated output
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec nx test integrations --skip-nx-cache
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    package.json and lockfiles are not mirrored by template promotion. Apply the bumps and
+    overrides above to the project's own root package.json and apps/web/package.json by hand,
+    keep the project's other overrides and any newer versions it already has, then run `pnpm
+    install` so the project's own lockfile re-resolves. Do not copy the template's pnpm-lock.yaml.
+  - >
+    Run `pnpm audit` first and work from the project's own findings. A project can have advisories
+    the template does not (extra dependencies) or lack some (no Storybook, no MCP plugin). Apply
+    the template's bumps and overrides that match; fix extra critical or high findings the same
+    way (direct bump first, a scoped override only for a transitive); record anything left with a
+    stated reason (no patched release, or a major move out of scope).
+  - >
+    nodemailer 10 only raises the Node floor to 20; the createTransport/sendMail/verify API used by
+    the SMTP provider is unchanged. @faker-js/faker 10 is ESM-only; the api-e2e factories run
+    under Vitest, so it imports cleanly. A project that still runs faker under Jest (CommonJS)
+    either keeps faker 8 and records the advisory with that reason, or moves those tests first.
+  - >
+    Do not move zod to 4 under this note, and do not change @modelcontextprotocol/* versions here.
+  - >
+    Any other Dockerfile or CI step that pins pnpm (`corepack prepare pnpm@`, `pnpm/action-setup`
+    `version:`) moves to the project's `packageManager` pnpm version. When Playwright moves, a CI
+    step that installs browsers (`playwright install --with-deps chromium`) picks up 1.64 on its
+    own; a pinned Playwright Docker image tag (`mcr.microsoft.com/playwright:v1.x`) must be moved
+    too, and the tag checked to exist before it is pinned.

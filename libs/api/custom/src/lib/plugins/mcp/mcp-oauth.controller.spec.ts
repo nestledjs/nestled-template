@@ -1,274 +1,597 @@
 import { ConfigService } from '@nestjs/config'
 import { JwtService } from '@nestjs/jwt'
+import { createHash } from 'node:crypto'
 import { McpOAuthController } from './mcp-oauth.controller'
 import { McpOAuthService } from './mcp-oauth.service'
+import { ApiTokensService } from '../api-tokens/api-tokens.service'
+import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+
+// Obviously fake placeholders: the session "cookie" is never a real token, the JWT service is
+// mocked to map it to claims.
+const SESSION_COOKIE = 'fake-session'
+const OTHER_SESSION_COOKIE = 'fake-other-session'
+const VERIFIER = 'fake-pkce-verifier-for-tests-only-0000000000000'
+const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url')
+const REDIRECT_URI = 'https://client.example.com/callback'
+
+type Claims = {
+  userId: string
+  sessionId?: string
+  authGeneration?: number
+  isEmulating?: boolean
+  originalAdminId?: string
+}
 
 describe('McpOAuthController', () => {
   let controller: McpOAuthController
-  let oauth: jest.Mocked<McpOAuthService>
-  let config: jest.Mocked<ConfigService>
-  let jwtService: jest.Mocked<JwtService>
+  let oauth: McpOAuthService
+  let data: any
+  let apiTokens: { generateApiToken: jest.Mock }
+  let jwtService: { verify: jest.Mock }
+  let sessions: Record<string, Claims>
+  let memberships: Array<{ organization: { id: string; name: string } }>
+  let clientId: string
 
-  const req = {
-    cookies: {},
-  } as any
+  const createResponse = () => {
+    const res: any = {
+      status: jest.fn(() => res),
+      json: jest.fn(() => res),
+      redirect: jest.fn(() => res),
+      setHeader: jest.fn(() => res),
+    }
+    return res
+  }
 
-  const createResponse = () =>
+  const requestWith = (cookie?: string) =>
     ({
-      status: jest.fn().mockReturnThis(),
-      json: jest.fn().mockReturnThis(),
-      redirect: jest.fn().mockReturnThis(),
+      cookies: cookie ? { __session: cookie } : {},
+      protocol: 'https',
+      get: (name: string) => (name === 'host' ? 'api.example.com' : undefined),
     }) as any
 
+  const authorizeQuery = (overrides: Record<string, string | undefined> = {}) =>
+    ({
+      client_id: clientId,
+      redirect_uri: REDIRECT_URI,
+      code_challenge: CHALLENGE,
+      code_challenge_method: 'S256',
+      state: 'state-123',
+      ...overrides,
+    }) as any
+
+  /** Runs /authorize for the signed-in session and returns the pending request id it created. */
+  async function startAuthorization(cookie = SESSION_COOKIE, overrides = {}): Promise<string> {
+    const res = createResponse()
+    await controller.authorize(authorizeQuery(overrides), requestWith(cookie), res)
+    const location = res.redirect.mock.calls[0]?.[0] as string
+    expect(location).toMatch(/^https:\/\/app\.example\.com\/mcp-connect\?request=/)
+    return new URL(location).searchParams.get('request') as string
+  }
+
+  async function readPending(requestId: string, cookie = SESSION_COOKIE) {
+    const res = createResponse()
+    await controller.getPendingAuthorization(requestId, requestWith(cookie), res)
+    return res
+  }
+
+  async function decide(body: Record<string, unknown>, cookie = SESSION_COOKIE) {
+    const res = createResponse()
+    await controller.decideAuthorization(body, requestWith(cookie), res)
+    return res
+  }
+
   beforeEach(() => {
-    oauth = {
-      getMcpBaseUrl: jest.fn().mockReturnValue('https://api.example.com/mcp'),
-      registerClient: jest.fn().mockReturnValue({
-        clientId: 'client-123',
-        clientName: 'MCP Client',
-        redirectUris: ['https://client.example.com/callback'],
-      }),
-      getClient: jest.fn(),
-      validateOrgMembership: jest.fn(),
-      countUserOrganizations: jest.fn(),
-      resolveOrganizationId: jest.fn(),
-      createAuthCode: jest.fn().mockReturnValue('auth-code-123'),
-      consumeAuthCode: jest.fn(),
-      verifyPkce: jest.fn(),
-      createAccessToken: jest.fn(),
-      isSessionTokenCurrent: jest.fn().mockResolvedValue(true),
-    } as any
-    config = {
+    sessions = {
+      [SESSION_COOKIE]: { userId: 'user-123', sessionId: 'session-1', authGeneration: 3 },
+      [OTHER_SESSION_COOKIE]: { userId: 'user-123', sessionId: 'session-2', authGeneration: 3 },
+    }
+    memberships = [{ organization: { id: 'org-123', name: 'Acme' } }]
+    data = {
+      user: {
+        findUnique: jest.fn(({ select }: any) =>
+          select.emails
+            ? { firstName: 'Ada', lastName: 'Lovelace', emails: [{ email: 'ada@example.com' }] }
+            : { id: 'user-123', authGeneration: 3 },
+        ),
+      },
+      userSession: {
+        findUnique: jest.fn().mockResolvedValue({ isValid: true, userId: 'user-123' }),
+      },
+      organizationMember: {
+        findMany: jest.fn(async () => memberships),
+        findFirst: jest.fn(async ({ where }: any) =>
+          memberships.some(m => m.organization.id === where.organizationId) ? { id: 'm-1' } : null,
+        ),
+      },
+    }
+    apiTokens = { generateApiToken: jest.fn().mockResolvedValue({ token: 'fake-api-token' }) }
+    const config = {
       get: jest.fn((key: string) => (key === 'siteUrl' ? 'https://app.example.com' : undefined)),
-    } as any
+    } as unknown as ConfigService
     jwtService = {
-      verify: jest.fn(),
-    } as any
-    controller = new McpOAuthController(oauth, config, jwtService)
+      verify: jest.fn((token: string) => {
+        const claims = sessions[token]
+        if (!claims) throw new Error('invalid token')
+        return claims
+      }),
+    }
+    oauth = new McpOAuthService(
+      config,
+      apiTokens as unknown as ApiTokensService,
+      data as ApiCoreDataAccessService,
+    )
+    controller = new McpOAuthController(oauth, config, jwtService as unknown as JwtService)
+    clientId = oauth.registerClient('Some MCP Client', [REDIRECT_URI]).clientId
   })
 
-  it('returns OAuth metadata and protected resource metadata', () => {
-    expect(controller.getOidcConfig(req)).toEqual(
-      expect.objectContaining({
-        issuer: 'https://api.example.com/mcp',
-        authorization_endpoint: 'https://api.example.com/mcp/authorize',
-        token_endpoint: 'https://api.example.com/mcp/token',
-      }),
-    )
-    expect(controller.getOAuthServerMetadata(req)).toEqual(
-      expect.objectContaining({
-        registration_endpoint: 'https://api.example.com/mcp/register',
-      }),
-    )
-    expect(controller.getProtectedResourceMetadata(req)).toEqual({
-      resource: 'https://api.example.com/mcp',
-      authorization_servers: ['https://api.example.com/mcp'],
-      bearer_methods_supported: ['header'],
+  describe('discovery and registration', () => {
+    it('returns OAuth metadata and protected resource metadata', () => {
+      const req = requestWith()
+      expect(controller.getOidcConfig(req)).toEqual(
+        expect.objectContaining({
+          issuer: 'https://api.example.com/api/mcp',
+          authorization_endpoint: 'https://api.example.com/api/mcp/authorize',
+          token_endpoint: 'https://api.example.com/api/mcp/token',
+          code_challenge_methods_supported: ['S256'],
+        }),
+      )
+      expect(controller.getOAuthServerMetadata(req)).toEqual(
+        expect.objectContaining({
+          registration_endpoint: 'https://api.example.com/api/mcp/register',
+        }),
+      )
+      expect(controller.getProtectedResourceMetadata(req)).toEqual({
+        resource: 'https://api.example.com/api/mcp',
+        authorization_servers: ['https://api.example.com/api/mcp'],
+        bearer_methods_supported: ['header'],
+      })
+      expect(controller.getJwks()).toEqual({ keys: [] })
     })
-    expect(controller.getJwks()).toEqual({ keys: [] })
+
+    it('registers dynamic clients with defaults', () => {
+      const result = controller.register({})
+      expect(result).toEqual(
+        expect.objectContaining({
+          client_name: 'MCP Client',
+          redirect_uris: [],
+          token_endpoint_auth_method: 'none',
+        }),
+      )
+    })
   })
 
-  it('registers dynamic clients with defaults', () => {
-    const result = controller.register({})
+  describe('authorize', () => {
+    it('rejects requests with missing required parameters', async () => {
+      const res = createResponse()
+      await controller.authorize({ client_id: clientId } as any, requestWith(SESSION_COOKIE), res)
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
+    })
 
-    expect(oauth.registerClient).toHaveBeenCalledWith('MCP Client', [])
-    expect(result).toEqual(
-      expect.objectContaining({
-        client_id: 'client-123',
-        client_name: 'MCP Client',
-        token_endpoint_auth_method: 'none',
-      }),
-    )
-  })
+    it.each([
+      ['plain', { code_challenge_method: 'plain', code_challenge: VERIFIER }],
+      ['a missing code_challenge_method', { code_challenge_method: undefined }],
+      ['a missing code_challenge', { code_challenge: undefined }],
+      ['a malformed code_challenge', { code_challenge: 'short' }],
+    ])('rejects PKCE with %s as invalid_request', async (_label, overrides) => {
+      const res = createResponse()
+      await controller.authorize(authorizeQuery(overrides), requestWith(SESSION_COOKIE), res)
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
+      expect(res.redirect).not.toHaveBeenCalled()
+    })
 
-  it('rejects authorize requests with missing required parameters', async () => {
-    const res = createResponse()
+    it('rejects a repeated parameter', async () => {
+      const res = createResponse()
+      await controller.authorize(
+        authorizeQuery({ redirect_uri: [REDIRECT_URI, 'https://evil.example.com/cb'] as any }),
+        requestWith(SESSION_COOKIE),
+        res,
+      )
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.redirect).not.toHaveBeenCalled()
+    })
 
-    await controller.authorize({ client_id: 'client-123' } as any, req, res)
+    it('rejects an unknown client', async () => {
+      const res = createResponse()
+      await controller.authorize(
+        authorizeQuery({ client_id: 'unknown' }),
+        requestWith(SESSION_COOKIE),
+        res,
+      )
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_client' }))
+    })
 
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: 'invalid_request',
-      }),
-    )
-  })
+    it('rejects a redirect_uri with a script scheme', async () => {
+      const res = createResponse()
+      await controller.authorize(
+        authorizeQuery({ redirect_uri: 'javascript:alert(1)' }),
+        requestWith(SESSION_COOKIE),
+        res,
+      )
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.redirect).not.toHaveBeenCalled()
+    })
 
-  it('redirects unauthenticated users to login with the authorize URL', async () => {
-    const res = createResponse()
-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
+    it('redirects unauthenticated users to login with the authorize URL', async () => {
+      const res = createResponse()
+      await controller.authorize(authorizeQuery(), requestWith(), res)
+      const location = res.redirect.mock.calls[0][0] as string
+      expect(location).toContain('https://app.example.com/login?redirect=')
+      const back = new URL(new URL(location).searchParams.get('redirect') as string)
+      expect(back.searchParams.get('code_challenge_method')).toBe('S256')
+      expect(back.searchParams.get('state')).toBe('state-123')
+    })
 
-    await controller.authorize(
-      {
-        client_id: 'client-123',
-        redirect_uri: 'https://client.example.com/callback',
-        code_challenge: 'challenge',
-        state: 'state-123',
-      },
-      req,
-      res,
-    )
+    it('sends the user to login when the cookie session is no longer current', async () => {
+      data.userSession.findUnique.mockResolvedValue({ isValid: false, userId: 'user-123' })
+      const res = createResponse()
+      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
+      expect(res.redirect).toHaveBeenCalledWith(
+        expect.stringContaining('https://app.example.com/login?redirect='),
+      )
+    })
 
-    expect(res.redirect).toHaveBeenCalledWith(
-      expect.stringContaining('https://app.example.com/login?redirect='),
-    )
-  })
-
-  it('issues an auth code for a valid authenticated user and organization', async () => {
-    const res = createResponse()
-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
-    oauth.validateOrgMembership.mockResolvedValue(true)
-    jwtService.verify.mockReturnValue({ userId: 'user-123', authGeneration: 3 } as any)
-
-    await controller.authorize(
-      {
-        client_id: 'client-123',
-        redirect_uri: 'https://client.example.com/callback',
-        code_challenge: 'challenge',
-        org: 'org-123',
-      },
-      { ...req, cookies: { __session: 'cookie-token' } } as any,
-      res,
-    )
-
-    expect(oauth.createAuthCode).toHaveBeenCalledWith(
-      expect.objectContaining({
+    it('refuses to authorize a client from an emulation session', async () => {
+      sessions[SESSION_COOKIE] = {
         userId: 'user-123',
-        authGeneration: 3,
-        organizationId: 'org-123',
-        clientId: 'client-123',
-      }),
-    )
-    expect(res.redirect).toHaveBeenCalledWith(
-      'https://client.example.com/callback?code=auth-code-123',
-    )
-  })
-
-  it('refuses to authorize a client from an emulation session', async () => {
-    const res = createResponse()
-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
-    oauth.validateOrgMembership.mockResolvedValue(true)
-    jwtService.verify.mockReturnValue({
-      userId: 'user-123',
-      sessionId: 'emulation-session',
-      isEmulating: true,
-      originalAdminId: 'admin-1',
-    } as any)
-
-    await controller.authorize(
-      {
-        client_id: 'client-123',
-        redirect_uri: 'https://client.example.com/callback',
-        code_challenge: 'challenge',
-        org: 'org-123',
-      },
-      { ...req, cookies: { __session: 'cookie-token' } } as any,
-      res,
-    )
-
-    expect(oauth.createAuthCode).not.toHaveBeenCalled()
-    expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'access_denied' }))
-  })
-
-  it('sends the user to login when the cookie session is no longer current', async () => {
-    const res = createResponse()
-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
-    oauth.validateOrgMembership.mockResolvedValue(true)
-    jwtService.verify.mockReturnValue({ userId: 'user-123', sessionId: 'session-1' } as any)
-    oauth.isSessionTokenCurrent.mockResolvedValue(false)
-
-    await controller.authorize(
-      {
-        client_id: 'client-123',
-        redirect_uri: 'https://client.example.com/callback',
-        code_challenge: 'challenge',
-        org: 'org-123',
-      },
-      { ...req, cookies: { __session: 'cookie-token' } } as any,
-      res,
-    )
-
-    expect(oauth.isSessionTokenCurrent).toHaveBeenCalledWith({
-      userId: 'user-123',
-      sessionId: 'session-1',
+        sessionId: 'emulation-session',
+        isEmulating: true,
+        originalAdminId: 'admin-1',
+      }
+      // The emulation session itself is current; what is refused is authorizing from it.
+      jest.spyOn(oauth, 'isSessionTokenCurrent').mockResolvedValue(true)
+      const res = createResponse()
+      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
+      expect(res.status).toHaveBeenCalledWith(403)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'access_denied' }))
+      expect(res.redirect).not.toHaveBeenCalled()
     })
-    expect(oauth.createAuthCode).not.toHaveBeenCalled()
-    expect(res.redirect).toHaveBeenCalledWith(
-      expect.stringContaining('https://app.example.com/login?redirect='),
-    )
+
+    it('rejects an org= the user does not belong to', async () => {
+      const res = createResponse()
+      await controller.authorize(
+        authorizeQuery({ org: 'org-other' }),
+        requestWith(SESSION_COOKIE),
+        res,
+      )
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.redirect).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['single-organization', [{ organization: { id: 'org-123', name: 'Acme' } }]],
+      [
+        'multi-organization',
+        [
+          { organization: { id: 'org-123', name: 'Acme' } },
+          { organization: { id: 'org-456', name: 'Globex' } },
+        ],
+      ],
+      ['organization-less', []],
+    ])('issues no code to a %s user without approval', async (_label, orgs) => {
+      memberships = orgs
+      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
+      const res = createResponse()
+
+      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
+
+      expect(createAuthCode).not.toHaveBeenCalled()
+      const location = res.redirect.mock.calls[0][0] as string
+      expect(location).toMatch(/^https:\/\/app\.example\.com\/mcp-connect\?request=[\w-]{43}$/)
+      expect(location).not.toContain(REDIRECT_URI)
+      expect(location).not.toContain('code=')
+    })
   })
 
-  it('redirects multi-organization users to organization selection', async () => {
-    const res = createResponse()
-    oauth.getClient.mockReturnValue({ clientId: 'client-123' } as any)
-    oauth.countUserOrganizations.mockResolvedValue(2)
-    jwtService.verify.mockReturnValue({ userId: 'user-123' } as any)
+  describe('pending authorization details', () => {
+    it('shows the client as unverified, the redirect host, the account and the organizations', async () => {
+      const requestId = await startAuthorization(SESSION_COOKIE, { org: 'org-123' })
+      const res = await readPending(requestId)
 
-    await controller.authorize(
-      {
-        client_id: 'client-123',
-        redirect_uri: 'https://client.example.com/callback',
-        code_challenge: 'challenge',
-      },
-      { ...req, cookies: { __session: 'cookie-token' } } as any,
-      res,
-    )
+      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store')
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          request: requestId,
+          csrfToken: expect.any(String),
+          client: { name: 'Some MCP Client', verified: false },
+          redirectUri: REDIRECT_URI,
+          redirectHost: 'client.example.com',
+          account: { name: 'Ada Lovelace', email: 'ada@example.com' },
+          organizations: [{ id: 'org-123', name: 'Acme' }],
+          selectedOrganizationId: 'org-123',
+        }),
+      )
+    })
 
-    expect(res.redirect).toHaveBeenCalledWith(
-      expect.stringContaining('https://app.example.com/mcp-connect?back='),
-    )
-    expect(oauth.createAuthCode).not.toHaveBeenCalled()
+    it('requires a session', async () => {
+      const requestId = await startAuthorization()
+      const res = await readPending(requestId, '')
+      expect(res.status).toHaveBeenCalledWith(401)
+    })
+
+    it('is not shown to a different session of the same user', async () => {
+      const requestId = await startAuthorization()
+      const res = await readPending(requestId, OTHER_SESSION_COOKIE)
+      expect(res.status).toHaveBeenCalledWith(403)
+      expect(res.json).not.toHaveBeenCalledWith(
+        expect.objectContaining({ csrfToken: expect.anything() }),
+      )
+    })
+
+    it('answers 404 for an unknown or expired request', async () => {
+      expect((await readPending('no-such-request')).status).toHaveBeenCalledWith(404)
+
+      const requestId = await startAuthorization()
+      const later = Date.now() + oauth.PENDING_TTL_MS + 1000
+      const now = jest.spyOn(Date, 'now').mockReturnValue(later)
+      try {
+        expect((await readPending(requestId)).status).toHaveBeenCalledWith(404)
+      } finally {
+        now.mockRestore()
+      }
+    })
   })
 
-  it('rejects token requests with invalid grant data', async () => {
-    const res = createResponse()
+  describe('decision', () => {
+    async function pendingWithCsrf(cookie = SESSION_COOKIE) {
+      const requestId = await startAuthorization(cookie)
+      const res = await readPending(requestId, cookie)
+      return { requestId, csrfToken: res.json.mock.calls[0][0].csrfToken as string }
+    }
 
-    await controller.token({ grant_type: 'client_credentials' }, res)
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'unsupported_grant_type' })
+    it('redirects a denial with access_denied and the state', async () => {
+      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
+      const { requestId, csrfToken } = await pendingWithCsrf()
 
-    jest.clearAllMocks()
-    await controller.token({ grant_type: 'authorization_code' }, res)
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: 'invalid_request',
-      }),
-    )
+      const res = await decide({ request: requestId, csrf_token: csrfToken, decision: 'deny' })
+
+      expect(createAuthCode).not.toHaveBeenCalled()
+      expect(res.json).toHaveBeenCalledWith({
+        redirect_to: `${REDIRECT_URI}?error=access_denied&state=state-123`,
+      })
+    })
+
+    it('rejects approval without a pending record', async () => {
+      const res = await decide({ request: 'no-such-request', csrf_token: 'x', decision: 'approve' })
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).not.toHaveBeenCalledWith(
+        expect.objectContaining({ redirect_to: expect.anything() }),
+      )
+    })
+
+    it.each([
+      ['a missing CSRF token', undefined],
+      ['a wrong CSRF token', 'fake-wrong-csrf-token'],
+    ])('rejects approval with %s', async (_label, csrf) => {
+      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
+      const { requestId } = await pendingWithCsrf()
+
+      const res = await decide({
+        request: requestId,
+        csrf_token: csrf,
+        decision: 'approve',
+        organization_id: 'org-123',
+      })
+
+      expect(res.status).toHaveBeenCalledWith(403)
+      expect(createAuthCode).not.toHaveBeenCalled()
+    })
+
+    it('rejects approval without a session', async () => {
+      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
+      const { requestId, csrfToken } = await pendingWithCsrf()
+
+      const res = await decide(
+        {
+          request: requestId,
+          csrf_token: csrfToken,
+          decision: 'approve',
+          organization_id: 'org-123',
+        },
+        '',
+      )
+
+      expect(res.status).toHaveBeenCalledWith(401)
+      expect(createAuthCode).not.toHaveBeenCalled()
+    })
+
+    it('rejects approval from a session other than the one that made the request', async () => {
+      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
+      const { requestId, csrfToken } = await pendingWithCsrf()
+
+      const res = await decide(
+        {
+          request: requestId,
+          csrf_token: csrfToken,
+          decision: 'approve',
+          organization_id: 'org-123',
+        },
+        OTHER_SESSION_COOKIE,
+      )
+
+      expect(res.status).toHaveBeenCalledWith(403)
+      expect(createAuthCode).not.toHaveBeenCalled()
+    })
+
+    it('rejects approval from an emulation session', async () => {
+      const { requestId, csrfToken } = await pendingWithCsrf()
+      sessions[SESSION_COOKIE] = {
+        ...sessions[SESSION_COOKIE],
+        isEmulating: true,
+        originalAdminId: 'admin-1',
+      }
+      jest.spyOn(oauth, 'isSessionTokenCurrent').mockResolvedValue(true)
+
+      const res = await decide({ request: requestId, csrf_token: csrfToken, decision: 'approve' })
+
+      expect(res.status).toHaveBeenCalledWith(403)
+    })
+
+    it('cannot be replayed', async () => {
+      const { requestId, csrfToken } = await pendingWithCsrf()
+      const body = {
+        request: requestId,
+        csrf_token: csrfToken,
+        decision: 'approve',
+        organization_id: 'org-123',
+      }
+
+      const first = await decide(body)
+      expect(first.json).toHaveBeenCalledWith({ redirect_to: expect.stringContaining('code=') })
+
+      const second = await decide(body)
+      expect(second.status).toHaveBeenCalledWith(400)
+      expect(second.json).not.toHaveBeenCalledWith(
+        expect.objectContaining({ redirect_to: expect.anything() }),
+      )
+    })
+
+    it('is used up by a failed attempt, so a guessed CSRF token cannot be retried', async () => {
+      const { requestId, csrfToken } = await pendingWithCsrf()
+      await decide({ request: requestId, csrf_token: 'fake-guess', decision: 'approve' })
+
+      const res = await decide({
+        request: requestId,
+        csrf_token: csrfToken,
+        decision: 'approve',
+        organization_id: 'org-123',
+      })
+
+      expect(res.status).toHaveBeenCalledWith(400)
+    })
+
+    it('rejects an organization the user does not belong to', async () => {
+      const createAuthCode = jest.spyOn(oauth, 'createAuthCode')
+      const { requestId, csrfToken } = await pendingWithCsrf()
+
+      const res = await decide({
+        request: requestId,
+        csrf_token: csrfToken,
+        decision: 'approve',
+        organization_id: 'org-other',
+      })
+
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(createAuthCode).not.toHaveBeenCalled()
+    })
+
+    it('rejects an unknown decision', async () => {
+      const { requestId, csrfToken } = await pendingWithCsrf()
+      const res = await decide({ request: requestId, csrf_token: csrfToken, decision: 'yes' })
+      expect(res.status).toHaveBeenCalledWith(400)
+    })
   })
 
-  it('exchanges a valid authorization code for an access token', async () => {
-    const res = createResponse()
-    oauth.consumeAuthCode.mockReturnValue({
-      clientId: 'client-123',
-      redirectUri: 'https://client.example.com/callback',
-      codeChallenge: 'challenge',
-      codeChallengeMethod: 'S256',
-      userId: 'user-123',
-      authGeneration: 3,
-      organizationId: 'org-123',
-      scope: 'openid',
-    } as any)
-    oauth.verifyPkce.mockReturnValue(true)
-    oauth.createAccessToken.mockResolvedValue('api-token-123')
+  describe('full flow', () => {
+    async function approveAndExchange(organizationId: string | undefined) {
+      const requestId = await startAuthorization()
+      const pending = await readPending(requestId)
+      const { csrfToken } = pending.json.mock.calls[0][0]
 
-    await controller.token(
-      {
-        grant_type: 'authorization_code',
-        code: 'auth-code-123',
-        redirect_uri: 'https://client.example.com/callback',
-        code_verifier: 'verifier',
-        client_id: 'client-123',
-      },
-      res,
-    )
+      const decision = await decide({
+        request: requestId,
+        csrf_token: csrfToken,
+        decision: 'approve',
+        organization_id: organizationId,
+      })
+      const redirectTo = new URL(decision.json.mock.calls[0][0].redirect_to)
+      expect(`${redirectTo.origin}${redirectTo.pathname}`).toBe(REDIRECT_URI)
+      expect(redirectTo.searchParams.get('state')).toBe('state-123')
+      const code = redirectTo.searchParams.get('code') as string
+      expect(code).toBeTruthy()
 
-    expect(oauth.createAccessToken).toHaveBeenCalledWith('user-123', 'org-123', 3)
-    expect(res.json).toHaveBeenCalledWith({
-      access_token: 'api-token-123',
-      token_type: 'bearer',
-      scope: 'openid',
+      const tokenRes = createResponse()
+      await controller.token(
+        {
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: VERIFIER,
+          client_id: clientId,
+        },
+        tokenRes,
+      )
+      return tokenRes
+    }
+
+    it('issues a code on approval and exchanges it for a token', async () => {
+      const tokenRes = await approveAndExchange('org-123')
+
+      expect(apiTokens.generateApiToken).toHaveBeenCalledWith(
+        'user-123',
+        expect.objectContaining({ organizationId: 'org-123' }),
+        3,
+      )
+      expect(tokenRes.json).toHaveBeenCalledWith({
+        access_token: 'fake-api-token',
+        token_type: 'bearer',
+        scope: 'openid',
+      })
+    })
+
+    it('lets a multi-organization user choose the organization', async () => {
+      memberships = [
+        { organization: { id: 'org-123', name: 'Acme' } },
+        { organization: { id: 'org-456', name: 'Globex' } },
+      ]
+      await approveAndExchange('org-456')
+      expect(apiTokens.generateApiToken).toHaveBeenCalledWith(
+        'user-123',
+        expect.objectContaining({ organizationId: 'org-456' }),
+        3,
+      )
+    })
+
+    it('grants an organization-less user a token with no organization', async () => {
+      memberships = []
+      await approveAndExchange(undefined)
+      expect(apiTokens.generateApiToken).toHaveBeenCalledWith(
+        'user-123',
+        expect.objectContaining({ organizationId: undefined }),
+        3,
+      )
+    })
+
+    it('refuses the code with the wrong PKCE verifier', async () => {
+      const requestId = await startAuthorization()
+      const { csrfToken } = (await readPending(requestId)).json.mock.calls[0][0]
+      const decision = await decide({
+        request: requestId,
+        csrf_token: csrfToken,
+        decision: 'approve',
+        organization_id: 'org-123',
+      })
+      const code = new URL(decision.json.mock.calls[0][0].redirect_to).searchParams.get('code')
+
+      const tokenRes = createResponse()
+      await controller.token(
+        {
+          grant_type: 'authorization_code',
+          code: code as string,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: 'fake-wrong-verifier',
+          client_id: clientId,
+        },
+        tokenRes,
+      )
+      expect(tokenRes.status).toHaveBeenCalledWith(400)
+      expect(apiTokens.generateApiToken).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('token', () => {
+    it('rejects token requests with invalid grant data', async () => {
+      const res = createResponse()
+      await controller.token({ grant_type: 'client_credentials' }, res)
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith({ error: 'unsupported_grant_type' })
+
+      const res2 = createResponse()
+      await controller.token({ grant_type: 'authorization_code' }, res2)
+      expect(res2.status).toHaveBeenCalledWith(400)
+      expect(res2.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
     })
   })
 })

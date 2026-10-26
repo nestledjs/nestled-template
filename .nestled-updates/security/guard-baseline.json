@@ -142,6 +142,8 @@
     "getJwks": [],
     "register": [],
     "authorize": [],
+    "getPendingAuthorization": [],
+    "decideAuthorization": [],
     "token": []
   },
   "libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts": {

@@ -30,6 +30,8 @@ const ROLES = {
   ),
   Admin: permissionsOf('organization:read', 'organization:update', 'billing:read'),
   Member: permissionsOf('organization:read', 'member:read', 'role:read', 'team:read'),
+  // A role that carries only the universal grant, as some seeds give the Owner.
+  Root: permissionsOf('all:manage'),
 } as const
 type RoleName = keyof typeof ROLES
 
@@ -876,6 +878,19 @@ describe('BillingSettings Component', () => {
       expect(screen.getByRole('button', { name: 'Cancel Subscription' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Open Customer Portal' })).toBeInTheDocument()
       expect(screen.queryByText(/read-only access to billing/i)).not.toBeInTheDocument()
+    })
+
+    it('gives a role holding only all:manage the page and every action', () => {
+      setRole('Root')
+      subscribed()
+      renderWithRouter()
+
+      expect(screen.getByText('Pro Plan')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Change Plan' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cancel Subscription' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Open Customer Portal' })).toBeInTheDocument()
+      expect(screen.queryByText(/read-only access to billing/i)).not.toBeInTheDocument()
+      expect(screen.queryByText('Permission Required')).not.toBeInTheDocument()
     })
 
     it('gives an Admin (billing:read) the billing data read-only, with no actions', () => {

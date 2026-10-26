@@ -1,0 +1,74 @@
+id: 2026-10-25-data-browser-1-0-25-filter-layout-and-tailwind-source
+title: >-
+  @nestledjs/data-browser 1.0.25 aligns the filter panel, and the app's Tailwind build must scan the
+  data-browser and shared-components packages
+priority: normal
+area: ui
+type: correctness
+delivery: hybrid
+intent: >
+  Two changes, one in the package and one in the app.
+
+  1. Upgrade @nestledjs/data-browser to 1.0.25. In the Filters panel every field label stays on one
+  line in a readable colour (gray-700, gray-200 in dark mode), every control has the same fixed
+  height, and the date and number range filters put their From/To and Min/Max captions under their
+  inputs, so all the controls in a row start on the same line. The range filters are now a
+  fieldset whose legend is the field name. Enum and boolean selects draw the same chevron as the
+  relation picker, at the right edge. Controls ask for dark native widgets in dark mode. The
+  package no longer uses the `green-web` colour, which no project defines, so accent colours
+  (primary buttons, the active Filters button and its count badge, focus rings, spinners) now come
+  from Tailwind's default `green` palette and actually render.
+
+  2. In the CSS file that imports Tailwind (`libs/shared/styles/src/lib/app.css` in the template
+  layout), add an `@source` for each of the two packages next to the existing repository-root
+  `@source`:
+
+      @source "../../../../node_modules/@nestledjs/data-browser";
+      @source "../../../../node_modules/@nestledjs/shared-components";
+
+  The paths are relative to that CSS file; adjust the `../` count if the file lives elsewhere.
+why: >
+  Tailwind v4 never scans `node_modules`, and a repository-root `@source` does not reach into it.
+  The data browser and the table it renders (DataTable, from @nestledjs/shared-components) are
+  styled entirely with Tailwind classes and ship no CSS, so in a project that consumes them from
+  npm only the classes the project's own code happens to use are generated. The result is a
+  half-styled admin data browser, worst in dark mode: faint grey filter labels (the dark-mode
+  colour is missing), select chevrons drawn at the left edge against the text (the positioning
+  class is missing), a "Create New" link with no button background, a pale active "Filters" button
+  with white text, and a white table body. The template's own development repository embeds both
+  packages as workspace libraries, which its root `@source` does scan, so the problem never showed
+  there. The package-side layout fixes need step 2 to be visible at all.
+affectedPaths:
+  - libs/shared/styles/src/lib/app.css
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.25
+    versionRange: ^1.0.25
+skipIf:
+  - >
+    The project embeds data-browser and shared-components as workspace libraries rather than
+    installing them from npm (its root `@source` already scans them): take step 1 only.
+verification:
+  - pnpm install
+  - pnpm build:web
+  - pnpm nx test web
+  - >
+    Open /admin/data/<model> with the Filters panel open in dark and light mode: labels are
+    readable, select chevrons are on the right, a date or number range filter's inputs line up
+    with the other controls in its row, "Create New" is a green button, and the table body is
+    dark in dark mode.
+agentHints:
+  - Update package.json and the lockfile to the published version. Do not copy files from libs/data-browser.
+  - >
+    Add the two `@source` lines to the CSS entry that contains `@import 'tailwindcss'`. Check the
+    relative path resolves: from the CSS file's directory it must reach the repository root's
+    `node_modules`. If the project's Tailwind entry already lists either package, leave that line.
+  - >
+    A project test that found a range filter's caption above its input, or asserted the
+    `green-web` classes, needs updating. The From/To and Min/Max inputs keep their accessible
+    names, so `getByLabelText('From')` still works; the field name is now the fieldset's legend,
+    so `getByRole('group', { name: 'Created At' })` finds the whole range filter.
+  - >
+    If the project defined its own `--color-green-web` theme colour to brand the data browser,
+    that colour no longer applies; the package uses Tailwind's `green-600`/`green-700`/`green-800`.
