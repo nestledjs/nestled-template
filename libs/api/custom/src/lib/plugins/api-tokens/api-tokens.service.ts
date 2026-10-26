@@ -20,11 +20,16 @@ export class ApiTokensService {
    * `authGeneration` is the owner's User.authGeneration as read when the issuing request
    * authenticated (the row JwtStrategy loaded). The token is only valid while the owner's value is
    * unchanged. Omitted, it is read here.
+   *
+   * `options.resource` binds the token to one RFC 8707 resource (the MCP endpoint, for tokens the
+   * MCP OAuth token endpoint issues). A bound token is refused everywhere except that resource.
+   * Tokens without one, which is every token a user creates, work across the API as before.
    */
   async generateApiToken(
     userId: string,
     input: GenerateApiTokenInput,
     authGeneration?: number,
+    options: { resource?: string } = {},
   ): Promise<GenerateApiTokenOutput> {
     const organizationId = input.organizationId?.trim() || undefined
 
@@ -47,6 +52,7 @@ export class ApiTokensService {
         authGeneration: authGeneration ?? (await this.currentAuthGeneration(userId)),
         expiresAt: input.expiresAt,
         organizationId,
+        resource: options.resource ?? null,
         lastUsedAt: null,
         revoked: false,
       },
@@ -58,6 +64,7 @@ export class ApiTokensService {
         tokenId: apiToken.id,
         tokenName: input.name,
         organizationId: organizationId ?? null,
+        resource: options.resource ?? null,
       },
     })
 
@@ -143,6 +150,8 @@ export class ApiTokensService {
         authGeneration: authGeneration ?? (await this.currentAuthGeneration(userId)),
         expiresAt: oldToken.expiresAt,
         organizationId: oldToken.organizationId ?? undefined,
+        // A rotated token keeps the binding of the token it replaces.
+        resource: oldToken.resource ?? null,
         lastUsedAt: null,
         revoked: false,
       },
@@ -178,9 +187,13 @@ export class ApiTokensService {
   /**
    * Validate an API token and return the associated user
    */
-  async validateApiToken(
-    token: string,
-  ): Promise<{ userId: string; tokenId: string; organizationId: string | null } | null> {
+  async validateApiToken(token: string): Promise<{
+    userId: string
+    tokenId: string
+    organizationId: string | null
+    /** The RFC 8707 resource the token is bound to, or null for a token usable across the API. */
+    resource: string | null
+  } | null> {
     const tokenHash = this.hashToken(token)
 
     // Find token by hash
@@ -235,6 +248,7 @@ export class ApiTokensService {
       userId: apiToken.userId,
       tokenId: apiToken.id,
       organizationId: apiToken.organizationId ?? null,
+      resource: apiToken.resource ?? null,
     }
   }
 

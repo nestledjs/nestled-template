@@ -140,7 +140,7 @@
     "getOAuthServerMetadata": [],
     "getProtectedResourceMetadata": [],
     "getJwks": [],
-    "register": [],
+    "register": ["ThrottlerGuard"],
     "authorize": [],
     "getPendingAuthorization": [],
     "decideAuthorization": [],

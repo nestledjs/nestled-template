@@ -47,6 +47,30 @@ model ApiToken {
   authGeneration Int           @default(0)
   organizationId String?
   organization   Organization? @relation("ApiToken_belongsTo_Organization", fields: [organizationId], references: [id], onDelete: SetNull)
+  // The RFC 8707 resource the token is bound to. Set on tokens the MCP OAuth token endpoint issues
+  // (the MCP endpoint's URI): such a token is accepted only there. Null for tokens a user creates,
+  // and for MCP tokens issued before binding existed, which keep working everywhere.
+  /// @graphqlOmit
+  resource       String?
+}
+
+/// @skipCrud
+/// Security-sensitive internal OAuth client registrations, made through MCP Dynamic Client
+/// Registration (RFC 7591). Each row's redirect URIs are the only places an authorization code for
+/// that client may be sent, so they change only through registration. Generic CRUD would let an
+/// edit redirect a client's codes, and its tokens with them.
+model McpOAuthClient {
+  /// The OAuth client_id: 32 random hex characters.
+  id           String    @id
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  clientName   String
+  redirectUris String[]
+  /// When the client last started an authorization or redeemed a code. Registrations never used,
+  /// or unused for 30 days, are pruned.
+  lastUsedAt   DateTime?
+
+  @@index([lastUsedAt])
 }
 
 model AuditLog {

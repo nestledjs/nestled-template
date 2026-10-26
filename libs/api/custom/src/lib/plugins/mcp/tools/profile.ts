@@ -1,4 +1,5 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer } from '@modelcontextprotocol/server'
+import { z } from 'zod-v4'
 import type { PrismaClient } from '@nestled-template/api/prisma'
 import { McpAuthContext } from '../mcp-auth'
 
@@ -11,7 +12,7 @@ export function registerProfileTools(
     'get_profile',
     {
       description: 'Get the current authenticated user profile',
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () => {
       const user = await prisma.user.findUnique({

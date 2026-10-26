@@ -10,6 +10,7 @@ import * as path from 'node:path'
 import helmet from 'helmet'
 import { NextFunction, Request, Response } from 'express'
 
+import { mcpRootWellKnownRewrite } from '@nestled-template/api/custom'
 import { AppModule } from './app.module'
 
 const GLOBAL_PREFIX = 'api'
@@ -177,6 +178,11 @@ async function bootstrap() {
       return callback(new Error('Not allowed by CORS'))
     },
   })
+
+  // Serve the MCP discovery documents RFC 9728 / RFC 8414 place at the origin root
+  // (/.well-known/.../api/mcp) from their /api/mcp/.well-known routes. Before the early filter,
+  // which only admits API prefixes.
+  app.use(mcpRootWellKnownRewrite)
 
   // Add early request filter after CORS is configured
   app.use(earlyRequestFilter)

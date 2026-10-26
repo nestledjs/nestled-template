@@ -1,15 +1,18 @@
-import { Controller, All, Req, Res, Logger } from '@nestjs/common'
+import { Controller, All, Req, Res, Logger, OnModuleDestroy } from '@nestjs/common'
 import { Request, Response } from 'express'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { JSONRPCMessage, isJSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  type AuthInfo,
+  type McpHttpHandler,
+  type McpRequestContext,
+  type McpServer,
+} from '@modelcontextprotocol/server'
 import { McpServerFactory } from './mcp-server.factory'
 import { McpAuthContext } from './mcp-auth'
+import { JsonRequestTransport, sendWebResponse, toWebRequest } from './mcp-transport'
 import { Public } from '@nestled-template/api/utils'
-
-interface UnrefableTimer {
-  unref: () => void
-}
+import { requestOrigin } from './mcp-resource'
 
 type McpAuthenticatedRequest = Request & {
   user?: {
@@ -19,89 +22,48 @@ type McpAuthenticatedRequest = Request & {
   apiTokenOrganizationId?: string | null
 }
 
-function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
-  if (typeof timer !== 'object' || timer === null || !('unref' in timer)) return
+/** Key under `AuthInfo.extra` that carries the caller into the per-request server factory. */
+const MCP_AUTH_EXTRA_KEY = 'nestledMcpAuth'
 
-  const maybeUnref = (timer as { unref?: unknown }).unref
-  if (typeof maybeUnref === 'function') {
-    ;(timer as UnrefableTimer).unref()
-  }
+function bearerToken(req: Request): string {
+  const header = req.headers?.authorization ?? ''
+  return header.toLowerCase().startsWith('bearer ') ? header.slice('bearer '.length).trim() : ''
 }
 
 /**
- * Minimal in-memory transport for a single JSON request/response cycle.
- * Uses POST-only JSON-RPC rather than SSE to work reliably behind CDNs that
- * kill long-lived connections (e.g. Railway/Fastly).
+ * The MCP endpoint. Every POST is served by a server built for that request and caller, and closed
+ * when it has answered: no sessions, no `Mcp-Session-Id`, no long-lived connections, so any API
+ * instance can answer any request and nothing is lost when one restarts.
+ *
+ * Two protocol eras share the endpoint:
+ *
+ * - 2026-07-28 requests (they carry the per-request `_meta` envelope) go to the v2 SDK's
+ *   `createMcpHandler`, which implements `server/discover`, per-request version negotiation, the
+ *   `Mcp-Method`/`Mcp-Name` header checks, `resultType` and the cache fields. It answers with one
+ *   JSON body (`responseMode: 'json'`) and refuses `subscriptions/listen` (`maxSubscriptions: 0`),
+ *   so no response is ever a held-open stream.
+ * - 2025-era requests (`initialize`, then plain JSON-RPC) keep the behaviour existing clients
+ *   already depend on, through {@link JsonRequestTransport}.
  */
-class JsonRequestTransport implements Transport {
-  onclose?: () => void
-  onerror?: (error: Error) => void
-  onmessage?: (message: JSONRPCMessage, extra?: { requestInfo?: unknown }) => void
-
-  private readonly pending = new Map<string | number, (msg: JSONRPCMessage) => void>()
-
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  async start(): Promise<void> {}
-
-  async send(message: JSONRPCMessage): Promise<void> {
-    if ('id' in message && message.id !== null && message.id !== undefined) {
-      const resolve = this.pending.get(message.id)
-      if (resolve) {
-        resolve(message)
-        this.pending.delete(message.id)
-      }
-    }
-  }
-
-  async close(): Promise<void> {
-    this.onclose?.()
-  }
-
-  async handleBody(body: unknown): Promise<JSONRPCMessage | JSONRPCMessage[] | null> {
-    if (!body || typeof body !== 'object') throw new Error('Invalid request body')
-
-    const messages: JSONRPCMessage[] = Array.isArray(body)
-      ? (body as JSONRPCMessage[])
-      : [body as JSONRPCMessage]
-
-    const requestMessages = messages.filter(m => isJSONRPCRequest(m))
-
-    const responsePromises = requestMessages.map(
-      req =>
-        new Promise<JSONRPCMessage>(resolve => {
-          this.pending.set(req.id, resolve)
-        }),
-    )
-
-    for (const msg of messages) {
-      this.onmessage?.(msg)
-    }
-
-    if (responsePromises.length === 0) return null
-
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-    try {
-      const timeout = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error('MCP response timeout')), 30_000)
-        unrefTimer(timeoutHandle)
-      })
-      const responses = await Promise.race([Promise.all(responsePromises), timeout])
-      const [firstResponse] = responses
-
-      return responses.length === 1 ? firstResponse : responses
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle)
-    }
-  }
-}
-
 // Authenticates via the MCP bearer token, not a session.
 @Public()
 @Controller('mcp')
-export class McpController {
+export class McpController implements OnModuleDestroy {
   private readonly logger = new Logger(McpController.name)
+  private readonly modernHandler: McpHttpHandler
 
-  constructor(private readonly factory: McpServerFactory) {}
+  constructor(private readonly factory: McpServerFactory) {
+    this.modernHandler = createMcpHandler((ctx: McpRequestContext) => this.buildModernServer(ctx), {
+      legacy: 'reject',
+      responseMode: 'json',
+      maxSubscriptions: 0,
+      onerror: err => this.logger.debug(`MCP request rejected: ${err.message}`),
+    })
+  }
+
+  async onModuleDestroy() {
+    await this.modernHandler.close()
+  }
 
   @All()
   async handle(@Req() req: Request, @Res() res: Response) {
@@ -120,14 +82,15 @@ export class McpController {
     const mcpReq = req as McpAuthenticatedRequest
     const user = mcpReq.user
     if (!user) {
-      const proto = (req.get('x-forwarded-proto') || req.protocol) as string
-      const host = (req.get('x-forwarded-host') || req.get('host')) as string
-      const resourceMetadataUrl = `${proto}://${host}/.well-known/oauth-protected-resource/api/mcp`
+      const resourceMetadataUrl = `${requestOrigin(req)}/.well-known/oauth-protected-resource/api/mcp`
+      // A bearer token was sent but authenticated no one (unknown, revoked or expired): say so, so
+      // the client re-authorizes instead of retrying the same token (RFC 6750 section 3.1).
+      const tokenError = bearerToken(req) ? ', error="invalid_token"' : ''
       res
         .status(401)
         .header(
           'WWW-Authenticate',
-          `Bearer realm="MCP", resource_metadata="${resourceMetadataUrl}"`,
+          `Bearer realm="MCP", resource_metadata="${resourceMetadataUrl}"${tokenError}`,
         )
         .json({
           error: 'Unauthorized',
@@ -142,6 +105,47 @@ export class McpController {
       isSuperAdmin: Boolean(user.isSuperAdmin),
     }
 
+    let webRequest: globalThis.Request
+    try {
+      webRequest = toWebRequest(req, requestOrigin(req))
+    } catch {
+      // A Host or X-Forwarded-Host that cannot form a URL (spaces, a bad port, ...).
+      res.status(400).json({ error: 'Bad Request', message: 'Invalid request host' })
+      return
+    }
+
+    try {
+      if (await isLegacyRequest(webRequest, req.body)) {
+        await this.handleLegacy(req, res, auth)
+        return
+      }
+
+      const authInfo: AuthInfo = {
+        token: bearerToken(req),
+        clientId: auth.userId,
+        scopes: [],
+        extra: { [MCP_AUTH_EXTRA_KEY]: auth },
+      }
+      const webResponse = await this.modernHandler.fetch(webRequest, {
+        authInfo,
+        parsedBody: req.body,
+      })
+      await sendWebResponse(webResponse, res)
+    } catch (err) {
+      this.logger.error('MCP request handling error', err)
+      if (!res.headersSent) res.status(500).json({ error: 'Internal server error' })
+    }
+  }
+
+  /** The caller rides in on `authInfo`; a request without it never reaches here (401 above). */
+  private buildModernServer(ctx: McpRequestContext): McpServer {
+    const auth = ctx.authInfo?.extra?.[MCP_AUTH_EXTRA_KEY] as McpAuthContext | undefined
+    if (!auth)
+      throw new Error('MCP request reached the server factory without an authenticated caller')
+    return this.factory.create(auth)
+  }
+
+  private async handleLegacy(req: Request, res: Response, auth: McpAuthContext) {
     let server: McpServer | null = null
     const transport = new JsonRequestTransport()
 
