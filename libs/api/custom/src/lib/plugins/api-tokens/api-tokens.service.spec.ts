@@ -46,6 +46,26 @@ describe('ApiTokensService', () => {
     service = module.get<ApiTokensService>(ApiTokensService)
   })
   describe('Token Generation', () => {
+    it('binds a token to a resource when asked, and records it', async () => {
+      mockData.apiToken.create.mockResolvedValue({ id: 'token-123' } as any)
+
+      await service.generateApiToken('user-123', { name: 'MCP' } as GenerateApiTokenInput, 0, {
+        resource: 'https://api.example.com/api/mcp',
+      })
+
+      expect(mockData.apiToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ resource: 'https://api.example.com/api/mcp' }),
+        }),
+      )
+      expect(mockSecurityEvents.logEvent).toHaveBeenCalledWith(
+        'user-123',
+        'API_TOKEN_CREATED',
+        expect.objectContaining({
+          metadata: expect.objectContaining({ resource: 'https://api.example.com/api/mcp' }),
+        }),
+      )
+    })
     it('should generate an API token successfully', async () => {
       const userId = 'user-123'
       const input: GenerateApiTokenInput = {
@@ -76,6 +96,7 @@ describe('ApiTokensService', () => {
           authGeneration: 0,
           expiresAt: input.expiresAt,
           organizationId: undefined,
+          resource: null,
           lastUsedAt: null,
           revoked: false,
         },
@@ -85,6 +106,7 @@ describe('ApiTokensService', () => {
           tokenId: 'token-123',
           tokenName: 'Production API Token',
           organizationId: null,
+          resource: null,
         },
       })
     })
@@ -126,6 +148,7 @@ describe('ApiTokensService', () => {
           tokenId: 'token-123',
           tokenName: 'MCP Token',
           organizationId: 'org-123',
+          resource: null,
         },
       })
     })
@@ -269,6 +292,30 @@ describe('ApiTokensService', () => {
     })
   })
   describe('Token Rotation', () => {
+    it('keeps the resource binding of the token it replaces', async () => {
+      mockData.apiToken.findUnique.mockResolvedValue({
+        id: 'old-token-123',
+        name: 'MCP',
+        userId: 'user-123',
+        expiresAt: null,
+        organizationId: null,
+        resource: 'https://api.example.com/api/mcp',
+      } as any)
+      mockData.apiToken.create.mockResolvedValue({ id: 'new-token-456' } as any)
+      mockData.apiToken.update.mockResolvedValue({} as any)
+
+      await service.rotateApiToken(
+        'user-123',
+        { tokenId: 'old-token-123' } as RotateApiTokenInput,
+        0,
+      )
+
+      expect(mockData.apiToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ resource: 'https://api.example.com/api/mcp' }),
+        }),
+      )
+    })
     it('should rotate token and revoke old one by default', async () => {
       const userId = 'user-123'
       const input: RotateApiTokenInput = {
@@ -357,6 +404,26 @@ describe('ApiTokensService', () => {
     })
   })
   describe('Token Validation', () => {
+    it('returns the resource a token is bound to', async () => {
+      mockData.apiToken.findFirst.mockResolvedValue({
+        user: { authGeneration: 0, isActive: true },
+        authGeneration: 0,
+        id: 'token-123',
+        userId: 'user-123',
+        organizationId: null,
+        resource: 'https://api.example.com/api/mcp',
+        revoked: false,
+        expiresAt: null,
+      } as any)
+      mockData.apiToken.update.mockResolvedValue({} as any)
+
+      await expect(service.validateApiToken('a'.repeat(64))).resolves.toEqual({
+        userId: 'user-123',
+        tokenId: 'token-123',
+        organizationId: null,
+        resource: 'https://api.example.com/api/mcp',
+      })
+    })
     it("records the issuing request's auth generation on a new token", async () => {
       mockData.apiToken.create.mockResolvedValue({ id: 'token-1' })
 
@@ -414,6 +481,7 @@ describe('ApiTokensService', () => {
         userId: 'user-123',
         tokenId: 'token-123',
         organizationId: null,
+        resource: null,
       })
       expect(mockData.apiToken.findFirst).toHaveBeenCalledWith({
         where: {
@@ -446,6 +514,7 @@ describe('ApiTokensService', () => {
         userId: 'user-123',
         tokenId: 'token-123',
         organizationId: 'org-123',
+        resource: null,
       })
       expect(mockData.organizationMember.findFirst).toHaveBeenCalledWith({
         where: { userId: 'user-123', organizationId: 'org-123' },
@@ -509,6 +578,7 @@ describe('ApiTokensService', () => {
         userId: 'user-123',
         tokenId: 'token-123',
         organizationId: null,
+        resource: null,
       })
     })
     it('should handle lastUsedAt update failure gracefully', async () => {
@@ -531,6 +601,7 @@ describe('ApiTokensService', () => {
         userId: 'user-123',
         tokenId: 'token-123',
         organizationId: null,
+        resource: null,
       })
     })
   })

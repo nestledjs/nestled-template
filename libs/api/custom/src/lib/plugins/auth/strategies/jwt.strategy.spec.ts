@@ -62,6 +62,43 @@ describe('JwtStrategy API token authentication', () => {
     )
   })
 
+  // RFC 8707: a token the MCP OAuth endpoint issued is bound to the MCP endpoint and is refused by
+  // the rest of the API. Tokens without a binding (settings tokens, older MCP tokens) still work.
+  it('refuses a token bound to a resource, before any user lookup', async () => {
+    const req = { headers: { authorization: `Bearer ${token}` } } as any
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: null,
+      resource: 'https://api.example.com/api/mcp',
+    })
+
+    await strategy.authenticate(req)
+
+    expect(auth.validateUser).not.toHaveBeenCalled()
+    expect((strategy as any).success).not.toHaveBeenCalled()
+    expect((strategy as any).fail).toHaveBeenCalledWith(
+      { message: 'API token is not valid for this resource' },
+      401,
+    )
+  })
+
+  it('still accepts an unbound token (resource null)', async () => {
+    const user = { id: 'user-1' }
+    const req = { headers: { authorization: `Bearer ${token}` } } as any
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: null,
+      resource: null,
+    })
+    auth.validateUser.mockResolvedValue(user)
+
+    await strategy.authenticate(req)
+
+    expect((strategy as any).success).toHaveBeenCalledWith(user)
+  })
+
   // An organization-scoped token is a restriction below the user's own access. The user really is
   // a member of the organization they are asking for, so every membership check downstream passes
   // — the binding has to happen here or not at all.

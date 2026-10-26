@@ -152,6 +152,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           return this.fail({ message: 'Invalid or expired API token' }, 401)
         }
 
+        // A token bound to a resource (RFC 8707) — the MCP endpoint, for tokens MCP OAuth issues —
+        // is accepted only there (ApiTokenAuthMiddleware), never by the rest of the API.
+        if (result.resource) {
+          this.logger.warn(
+            `API token ${result.tokenId} is bound to ${result.resource}; refused here`,
+          )
+          return this.fail({ message: 'API token is not valid for this resource' }, 401)
+        }
+
         // An organization-scoped token is a RESTRICTION below the user's own access, not a hint.
         // Without this, a user who belongs to both A and B, holding a token scoped only to A, can
         // act in B just by sending x-organization-id: B — every membership check downstream still

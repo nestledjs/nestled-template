@@ -8,6 +8,14 @@ import {
   claimedAuthGeneration,
   isAuthTokenCurrent,
 } from '../auth/auth-token-claims'
+import {
+  ClientMetadataError,
+  ClientMetadataResolver,
+  isAcceptableRedirectUri,
+  isClientMetadataDocumentUrl,
+  isRegisteredRedirectUri,
+} from './mcp-client-metadata'
+import { canonicalResource, MCP_RESOURCE_PATH, requestOrigin } from './mcp-resource'
 
 export interface StoredAuthCode {
   userId: string
@@ -19,6 +27,8 @@ export interface StoredAuthCode {
   codeChallenge: string
   codeChallengeMethod: string
   scope: string
+  /** The canonical MCP resource URI the token will be bound to (RFC 8707). */
+  resource: string
   expiresAt: Date
 }
 
@@ -27,6 +37,33 @@ export interface OAuthClient {
   clientName: string
   redirectUris: string[]
 }
+
+/** A client_id that cannot be used, with the OAuth error to answer it with. */
+export class OAuthClientError extends Error {
+  constructor(
+    readonly error: 'invalid_client' | 'invalid_request',
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+/** Bounds on a dynamic registration, which anyone can make: the record is stored. */
+export const MAX_REGISTERED_REDIRECT_URIS = 10
+const MAX_REDIRECT_URI_LENGTH = 2048
+/** All of a registration's redirect URIs together, in UTF-8 bytes. */
+export const MAX_REDIRECT_URI_BYTES = 4096
+const MAX_CLIENT_NAME_LENGTH = 200
+
+const HOUR_MS = 60 * 60 * 1000
+const DAY_MS = 24 * HOUR_MS
+/** A registration never used for an authorization within this long is pruned. */
+export const UNUSED_CLIENT_TTL_MS = DAY_MS
+/** A registration not used for this long is pruned. */
+export const IDLE_CLIENT_TTL_MS = 30 * DAY_MS
+/** How often (per API instance) a registration may trigger the prune. */
+const CLIENT_PRUNE_INTERVAL_MS = HOUR_MS
+const DCR_CLIENT_ID_PATTERN = /^[a-f0-9]{32}$/
 
 /**
  * An /authorize request waiting for the signed-in user to approve or deny it on the consent page.
@@ -49,6 +86,13 @@ export interface PendingAuthorization {
   scope: string
   /** An organization the client asked for with `org=`, already checked for membership. */
   requestedOrganizationId: string | null
+  /**
+   * The issuer the client saw when it started (RFC 9207 `iss`). Recorded here because the decision
+   * arrives from the web app's server, possibly through another host name.
+   */
+  issuer: string
+  /** The canonical MCP resource URI the token will be bound to (RFC 8707). */
+  resource: string
   expiresAt: Date
 }
 
@@ -64,23 +108,14 @@ export const PKCE_METHOD = 'S256'
 // challenge is the 43-character base64url SHA-256 of the verifier.
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/
 
-// Schemes a browser must never be sent to with an authorization code or an error.
-const FORBIDDEN_REDIRECT_SCHEMES = new Set([
-  'javascript:',
-  'data:',
-  'vbscript:',
-  'file:',
-  'blob:',
-  'about:',
-])
-
 @Injectable()
 export class McpOAuthService {
   private readonly logger = new Logger(McpOAuthService.name)
   private readonly authCodes = new Map<string, StoredAuthCode>()
-  private readonly clients = new Map<string, OAuthClient>()
   private readonly pendingAuthorizations = new Map<string, PendingAuthorization>()
   private readonly CODE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+  private readonly clientMetadata = new ClientMetadataResolver()
+  private lastClientPruneAt = 0
   /** How long the consent page stays usable before the client must start again. */
   readonly PENDING_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -104,9 +139,7 @@ export class McpOAuthService {
 
   getMcpBaseUrl(req?: { protocol: string; get: (name: string) => string | undefined }): string {
     if (req) {
-      const proto = req.get('x-forwarded-proto') || req.protocol
-      const host = req.get('x-forwarded-host') || req.get('host')
-      return `${proto}://${host}/api/mcp`
+      return `${requestOrigin(req)}${MCP_RESOURCE_PATH}`
     }
     // API_URL is the origin only (no `/api` suffix — see libs/api/config/src/lib/validation.ts),
     // so the `/api/mcp` prefix is appended directly. Trim any trailing slashes defensively (env
@@ -119,16 +152,178 @@ export class McpOAuthService {
     return `${apiUrl}/api/mcp`
   }
 
-  registerClient(clientName: string, redirectUris: string[]): OAuthClient {
+  /** RFC 8414 / OIDC discovery metadata for the authorization server at `/api/mcp`. */
+  buildAuthorizationServerMetadata(req: {
+    protocol: string
+    get: (name: string) => string | undefined
+  }) {
+    const base = this.getMcpBaseUrl(req)
+    return {
+      issuer: base,
+      authorization_endpoint: `${base}/authorize`,
+      token_endpoint: `${base}/token`,
+      // Dynamic Client Registration: deprecated by MCP 2026-07-28, kept for older clients.
+      registration_endpoint: `${base}/register`,
+      jwks_uri: `${base}/jwks`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      subject_types_supported: ['public'],
+      id_token_signing_alg_values_supported: ['RS256'],
+      code_challenge_methods_supported: [PKCE_METHOD],
+      token_endpoint_auth_methods_supported: ['none'],
+      scopes_supported: ['openid'],
+      // Client ID Metadata Documents: a client may use the HTTPS URL of its metadata as client_id.
+      client_id_metadata_document_supported: true,
+      // RFC 9207: authorization responses carry `iss`.
+      authorization_response_iss_parameter_supported: true,
+    }
+  }
+
+  /** RFC 9728 Protected Resource Metadata for the MCP endpoint at `/api/mcp`. */
+  buildProtectedResourceMetadata(req: {
+    protocol: string
+    get: (name: string) => string | undefined
+  }) {
+    const base = this.getMcpBaseUrl(req)
+    return {
+      resource: base,
+      authorization_servers: [base],
+      bearer_methods_supported: ['header'],
+    }
+  }
+
+  /**
+   * The resource a token for this request is bound to: this server's MCP endpoint. A client may
+   * name it with `resource` (RFC 8707); naming anything else is refused (null).
+   */
+  resolveResource(requested: string | undefined, mcpBase: string): string | null {
+    const ours = canonicalResource(mcpBase)
+    if (!ours) return null
+    if (requested === undefined || requested === '') return ours
+    return canonicalResource(requested) === ours ? ours : null
+  }
+
+  /**
+   * Store a Dynamic Client Registration. Registrations are rows (McpOAuthClient), so they survive
+   * restarts and are shared by every API instance.
+   */
+  async registerClient(clientName: string, redirectUris: string[]): Promise<OAuthClient> {
     const clientId = randomBytes(16).toString('hex')
-    const client: OAuthClient = { clientId, clientName, redirectUris }
-    this.clients.set(clientId, client)
-    this.logger.log(`Registered MCP OAuth client: ${clientName} (${clientId})`)
+    const name = clientName.trim().slice(0, MAX_CLIENT_NAME_LENGTH) || 'MCP Client'
+    const row = await this.data.mcpOAuthClient.create({
+      data: { id: clientId, clientName: name, redirectUris },
+      select: { id: true, clientName: true, redirectUris: true },
+    })
+    this.logger.log(`Registered MCP OAuth client: ${row.clientName} (${row.id})`)
+    // There is no scheduler in the template: registration, the only way rows are added, also
+    // clears out stale ones, at most once an hour per instance and without delaying the response.
+    if (Date.now() - this.lastClientPruneAt >= CLIENT_PRUNE_INTERVAL_MS) {
+      this.lastClientPruneAt = Date.now()
+      this.pruneStaleClients().catch(err =>
+        this.logger.error('Pruning stale MCP OAuth clients failed', err),
+      )
+    }
+    return { clientId: row.id, clientName: row.clientName, redirectUris: row.redirectUris }
+  }
+
+  /**
+   * Delete registrations that were never used within a day of being made, or not used for 30
+   * days. A pruned client gets `invalid_client` and registers again. Returns how many went.
+   */
+  async pruneStaleClients(now = Date.now()): Promise<number> {
+    const { count } = await this.data.mcpOAuthClient.deleteMany({
+      where: {
+        OR: [
+          { lastUsedAt: null, createdAt: { lt: new Date(now - UNUSED_CLIENT_TTL_MS) } },
+          { lastUsedAt: { lt: new Date(now - IDLE_CLIENT_TTL_MS) } },
+        ],
+      },
+    })
+    if (count > 0) this.logger.log(`Pruned ${count} stale MCP OAuth client registration(s)`)
+    return count
+  }
+
+  /** Record that a DCR client was used, which keeps it from being pruned. */
+  async touchClient(clientId: string): Promise<void> {
+    if (!DCR_CLIENT_ID_PATTERN.test(clientId)) return
+    await this.data.mcpOAuthClient.updateMany({
+      where: { id: clientId },
+      data: { lastUsedAt: new Date() },
+    })
+  }
+
+  async getClient(clientId: string): Promise<OAuthClient | undefined> {
+    // DCR ids are 32 hex characters; anything else cannot be a row, so skip the query.
+    if (!DCR_CLIENT_ID_PATTERN.test(clientId)) return undefined
+    const row = await this.data.mcpOAuthClient.findUnique({
+      where: { id: clientId },
+      select: { id: true, clientName: true, redirectUris: true },
+    })
+    return row
+      ? { clientId: row.id, clientName: row.clientName, redirectUris: row.redirectUris }
+      : undefined
+  }
+
+  /**
+   * The checks /authorize can make before the caller has signed in, without a network request:
+   * a DCR client must exist and `redirectUri` must be one it registered; a Client ID Metadata
+   * Document URL must be well-formed and `redirectUri` acceptable in form (its document is fetched
+   * only after sign-in, by {@link resolveClientForRedirect}).
+   */
+  async precheckClient(clientId: string, redirectUri: string): Promise<void> {
+    if (isClientMetadataDocumentUrl(clientId)) {
+      if (!isAcceptableRedirectUri(redirectUri)) {
+        throw new OAuthClientError('invalid_request', 'Unacceptable redirect_uri')
+      }
+      return
+    }
+    await this.resolveClientForRedirect(clientId, redirectUri)
+  }
+
+  /**
+   * The client behind `clientId`, after checking that `redirectUri` is one it registered (exact
+   * match; a loopback redirect may use any port). A URL-shaped client_id is resolved by fetching
+   * its Client ID Metadata Document; anything else must be a stored DCR registration.
+   */
+  async resolveClientForRedirect(clientId: string, redirectUri: string): Promise<OAuthClient> {
+    let client: OAuthClient | undefined
+    if (isClientMetadataDocumentUrl(clientId)) {
+      try {
+        client = await this.clientMetadata.resolve(clientId)
+      } catch (err) {
+        const reason = err instanceof ClientMetadataError ? err.message : 'lookup failed'
+        this.logger.warn(`MCP client metadata document rejected (${clientId}): ${reason}`)
+        throw new OAuthClientError('invalid_client', reason)
+      }
+    } else {
+      client = await this.getClient(clientId)
+    }
+    if (!client) throw new OAuthClientError('invalid_client', 'Unknown client_id')
+    if (!isRegisteredRedirectUri(client.redirectUris, redirectUri)) {
+      throw new OAuthClientError(
+        'invalid_request',
+        'redirect_uri is not registered for this client',
+      )
+    }
+    await this.touchClient(clientId)
     return client
   }
 
-  getClient(clientId: string): OAuthClient | undefined {
-    return this.clients.get(clientId)
+  /** The redirect URIs a DCR request may register, or null when any of them is unacceptable. */
+  validateRedirectUris(redirectUris: unknown): string[] | null {
+    if (!Array.isArray(redirectUris) || redirectUris.length === 0) return null
+    if (redirectUris.length > MAX_REGISTERED_REDIRECT_URIS) return null
+    const acceptable = (uri: unknown) =>
+      typeof uri === 'string' &&
+      uri.length <= MAX_REDIRECT_URI_LENGTH &&
+      isAcceptableRedirectUri(uri)
+    if (!redirectUris.every(acceptable)) return null
+    const totalBytes = redirectUris.reduce(
+      (sum: number, uri: string) => sum + Buffer.byteLength(uri, 'utf8'),
+      0,
+    )
+    if (totalBytes > MAX_REDIRECT_URI_BYTES) return null
+    return redirectUris as string[]
   }
 
   createAuthCode(params: Omit<StoredAuthCode, 'expiresAt'>): string {
@@ -164,17 +359,6 @@ export class McpOAuthService {
     if (method !== PKCE_METHOD || typeof codeVerifier !== 'string') return false
     const hash = createHash('sha256').update(codeVerifier).digest('base64url')
     return hash === codeChallenge
-  }
-
-  /** Whether `redirectUri` is an absolute URL with a scheme a browser may safely be sent to. */
-  isSafeRedirectUri(redirectUri: string): boolean {
-    let url: URL
-    try {
-      url = new URL(redirectUri)
-    } catch {
-      return false
-    }
-    return !url.hash && !FORBIDDEN_REDIRECT_SCHEMES.has(url.protocol)
   }
 
   /**
@@ -276,10 +460,15 @@ export class McpOAuthService {
     return !!membership
   }
 
+  /**
+   * An API token for the MCP client, bound to `resource` (the MCP endpoint): it is accepted at
+   * `/api/mcp` and nowhere else.
+   */
   async createAccessToken(
     userId: string,
     organizationId: string | null,
     authGeneration: number,
+    resource: string,
   ): Promise<string> {
     const result = await this.apiTokensService.generateApiToken(
       userId,
@@ -288,6 +477,7 @@ export class McpOAuthService {
         organizationId: organizationId ?? undefined,
       },
       authGeneration,
+      { resource },
     )
     return result.token
   }

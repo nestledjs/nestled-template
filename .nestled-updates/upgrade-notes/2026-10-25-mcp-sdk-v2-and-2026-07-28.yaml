@@ -1,0 +1,246 @@
+id: 2026-10-25-mcp-sdk-v2-and-2026-07-28
+title: >-
+  The MCP plugin moves to the v2 SDK and serves MCP 2026-07-28 (server/discover, Client ID
+  Metadata Documents) next to the 2025-era flow
+priority: normal
+area: auth
+type: feature
+delivery: code-patch
+intent: >
+  The MCP plugin (libs/api/custom/src/lib/plugins/mcp) moves from the v1 SDK
+  (@modelcontextprotocol/sdk) to the v2 packages and serves protocol revision 2026-07-28 next to
+  the 2025-era flow, from the same stateless `/api/mcp` endpoint. OAuth gains Client ID Metadata
+  Documents (CIMD) and keeps Dynamic Client Registration (DCR). Session and browser auth are not
+  touched.
+
+  Package changes in the root package.json (template promotion does not mirror package.json, so
+  make them by hand, then run `pnpm install` so pnpm-lock.yaml follows):
+  remove `"@modelcontextprotocol/sdk"` from dependencies; add `"@modelcontextprotocol/server":
+  "^2.4.0"` and `"zod-v4": "npm:zod@^4.6.7"` to dependencies; add
+  `"@modelcontextprotocol/client": "^2.4.0"` to devDependencies (the specs drive the endpoint with
+  the real SDK client); keep `"zod": "3.25.56"`; and add `"zod@<4": "3.25.56"` to
+  `pnpm.overrides`. The v2 SDK only converts zod >= 4.2 schemas, while @nestledjs/forms and
+  @nestledjs/forms-core peer-depend on zod ^3. With a zod 4 in the lockfile, pnpm resolves those
+  peers to it silently; the override keeps them on 3.25.56. After install, `grep "(zod@"
+  pnpm-lock.yaml` must show only `zod@3.25.56`.
+
+  Transport (mcp.controller.ts, new mcp-transport.ts). Every POST is still served by a server
+  built for that request and caller, and closed after it answers: no sessions, no
+  `Mcp-Session-Id`, no long-lived connections. A request carrying the 2026-07-28 `_meta` envelope
+  goes to the SDK's `createMcpHandler` (`legacy: 'reject'`, `responseMode: 'json'`,
+  `maxSubscriptions: 0`), which implements `server/discover`, per-request version negotiation
+  (-32022 for an unsupported version), the `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` header
+  checks (-32020), `resultType`, and the `ttlMs`/`cacheScope` cache fields. Any other request is
+  2025-era and keeps the existing JSON transport (JsonRequestTransport, moved to mcp-transport.ts)
+  with unchanged responses: plain JSON bodies, batches, no `Accept: text/event-stream`
+  requirement. `isLegacyRequest` from the SDK makes the split. The caller reaches the per-request
+  factory through `AuthInfo.extra`. The server advertises `tools.listChanged: false`, and
+  `subscriptions/listen` is refused in-band, so no response is ever a held-open stream.
+
+  A `401` for a bearer token that authenticated no one now carries `error="invalid_token"`.
+  A Host or X-Forwarded-Host that cannot form a URL gets `400 Invalid request host` instead of a
+  500. Wherever the MCP base URL, issuer or resource is derived from a request, a comma-separated
+  X-Forwarded-Proto or X-Forwarded-Host (a proxy chain) contributes its first entry, trimmed.
+
+  Tools (tools/*.ts, mcp-server.factory.ts). `McpServer` comes from `@modelcontextprotocol/server`,
+  `z` from `zod-v4`, and each `inputSchema` is a `z.object({...})` (`z.object({})` for a tool
+  without arguments) instead of a raw shape.
+
+  Discovery (new mcp-well-known.ts, apps/api/src/main.ts). The `401` challenge names
+  `/.well-known/oauth-protected-resource/api/mcp`, which the API did not serve: it is outside the
+  `api` prefix and the early request filter refused it. A small Express middleware,
+  `mcpRootWellKnownRewrite`, mounted in main.ts just before `earlyRequestFilter`, now serves it
+  and `/.well-known/oauth-authorization-server/api/mcp` and
+  `/.well-known/openid-configuration/api/mcp` (the first two locations a 2026-07-28 client tries
+  for an issuer with a path) from the existing `/api/mcp/.well-known/*` routes. No route,
+  controller, public-operation or guard-baseline entry is added.
+
+  OAuth (mcp-oauth.controller.ts, mcp-oauth.service.ts, new mcp-client-metadata.ts). The
+  authorization server metadata adds `client_id_metadata_document_supported: true` and
+  `authorization_response_iss_parameter_supported: true`, and keeps `registration_endpoint`.
+  `/authorize` accepts as `client_id` either a DCR client or the HTTPS URL of a Client ID Metadata
+  Document. The document is fetched only after the user has signed in, with a bounded fetch
+  (https only; the host is resolved once, with a 3 s timeout and at most 2 lookups in flight so
+  slow DNS cannot fill libuv's threadpool, every address checked public, including the IPv6
+  forms that embed an IPv4 address (::/96, 64:ff9b::/96, 64:ff9b:1::/48, 2002::/16) and fec0::/10;
+  the connection is made to that checked address with the original Host and SNI, so DNS
+  rebinding cannot redirect it; no redirects, 5 s, 5 KB, cached per Cache-Control up to 24 h);
+  its `client_id` must equal the URL, it must name `client_name` and `redirect_uris`, and its
+  `token_endpoint_auth_method` must be absent or `none`. No redirect URI or client_id may contain
+  `#`, a bare trailing one included. For both kinds of client, `redirect_uri` must be one the
+  client registered (exact match; a loopback HTTP redirect may use any port, per RFC 8252). /authorize checks that before sign-in for a DCR client, and again after sign-in,
+  before it creates the pending authorization of the consent flow
+  (2026-10-25-mcp-oauth-consent-and-s256-pkce, which this note builds on and replaces the
+  minimal redirect scheme check of). The consent page still shows every client, a metadata
+  document's included, as `verified: false`: its name is self-asserted and nothing checks its
+  origin. Both the approval and the denial redirect carry `iss` (RFC 9207), the issuer the
+  client saw at /authorize, recorded on the pending authorization because the decision arrives
+  from the web app's server. `/register` (DCR) stays, and now requires 1-10 acceptable redirect
+  URIs (https, loopback http, or a native app's private-use scheme; plain http to another host
+  and script, file or about schemes are refused with `invalid_redirect_uri`, as is a URI over
+  2048 characters); the client name is trimmed and capped at 200 characters.
+
+  Stored DCR registrations. Registrations were an in-process Map, lost on every restart and not
+  shared between API instances. They are now rows of a new `McpOAuthClient` model
+  (`/// @skipCrud`: its redirect URIs are where a client's codes may go, so they change only
+  through registration). getClient and registerClient are async. Because anyone can call
+  /register and every call now stores a row: it is rate limited per client IP (10 an hour, through
+  ThrottlerGuard and the `signup` throttler AuthModule already configures, keyed on req.ip and so
+  on TRUST_PROXY_HOPS; SIGNUP_THROTTLE_ENABLED=false turns it off with the signup limit); a
+  registration may store at most 10 redirect URIs of at most 2048 characters and 4096 UTF-8 bytes
+  together; `McpOAuthClient.lastUsedAt` is set when the client starts an authorization (its
+  redirect is resolved) or redeems a code; and registrations never used within a day, or unused
+  for 30 days, are deleted. The template has no scheduler, so registration runs that prune, at
+  most once an hour per instance and without delaying the response. Pending authorizations and
+  authorization codes stay in memory (they live 10 and 5 minutes): a deployment with several API
+  instances and no sticky routing still needs a shared store for those.
+
+  Token binding (RFC 8707). New `ApiToken.resource` column (`String?`, `/// @graphqlOmit`).
+  /authorize takes an optional `resource`, which must be this server's MCP endpoint in canonical
+  form (lowercase scheme and host, no trailing slash, no fragment); anything else gets
+  `400 invalid_target`. It is kept through the login redirect, recorded on the pending
+  authorization and the code, and /token refuses a `resource` that differs from the code's.
+  Every token the MCP token endpoint now issues is bound to that URI (apiTokensService
+  generateApiToken takes `{ resource }`; rotation keeps it). JwtStrategy refuses a bound token
+  anywhere in the API (401), and ApiTokenAuthMiddleware, in front of the MCP endpoint, accepts it
+  only when it names the MCP endpoint of the origin the request reached. Tokens with no
+  resource, which is every settings token and every MCP token issued before this change, keep
+  working exactly as before.
+
+  Schema and migration (libs/api/prisma): the `ApiToken.resource` column and the `McpOAuthClient`
+  model (with `lastUsedAt` and an index on it), in migration
+  `20261025210000_mcp_oauth_token_resource_and_clients`. Both are additive.
+
+  Tests cover the transport on both eras, discovery metadata, DCR (stored), CIMD, the resource
+  binding, and token validation (mcp.controller.spec.ts, mcp.http.spec.ts,
+  mcp-oauth.controller.spec.ts, mcp-oauth.service.spec.ts, mcp-client-metadata.spec.ts,
+  mcp-resource.spec.ts, mcp-well-known.spec.ts, middleware/api-token-auth.middleware.spec.ts,
+  api-tokens.service.spec.ts and jwt.strategy.spec.ts).
+why: >
+  MCP 2026-07-28 removes the initialize handshake and sessions, requires `server/discover`, a
+  per-request version envelope, `resultType` and cache fields, and renumbers its errors. The v1
+  SDK does not implement the revision; the v2 SDK does, so the plugin now gets those rules from
+  the SDK instead of hand-rolling them. The revision also deprecates DCR in favour of Client ID
+  Metadata Documents, which need no registration state, and asks authorization servers to
+  validate redirect URIs exactly, name the issuer in the authorization response, publish their
+  metadata where clients look for it, and issue tokens only for the resource they will be used
+  at. The DCR registry was in memory, so every restart and every second instance invalidated
+  registered clients. Existing clients keep working: the 2025-era path is unchanged, DCR is
+  kept, and tokens issued before this change are validated exactly as before.
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - apps/api/src/main.ts
+  - libs/api/custom/src/lib/plugins/mcp/index.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-transport.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-server.factory.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-resource.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+  - libs/api/prisma/src/lib/schemas/schema.prisma
+  - libs/api/prisma/src/lib/migrations/20261025210000_mcp_oauth_token_resource_and_clients/migration.sql
+  - libs/api/custom/src/lib/plugins/mcp/mcp-client-metadata.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-well-known.ts
+  - libs/api/custom/src/lib/plugins/mcp/tools/**
+  - libs/api/custom/src/lib/plugins/mcp/*.spec.ts
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+skipIf:
+  - >
+    The project has no MCP plugin: no libs/api/custom/src/lib/plugins/mcp directory and no
+    @modelcontextprotocol/* dependency. Record not-applicable.
+verification:
+  - pnpm install --frozen-lockfile
+  - pnpm db-update # applies the migration and regenerates; generated models, CRUD and SDK do not change
+  - grep -c "(zod@4" pnpm-lock.yaml # 0: no zod-3 peer resolved to zod 4
+  - git grep -n "@modelcontextprotocol/sdk" -- ':!pnpm-lock.yaml' ':!.nestled-updates' # no hits
+  - pnpm typecheck:workspace
+  - pnpm exec nx build api
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm run nestled-doctor
+agentHints:
+  - >
+    Apply 2026-10-25-mcp-oauth-consent-and-s256-pkce first: this note's OAuth part is written
+    against the consent flow. Keep its consent page, single-use pending records, session binding,
+    CSRF token and S256-only PKCE exactly; this note adds the registered-redirect check before the
+    pending record is created, `iss` on both decision redirects, stored DCR clients and the
+    resource binding.
+  - >
+    Add the schema change and the migration as they are in the template: the `resource String?`
+    field with `/// @graphqlOmit` at the end of model ApiToken, and model McpOAuthClient with
+    `/// @skipCrud` and its reason. Copy the migration directory under its template name, so the
+    project's migration history matches the template's; if the project already has a later
+    migration, keep the template's timestamp anyway (Prisma applies pending migrations in name
+    order and both statements are independent of other tables). Do not use `prisma db push`.
+  - >
+    /register's throttle uses the `signup` throttler that the template's AuthModule registers with
+    ThrottlerModule (global). A project that renamed or removed it must point `@Throttle` at the
+    throttler it has, or register one; without any, Nest cannot resolve ThrottlerGuard and the API
+    fails to start. Keep the per-route limit (10 an hour) unless the project's clients register
+    more often from one address, and say so in the log entry if you raise it.
+  - >
+    The resource binding must not touch tokens that already exist. Check that the column is
+    nullable with no default and no backfill, that JwtStrategy refuses only a non-null
+    `resource`, and that the MCP middleware still accepts a null one. If the project mints API
+    tokens anywhere else for MCP use (a CLI login, a settings "connect" button), decide whether
+    those should pass `{ resource }` too, and say what you chose in the log entry.
+  - >
+    A project whose API is reached under several host names (custom domains, a preview URL) will
+    find that a bound token works only on the host it was issued at, because the resource is the
+    origin plus `/api/mcp`. That is the intended audience check. If a project must accept one token
+    on several hosts, list them explicitly in the middleware rather than dropping the comparison.
+  - >
+    A project without the MCP plugin records not-applicable and changes nothing, including
+    package.json. A project whose plugin predates the OAuth controller (no mcp-oauth.controller.ts)
+    applies the SDK, transport and tool parts, and records the OAuth, CIMD and well-known parts
+    not-applicable in the log entry.
+  - >
+    Customised tools are the bulk of the work in most projects. For every file that registers
+    tools: change the import to `import { McpServer } from '@modelcontextprotocol/server'`; import
+    `z` from `zod-v4` instead of `zod`; wrap every raw-shape `inputSchema` (and `outputSchema`) in
+    `z.object(...)`, and give argument-less tools `z.object({})`. Handler signatures stay
+    `(args, ctx)`. Anything imported from `@modelcontextprotocol/sdk/types.js` (CallToolResult,
+    McpError, ErrorCode, the `*Schema` constants) moves: types and error classes to
+    `@modelcontextprotocol/server`, Zod `*Schema` constants to `@modelcontextprotocol/core` (add
+    it to package.json only if the project imports it). `McpError` is `ProtocolError` in v2.
+    Grep for `@modelcontextprotocol/sdk` across src, tests and scripts; the official codemod
+    (`npx @modelcontextprotocol/codemod@latest v1-to-v2 .`) handles the mechanical renames, but
+    review its package.json edit against the exact changes in this note.
+  - >
+    Tool code that reads `extra.authInfo`, `extra.sessionId` or request headers: the second
+    handler argument is now `ctx` (`ctx.http?.authInfo`, `ctx.http?.req` is a web `Request` with
+    `headers.get()`). There is no session id on either era. Tools in the template read the caller
+    from the `McpAuthContext` closed over at registration; keep doing that.
+  - >
+    A project that uses zod 3 outside the MCP plugin keeps it: the `zod-v4` alias exists so only
+    MCP schemas move to zod 4. Do not share schemas between the two; a zod-3 schema passed to
+    `registerTool` compiles but fails at the first `tools/list`. Every zod-3 peer in the lockfile
+    must stay on 3.25.56 after install; add the `"zod@<4": "3.25.56"` override even if the project
+    has no forms package, so a later one cannot pick up the alias.
+  - >
+    Keep the transport split exactly as in the template: modern traffic to `createMcpHandler` with
+    `legacy: 'reject'`, everything else to JsonRequestTransport. Do not use the SDK's default
+    `legacy: 'stateless'`, `legacyStatelessFallback` or a `StreamableHTTPServerTransport` for the
+    2025-era path: they answer over SSE and refuse a JSON-only `Accept` with 406, which breaks
+    existing scripted clients. Do not add a session map, an SSE response mode or
+    `subscriptions/listen` support; the endpoint runs behind CDNs that cut long-lived connections.
+  - >
+    A project that already serves `/.well-known/oauth-protected-resource/api/mcp` itself (for
+    example a hand-added `httpAdapter.get(...)` in main.ts) removes that route and its
+    VALID_API_PREFIXES entry in favour of `mcpRootWellKnownRewrite`, so one document is served
+    from one place. Keep the rewrite ahead of `earlyRequestFilter`.
+  - >
+    The stricter redirect URI rules affect only new authorizations. Existing API tokens issued by
+    the token endpoint are unaffected. Registrations held in memory before this change are lost
+    on the deploy that ships it (as on every deploy before), so clients re-register once, and from
+    then on their registration is stored. A client that registers with no redirect URI, or with
+    plain http to a non-loopback host, now gets `invalid_redirect_uri` from /register. If a project
+    knowingly serves such a client, say so in the log entry rather than loosening the check.
+  - >
+    Projects whose MCP endpoint, base path or global prefix differ from `/api/mcp` adjust the paths
+    in mcp-well-known.ts and in the controller's 401 challenge together.

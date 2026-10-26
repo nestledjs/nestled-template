@@ -5,6 +5,8 @@ import { McpOAuthController } from './mcp-oauth.controller'
 import { McpOAuthService } from './mcp-oauth.service'
 import { ApiTokensService } from '../api-tokens/api-tokens.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+import { BadRequestException } from '@nestjs/common'
+import { ClientMetadataError } from './mcp-client-metadata'
 
 // Obviously fake placeholders: the session "cookie" is never a real token, the JWT service is
 // mocked to map it to claims.
@@ -13,6 +15,31 @@ const OTHER_SESSION_COOKIE = 'fake-other-session'
 const VERIFIER = 'fake-pkce-verifier-for-tests-only-0000000000000'
 const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url')
 const REDIRECT_URI = 'https://client.example.com/callback'
+const MCP_BASE = 'https://api.example.com/api/mcp'
+const CIMD_CLIENT_ID = 'https://client.example.com/oauth/client.json'
+
+/** The McpOAuthClient table, in memory: what DCR registrations are stored in. */
+function createClientTable() {
+  const rows = new Map<string, { id: string; clientName: string; redirectUris: string[] }>()
+  return {
+    rows,
+    create: jest.fn(async ({ data }: any) => {
+      rows.set(data.id, {
+        id: data.id,
+        clientName: data.clientName,
+        redirectUris: data.redirectUris,
+      })
+      return rows.get(data.id)
+    }),
+    findUnique: jest.fn(async ({ where }: any) => rows.get(where.id) ?? null),
+    updateMany: jest.fn(async ({ where, data }: any) => {
+      const row = rows.get(where.id)
+      if (row) Object.assign(row, data)
+      return { count: row ? 1 : 0 }
+    }),
+    deleteMany: jest.fn(async () => ({ count: 0 })),
+  }
+}
 
 type Claims = {
   userId: string
@@ -80,7 +107,7 @@ describe('McpOAuthController', () => {
     return res
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sessions = {
       [SESSION_COOKIE]: { userId: 'user-123', sessionId: 'session-1', authGeneration: 3 },
       [OTHER_SESSION_COOKIE]: { userId: 'user-123', sessionId: 'session-2', authGeneration: 3 },
@@ -97,6 +124,7 @@ describe('McpOAuthController', () => {
       userSession: {
         findUnique: jest.fn().mockResolvedValue({ isValid: true, userId: 'user-123' }),
       },
+      mcpOAuthClient: createClientTable(),
       organizationMember: {
         findMany: jest.fn(async () => memberships),
         findFirst: jest.fn(async ({ where }: any) =>
@@ -121,7 +149,7 @@ describe('McpOAuthController', () => {
       data as ApiCoreDataAccessService,
     )
     controller = new McpOAuthController(oauth, config, jwtService as unknown as JwtService)
-    clientId = oauth.registerClient('Some MCP Client', [REDIRECT_URI]).clientId
+    clientId = (await oauth.registerClient('Some MCP Client', [REDIRECT_URI])).clientId
   })
 
   describe('discovery and registration', () => {
@@ -148,13 +176,69 @@ describe('McpOAuthController', () => {
       expect(controller.getJwks()).toEqual({ keys: [] })
     })
 
-    it('registers dynamic clients with defaults', () => {
-      const result = controller.register({})
+    it('registers dynamic clients with defaults', async () => {
+      // #64: a registration must name at least one acceptable redirect URI.
+      const result = await controller.register({ redirect_uris: [REDIRECT_URI] })
       expect(result).toEqual(
         expect.objectContaining({
           client_name: 'MCP Client',
-          redirect_uris: [],
+          redirect_uris: [REDIRECT_URI],
           token_endpoint_auth_method: 'none',
+        }),
+      )
+    })
+
+    it('stores registrations, so another instance (or a restart) still knows the client', async () => {
+      const result = await controller.register({
+        client_name: 'Desktop Client',
+        redirect_uris: ['http://127.0.0.1:33418/callback'],
+      })
+
+      expect(data.mcpOAuthClient.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            id: result.client_id,
+            clientName: 'Desktop Client',
+            redirectUris: ['http://127.0.0.1:33418/callback'],
+          },
+        }),
+      )
+      const otherInstance = new McpOAuthService(
+        { get: jest.fn() } as unknown as ConfigService,
+        apiTokens as unknown as ApiTokensService,
+        data as ApiCoreDataAccessService,
+      )
+      await expect(otherInstance.getClient(result.client_id)).resolves.toEqual({
+        clientId: result.client_id,
+        clientName: 'Desktop Client',
+        redirectUris: ['http://127.0.0.1:33418/callback'],
+      })
+    })
+
+    it.each([
+      ['no redirect_uris', {}],
+      ['an empty list', { redirect_uris: [] }],
+      ['plain http to a remote host', { redirect_uris: ['http://client.example.com/cb'] }],
+      ['a script scheme', { redirect_uris: ['javascript:alert(1)'] }],
+      [
+        'too many redirect URIs',
+        { redirect_uris: Array.from({ length: 11 }, (_, i) => `https://c.example.com/${i}`) },
+      ],
+    ])('refuses a registration with %s as invalid_redirect_uri', async (_label, body) => {
+      const error = await controller.register(body).catch(err => err)
+      expect(error).toBeInstanceOf(BadRequestException)
+      expect((error as BadRequestException).getResponse()).toEqual(
+        expect.objectContaining({ error: 'invalid_redirect_uri' }),
+      )
+      expect(data.mcpOAuthClient.create).toHaveBeenCalledTimes(1) // only the beforeEach client
+    })
+
+    it('advertises CIMD, RFC 9207 iss and keeps the DCR endpoint', () => {
+      expect(controller.getOAuthServerMetadata(requestWith())).toEqual(
+        expect.objectContaining({
+          client_id_metadata_document_supported: true,
+          authorization_response_iss_parameter_supported: true,
+          registration_endpoint: `${MCP_BASE}/register`,
         }),
       )
     })
@@ -349,7 +433,8 @@ describe('McpOAuthController', () => {
 
       expect(createAuthCode).not.toHaveBeenCalled()
       expect(res.json).toHaveBeenCalledWith({
-        redirect_to: `${REDIRECT_URI}?error=access_denied&state=state-123`,
+        // #64: RFC 9207 iss on denials too.
+        redirect_to: `${REDIRECT_URI}?error=access_denied&iss=${encodeURIComponent(MCP_BASE)}&state=state-123`,
       })
     })
 
@@ -523,6 +608,7 @@ describe('McpOAuthController', () => {
         'user-123',
         expect.objectContaining({ organizationId: 'org-123' }),
         3,
+        { resource: MCP_BASE },
       )
       expect(tokenRes.json).toHaveBeenCalledWith({
         access_token: 'fake-api-token',
@@ -541,6 +627,7 @@ describe('McpOAuthController', () => {
         'user-123',
         expect.objectContaining({ organizationId: 'org-456' }),
         3,
+        { resource: MCP_BASE },
       )
     })
 
@@ -551,6 +638,7 @@ describe('McpOAuthController', () => {
         'user-123',
         expect.objectContaining({ organizationId: undefined }),
         3,
+        { resource: MCP_BASE },
       )
     })
 
@@ -578,6 +666,257 @@ describe('McpOAuthController', () => {
       )
       expect(tokenRes.status).toHaveBeenCalledWith(400)
       expect(apiTokens.generateApiToken).not.toHaveBeenCalled()
+    })
+  })
+
+  /** Approve a started request and return the redirect the client is sent to. */
+  async function approve(requestId: string, organizationId: string | undefined = 'org-123') {
+    const { csrfToken } = (await readPending(requestId)).json.mock.calls[0][0]
+    const res = await decide({
+      request: requestId,
+      csrf_token: csrfToken,
+      decision: 'approve',
+      organization_id: organizationId,
+    })
+    return new URL(res.json.mock.calls[0][0].redirect_to)
+  }
+
+  async function exchange(code: string, overrides: Record<string, string> = {}) {
+    const res = createResponse()
+    await controller.token(
+      {
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: VERIFIER,
+        client_id: clientId,
+        ...overrides,
+      },
+      res,
+    )
+    return res
+  }
+
+  describe('registered redirect URIs (#64)', () => {
+    it('records the client as used when it redeems a code', async () => {
+      const redirect = await approve(await startAuthorization())
+      data.mcpOAuthClient.updateMany.mockClear()
+
+      await exchange(redirect.searchParams.get('code') as string)
+
+      expect(data.mcpOAuthClient.updateMany).toHaveBeenCalledWith({
+        where: { id: clientId },
+        data: { lastUsedAt: expect.any(Date) },
+      })
+    })
+
+    it('refuses a redirect_uri the client did not register, before sign-in and after', async () => {
+      for (const cookie of [undefined, SESSION_COOKIE]) {
+        const res = createResponse()
+        await controller.authorize(
+          authorizeQuery({ redirect_uri: 'https://attacker.example.com/callback' }),
+          requestWith(cookie),
+          res,
+        )
+        expect(res.status).toHaveBeenCalledWith(400)
+        expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
+        expect(res.redirect).not.toHaveBeenCalled()
+      }
+    })
+
+    it('lets a loopback redirect use another port (RFC 8252)', async () => {
+      clientId = (await oauth.registerClient('CLI', ['http://127.0.0.1:33418/callback'])).clientId
+
+      const requestId = await startAuthorization(SESSION_COOKIE, {
+        redirect_uri: 'http://127.0.0.1:51234/callback',
+      })
+
+      expect(requestId).toBeTruthy()
+    })
+
+    it('checks the client and redirect before the pending authorization is created', async () => {
+      const order: string[] = []
+      jest.spyOn(oauth, 'resolveClientForRedirect').mockImplementation(async () => {
+        order.push('resolve')
+        return { clientId, clientName: 'Some MCP Client', redirectUris: [REDIRECT_URI] }
+      })
+      const createPending = oauth.createPendingAuthorization.bind(oauth)
+      jest.spyOn(oauth, 'createPendingAuthorization').mockImplementation(params => {
+        order.push('pending')
+        return createPending(params)
+      })
+
+      await startAuthorization()
+
+      // Once before sign-in (the DCR record and redirect), once after, then the pending record.
+      expect(order).toEqual(['resolve', 'resolve', 'pending'])
+    })
+  })
+
+  describe('RFC 9207 iss (#64)', () => {
+    it('names the issuer on an approval redirect', async () => {
+      const redirect = await approve(await startAuthorization())
+
+      expect(redirect.searchParams.get('iss')).toBe(MCP_BASE)
+      expect(redirect.searchParams.get('code')).toEqual(expect.any(String))
+      expect(redirect.searchParams.get('state')).toBe('state-123')
+    })
+
+    it('names the issuer the client saw, even when the decision arrives through another host', async () => {
+      const requestId = await startAuthorization()
+      const { csrfToken } = (await readPending(requestId)).json.mock.calls[0][0]
+      const internal = {
+        ...requestWith(SESSION_COOKIE),
+        get: (name: string) => (name === 'host' ? 'api.internal:3000' : undefined),
+      }
+      const res = createResponse()
+
+      await controller.decideAuthorization(
+        { request: requestId, csrf_token: csrfToken, decision: 'deny' },
+        internal as any,
+        res,
+      )
+
+      expect(new URL(res.json.mock.calls[0][0].redirect_to).searchParams.get('iss')).toBe(MCP_BASE)
+    })
+  })
+
+  describe('Client ID Metadata Documents (#64)', () => {
+    let resolveMetadata: jest.SpyInstance
+    const document = {
+      clientId: CIMD_CLIENT_ID,
+      clientName: 'Example Client',
+      redirectUris: [REDIRECT_URI],
+    }
+
+    beforeEach(() => {
+      resolveMetadata = jest.spyOn((oauth as any).clientMetadata, 'resolve')
+      clientId = CIMD_CLIENT_ID
+    })
+
+    it('does not fetch the metadata document before the user has signed in', async () => {
+      const res = createResponse()
+      await controller.authorize(authorizeQuery(), requestWith(), res)
+
+      expect(res.redirect).toHaveBeenCalledWith(
+        expect.stringContaining('https://app.example.com/login?redirect='),
+      )
+      expect(resolveMetadata).not.toHaveBeenCalled()
+    })
+
+    it('runs a CIMD client through consent and the token endpoint', async () => {
+      resolveMetadata.mockResolvedValue(document)
+      const requestId = await startAuthorization()
+
+      const pending = (await readPending(requestId)).json.mock.calls[0][0]
+      // The document's name is self-asserted: nothing checked its origin, so it is not verified.
+      expect(pending.client).toEqual({ name: 'Example Client', verified: false })
+
+      const redirect = await approve(requestId)
+      const tokenRes = await exchange(redirect.searchParams.get('code') as string)
+
+      expect(resolveMetadata).toHaveBeenCalledWith(CIMD_CLIENT_ID)
+      expect(tokenRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({ access_token: 'fake-api-token' }),
+      )
+    })
+
+    it('refuses a redirect_uri the metadata document does not list', async () => {
+      resolveMetadata.mockResolvedValue({
+        ...document,
+        redirectUris: ['https://other.example.com/cb'],
+      })
+      const create = jest.spyOn(oauth, 'createPendingAuthorization')
+      const res = createResponse()
+
+      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
+
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }))
+      expect(create).not.toHaveBeenCalled()
+    })
+
+    it('answers a document that fails validation as invalid_client', async () => {
+      resolveMetadata.mockRejectedValue(
+        new ClientMetadataError('Client metadata document client_id does not match its URL'),
+      )
+      const res = createResponse()
+
+      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
+
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'invalid_client',
+        error_description: 'Client metadata document client_id does not match its URL',
+      })
+      expect(res.redirect).not.toHaveBeenCalled()
+    })
+
+    it('refuses a code presented by another client', async () => {
+      resolveMetadata.mockResolvedValue(document)
+      const redirect = await approve(await startAuthorization())
+
+      const res = await exchange(redirect.searchParams.get('code') as string, {
+        client_id: 'https://other.example.com/client.json',
+      })
+
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith({ error: 'invalid_client' })
+    })
+  })
+
+  describe('RFC 8707 resource binding (#64)', () => {
+    it.each([
+      ['omitted', undefined],
+      ['this endpoint', MCP_BASE],
+      [
+        'this endpoint with a trailing slash and an uppercase host',
+        'https://API.example.com/api/mcp/',
+      ],
+    ])('binds the token to this MCP endpoint when resource is %s', async (_label, resource) => {
+      const redirect = await approve(await startAuthorization(SESSION_COOKIE, { resource }))
+      await exchange(redirect.searchParams.get('code') as string, resource ? { resource } : {})
+
+      expect(apiTokens.generateApiToken).toHaveBeenCalledWith('user-123', expect.anything(), 3, {
+        resource: MCP_BASE,
+      })
+    })
+
+    it.each([
+      'https://other.example.com/api/mcp',
+      'https://api.example.com/api/graphql',
+      'https://api.example.com/api/mcp#fragment',
+      'not a url',
+    ])('refuses an authorization for resource %s as invalid_target', async resource => {
+      const res = createResponse()
+
+      await controller.authorize(authorizeQuery({ resource }), requestWith(SESSION_COOKIE), res)
+
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_target' }))
+      expect(res.redirect).not.toHaveBeenCalled()
+    })
+
+    it('refuses a token request naming another resource than the code was issued for', async () => {
+      const redirect = await approve(await startAuthorization())
+
+      const res = await exchange(redirect.searchParams.get('code') as string, {
+        resource: 'https://other.example.com/api/mcp',
+      })
+
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_target' }))
+      expect(apiTokens.generateApiToken).not.toHaveBeenCalled()
+    })
+
+    it('keeps resource through the login redirect', async () => {
+      const res = createResponse()
+      await controller.authorize(authorizeQuery({ resource: MCP_BASE }), requestWith(), res)
+
+      const back = new URL(
+        new URL(res.redirect.mock.calls[0][0]).searchParams.get('redirect') as string,
+      )
+      expect(back.searchParams.get('resource')).toBe(MCP_BASE)
     })
   })
 

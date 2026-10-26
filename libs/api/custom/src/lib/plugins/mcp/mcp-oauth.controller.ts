@@ -1,8 +1,21 @@
-import { Controller, Get, Post, Query, Body, Req, Res, HttpCode, Logger } from '@nestjs/common'
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Logger,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common'
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler'
 import { JwtService } from '@nestjs/jwt'
 import { Request, Response } from 'express'
 import { ConfigService } from '@nestjs/config'
-import { McpOAuthService, PKCE_METHOD } from './mcp-oauth.service'
+import { McpOAuthService, OAuthClientError, PKCE_METHOD } from './mcp-oauth.service'
 import { Public } from '@nestled-template/api/utils'
 import { AuthTokenClaims, claimedAuthGeneration } from '../auth/auth-token-claims'
 
@@ -14,6 +27,8 @@ interface AuthorizeQuery {
   code_challenge_method?: string
   scope?: string
   org?: string
+  /** RFC 8707: the resource the client wants a token for. Must be this MCP endpoint. */
+  resource?: string
 }
 
 const EMULATION_REFUSED = {
@@ -28,6 +43,20 @@ const OTHER_SESSION = {
   error: 'access_denied',
   error_description: 'This authorization request belongs to a different session',
 }
+/** Dynamic client registrations allowed per client IP per window. */
+export const MCP_REGISTER_LIMIT = 10
+export const MCP_REGISTER_WINDOW_MS = 60 * 60 * 1000
+
+const INVALID_TARGET = {
+  error: 'invalid_target',
+  error_description: 'resource must be this MCP endpoint',
+}
+
+/** The OAuth error body for a client or redirect check that failed; anything else is rethrown. */
+function clientErrorBody(err: unknown): Record<string, string> {
+  if (!(err instanceof OAuthClientError)) throw err
+  return { error: err.error, error_description: err.message }
+}
 
 /** The host a redirect URI points at, or its scheme for a private-use URI with no host. */
 function redirectHostOf(redirectUri: string): string {
@@ -35,13 +64,19 @@ function redirectHostOf(redirectUri: string): string {
   return url.host || url.protocol
 }
 
-/** `redirectUri` with `params` (and `state`, when the client sent one) added to its query. */
+/**
+ * `redirectUri` with `params`, the RFC 9207 `iss` (on approvals and denials alike, so a client
+ * talking to several authorization servers can tell which one answered) and `state` (when the
+ * client sent one) added to its query.
+ */
 function withParams(
   redirectUri: string,
   params: Record<string, string>,
   state: string | null,
+  issuer: string,
 ): string {
   const query = new URLSearchParams(params)
+  query.set('iss', issuer)
   if (state) query.set('state', state)
   const separator = redirectUri.includes('?') ? '&' : '?'
   return `${redirectUri}${separator}${query.toString()}`
@@ -75,12 +110,7 @@ export class McpOAuthController {
   /** Protected Resource Metadata — tells clients which auth server protects this resource */
   @Get('.well-known/oauth-protected-resource')
   getProtectedResourceMetadata(@Req() req: Request) {
-    const base = this.oauth.getMcpBaseUrl(req)
-    return {
-      resource: base,
-      authorization_servers: [base],
-      bearer_methods_supported: ['header'],
-    }
+    return this.oauth.buildProtectedResourceMetadata(req)
   }
 
   /** JWKS endpoint — no JWTs issued but some clients validate jwks_uri exists */
@@ -89,15 +119,30 @@ export class McpOAuthController {
     return { keys: [] }
   }
 
-  /** Dynamic Client Registration (RFC 7591) */
+  /**
+   * Dynamic Client Registration (RFC 7591). Deprecated by MCP 2026-07-28 in favour of Client ID
+   * Metadata Documents, and kept for clients that predate them. Registrations are stored, so they
+   * survive restarts and work on every API instance.
+   */
+  // Unauthenticated, and every call stores a row, so it is rate limited per client IP: the
+  // `signup` throttler AuthModule configures (SIGNUP_THROTTLE_ENABLED turns it off), with its own
+  // bucket and limit for this route. Keyed on req.ip, which depends on TRUST_PROXY_HOPS being set
+  // correctly (see main.ts and GqlThrottlerGuard).
   @Post('register')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ signup: { limit: MCP_REGISTER_LIMIT, ttl: MCP_REGISTER_WINDOW_MS } })
   @HttpCode(201)
-  register(@Body() body: Record<string, unknown>) {
+  async register(@Body() body: Record<string, unknown>) {
     const clientName = typeof body['client_name'] === 'string' ? body['client_name'] : 'MCP Client'
-    const redirectUris = Array.isArray(body['redirect_uris'])
-      ? (body['redirect_uris'] as string[])
-      : []
-    const client = this.oauth.registerClient(clientName, redirectUris)
+    const redirectUris = this.oauth.validateRedirectUris(body['redirect_uris'])
+    if (!redirectUris) {
+      throw new BadRequestException({
+        error: 'invalid_redirect_uri',
+        error_description:
+          'redirect_uris must list 1-10 https, loopback http, or private-use scheme URIs',
+      })
+    }
+    const client = await this.oauth.registerClient(clientName, redirectUris)
     return {
       client_id: client.clientId,
       client_name: client.clientName,
@@ -116,71 +161,27 @@ export class McpOAuthController {
    * who is asking, where the code would go and what would be granted. Only an explicit approval
    * there, through POST authorize/decision, issues a code. A caller without a session is sent to
    * login first and comes back here.
+   *
+   * `client_id` is either a client registered through /register (DCR) or the HTTPS URL of a Client
+   * ID Metadata Document, fetched only once the caller has signed in. Either way `redirect_uri`
+   * must be one the client registered, checked before the pending authorization is created.
    */
   @Get('authorize')
   async authorize(@Query() query: AuthorizeQuery, @Req() req: Request, @Res() res: Response) {
-    const {
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      state,
-      code_challenge: codeChallenge,
-      code_challenge_method: codeChallengeMethod,
-      scope,
-      org: orgId,
-    } = query
     const siteUrl = this.config.get<string>('siteUrl') || 'http://localhost:4200'
     const mcpBase = this.oauth.getMcpBaseUrl(req)
 
-    if (!clientId || !redirectUri || !codeChallenge) {
-      return res
-        .status(400)
-        .json({ error: 'invalid_request', error_description: 'Missing required parameters' })
+    const checked = await this.checkAuthorizeRequest(query, mcpBase)
+    if ('error' in checked) {
+      return res.status(400).json(checked.error)
     }
-
-    // A repeated query parameter arrives as an array; every parameter here must be a single value.
-    if (Object.values(query).some(value => value !== undefined && typeof value !== 'string')) {
-      return res
-        .status(400)
-        .json({ error: 'invalid_request', error_description: 'Repeated parameters' })
-    }
-
-    // PKCE is mandatory for every client and only S256 is accepted. A missing method means
-    // `plain` (RFC 7636 section 4.3), so it is refused too.
-    if (!this.oauth.isAcceptablePkce(codeChallenge, codeChallengeMethod)) {
-      return res.status(400).json({
-        error: 'invalid_request',
-        error_description: 'code_challenge_method must be S256 with a valid code_challenge',
-      })
-    }
-
-    const client = this.oauth.getClient(clientId)
-    if (!client) {
-      return res
-        .status(400)
-        .json({ error: 'invalid_client', error_description: 'Unknown client_id' })
-    }
-
-    if (!this.oauth.isSafeRedirectUri(redirectUri)) {
-      return res
-        .status(400)
-        .json({ error: 'invalid_request', error_description: 'Unacceptable redirect_uri' })
-    }
+    const { client_id: clientId, redirect_uri: redirectUri, state, scope, org: orgId } = query
 
     const session = await this.getSessionFromCookie(req)
     const userId = session?.userId
 
     if (!session || !userId) {
-      const authorizeParams = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        code_challenge: codeChallenge,
-        code_challenge_method: PKCE_METHOD,
-        ...(state ? { state } : {}),
-        ...(scope ? { scope } : {}),
-        ...(orgId ? { org: orgId } : {}),
-      })
-      const authorizeUrl = `${mcpBase}/authorize?${authorizeParams.toString()}`
-      return res.redirect(`${siteUrl}/login?redirect=${encodeURIComponent(authorizeUrl)}`)
+      return res.redirect(this.loginRedirectFor(query, siteUrl, mcpBase))
     }
 
     // A client authorized here gets a long-lived credential of its own. Under emulation that would
@@ -196,6 +197,13 @@ export class McpOAuthController {
       })
     }
 
+    let client
+    try {
+      client = await this.oauth.resolveClientForRedirect(clientId, redirectUri)
+    } catch (err) {
+      return res.status(400).json(clientErrorBody(err))
+    }
+
     const pending = this.oauth.createPendingAuthorization({
       userId,
       sessionId: session.sessionId ?? null,
@@ -204,12 +212,82 @@ export class McpOAuthController {
       clientName: client.clientName,
       redirectUri,
       state: state ?? null,
-      codeChallenge,
+      codeChallenge: query.code_challenge,
       scope: scope ?? 'openid',
       requestedOrganizationId: orgId ?? null,
+      issuer: mcpBase,
+      resource: checked.resource,
     })
 
     return res.redirect(`${siteUrl}/mcp-connect?request=${encodeURIComponent(pending.id)}`)
+  }
+
+  /**
+   * Everything /authorize can check before it knows who is asking: required and single-valued
+   * parameters, S256 PKCE, the RFC 8707 resource, and the client and redirect URI without a
+   * network request (a metadata document is fetched only after sign-in). Returns the error body
+   * to answer with, or the resource the token will be bound to.
+   */
+  private async checkAuthorizeRequest(
+    query: AuthorizeQuery,
+    mcpBase: string,
+  ): Promise<{ error: Record<string, string> } | { resource: string }> {
+    const { client_id: clientId, redirect_uri: redirectUri, code_challenge: codeChallenge } = query
+
+    if (!clientId || !redirectUri || !codeChallenge) {
+      return {
+        error: { error: 'invalid_request', error_description: 'Missing required parameters' },
+      }
+    }
+
+    // A repeated query parameter arrives as an array; every parameter here must be a single value.
+    if (Object.values(query).some(value => value !== undefined && typeof value !== 'string')) {
+      return { error: { error: 'invalid_request', error_description: 'Repeated parameters' } }
+    }
+
+    // PKCE is mandatory for every client and only S256 is accepted. A missing method means
+    // `plain` (RFC 7636 section 4.3), so it is refused too.
+    if (!this.oauth.isAcceptablePkce(codeChallenge, query.code_challenge_method)) {
+      return {
+        error: {
+          error: 'invalid_request',
+          error_description: 'code_challenge_method must be S256 with a valid code_challenge',
+        },
+      }
+    }
+
+    const resource = this.oauth.resolveResource(query.resource, mcpBase)
+    if (!resource) {
+      return { error: INVALID_TARGET }
+    }
+
+    try {
+      await this.oauth.precheckClient(clientId, redirectUri)
+    } catch (err) {
+      return { error: clientErrorBody(err) }
+    }
+    return { resource }
+  }
+
+  /** The login page, coming back to this same authorization request once signed in. */
+  private loginRedirectFor(query: AuthorizeQuery, siteUrl: string, mcpBase: string): string {
+    const optional: Record<string, string | undefined> = {
+      state: query.state,
+      scope: query.scope,
+      org: query.org,
+      resource: query.resource,
+    }
+    const authorizeParams = new URLSearchParams({
+      client_id: query.client_id,
+      redirect_uri: query.redirect_uri,
+      code_challenge: query.code_challenge,
+      code_challenge_method: PKCE_METHOD,
+    })
+    for (const [name, value] of Object.entries(optional)) {
+      if (value) authorizeParams.set(name, value)
+    }
+    const authorizeUrl = `${mcpBase}/authorize?${authorizeParams.toString()}`
+    return `${siteUrl}/login?redirect=${encodeURIComponent(authorizeUrl)}`
   }
 
   /**
@@ -254,7 +332,9 @@ export class McpOAuthController {
       expiresAt: pending.expiresAt.toISOString(),
       client: {
         name: pending.clientName,
-        // Every client here came from dynamic registration, so its name is whatever it said.
+        // Self-asserted on both paths: a DCR client named itself, and a Client ID Metadata
+        // Document's name is whatever its author wrote (nothing checks the document's origin
+        // against a trust list), so neither is shown as verified.
         verified: false,
       },
       redirectUri: pending.redirectUri,
@@ -309,7 +389,12 @@ export class McpOAuthController {
     if (decision === 'deny') {
       this.logger.log(`MCP OAuth consent denied by user ${pending.userId} for ${pending.clientId}`)
       return res.json({
-        redirect_to: withParams(pending.redirectUri, { error: 'access_denied' }, pending.state),
+        redirect_to: withParams(
+          pending.redirectUri,
+          { error: 'access_denied' },
+          pending.state,
+          pending.issuer,
+        ),
       })
     }
     if (decision !== 'approve') {
@@ -340,19 +425,22 @@ export class McpOAuthController {
       codeChallenge: pending.codeChallenge,
       codeChallengeMethod: PKCE_METHOD,
       scope: pending.scope,
+      resource: pending.resource,
     })
     this.logger.log(
       `MCP OAuth consent approved by user ${pending.userId} for ${pending.clientId} org=${organizationId}`,
     )
 
-    return res.json({ redirect_to: withParams(pending.redirectUri, { code }, pending.state) })
+    return res.json({
+      redirect_to: withParams(pending.redirectUri, { code }, pending.state, pending.issuer),
+    })
   }
 
   /** OAuth 2.0 Token Endpoint — exchanges auth code for an API token */
   @Post('token')
   @HttpCode(200)
   async token(@Body() body: Record<string, string>, @Res() res: Response) {
-    const { grant_type, code, redirect_uri, code_verifier, client_id } = body
+    const { grant_type, code, redirect_uri, code_verifier, client_id, resource } = body
 
     if (grant_type !== 'authorization_code') {
       return res.status(400).json({ error: 'unsupported_grant_type' })
@@ -390,10 +478,17 @@ export class McpOAuthController {
         .json({ error: 'invalid_grant', error_description: 'PKCE verification failed' })
     }
 
+    // RFC 8707: a resource named here must be the one the code was issued for.
+    if (resource && this.oauth.resolveResource(resource, authCode.resource) !== authCode.resource) {
+      return res.status(400).json(INVALID_TARGET)
+    }
+
+    await this.oauth.touchClient(authCode.clientId)
     const accessToken = await this.oauth.createAccessToken(
       authCode.userId,
       authCode.organizationId,
       authCode.authGeneration,
+      authCode.resource,
     )
     this.logger.log(
       `MCP OAuth token issued for user ${authCode.userId} org=${authCode.organizationId}`,
@@ -420,20 +515,6 @@ export class McpOAuthController {
   }
 
   private buildMetadata(req: Request) {
-    const base = this.oauth.getMcpBaseUrl(req)
-    return {
-      issuer: base,
-      authorization_endpoint: `${base}/authorize`,
-      token_endpoint: `${base}/token`,
-      registration_endpoint: `${base}/register`,
-      jwks_uri: `${base}/jwks`,
-      response_types_supported: ['code'],
-      grant_types_supported: ['authorization_code'],
-      subject_types_supported: ['public'],
-      id_token_signing_alg_values_supported: ['RS256'],
-      code_challenge_methods_supported: ['S256'],
-      token_endpoint_auth_methods_supported: ['none'],
-      scopes_supported: ['openid'],
-    }
+    return this.oauth.buildAuthorizationServerMetadata(req)
   }
 }

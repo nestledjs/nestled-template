@@ -1,5 +1,7 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { z } from 'zod'
+import { McpServer } from '@modelcontextprotocol/server'
+// MCP SDK v2 needs Standard Schema with JSON Schema conversion (zod >= 4.2). The workspace `zod`
+// stays on 3.x for the forms packages, so tool schemas use the `zod-v4` alias.
+import { z } from 'zod-v4'
 import type { PrismaClient } from '@nestled-template/api/prisma'
 import { McpAuthContext } from '../mcp-auth'
 
@@ -12,7 +14,7 @@ export function registerOrganizationTools(
     'get_organization',
     {
       description: 'Get the current organization profile including its members and their roles',
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () => {
       if (!auth.organizationId) {
@@ -64,11 +66,11 @@ export function registerOrganizationTools(
         description: auth.isSuperAdmin
           ? 'List all organizations (admin)'
           : 'List organizations you belong to',
-        inputSchema: {
+        inputSchema: z.object({
           search: z.string().optional().describe('Filter by name'),
           limit: z.coerce.number().min(1).max(100).default(20),
           offset: z.coerce.number().min(0).default(0),
-        },
+        }),
       },
       async ({ search, limit, offset }) => {
         if (auth.isSuperAdmin) {
