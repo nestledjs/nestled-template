@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-23
+generatedAt: 2026-10-26
 channels:
-  canary: 2026.10.18
+  canary: 2026.10.19
   stable: 2026.10.18
 releases:
   - id: 2026.08.0
@@ -922,3 +922,120 @@ releases:
           - pnpm exec nx build api
           - pnpm exec nx test api-utils
         patch: patches/2026-10-23-node-22-23-4-security-pin.diff
+  - id: 2026.10.19
+    date: 2026-10-26
+    title: "R2: MCP OAuth consent, data-browser 1.0.25, dependency audit, forms 0.9.1"
+    templateCommit: 4b16b8c
+    notes:
+      - id: 2026-10-25-data-browser-1-0-25-filter-layout-and-tailwind-source
+        title: "@nestledjs/data-browser 1.0.25 aligns the filter panel, and the app's Tailwind build must scan the data-browser and shared-components packages"
+        delivery: hybrid
+        intent: "Two changes, one in the package and one in the app. 1. Upgrade @nestledjs/data-browser to 1.0.25. In the Filters panel every field label stays on one line in a readable colour (gray-700, gray-200 in dark mode), every control has the same fixed height, and the date and number range filters put their From/To and Min/Max captions under their inputs, so all the controls in a row start on the same line. The range filters are now a fieldset whose legend is the field name. Enum and boolean selects draw the same chevron as the relation picker, at the right edge. Controls ask for dark native widgets in dark mode. The package no longer uses the `green-web` colour, which no project defines, so accent colours (primary buttons, the active Filters button and its count badge, focus rings, spinners) now come from Tailwind's default `green` palette and actually render. 2. In the CSS file that imports Tailwind (`libs/shared/styles/src/lib/app.css` in the template layout), add an `@source` for each of the two packages next to the existing repository-root `@source`: @source \"../../../../node_modules/@nestledjs/data-browser\"; @source \"../../../../node_modules/@nestledjs/shared-components\"; The paths are relative to that CSS file; adjust the `../` count if the file lives elsewhere."
+        area: ui
+        affectedPaths:
+          - libs/shared/styles/src/lib/app.css
+        verification:
+          - pnpm install
+          - "pnpm build:web"
+          - pnpm nx test web
+          - "Open /admin/data/<model> with the Filters panel open in dark and light mode: labels are readable, select chevrons are on the right, a date or number range filter's inputs line up with the other controls in its row, \"Create New\" is a green button, and the table body is dark in dark mode."
+        patch: patches/2026-10-25-data-browser-1-0-25-filter-layout-and-tailwind-source.diff
+        packageReleases:
+          - name: "@nestledjs/data-browser"
+            sourcePath: libs/data-browser
+            targetVersion: 1.0.25
+            versionRange: ^1.0.25
+      - id: 2026-10-25-dependency-audit-refresh
+        title: "Dependency audit refresh: no critical advisories and two stated highs left, Playwright 1.64, Docker pnpm 10.33.0"
+        delivery: code-patch
+        intent: "The root package.json, apps/web/package.json, pnpm-lock.yaml and .dev/Dockerfile move every dependency with a critical or high `pnpm audit` advisory to a fixed version, by a direct version bump where the package is a direct dependency and by a targeted pnpm.overrides entry where it is only reached transitively. Each project applies the same bumps and overrides to its own manifests and re-resolves its own lockfile; the template's lockfile is not copied. Direct dependency bumps (root package.json unless noted): nx and every @nx/* package (including @nx/devkit) 22.7.8 -> 22.7.12; storybook, @storybook/addon-a11y, @storybook/addon-docs, @storybook/addon-vitest, @storybook/react-vite and eslint-plugin-storybook 10.5.7 -> 10.6.3; @nestjs/common, @nestjs/core, @nestjs/platform-express and @nestjs/testing ^11.1.29 -> ^11.2.8; prisma, @prisma/client, @prisma/adapter-pg and @prisma/internals ^7.9.1 -> ^7.10.1; vite 7.3.6 -> 7.3.7; axios ^1.19.0 -> ^1.20.0; joi ^18.2.3 -> ^18.3.0; nodemailer ^9.0.5 -> ^10.2.1; compression ^1.8.1 -> ^1.8.2; happy-dom ^20.11.2 -> ^21.0.4; @faker-js/faker ^8.4.1 -> ^10.6.0; @playwright/test ^1.62.1 -> ^1.64.1; remark-mdx-frontmatter ^5.2.0 -> ^6.0.0 (root and apps/web/package.json); js-yaml in apps/web/package.json ^4.3.1 -> ^4.3.2. pnpm.overrides changes. Four existing entries are widened to the new fixed version: `\"js-yaml@>=4.0.0 <4.3.2\": \"4.3.2\"` (was `<4.3.1` -> 4.3.1), `\"nx@>=17.0.4 <22.7.9\": \"22.7.12\"` (was `<22.7.7` -> 22.7.8), `\"brace-expansion@>=4.0.0 <5.0.11\": \"5.0.12\"` (was `<5.0.9` -> 5.0.9) and `\"shell-quote@<1.11.0\": \"1.12.0\"` (was `<1.9.0` -> 1.9.0). New entries: `\"js-yaml@>=3.0.0 <3.15.2\": \"3.15.2\"`, `\"brace-expansion@<1.1.20\": \"1.1.21\"`, `\"brace-expansion@>=2.0.0 <2.1.6\": \"2.1.7\"`, `\"piscina@<4.9.4\": \"4.9.4\"`, `\"multer@<2.5.0\": \"2.5.0\"`, `\"body-parser@<1.20.9\": \"1.20.9\"`, `\"body-parser@>=2.0.0 <2.4.0\": \"2.4.0\"`, `\"fast-uri@>=3.0.0 <3.1.7\": \"3.1.7\"`, `\"svgo@>=3.0.0 <3.3.5\": \"3.3.5\"`, `\"svgo@>=4.0.0 <4.1.0\": \"4.1.0\"`, `\"smol-toml@<1.7.1\": \"1.9.1\"`, `\"adm-zip@<0.6.1\": \"0.6.1\"`, `\"undici@>=7.0.0 <7.30.1\": \"7.30.1\"`, `\"source-map-js@>=1.0.0 <1.2.2\": \"1.2.2\"`, `\"follow-redirects@<1.16.1\": \"1.16.1\"`, `\"launch-editor@<2.14.2\": \"2.14.2\"`, `\"@fastify/busboy@>=1.0.0 <3.2.1\": \"3.2.4\"`, `\"@nx/docker@<22.7.8\": \"22.7.12\"`, `\"@graphql-tools/executor-legacy-ws@<1.1.35\": \"1.1.39\"`, `\"axios@>=1.13.0 <1.20.0\": \"1.20.0\"`, `\"compression@<1.8.2\": \"1.8.2\"` and `\"@graphql-tools/utils@>=10.10.1 <12.0.2\": \"12.1.0\"`. All other existing overrides stay as they are. Why an override rather than a bump: @nestjs/platform-express 11.2.8 pins multer 2.4.0; nx 22.7.12 pins axios 1.18.1; verdaccio pins compression 1.8.1; @nestledjs/generators reaches @nx/docker through its own @nx/nest 22.0.2; and the @graphql-codegen 5/6 family resolves @graphql-tools/utils 11. The utils override crosses a major of a transitive package; the template's `pnpm sdk` output is byte-identical with it. The other overrides are patch or minor moves of packages that no direct dependency exposes. .dev/Dockerfile runs `corepack prepare pnpm@10.33.0` instead of the stale pnpm@9.8.0, matching the root `packageManager` and `engines.pnpm`. Audit counts in the template. `pnpm audit` (full) went from 158 (4 critical, 74 high, 70 moderate, 10 low) to 28 (0 critical, 2 high, 23 moderate, 3 low). `pnpm audit --prod` went from 135 (2 critical, 63 high, 61 moderate, 9 low) to 26 (0 critical, 2 high, 22 moderate, 2 low). The two highs left have stated reasons. http-cache-semantics (GHSA-ch52-4w7c-c8xp) has no patched release at all; it is reached only through @swc/cli's binary downloader (got -> cacheable-request), which is build tooling and never in the api or web output. zod (GHSA-mrhx-c7xc-m3w5) is fixed only in 4.6.6, a major move from the pinned 3.25.56; zod is used only by the MCP plugin's tool schemas, and the move to zod 4 belongs with the MCP SDK v2 change, not this note. Moderate and low advisories are not in scope."
+        area: infra
+        affectedPaths:
+          - package.json
+          - apps/web/package.json
+          - pnpm-lock.yaml
+          - .dev/Dockerfile
+        verification:
+          - pnpm audit --audit-level=high
+          - pnpm audit --prod --audit-level=high
+          - pnpm install --frozen-lockfile
+          - "pnpm typecheck:workspace"
+          - pnpm exec nx build api
+          - "pnpm build:web"
+          - pnpm sdk && git diff --exit-code libs/shared/sdk/src/generated
+          - pnpm exec nx test api-utils --skip-nx-cache
+          - pnpm exec nx test integrations --skip-nx-cache
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-25-dependency-audit-refresh.diff
+      - id: 2026-10-25-mcp-oauth-consent-and-s256-pkce
+        title: MCP OAuth /authorize always asks the user to approve on a consent page, and PKCE accepts S256 only
+        delivery: code-patch
+        intent: "Security fix. GET /api/mcp/authorize no longer issues an authorization code. For a signed-in caller it stores a pending authorization and redirects to the web app's consent page, /mcp-connect?request=<id>. Only an explicit Approve there issues a code, whatever the user's organization count. The old organization picker on /mcp-connect is folded into the same page, so no path skips consent. API (libs/api/custom/src/lib/plugins/mcp/). McpOAuthService keeps pending authorizations in an in-process Map next to the existing auth codes and DCR clients: no migration and no Redis dependency. A record holds the user, the session id and auth generation of the session that made the request, the client, redirect URI, state, PKCE challenge, scope and any requested `org`, plus a random id and a separate random CSRF token (32 bytes each, base64url). It lives PENDING_TTL_MS = 10 minutes and is single use: takePendingAuthorization deletes it on every decision attempt, successful or not. Expired records are swept when a new one is created. McpOAuthController gains two routes on the same @Public() controller, each authenticating the session cookie itself with the existing getSessionFromCookie (verified and still current): GET authorize/pending?request=<id> returns, to the bound session only, the client name with `verified: false` (every client here is self-registered through DCR), the redirect URI and its host, the account's name and primary email, the user's organizations, the requested organization, and the CSRF token; POST authorize/decision takes `request`, `csrf_token`, `decision` (approve or deny) and `organization_id`, and answers `{ redirect_to }`. Deny sends the client `error=access_denied` with its `state`. Approve requires an organization the user belongs to (none for a user without one), issues the code and sends `code` with `state`. Both refuse emulation sessions, a different session of the same user (403), a missing session (401), a missing or wrong CSRF token (403), and an unknown, expired or already-used record. Both set Cache-Control: no-store. /authorize also refuses a redirect_uri that is not an absolute URL, has a fragment, or uses javascript:, data:, vbscript:, file:, blob: or about:. PKCE. /authorize requires `code_challenge_method=S256` and a well-formed challenge (43-128 characters of the RFC 7636 unreserved set). `plain`, a missing method (which RFC 7636 defines as plain) and a missing challenge get 400 invalid_request. verifyPkce accepts S256 only, and every stored code is S256. countUserOrganizations and resolveOrganizationId are replaced by listUserOrganizations and getAccountSummary. Web. apps/web/app/routes/mcp-connect.tsx is now the consent page. Its loader reads `?request=`, sends a signed-out user to /login?return_url=..., and fetches authorize/pending server-side with the session cookie. The page shows the client name marked unverified, the redirect host in a prominent box with the full URI beneath, the signed-in account, the organization (a required radio list when there are several, preselecting a requested `org`), and Approve and Deny buttons in a plain `<form method=\"post\">` carrying the request id and CSRF token. Its action forwards the decision to authorize/decision server-side with the cookie and redirects to the returned URL. A `headers` export sets X-Frame-Options: DENY, `frame-ancestors 'none'`, Cache-Control: no-store and Referrer-Policy: no-referrer. apps/web/app/routes/settings/_mcp-shared.tsx exports toApiBase(), the API-URL normaliser that `apiBase` already used, so the route can apply it to the server's runtime VITE_API_URL. Security baselines. public-operations.json records reasons for getPendingAuthorization and decideAuthorization and corrects the authorize reason; guard-baseline.json lists both routes with no guard, as before for this controller. Tests. mcp-oauth.controller.spec.ts drives the real McpOAuthService with mocked data access: no code without approval for single-, multi- and no-organization users; Deny gives access_denied with state; approval without a pending record, CSRF token or session, or from another session or an emulation session, is refused; a record cannot be replayed and a failed attempt uses it up; the full authorize, consent, approve and token exchange issues a token; plain, missing-method, missing and malformed PKCE challenges are refused. mcp-oauth.service.spec.ts covers the pending record, S256-only PKCE and the redirect checks. apps/web/tests/routes/mcp-connect.spec.tsx covers the loader, action, headers and page; the old mcp-connect case is removed from sonar-coverage-routes.spec.tsx."
+        area: auth
+        affectedPaths:
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+          - apps/web/app/routes/mcp-connect.tsx
+          - apps/web/app/routes/settings/_mcp-shared.tsx
+          - apps/web/tests/routes/mcp-connect.spec.tsx
+          - apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+          - .nestled-updates/security/public-operations.json
+          - .nestled-updates/security/guard-baseline.json
+        verification:
+          - pnpm exec nx test api-custom --skip-nx-cache
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx build api --skip-nx-cache
+          - "pnpm build:web"
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-25-mcp-oauth-consent-and-s256-pkce.diff
+      - id: 2026-10-25-settings-all-manage-and-sonar-follow-ups
+        title: "Settings honour all:manage; the billing read-only notice and error fallbacks pass Sonar; db-update's Doctor warning is best-effort"
+        delivery: code-patch
+        intent: "Four small follow-ups to the 2026.10.17 changes. 1. `apps/web/app/routes/settings/_settings-access.ts`: `hasRolePermission` also counts `all:manage` as holding the asked-for permission. The API's access policy already treats `all:manage` as `*` (every permission), so a role that carries only `all:manage`, as older seeds gave the Owner, can use every billing mutation but was shown the billing page read-only and had the Roles and AI tabs hidden. With the change the settings area shows such a role exactly what the API lets it do. Nothing else changes: `hasBillingAccess` keeps its Owner/Admin role-name rule for viewing, `canManageBilling` still needs `billing:manage` (now also met by `all:manage`), and no role without `all:manage` sees more or less than before. 2. `apps/web/app/routes/settings/billing.tsx`: the read-only notice is an `<output>` (with `block`) instead of `<p role=\"status\">`, which is the same live region without Sonar S6819. 3. `errorReason` in `scripts/test-database.mjs` and `apps/api-e2e/src/support/sql-runner.mjs` no longer calls `String()` on an unknown thrown value (Sonar S6551). A new `thrownValueText` returns a string as it is, a number, boolean or bigint as text, anything else as JSON, and nothing for null, undefined or a value JSON cannot represent; `errorReason` then falls back to `unknown error`. `AuthCacheService.reportConnectionStatus` in `libs/api/utils/src/lib/services/auth-cache.service.ts` logs `unknown error` for a non-Error rejection instead of `String(error)`. 4. `scripts/db-update.mjs`: the warning about a trailing Doctor run in `db-update:generate` moves to `trailingDoctorWarning` in `scripts/db-update-steps.mjs` and is best-effort. A missing, unreadable or non-JSON package.json gives no warning instead of stopping db-update before any step runs (db-update run in a bare folder, as some Docker tests do, failed with ENOENT)."
+        area: web
+        affectedPaths:
+          - apps/web/app/routes/settings/_settings-access.ts
+          - apps/web/app/routes/settings/billing.tsx
+          - apps/web/tests/routes/settings/_layout.spec.tsx
+          - apps/web/tests/routes/settings/billing.spec.tsx
+          - libs/api/utils/src/lib/services/auth-cache.service.ts
+          - libs/api/utils/src/lib/services/auth-cache.service.redis-options.spec.ts
+          - scripts/test-database.mjs
+          - scripts/test-database.spec.mjs
+          - apps/api-e2e/src/support/sql-runner.mjs
+          - apps/api-e2e/src/support/sql-runner.spec.ts
+          - scripts/db-update.mjs
+          - scripts/db-update-steps.mjs
+          - scripts/db-update-steps.spec.mjs
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx test api-utils --skip-nx-cache
+          - pnpm exec vitest run --config apps/api-e2e/vitest.support.config.mts
+          - node --test scripts/*.spec.mjs
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-25-settings-all-manage-and-sonar-follow-ups.diff
+      - id: 2026-10-26-nestled-forms-0-9-1
+        title: "@nestledjs/forms 0.9.1: pasted, autofilled and dropped values register, standalone RenderFormField shows its errors, and dotted keys validate"
+        delivery: package-release
+        intent: "Move @nestledjs/forms, @nestledjs/forms-core and @nestledjs/forms-native (where the project uses it) together from 0.9.0 to 0.9.1. The template's root package.json pins `\"@nestledjs/forms\": \"0.9.1\"` and `\"@nestledjs/forms-core\": \"0.9.1\"`; re-resolve the lockfile with `pnpm install`. No application source change is required. What 0.9.1 fixes: 1. Paste, autofill and drag-drop now register. A value set by a script (a password manager, a browser extension, autofill) or dropped into a field assigns the element's `.value` before the `input` event fires, so React's value tracker swallowed the event and the form state never saw the value: the field showed text, and a `required` rule still blocked the submit. Text, email, password, url and textarea fields now also sync from the native `input` and `change` events, `<Form>` reads those fields' DOM values at submit as a last resort for autofill that fires no event at all, and a blocked submit moves focus to the first invalid field in document order, including controlled fields. 2. A standalone `RenderFormField` (one placed under the project's own `FormContext.Provider` rather than inside `<Form>`) now shows its validation errors. It read `formState.errors` without a subscription of its own, so its message only appeared when something above it happened to re-render. It now reads its error through the new `useFieldError(name)` hook exported by @nestledjs/forms-core, which subscribes to that one field with `useFormState({ name })`. `useFieldError` returns `{ error, errorMessage }` and is available to custom fields too. 3. Nested dotted keys such as `address.city` validate correctly. The field resolver read `values[key]` and wrote `errors[key]` flat, so a filled nested required field was always validated as empty and could never submit, and its error was never found. Values are now read with react-hook-form's `get()` and errors written with `set()`. 4. The @nestledjs/forms README has a new Validation section: when validation runs, Zod setup (Zod 3 through @hookform/resolvers, both peer dependencies the app installs), field rules, and how to use `RenderFormField` without `<Form>` (pass `buildFieldsResolver({ fields })` to your own `useForm` so `required` and the other field rules are enforced)."
+        area: web
+        verification:
+          - pnpm install
+          - pnpm install --frozen-lockfile
+          - "pnpm typecheck:workspace"
+          - "pnpm build:web"
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm run nestled-doctor
+          - "In a running web app, fill the login form with the browser's or a password manager's autofill and submit without typing: the form submits. Submit a form with a required field empty: focus moves to that field and its message shows."
+        packageReleases:
+          - name: "@nestledjs/forms"
+            targetVersion: 0.9.1
+            versionRange: ^0.9.1
+          - name: "@nestledjs/forms-core"
+            targetVersion: 0.9.1
+            versionRange: ^0.9.1
+          - name: "@nestledjs/forms-native"
+            targetVersion: 0.9.1
+            versionRange: ^0.9.1
