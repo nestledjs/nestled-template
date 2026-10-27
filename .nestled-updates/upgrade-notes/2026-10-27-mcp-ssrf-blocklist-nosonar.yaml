@@ -1,0 +1,28 @@
+id: 2026-10-27-mcp-ssrf-blocklist-nosonar
+title: 'Mark the MCP client-metadata SSRF blocklist NOSONAR'
+priority: ignore
+area: api
+type: cleanup
+delivery: code-patch
+
+intent: >
+  Add a NOSONAR comment to each CIDR entry in BLOCKED_IPV4_RANGES and BLOCKED_IPV6_RANGES in
+  mcp-client-metadata.ts, with one comment above the lists saying why.
+
+why: >
+  SonarCloud's typescript:S1313 (hardcoded IP address) raises one issue per entry in the
+  private-address blocklist that 2026-10-25-mcp-sdk-v2-and-2026-07-28 introduced: 16 issues,
+  which fail a zero-new-issues quality gate on every project that adopts that note. The entries
+  are the ranges a client metadata fetch must never reach, not addresses the API connects to, so
+  every one is a false positive. No behaviour changes.
+
+  priority: ignore because a project that has already adopted the MCP v2 note can mark the 16
+  issues false positive in SonarCloud instead, and one that has not yet adopted it takes the
+  template's current file, which already carries the comments.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/mcp/mcp-client-metadata.ts
+
+skipIf:
+  - The project does not have libs/api/custom/src/lib/plugins/mcp/mcp-client-metadata.ts.
+  - The project's SonarCloud issues for these lines are already resolved as false positive.
