@@ -198,6 +198,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         apiTokenReq[API_TOKEN_USER_KEY] = user
         apiTokenReq.apiTokenId = result.tokenId
         apiTokenReq.apiTokenOrganizationId = result.organizationId
+        this.apiTokensService.recordTokenUse(result.tokenId)
 
         return this.success(user)
       } catch (error) {

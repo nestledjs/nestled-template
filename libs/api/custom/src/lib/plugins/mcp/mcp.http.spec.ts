@@ -55,6 +55,7 @@ describe('MCP over HTTP', () => {
       return null
     }),
     generateApiToken: jest.fn(),
+    recordTokenUse: jest.fn(),
   }
 
   beforeAll(async () => {

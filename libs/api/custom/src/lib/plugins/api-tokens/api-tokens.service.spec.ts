@@ -581,28 +581,47 @@ describe('ApiTokensService', () => {
         resource: null,
       })
     })
-    it('should handle lastUsedAt update failure gracefully', async () => {
-      const plainToken = 'a'.repeat(64)
-      const tokenHash = createHash('sha256').update(plainToken).digest('hex')
+    // A valid token can still be refused by the caller (one bound to a resource, presented
+    // anywhere else), so validation alone must not mark it used; the caller records use.
+    it('does not record use when validating a token', async () => {
       mockData.apiToken.findFirst.mockResolvedValue({
         user: currentOwner,
         authGeneration: 0,
         id: 'token-123',
         userId: 'user-123',
-        tokenHash,
+        organizationId: null,
+        resource: 'https://api.example.com/api/mcp',
         revoked: false,
         expiresAt: null,
       } as any)
-      // Simulate update failure
-      mockData.apiToken.update.mockRejectedValue(new Error('Database error'))
-      // Should still return valid result even if update fails
-      const result = await service.validateApiToken(plainToken)
-      expect(result).toEqual({
-        userId: 'user-123',
-        tokenId: 'token-123',
-        organizationId: null,
-        resource: null,
+
+      await expect(service.validateApiToken('a'.repeat(64))).resolves.not.toBeNull()
+      await new Promise(resolve => setImmediate(resolve))
+      expect(mockData.apiToken.update).not.toHaveBeenCalled()
+    })
+    it('records use of an accepted token', () => {
+      mockData.apiToken.update.mockResolvedValue({} as any)
+
+      service.recordTokenUse('token-123')
+
+      expect(mockData.apiToken.update).toHaveBeenCalledWith({
+        where: { id: 'token-123' },
+        data: { lastUsedAt: expect.any(Date) },
       })
+    })
+    it('should handle lastUsedAt update failure gracefully', async () => {
+      mockData.apiToken.update.mockRejectedValue(new Error('Database error'))
+      const logError = jest
+        .spyOn((service as any).logger, 'error')
+        .mockImplementation(() => undefined)
+
+      expect(() => service.recordTokenUse('token-123')).not.toThrow()
+      await new Promise(resolve => setImmediate(resolve))
+
+      expect(logError).toHaveBeenCalledWith(
+        'Failed to update lastUsedAt for token token-123',
+        expect.any(Error),
+      )
     })
   })
   describe('Token Hashing', () => {

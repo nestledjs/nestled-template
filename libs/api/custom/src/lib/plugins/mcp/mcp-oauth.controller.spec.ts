@@ -710,6 +710,43 @@ describe('McpOAuthController', () => {
       })
     })
 
+    it('does not record use for /authorize or consent, only for a redeemed code', async () => {
+      data.mcpOAuthClient.updateMany.mockClear()
+
+      // Before sign-in: anyone who knows the client id and redirect URI can get this far.
+      const anonymous = createResponse()
+      await controller.authorize(authorizeQuery(), requestWith(undefined), anonymous)
+      expect(anonymous.redirect).toHaveBeenCalledWith(
+        expect.stringMatching(/^https:\/\/app\.example\.com\/login\?/),
+      )
+      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
+
+      // Signed in, through consent: still not use until the code is redeemed.
+      const redirect = await approve(await startAuthorization())
+      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
+
+      // A failed exchange is not use either.
+      const code = redirect.searchParams.get('code') as string
+      const refused = await exchange('0'.repeat(64))
+      expect(refused.status).toHaveBeenCalledWith(400)
+      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
+
+      await exchange(code)
+      expect(data.mcpOAuthClient.updateMany).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not record use when the code exchange fails PKCE', async () => {
+      const redirect = await approve(await startAuthorization())
+      data.mcpOAuthClient.updateMany.mockClear()
+
+      const res = await exchange(redirect.searchParams.get('code') as string, {
+        code_verifier: 'fake-wrong-verifier',
+      })
+
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
+    })
+
     it('refuses a redirect_uri the client did not register, before sign-in and after', async () => {
       for (const cookie of [undefined, SESSION_COOKIE]) {
         const res = createResponse()
