@@ -1,0 +1,369 @@
+diff --git a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+index 7226a17..779514c 100644
+--- a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
++++ b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+@@ -6,7 +6,7 @@ import { ApiTokenAuthMiddleware } from './api-token-auth.middleware'
+ describe('ApiTokenAuthMiddleware', () => {
+   const token = 'a1'.repeat(32)
+   const user = { id: 'user-123', organizations: [] }
+-  let apiTokensService: { validateApiToken: jest.Mock }
++  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
+   let data: { user: { findUnique: jest.Mock } }
+   let middleware: ApiTokenAuthMiddleware
+ 
+@@ -28,6 +28,7 @@ describe('ApiTokenAuthMiddleware', () => {
+         userId: 'user-123',
+         organizationId: 'org-123',
+       }),
++      recordTokenUse: jest.fn(),
+     }
+     data = { user: { findUnique: jest.fn().mockResolvedValue(user) } }
+     middleware = new ApiTokenAuthMiddleware(apiTokensService as any, data as any)
+@@ -44,6 +45,7 @@ describe('ApiTokenAuthMiddleware', () => {
+     expect(req.apiTokenId).toBe('token-1')
+     expect(req.apiTokenOrganizationId).toBe('org-123')
+     expect(next).toHaveBeenCalledTimes(1)
++    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('token-1')
+   })
+ 
+   it('keeps an unscoped token unscoped', async () => {
+@@ -87,6 +89,7 @@ describe('ApiTokenAuthMiddleware', () => {
+ 
+     expect(req.user).toBeUndefined()
+     expect(req.apiTokenOrganizationId).toBeUndefined()
++    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+   })
+ 
+   describe('resource binding (RFC 8707)', () => {
+@@ -103,6 +106,7 @@ describe('ApiTokenAuthMiddleware', () => {
+       const { req } = await run(`Bearer ${token}`)
+ 
+       expect(req.user).toBe(user)
++      expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('token-3')
+     })
+ 
+     it('compares the binding in canonical form', async () => {
+@@ -129,6 +133,8 @@ describe('ApiTokenAuthMiddleware', () => {
+       expect(req.user).toBeUndefined()
+       expect(data.user.findUnique).not.toHaveBeenCalled()
+       expect(next).toHaveBeenCalledTimes(1)
++      // Refused here, so not counted as use of the token.
++      expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+     })
+ 
+     it('still accepts a token issued before binding existed (resource null)', async () => {
+diff --git a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+index fe78c5f..51d357c 100644
+--- a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
++++ b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+@@ -66,6 +66,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
+             apiTokenReq.user = user
+             apiTokenReq.apiTokenId = result.tokenId
+             apiTokenReq.apiTokenOrganizationId = result.organizationId
++            this.apiTokensService.recordTokenUse(result.tokenId)
+ 
+             this.logger.log(`API token authentication successful for user ${user.id}`)
+           } else {
+diff --git a/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts b/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts
+index cfee65b..4356611 100644
+--- a/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts
+@@ -581,29 +581,48 @@ describe('ApiTokensService', () => {
+         resource: null,
+       })
+     })
+-    it('should handle lastUsedAt update failure gracefully', async () => {
+-      const plainToken = 'a'.repeat(64)
+-      const tokenHash = createHash('sha256').update(plainToken).digest('hex')
++    // A valid token can still be refused by the caller (one bound to a resource, presented
++    // anywhere else), so validation alone must not mark it used; the caller records use.
++    it('does not record use when validating a token', async () => {
+       mockData.apiToken.findFirst.mockResolvedValue({
+         user: currentOwner,
+         authGeneration: 0,
+         id: 'token-123',
+         userId: 'user-123',
+-        tokenHash,
++        organizationId: null,
++        resource: 'https://api.example.com/api/mcp',
+         revoked: false,
+         expiresAt: null,
+       } as any)
+-      // Simulate update failure
+-      mockData.apiToken.update.mockRejectedValue(new Error('Database error'))
+-      // Should still return valid result even if update fails
+-      const result = await service.validateApiToken(plainToken)
+-      expect(result).toEqual({
+-        userId: 'user-123',
+-        tokenId: 'token-123',
+-        organizationId: null,
+-        resource: null,
++
++      await expect(service.validateApiToken('a'.repeat(64))).resolves.not.toBeNull()
++      await new Promise(resolve => setImmediate(resolve))
++      expect(mockData.apiToken.update).not.toHaveBeenCalled()
++    })
++    it('records use of an accepted token', () => {
++      mockData.apiToken.update.mockResolvedValue({} as any)
++
++      service.recordTokenUse('token-123')
++
++      expect(mockData.apiToken.update).toHaveBeenCalledWith({
++        where: { id: 'token-123' },
++        data: { lastUsedAt: expect.any(Date) },
+       })
+     })
++    it('should handle lastUsedAt update failure gracefully', async () => {
++      mockData.apiToken.update.mockRejectedValue(new Error('Database error'))
++      const logError = jest
++        .spyOn((service as any).logger, 'error')
++        .mockImplementation(() => undefined)
++
++      expect(() => service.recordTokenUse('token-123')).not.toThrow()
++      await new Promise(resolve => setImmediate(resolve))
++
++      expect(logError).toHaveBeenCalledWith(
++        'Failed to update lastUsedAt for token token-123',
++        expect.any(Error),
++      )
++    })
+   })
+   describe('Token Hashing', () => {
+     it('should produce consistent hashes for same input', async () => {
+diff --git a/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts b/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts
+index ca468ac..af7a431 100644
+--- a/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts
++++ b/libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts
+@@ -232,18 +232,8 @@ export class ApiTokensService {
+       return null
+     }
+ 
+-    // Update last used timestamp (async, don't block)
+-    setImmediate(async () => {
+-      try {
+-        await this.data.apiToken.update({
+-          where: { id: apiToken.id },
+-          data: { lastUsedAt: new Date() },
+-        })
+-      } catch (error) {
+-        this.logger.error(`Failed to update lastUsedAt for token ${apiToken.id}`, error)
+-      }
+-    })
+-
++    // lastUsedAt is not updated here: a valid token can still be refused by the caller (a token
++    // bound to a resource, presented anywhere else). Callers record use once they accept it.
+     return {
+       userId: apiToken.userId,
+       tokenId: apiToken.id,
+@@ -252,6 +242,17 @@ export class ApiTokensService {
+     }
+   }
+ 
++  /**
++   * Record that a token was used. Call it only once the request presenting the token has been
++   * accepted, so a token refused where it was presented does not look in use. Does not block the
++   * request; a failure is logged.
++   */
++  recordTokenUse(tokenId: string): void {
++    this.data.apiToken
++      .update({ where: { id: tokenId }, data: { lastUsedAt: new Date() } })
++      .catch(error => this.logger.error(`Failed to update lastUsedAt for token ${tokenId}`, error))
++  }
++
+   /**
+    * Hash a token using SHA-256
+    */
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+index 0dc318d..8903d4f 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+@@ -17,13 +17,13 @@ function extractJwt(strategy: JwtStrategy, request: Request): string | null {
+ describe('JwtStrategy API token authentication', () => {
+   const token = 'a'.repeat(64)
+   let auth: { validateUser: jest.Mock }
+-  let apiTokensService: { validateApiToken: jest.Mock }
++  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
+   let strategy: JwtStrategy
+ 
+   beforeEach(() => {
+     process.env['JWT_SECRET'] = 'test-secret'
+     auth = { validateUser: jest.fn() }
+-    apiTokensService = { validateApiToken: jest.fn() }
++    apiTokensService = { validateApiToken: jest.fn(), recordTokenUse: jest.fn() }
+     strategy = new JwtStrategy(auth as never, apiTokensService as never)
+     ;(strategy as any).success = jest.fn()
+     ;(strategy as any).fail = jest.fn()
+@@ -47,6 +47,7 @@ describe('JwtStrategy API token authentication', () => {
+     expect(req.apiTokenId).toBe('api-token-1')
+     expect(req.apiTokenOrganizationId).toBe('org-1')
+     expect((strategy as any).success).toHaveBeenCalledWith(user)
++    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('api-token-1')
+   })
+ 
+   it('fails invalid API tokens without trying user lookup', async () => {
+@@ -81,6 +82,8 @@ describe('JwtStrategy API token authentication', () => {
+       { message: 'API token is not valid for this resource' },
+       401,
+     )
++    // Refused here (GraphQL and the rest of the API), so not counted as use of the token.
++    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+   })
+ 
+   it('still accepts an unbound token (resource null)', async () => {
+@@ -97,6 +100,7 @@ describe('JwtStrategy API token authentication', () => {
+     await strategy.authenticate(req)
+ 
+     expect((strategy as any).success).toHaveBeenCalledWith(user)
++    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('api-token-1')
+   })
+ 
+   // An organization-scoped token is a restriction below the user's own access. The user really is
+@@ -313,7 +317,7 @@ describe('JwtStrategy session token validation', () => {
+ 
+ describe('JwtStrategy inactive accounts', () => {
+   let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
+-  let apiTokensService: { validateApiToken: jest.Mock }
++  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
+   let strategy: JwtStrategy
+ 
+   beforeEach(() => {
+@@ -324,7 +328,7 @@ describe('JwtStrategy inactive accounts', () => {
+         .mockResolvedValue({ id: 'user-1', authGeneration: 0, isActive: false }),
+       isTokenCurrent: jest.fn().mockResolvedValue(true),
+     }
+-    apiTokensService = { validateApiToken: jest.fn() }
++    apiTokensService = { validateApiToken: jest.fn(), recordTokenUse: jest.fn() }
+     strategy = new JwtStrategy(auth as never, apiTokensService as never)
+     ;(strategy as any).success = jest.fn()
+     ;(strategy as any).fail = jest.fn()
+@@ -350,5 +354,6 @@ describe('JwtStrategy inactive accounts', () => {
+       { message: 'User not found for API token' },
+       401,
+     )
++    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+   })
+ })
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+index c066da6..cf52c5b 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+@@ -198,6 +198,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
+         apiTokenReq[API_TOKEN_USER_KEY] = user
+         apiTokenReq.apiTokenId = result.tokenId
+         apiTokenReq.apiTokenOrganizationId = result.organizationId
++        this.apiTokensService.recordTokenUse(result.tokenId)
+ 
+         return this.success(user)
+       } catch (error) {
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+index 43fe4f2..6e40619 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+@@ -710,6 +710,43 @@ describe('McpOAuthController', () => {
+       })
+     })
+ 
++    it('does not record use for /authorize or consent, only for a redeemed code', async () => {
++      data.mcpOAuthClient.updateMany.mockClear()
++
++      // Before sign-in: anyone who knows the client id and redirect URI can get this far.
++      const anonymous = createResponse()
++      await controller.authorize(authorizeQuery(), requestWith(undefined), anonymous)
++      expect(anonymous.redirect).toHaveBeenCalledWith(
++        expect.stringMatching(/^https:\/\/app\.example\.com\/login\?/),
++      )
++      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
++
++      // Signed in, through consent: still not use until the code is redeemed.
++      const redirect = await approve(await startAuthorization())
++      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
++
++      // A failed exchange is not use either.
++      const code = redirect.searchParams.get('code') as string
++      const refused = await exchange('0'.repeat(64))
++      expect(refused.status).toHaveBeenCalledWith(400)
++      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
++
++      await exchange(code)
++      expect(data.mcpOAuthClient.updateMany).toHaveBeenCalledTimes(1)
++    })
++
++    it('does not record use when the code exchange fails PKCE', async () => {
++      const redirect = await approve(await startAuthorization())
++      data.mcpOAuthClient.updateMany.mockClear()
++
++      const res = await exchange(redirect.searchParams.get('code') as string, {
++        code_verifier: 'fake-wrong-verifier',
++      })
++
++      expect(res.status).toHaveBeenCalledWith(400)
++      expect(data.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
++    })
++
+     it('refuses a redirect_uri the client did not register, before sign-in and after', async () => {
+       for (const cookie of [undefined, SESSION_COOKIE]) {
+         const res = createResponse()
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+index 79146c3..b1add59 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+@@ -98,11 +98,11 @@ describe('McpOAuthService', () => {
+   })
+ 
+   describe('Stored registrations: use and pruning', () => {
+-    it('records use when a client is resolved for a redirect, and only for DCR ids', async () => {
++    it('records use only for DCR ids', async () => {
+       const client = await service.registerClient('App', ['https://app.example.com/cb'])
+       mockData.mcpOAuthClient.updateMany.mockClear()
+ 
+-      await service.resolveClientForRedirect(client.clientId, 'https://app.example.com/cb')
++      await service.touchClient(client.clientId)
+       await service.touchClient('https://client.example.com/client.json')
+ 
+       expect(mockData.mcpOAuthClient.updateMany).toHaveBeenCalledTimes(1)
+@@ -112,6 +112,18 @@ describe('McpOAuthService', () => {
+       })
+     })
+ 
++    it('does not record use when a client is checked or resolved for a redirect', async () => {
++      // /authorize makes these checks before sign-in; counting them as use would let anyone who
++      // knows a client id and its redirect URI keep the client from ever being pruned.
++      const client = await service.registerClient('App', ['https://app.example.com/cb'])
++      mockData.mcpOAuthClient.updateMany.mockClear()
++
++      await service.precheckClient(client.clientId, 'https://app.example.com/cb')
++      await service.resolveClientForRedirect(client.clientId, 'https://app.example.com/cb')
++
++      expect(mockData.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
++    })
++
+     it('does not record use for a redirect the client did not register', async () => {
+       const client = await service.registerClient('App', ['https://app.example.com/cb'])
+       mockData.mcpOAuthClient.updateMany.mockClear()
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+index b6d73d2..96c2db9 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+@@ -305,7 +305,9 @@ export class McpOAuthService {
+         'redirect_uri is not registered for this client',
+       )
+     }
+-    await this.touchClient(clientId)
++    // Not counted as use: /authorize runs this before sign-in (precheckClient), so anyone holding
++    // a client id and its redirect URI could otherwise keep the client from ever being pruned.
++    // Use is recorded when /token redeems a code issued to the client.
+     return client
+   }
+ 
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp.http.spec.ts b/libs/api/custom/src/lib/plugins/mcp/mcp.http.spec.ts
+index 7ffadc5..99049e7 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp.http.spec.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp.http.spec.ts
+@@ -55,6 +55,7 @@ describe('MCP over HTTP', () => {
+       return null
+     }),
+     generateApiToken: jest.fn(),
++    recordTokenUse: jest.fn(),
+   }
+ 
+   beforeAll(async () => {
