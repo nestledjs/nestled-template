@@ -109,29 +109,30 @@ export function isRegisteredRedirectUri(registered: string[], requested: string)
 // carrier-grade NAT, unspecified, multicast and reserved ranges, and their IPv6 counterparts,
 // including the IPv6 forms that embed an IPv4 address (IPv4-compatible ::/96, NAT64 and 6to4),
 // since those can reach an internal IPv4 host.
-// CIDR notation, split at load time.
+// CIDR notation, split at load time. Each entry carries NOSONAR: typescript:S1313 (hardcoded
+// IP address) flags them, but they are the blocklist itself, never an address we connect to.
 const BLOCKED_IPV4_RANGES = [
-  '0.0.0.0/8',
-  '10.0.0.0/8',
-  '100.64.0.0/10',
-  '127.0.0.0/8',
-  '169.254.0.0/16',
-  '172.16.0.0/12',
-  '192.0.0.0/24',
-  '192.168.0.0/16',
-  '198.18.0.0/15',
-  '224.0.0.0/4',
-  '240.0.0.0/4',
+  '0.0.0.0/8', // NOSONAR
+  '10.0.0.0/8', // NOSONAR
+  '100.64.0.0/10', // NOSONAR
+  '127.0.0.0/8', // NOSONAR
+  '169.254.0.0/16', // NOSONAR
+  '172.16.0.0/12', // NOSONAR
+  '192.0.0.0/24', // NOSONAR
+  '192.168.0.0/16', // NOSONAR
+  '198.18.0.0/15', // NOSONAR
+  '224.0.0.0/4', // NOSONAR
+  '240.0.0.0/4', // NOSONAR
 ]
 const BLOCKED_IPV6_RANGES = [
-  '::/96', // unspecified, loopback and IPv4-compatible (deprecated)
-  '64:ff9b::/96', // NAT64, well-known prefix
-  '64:ff9b:1::/48', // NAT64, local-use prefix
-  '2002::/16', // 6to4
-  'fc00::/7', // unique local
-  'fe80::/10', // link-local
-  'fec0::/10', // site-local (deprecated)
-  'ff00::/8', // multicast
+  '::/96', // NOSONAR - unspecified, loopback and IPv4-compatible (deprecated)
+  '64:ff9b::/96', // NOSONAR - NAT64, well-known prefix
+  '64:ff9b:1::/48', // NOSONAR - NAT64, local-use prefix
+  '2002::/16', // NOSONAR - 6to4
+  'fc00::/7', // NOSONAR - unique local
+  'fe80::/10', // NOSONAR - link-local
+  'fec0::/10', // NOSONAR - site-local (deprecated)
+  'ff00::/8', // NOSONAR - multicast
 ]
 const BLOCKED_ADDRESSES = new BlockList()
 for (const [ranges, family] of [
