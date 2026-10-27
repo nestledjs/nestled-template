@@ -1,0 +1,78 @@
+id: 2026-10-27-mcp-oauth-last-used-accounting
+title: 'Count MCP OAuth clients and API tokens as used only once they are accepted'
+priority: normal
+area: api
+type: security
+delivery: code-patch
+
+intent: >
+  Two lastUsedAt updates that 2026-10-25-mcp-sdk-v2-and-2026-07-28 made too early.
+
+  MCP OAuth clients (mcp-oauth.service.ts). resolveClientForRedirect no longer calls touchClient.
+  /authorize runs it before the caller has signed in (through precheckClient) and again after
+  sign-in, so a stored DCR client's lastUsedAt was refreshed by any request that named a client id
+  and one of its redirect URIs. A client now counts as used only when /token redeems a code issued
+  to it, after the code, client, redirect URI, PKCE verifier and resource have all checked out;
+  that call (`touchClient` in the token handler of mcp-oauth.controller.ts) was already there and
+  is unchanged. The prune rules are unchanged: never used within a day of registering, or unused
+  for 30 days.
+
+  API tokens (api-tokens.service.ts, jwt.strategy.ts, middleware/api-token-auth.middleware.ts).
+  validateApiToken no longer updates ApiToken.lastUsedAt. A new
+  `ApiTokensService.recordTokenUse(tokenId)` does, without blocking the request and logging a
+  failure, and the two callers call it only once they accept the token: JwtStrategy after every
+  check passes, just before `success(user)`, and ApiTokenAuthMiddleware once it has attached the
+  user to the request. A token bound to an RFC 8707 resource and presented anywhere else (GraphQL,
+  another host, another resource) is refused exactly as before, and its lastUsedAt no longer
+  moves. Which tokens are accepted where does not change.
+
+  Tests: mcp-oauth.service.spec.ts and mcp-oauth.controller.spec.ts (neither /authorize before or
+  after sign-in, nor consent, nor a failed /token records use; a redeemed code does),
+  api-tokens.service.spec.ts, jwt.strategy.spec.ts and middleware/api-token-auth.middleware.spec.ts
+  (use recorded on acceptance, not on refusal), and the recordTokenUse mock in mcp.http.spec.ts.
+
+why: >
+  lastUsedAt is what decides whether a stored MCP OAuth client is pruned, and what a user sees as
+  the last use of an API token. Updating it before sign-in let anyone who knew a client id and its
+  redirect URI keep that client from ever being pruned, and updating it on a token that was then
+  refused made a token look in use where it is not valid. A small hardening; no request is
+  accepted or refused differently.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp.http.spec.ts
+  - libs/api/custom/src/lib/plugins/api-tokens/api-tokens.service.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+
+skipIf:
+  - >
+    The project has no MCP plugin and no API tokens (no libs/api/custom/src/lib/plugins/api-tokens).
+    Record not-applicable.
+
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx build api
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Apply 2026-10-25-mcp-sdk-v2-and-2026-07-28 first. A project that has not adopted it yet takes
+    the template's current files for that note, which already include this change; record this one
+    as superseded or applied in the same pass.
+  - >
+    A project without stored MCP OAuth clients (no McpOAuthClient model) applies only the API token
+    part, and records the client part not-applicable in the log entry.
+  - >
+    If the project validates API tokens anywhere else (another guard, a WebSocket handshake, a
+    CLI endpoint), call recordTokenUse there too, at the point the token is accepted; otherwise
+    tokens used only through that path stop showing a last use.
+  - >
+    If the project stores MCP OAuth state differently (its own client table, stored codes), keep
+    the same rule: record client use only when a code is redeemed, never from a check /authorize
+    can reach before sign-in.

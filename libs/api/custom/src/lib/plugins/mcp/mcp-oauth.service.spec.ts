@@ -98,11 +98,11 @@ describe('McpOAuthService', () => {
   })
 
   describe('Stored registrations: use and pruning', () => {
-    it('records use when a client is resolved for a redirect, and only for DCR ids', async () => {
+    it('records use only for DCR ids', async () => {
       const client = await service.registerClient('App', ['https://app.example.com/cb'])
       mockData.mcpOAuthClient.updateMany.mockClear()
 
-      await service.resolveClientForRedirect(client.clientId, 'https://app.example.com/cb')
+      await service.touchClient(client.clientId)
       await service.touchClient('https://client.example.com/client.json')
 
       expect(mockData.mcpOAuthClient.updateMany).toHaveBeenCalledTimes(1)
@@ -110,6 +110,18 @@ describe('McpOAuthService', () => {
         where: { id: client.clientId },
         data: { lastUsedAt: expect.any(Date) },
       })
+    })
+
+    it('does not record use when a client is checked or resolved for a redirect', async () => {
+      // /authorize makes these checks before sign-in; counting them as use would let anyone who
+      // knows a client id and its redirect URI keep the client from ever being pruned.
+      const client = await service.registerClient('App', ['https://app.example.com/cb'])
+      mockData.mcpOAuthClient.updateMany.mockClear()
+
+      await service.precheckClient(client.clientId, 'https://app.example.com/cb')
+      await service.resolveClientForRedirect(client.clientId, 'https://app.example.com/cb')
+
+      expect(mockData.mcpOAuthClient.updateMany).not.toHaveBeenCalled()
     })
 
     it('does not record use for a redirect the client did not register', async () => {

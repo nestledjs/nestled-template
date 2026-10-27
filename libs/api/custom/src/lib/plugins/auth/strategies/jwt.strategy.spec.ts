@@ -17,13 +17,13 @@ function extractJwt(strategy: JwtStrategy, request: Request): string | null {
 describe('JwtStrategy API token authentication', () => {
   const token = 'a'.repeat(64)
   let auth: { validateUser: jest.Mock }
-  let apiTokensService: { validateApiToken: jest.Mock }
+  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
   let strategy: JwtStrategy
 
   beforeEach(() => {
     process.env['JWT_SECRET'] = 'test-secret'
     auth = { validateUser: jest.fn() }
-    apiTokensService = { validateApiToken: jest.fn() }
+    apiTokensService = { validateApiToken: jest.fn(), recordTokenUse: jest.fn() }
     strategy = new JwtStrategy(auth as never, apiTokensService as never)
     ;(strategy as any).success = jest.fn()
     ;(strategy as any).fail = jest.fn()
@@ -47,6 +47,7 @@ describe('JwtStrategy API token authentication', () => {
     expect(req.apiTokenId).toBe('api-token-1')
     expect(req.apiTokenOrganizationId).toBe('org-1')
     expect((strategy as any).success).toHaveBeenCalledWith(user)
+    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('api-token-1')
   })
 
   it('fails invalid API tokens without trying user lookup', async () => {
@@ -81,6 +82,8 @@ describe('JwtStrategy API token authentication', () => {
       { message: 'API token is not valid for this resource' },
       401,
     )
+    // Refused here (GraphQL and the rest of the API), so not counted as use of the token.
+    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
   })
 
   it('still accepts an unbound token (resource null)', async () => {
@@ -97,6 +100,7 @@ describe('JwtStrategy API token authentication', () => {
     await strategy.authenticate(req)
 
     expect((strategy as any).success).toHaveBeenCalledWith(user)
+    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('api-token-1')
   })
 
   // An organization-scoped token is a restriction below the user's own access. The user really is
@@ -313,7 +317,7 @@ describe('JwtStrategy session token validation', () => {
 
 describe('JwtStrategy inactive accounts', () => {
   let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
-  let apiTokensService: { validateApiToken: jest.Mock }
+  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
   let strategy: JwtStrategy
 
   beforeEach(() => {
@@ -324,7 +328,7 @@ describe('JwtStrategy inactive accounts', () => {
         .mockResolvedValue({ id: 'user-1', authGeneration: 0, isActive: false }),
       isTokenCurrent: jest.fn().mockResolvedValue(true),
     }
-    apiTokensService = { validateApiToken: jest.fn() }
+    apiTokensService = { validateApiToken: jest.fn(), recordTokenUse: jest.fn() }
     strategy = new JwtStrategy(auth as never, apiTokensService as never)
     ;(strategy as any).success = jest.fn()
     ;(strategy as any).fail = jest.fn()
@@ -350,5 +354,6 @@ describe('JwtStrategy inactive accounts', () => {
       { message: 'User not found for API token' },
       401,
     )
+    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
   })
 })

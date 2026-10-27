@@ -244,3 +244,28 @@ agentHints:
   - >
     Projects whose MCP endpoint, base path or global prefix differ from `/api/mcp` adjust the paths
     in mcp-well-known.ts and in the controller's 401 challenge together.
+  - >
+    A project that already stores MCP OAuth state in Postgres (its own McpOAuthClient table,
+    authorization codes or pending authorizations) cannot run the template migration's SQL as
+    written: CREATE TABLE "McpOAuthClient" fails on the existing table. Keep the template
+    migration's directory name (20261025210000_mcp_oauth_token_resource_and_clients) so the
+    history still lines up, but make its SQL additive against what the project has: add
+    ApiToken.resource; add the columns the template's models have and the project's lack (for
+    example McpOAuthClient.lastUsedAt and its index); and add `resource` to the stored codes (and
+    pending authorizations, if stored), since the binding travels with them to /token.
+  - >
+    In that same migration, backfill McpOAuthClient.lastUsedAt for the existing clients (from each
+    client's newest authorization code if codes are stored, otherwise the deploy time), so the
+    first prune does not delete clients still in use: a NULL lastUsedAt on a client older than a
+    day reads as never used. Columns for a table that one of the project's own migrations creates
+    after 20261025210000 (sorting later by name) cannot go in the template-named migration, because
+    that table does not exist yet when it runs on a fresh database; put them in a separate
+    later migration whose name sorts after the one that creates the table.
+  - >
+    If the project's stored codes or pending authorizations have a foreign key to the client
+    table, a client identified by a Client ID Metadata Document URL needs a row too: store one
+    keyed by the URL so the foreign key holds, but never read its stored redirect URIs back as
+    trusted. The metadata document, fetched and checked as this note describes, stays the only
+    source of a URL client's redirect URIs. Verify on a fresh database with `prisma migrate
+    deploy`, then check `prisma migrate diff` between the migrations and the schema is empty.
+    Clients the project already stores keep their registrations and need not re-register.

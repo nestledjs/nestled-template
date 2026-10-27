@@ -305,7 +305,9 @@ export class McpOAuthService {
         'redirect_uri is not registered for this client',
       )
     }
-    await this.touchClient(clientId)
+    // Not counted as use: /authorize runs this before sign-in (precheckClient), so anyone holding
+    // a client id and its redirect URI could otherwise keep the client from ever being pruned.
+    // Use is recorded when /token redeems a code issued to the client.
     return client
   }
 

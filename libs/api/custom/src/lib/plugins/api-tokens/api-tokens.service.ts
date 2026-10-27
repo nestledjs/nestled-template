@@ -232,24 +232,25 @@ export class ApiTokensService {
       return null
     }
 
-    // Update last used timestamp (async, don't block)
-    setImmediate(async () => {
-      try {
-        await this.data.apiToken.update({
-          where: { id: apiToken.id },
-          data: { lastUsedAt: new Date() },
-        })
-      } catch (error) {
-        this.logger.error(`Failed to update lastUsedAt for token ${apiToken.id}`, error)
-      }
-    })
-
+    // lastUsedAt is not updated here: a valid token can still be refused by the caller (a token
+    // bound to a resource, presented anywhere else). Callers record use once they accept it.
     return {
       userId: apiToken.userId,
       tokenId: apiToken.id,
       organizationId: apiToken.organizationId ?? null,
       resource: apiToken.resource ?? null,
     }
+  }
+
+  /**
+   * Record that a token was used. Call it only once the request presenting the token has been
+   * accepted, so a token refused where it was presented does not look in use. Does not block the
+   * request; a failure is logged.
+   */
+  recordTokenUse(tokenId: string): void {
+    this.data.apiToken
+      .update({ where: { id: tokenId }, data: { lastUsedAt: new Date() } })
+      .catch(error => this.logger.error(`Failed to update lastUsedAt for token ${tokenId}`, error))
   }
 
   /**

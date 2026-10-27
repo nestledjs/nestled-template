@@ -6,7 +6,7 @@ import { ApiTokenAuthMiddleware } from './api-token-auth.middleware'
 describe('ApiTokenAuthMiddleware', () => {
   const token = 'a1'.repeat(32)
   const user = { id: 'user-123', organizations: [] }
-  let apiTokensService: { validateApiToken: jest.Mock }
+  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
   let data: { user: { findUnique: jest.Mock } }
   let middleware: ApiTokenAuthMiddleware
 
@@ -28,6 +28,7 @@ describe('ApiTokenAuthMiddleware', () => {
         userId: 'user-123',
         organizationId: 'org-123',
       }),
+      recordTokenUse: jest.fn(),
     }
     data = { user: { findUnique: jest.fn().mockResolvedValue(user) } }
     middleware = new ApiTokenAuthMiddleware(apiTokensService as any, data as any)
@@ -44,6 +45,7 @@ describe('ApiTokenAuthMiddleware', () => {
     expect(req.apiTokenId).toBe('token-1')
     expect(req.apiTokenOrganizationId).toBe('org-123')
     expect(next).toHaveBeenCalledTimes(1)
+    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('token-1')
   })
 
   it('keeps an unscoped token unscoped', async () => {
@@ -87,6 +89,7 @@ describe('ApiTokenAuthMiddleware', () => {
 
     expect(req.user).toBeUndefined()
     expect(req.apiTokenOrganizationId).toBeUndefined()
+    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
   })
 
   describe('resource binding (RFC 8707)', () => {
@@ -103,6 +106,7 @@ describe('ApiTokenAuthMiddleware', () => {
       const { req } = await run(`Bearer ${token}`)
 
       expect(req.user).toBe(user)
+      expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('token-3')
     })
 
     it('compares the binding in canonical form', async () => {
@@ -129,6 +133,8 @@ describe('ApiTokenAuthMiddleware', () => {
       expect(req.user).toBeUndefined()
       expect(data.user.findUnique).not.toHaveBeenCalled()
       expect(next).toHaveBeenCalledTimes(1)
+      // Refused here, so not counted as use of the token.
+      expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
     })
 
     it('still accepts a token issued before binding existed (resource null)', async () => {

@@ -66,6 +66,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
             apiTokenReq.user = user
             apiTokenReq.apiTokenId = result.tokenId
             apiTokenReq.apiTokenOrganizationId = result.organizationId
+            this.apiTokensService.recordTokenUse(result.tokenId)
 
             this.logger.log(`API token authentication successful for user ${user.id}`)
           } else {
