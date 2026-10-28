@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-27
+generatedAt: 2026-10-28
 channels:
-  canary: 2026.10.22
+  canary: 2026.10.23
   stable: 2026.10.21
 releases:
   - id: 2026.08.0
@@ -1124,3 +1124,30 @@ releases:
           - pnpm exec nx build api
           - pnpm run nestled-doctor
         patch: patches/2026-10-27-mcp-oauth-last-used-accounting.diff
+  - id: 2026.10.23
+    date: 2026-10-28
+    title: Client session cookie decoding
+    templateCommit: cd0da96
+    notes:
+      - id: 2026-10-28-client-cookie-decoding
+        title: Decode session cookies safely in the browser, and survive a badly encoded cookie
+        delivery: code-patch
+        intent: "Two client-side cookie defects, both in the web app's shared libs. Browser-safe JWT decoding. `pickNewestJwt` in libs/shared/utils/src/lib/cookies.tsx decoded the JWT payload with `Buffer`, which browsers do not have and the web bundle does not polyfill. In the browser every token threw inside the catch that skips malformed tokens, so the picker fell back to the last cookie value, which can be the stale session when two same-name session cookies exist. The browser-safe decoder that libs/shared/apollo/src/lib/apollo.ts already had now lives in a new libs/shared/utils/src/lib/base64url.ts as `decodeBase64UrlSegment` (Buffer where it exists, else atob plus TextDecoder, else a clear error), exported from @nestled-template/shared/utils. The utils `pickNewestJwt` is now exported and uses it, prefers the later value on equal timestamps, and warns when it cannot decode any of several values. apollo.ts drops its own copy of the decoder and of `pickNewestJwt` and imports both from @nestled-template/shared/utils; shared/utils never imports Apollo, so there is no cycle. Because shared/utils exports .tsx modules, libs/shared/apollo/tsconfig.json now sets `\"jsx\": \"react-jsx\"` like shared/utils does. `isJwtExpired` in auth.ts uses the same decoder in place of its own atob-only one. Malformed percent-encoding. `parseCookies` in cookies.tsx ran `decodeURIComponent` on every cookie in the header, unguarded. One badly encoded cookie, even one with an unrelated name set by another app on a parent domain, made the root loader throw, so every route returned 500. Apollo's `getCookieFromHeader` did the same for the session cookie. Both now go through a new exported `decodeCookieValue` in cookies.tsx that returns the raw value when decoding fails, the same rule the API's `decodeCookieValue` in jwt.strategy.ts already follows. Tests: cookies.spec.ts (newest token wins in either order with Buffer stubbed away, a malformed token is skipped, a single cookie is returned as-is, a malformed `%` in any cookie does not throw and the other cookies still parse, and the decoder tests moved from apollo.spec.ts), apollo.spec.ts (a malformed session cookie value reaches the Authorization header raw instead of throwing), and a new apps/web/tests/root-loader-cookies.spec.ts that runs the root loader with a badly encoded cookie."
+        area: web
+        affectedPaths:
+          - libs/shared/utils/src/lib/base64url.ts
+          - libs/shared/utils/src/lib/cookies.tsx
+          - libs/shared/utils/src/lib/auth.ts
+          - libs/shared/utils/src/index.ts
+          - libs/shared/apollo/src/lib/apollo.ts
+          - libs/shared/apollo/tsconfig.json
+          - libs/shared/utils/src/lib/cookies.spec.ts
+          - libs/shared/apollo/src/lib/apollo.spec.ts
+          - apps/web/tests/root-loader-cookies.spec.ts
+        verification:
+          - pnpm exec nx test utils --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx build web
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-28-client-cookie-decoding.diff
