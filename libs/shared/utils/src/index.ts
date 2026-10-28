@@ -1,6 +1,7 @@
 export * from './lib/math'
 export * from './lib/types'
 export * from './lib/colors'
+export * from './lib/base64url'
 export * from './lib/cookies'
 export * from './lib/auth'
 export * from './lib/error-detection'

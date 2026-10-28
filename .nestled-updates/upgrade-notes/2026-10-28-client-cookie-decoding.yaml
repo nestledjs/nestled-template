@@ -1,0 +1,80 @@
+id: 2026-10-28-client-cookie-decoding
+title: 'Decode session cookies safely in the browser, and survive a badly encoded cookie'
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Two client-side cookie defects, both in the web app's shared libs.
+
+  Browser-safe JWT decoding. `pickNewestJwt` in libs/shared/utils/src/lib/cookies.tsx decoded the
+  JWT payload with `Buffer`, which browsers do not have and the web bundle does not polyfill. In the
+  browser every token threw inside the catch that skips malformed tokens, so the picker fell back to
+  the last cookie value, which can be the stale session when two same-name session cookies exist.
+  The browser-safe decoder that libs/shared/apollo/src/lib/apollo.ts already had now lives in a new
+  libs/shared/utils/src/lib/base64url.ts as `decodeBase64UrlSegment` (Buffer where it exists, else
+  atob plus TextDecoder, else a clear error), exported from @nestled-template/shared/utils. The
+  utils `pickNewestJwt` is now exported and uses it, prefers the later value on equal timestamps,
+  and warns when it cannot decode any of several values. apollo.ts drops its own copy of the
+  decoder and of `pickNewestJwt` and imports both from @nestled-template/shared/utils; shared/utils
+  never imports Apollo, so there is no cycle. Because shared/utils exports .tsx modules,
+  libs/shared/apollo/tsconfig.json now sets `"jsx": "react-jsx"` like shared/utils does. `isJwtExpired` in auth.ts uses the same decoder in
+  place of its own atob-only one.
+
+  Malformed percent-encoding. `parseCookies` in cookies.tsx ran `decodeURIComponent` on every cookie
+  in the header, unguarded. One badly encoded cookie, even one with an unrelated name set by another
+  app on a parent domain, made the root loader throw, so every route returned 500. Apollo's
+  `getCookieFromHeader` did the same for the session cookie. Both now go through a new exported
+  `decodeCookieValue` in cookies.tsx that returns the raw value when decoding fails, the same rule
+  the API's `decodeCookieValue` in jwt.strategy.ts already follows.
+
+  Tests: cookies.spec.ts (newest token wins in either order with Buffer stubbed away, a malformed
+  token is skipped, a single cookie is returned as-is, a malformed `%` in any cookie does not throw
+  and the other cookies still parse, and the decoder tests moved from apollo.spec.ts),
+  apollo.spec.ts (a malformed session cookie value reaches the Authorization header raw instead of
+  throwing), and a new apps/web/tests/root-loader-cookies.spec.ts that runs the root loader with a
+  badly encoded cookie.
+
+why: >
+  The first defect silently undid the duplicate-cookie picker in the one runtime it was written
+  for, so a user with a leftover cookie could be sent the stale session. The second let any cookie
+  on the request's domain, including one this app never set, take the whole site down with a 500
+  on every route until that cookie was cleared.
+
+affectedPaths:
+  - libs/shared/utils/src/lib/base64url.ts
+  - libs/shared/utils/src/lib/cookies.tsx
+  - libs/shared/utils/src/lib/auth.ts
+  - libs/shared/utils/src/index.ts
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/tsconfig.json
+  - libs/shared/utils/src/lib/cookies.spec.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/tests/root-loader-cookies.spec.ts
+
+verification:
+  - pnpm exec nx test utils --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    A project that has diverged in these files keeps its own cookie names. Adapt the decoding, not
+    the names.
+  - >
+    The fix must not change which cookie name is read: getSessionCookieName, VITE_COOKIE_NAME and
+    the default stay exactly as the project has them.
+  - >
+    A project whose client still has no newest-cookie picker (getCookie or getCookieFromHeader
+    returns the first or last same-name value directly) should adopt the template's whole picker:
+    decodeBase64UrlSegment, pickNewestJwt and decodeCookieValue together, not the decoder alone.
+  - >
+    If the project's root loader or any other loader reads cookies through its own parser, give it
+    the same try-and-fall-back-to-raw rule; one unguarded decodeURIComponent anywhere in the root
+    loader path is enough to 500 every route.
+  - >
+    If the project imports decodeBase64UrlSegment from @nestled-template/shared/apollo, import it
+    from @nestled-template/shared/utils instead; apollo no longer exports it.

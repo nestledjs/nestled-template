@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { getCookie, getJsonCookie, getSessionCookieName } from './cookies'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { decodeBase64UrlSegment } from './base64url'
+import {
+  decodeCookieValue,
+  getCookie,
+  getJsonCookie,
+  getSessionCookieName,
+  pickNewestJwt,
+} from './cookies'
 
 function jwt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
@@ -37,5 +44,128 @@ describe('cookie utilities', () => {
     })
     expect(getJsonCookie({ cookie: 'prefs=not-json' }, 'prefs')).toBeNull()
     expect(getJsonCookie({ cookie: '' }, 'prefs')).toBeNull()
+  })
+})
+
+describe('session cookie picking without Buffer', () => {
+  // Browsers have no Buffer and the web bundle polyfills nothing. Decoding through it threw inside
+  // the picker's catch, so every token looked malformed and the LAST value won -- which can be the
+  // stale session. Buffer is stubbed away around each pure call only.
+  function withoutBuffer<T>(run: () => T): T {
+    vi.stubGlobal('Buffer', undefined)
+    try {
+      return run()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('picks the newest token when the older cookie comes first', () => {
+    const older = jwt(1)
+    const newer = jwt(2)
+    const headers = new Headers({ cookie: `__session=${older}; __session=${newer}` })
+
+    expect(withoutBuffer(() => getCookie(headers, '__session'))).toBe(newer)
+  })
+
+  it('picks the newest token when the newer cookie comes first', () => {
+    const older = jwt(1)
+    const newer = jwt(2)
+    const headers = new Headers({ cookie: `__session=${newer}; theme=dark; __session=${older}` })
+
+    expect(withoutBuffer(() => getCookie(headers, '__session'))).toBe(newer)
+  })
+
+  it('skips a malformed token rather than letting it win by position', () => {
+    const newer = jwt(2)
+    const headers = new Headers({ cookie: `__session=${newer}; __session=not.a-valid.jwt` })
+
+    expect(withoutBuffer(() => getCookie(headers, '__session'))).toBe(newer)
+  })
+
+  it('returns a single session cookie as-is', () => {
+    const only = jwt(5)
+
+    expect(withoutBuffer(() => getCookie({ cookie: `__session=${only}` }, '__session'))).toBe(only)
+  })
+
+  it('warns when no duplicate decodes and the choice falls back to position', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    expect(pickNewestJwt(['a.%%%.c', 'x.y'])).toBe('x.y')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not decode any of 2'))
+  })
+})
+
+describe('malformed cookie encoding', () => {
+  // The cookie header carries every cookie visible to the request, including ones another app set
+  // on a parent domain. One bad `%` sequence made decodeURIComponent throw, the root loader throw,
+  // and every route return 500.
+  it('does not throw on a malformed % sequence in an unrelated cookie', () => {
+    const token = jwt(3)
+    const headers = new Headers({ cookie: `other=%E0%A4%A; __session=${token}; theme=light` })
+
+    expect(() => getCookie(headers, '__session')).not.toThrow()
+    expect(getCookie(headers, '__session')).toBe(token)
+    expect(getCookie(headers, 'theme')).toBe('light')
+    expect(getCookie(headers, 'other')).toBe('%E0%A4%A')
+  })
+
+  it('keeps the raw value of a malformed session cookie', () => {
+    expect(getCookie({ cookie: '__session=abc%zz' }, '__session')).toBe('abc%zz')
+  })
+
+  it('still decodes well-formed percent-encoding', () => {
+    expect(decodeCookieValue('a%20b')).toBe('a b')
+    expect(decodeCookieValue('100%')).toBe('100%')
+  })
+})
+
+describe('decodeBase64UrlSegment', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('decodes a JWT payload segment without Buffer', () => {
+    const payload = { iat: 2, name: 'Zoë' }
+    const segment = Buffer.from(JSON.stringify(payload)).toString('base64url')
+
+    vi.stubGlobal('Buffer', undefined)
+    expect(JSON.parse(decodeBase64UrlSegment(segment))).toEqual(payload)
+  })
+
+  it('restores padding that base64url omits', () => {
+    const segment = Buffer.from('a').toString('base64url').replaceAll('=', '')
+
+    expect(decodeBase64UrlSegment(segment)).toBe('a')
+  })
+
+  it('decodes the URL-safe alphabet', () => {
+    const payload = { sub: 'a~b?c>d' }
+    const segment = Buffer.from(JSON.stringify(payload)).toString('base64url')
+
+    expect(JSON.parse(decodeBase64UrlSegment(segment))).toEqual(payload)
+  })
+
+  it('prefers Buffer where it exists so SSR keeps one decoder', () => {
+    const atobSpy = vi.fn(() => 'should not be called')
+    vi.stubGlobal('atob', atobSpy)
+    const segment = Buffer.from(JSON.stringify({ iat: 7 })).toString('base64url')
+
+    expect(JSON.parse(decodeBase64UrlSegment(segment))).toEqual({ iat: 7 })
+    expect(atobSpy).not.toHaveBeenCalled()
+  })
+
+  it('throws a clear error rather than guessing when no decoder exists', () => {
+    const segment = Buffer.from(JSON.stringify({ iat: 1 })).toString('base64url')
+    vi.stubGlobal('Buffer', undefined)
+    vi.stubGlobal('atob', () => 'unused')
+    vi.stubGlobal('TextDecoder', undefined)
+
+    expect(() => decodeBase64UrlSegment(segment)).toThrow(/neither Buffer nor atob/)
   })
 })
