@@ -70,6 +70,7 @@ import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
 import { getMainDefinition } from '@apollo/client/utilities'
 import { createClient } from 'graphql-ws'
 import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
+import { decodeCookieValue, pickNewestJwt } from '@nestled-template/shared/utils'
 import { createCache } from './cache-config'
 
 export type ClientOptions = {
@@ -102,88 +103,6 @@ function getSessionCookieName(): string {
   return '__session'
 }
 
-/**
- * Decode a base64url JWT segment in both runtimes.
- *
- * `Buffer` is Node-only and the web bundle polyfills nothing, so decoding through it threw a
- * ReferenceError on every token in the browser. The throw never surfaced: the caller's `catch`
- * treats it as a malformed token, leaves `best` null, and falls back to the last cookie value —
- * which is exactly the behaviour `pickNewestJwt` exists to replace. `document.cookie` orders by
- * path specificity rather than by age, so that fallback can hand back the stale token, silently,
- * in precisely the duplicate-cookie case this code was written for.
- *
- * Padding is restored explicitly because base64url omits it and `atob` requires it.
- *
- * `Buffer` is preferred where it exists, so server rendering keeps a single decoder rather than
- * silently switching to the browser one on a Node version that happens to expose `atob`. The
- * `atob` branch requires `TextDecoder` as well: guarding on `atob` alone would throw in a runtime
- * that has one and not the other, and that throw lands in the caller's catch and restores the very
- * silent fallback this function was written to remove.
- *
- * An exhausted decoder throws rather than returning something plausible. The caller still treats it
- * as an undecodable token, but it warns rather than failing quietly — see `pickNewestJwt`.
- */
-export function decodeBase64UrlSegment(segment: string): string {
-  const base64 = segment.replaceAll('-', '+').replaceAll('_', '/')
-  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')
-
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(padded, 'base64').toString('utf8')
-  }
-
-  if (typeof atob === 'function' && typeof TextDecoder === 'function') {
-    const binary = atob(padded)
-    const bytes = Uint8Array.from(binary, character => character.codePointAt(0) ?? 0)
-    return new TextDecoder().decode(bytes)
-  }
-
-  throw new Error(
-    'No base64 decoder available: this runtime provides neither Buffer nor atob with TextDecoder',
-  )
-}
-
-function pickNewestJwt(values: string[]): string {
-  let best: { token: string; iat: number } | null = null
-  for (const token of values) {
-    try {
-      const parts = token.split('.')
-      if (parts.length !== 3) continue
-      const payload = JSON.parse(decodeBase64UrlSegment(parts[1])) as {
-        iat?: number
-        exp?: number
-      }
-      let iat: number
-      if (typeof payload.iat === 'number') {
-        iat = payload.iat
-      } else if (typeof payload.exp === 'number') {
-        iat = payload.exp
-      } else {
-        iat = 0
-      }
-      // Cookie headers order equal-path cookies from oldest to newest. Prefer the later value when
-      // rapid re-logins produce tokens with the same whole-second JWT timestamp.
-      if (!best || iat >= best.iat) {
-        best = { token, iat }
-      }
-    } catch {
-      // ignore malformed
-    }
-  }
-
-  // The catch above cannot tell a malformed token from a broken environment, and this is the exact
-  // shape that hid the Buffer defect: every token failed to decode, `best` stayed null, and the
-  // positional fallback below became the normal path while looking like the exceptional one. It is
-  // only defensible for a single value; with several, it is a guess ordered by path specificity
-  // rather than by age, so say so out loud.
-  if (!best && values.length > 1) {
-    console.warn(
-      `[Apollo] Could not decode any of ${values.length} session cookies; ` +
-        'falling back to the last one, which may not be the newest.',
-    )
-  }
-  return best?.token ?? values[values.length - 1]
-}
-
 // Helper to parse cookies from a cookie header string
 function getCookieFromHeader(cookieHeader: string | null | undefined, name: string): string | null {
   if (!cookieHeader) return null
@@ -196,7 +115,7 @@ function getCookieFromHeader(cookieHeader: string | null | undefined, name: stri
     const key = pair.substring(0, eqIdx)
     const val = pair.substring(eqIdx + 1)
     if (key === name) {
-      values.push(decodeURIComponent(val))
+      values.push(decodeCookieValue(val))
     }
   }
   if (values.length === 0) return null

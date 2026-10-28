@@ -1,79 +1,14 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { gql } from '@apollo/client'
-import { APOLLO_ACCESS_FORBIDDEN_EVENT, decodeBase64UrlSegment, makeClient } from './apollo'
+import { APOLLO_ACCESS_FORBIDDEN_EVENT, makeClient } from './apollo'
 
 function jwtWithIssuedAt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
   return `header.${payload}.signature`
 }
 
-describe('decodeBase64UrlSegment', () => {
-  it('decodes a JWT payload segment without Buffer', () => {
-    // The web bundle polyfills nothing, so decoding through Buffer threw a ReferenceError on every
-    // token in the browser. It never surfaced: pickNewestJwt's catch treats the throw as a
-    // malformed token and falls back to the LAST cookie value -- the behaviour that path exists to
-    // stop relying on, since document.cookie orders by path specificity rather than by age.
-    //
-    // Buffer is removed around this pure call only. Removing it around a live Apollo client
-    // instead leaves module state behind that breaks unrelated tests later in this file.
-    const payload = { iat: 2 }
-    const segment = Buffer.from(JSON.stringify(payload)).toString('base64url')
-
-    vi.stubGlobal('Buffer', undefined)
-    try {
-      expect(JSON.parse(decodeBase64UrlSegment(segment))).toEqual(payload)
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('restores padding that base64url omits', () => {
-    // atob rejects unpadded input, and base64url strips it. A single-character remainder is the
-    // case that needs two '=' back.
-    const value = 'a'
-    const segment = Buffer.from(value).toString('base64url').replaceAll('=', '')
-
-    expect(decodeBase64UrlSegment(segment)).toBe(value)
-  })
-
-  it('throws a clear error rather than guessing when no decoder exists', () => {
-    // Guarding on atob alone would take the browser branch in a runtime that has atob but not
-    // TextDecoder, throw there, and land in pickNewestJwt's catch -- restoring the silent
-    // last-cookie fallback this whole change removes.
-    const segment = Buffer.from(JSON.stringify({ iat: 1 })).toString('base64url')
-
-    vi.stubGlobal('Buffer', undefined)
-    vi.stubGlobal('atob', () => 'unused')
-    vi.stubGlobal('TextDecoder', undefined)
-    try {
-      expect(() => decodeBase64UrlSegment(segment)).toThrow(/neither Buffer nor atob/)
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('prefers Buffer where it exists so SSR keeps one decoder', () => {
-    // The doc and upgrade note claim SSR falls back to Buffer. Node exposes atob, so guarding on
-    // atob first made that claim false and the Buffer branch dead.
-    const atobSpy = vi.fn(() => 'should not be called')
-    vi.stubGlobal('atob', atobSpy)
-    try {
-      const segment = Buffer.from(JSON.stringify({ iat: 7 })).toString('base64url')
-      expect(JSON.parse(decodeBase64UrlSegment(segment))).toEqual({ iat: 7 })
-      expect(atobSpy).not.toHaveBeenCalled()
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('decodes the URL-safe alphabet', () => {
-    // Payloads containing '-' or '_' decode to different bytes than '+' and '/' would.
-    const payload = { sub: 'a~b?c>d' }
-    const segment = Buffer.from(JSON.stringify(payload)).toString('base64url')
-
-    expect(JSON.parse(decodeBase64UrlSegment(segment))).toEqual(payload)
-  })
-})
+// The base64url decoder these tests rely on lives in @nestled-template/shared/utils and is tested
+// there, next to the cookie picker that shares it.
 
 describe('makeClient', () => {
   const originalNodeEnv = process.env.NODE_ENV
@@ -198,6 +133,35 @@ describe('makeClient', () => {
     } finally {
       Reflect.deleteProperty(document, 'cookie')
     }
+  })
+
+  it('keeps the raw session cookie when its value is not valid percent-encoding', async () => {
+    // decodeURIComponent throws a URIError on a malformed `%` sequence. Unguarded, that throw
+    // escaped makeClient and failed the whole loader; the server already falls back to the raw
+    // value, and so does the client now.
+    process.env.VITE_COOKIE_NAME = '__session'
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { ping: 'pong' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    globalThis.fetch = fetchMock
+    const request = new Request('https://app.example.com', {
+      headers: { cookie: 'other=%E0%A4%A; __session=abc%zz; theme=dark' },
+    })
+
+    const client = makeClient(request, { apiUrl: 'https://api.example.com/graphql' })
+
+    await client.query({
+      query: gql`
+        query Ping {
+          ping
+        }
+      `,
+    })
+
+    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe('Bearer abc%zz')
   })
 
   it('prefers the last duplicate JWT when both were issued in the same second', async () => {
