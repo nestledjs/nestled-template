@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-28
+generatedAt: 2026-10-29
 channels:
-  canary: 2026.10.23
+  canary: 2026.10.24
   stable: 2026.10.23
 releases:
   - id: 2026.08.0
@@ -1151,3 +1151,68 @@ releases:
           - pnpm exec nx build web
           - pnpm run nestled-doctor
         patch: patches/2026-10-28-client-cookie-decoding.diff
+  - id: 2026.10.24
+    date: 2026-10-29
+    title: Release 2026.10.24
+    templateCommit: ba3ecea
+    notes:
+      - id: 2026-10-29-refuse-deactivated-api-tokens
+        title: Refuse a deactivated user's API token on the MCP path, and their session at MCP OAuth
+        delivery: code-patch
+        intent: "JwtStrategy refuses a session or API token whose user is deactivated (`!user || user.isActive === false`). Three other accept paths did not apply that rule themselves. ApiTokenAuthMiddleware (libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts), which turns an API token into `req.user` in front of the MCP endpoint, loaded the user and attached it without looking at `isActive`. It now refuses a user with `isActive === false` the same way: the request continues unauthenticated, nothing is attached, and `recordTokenUse` is not called. In the template, `ApiTokensService.validateApiToken` already returns null for a deactivated owner, so this is defence in depth there; it matters wherever a project's validateApiToken lacks that check, and closes the window between that query and the user load. MCP OAuth (libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts and mcp-oauth.controller.ts). `isSessionTokenCurrent`, which /authorize and the consent endpoints use for the session cookie, now selects `isActive` and treats a deactivated account's session as not current, so the user is sent to sign in instead of being able to authorize a client. /token checks a new `McpOAuthService.isUserActive(userId)` before issuing a token, and answers `invalid_grant` for a code whose user was deactivated after it was issued. Nothing else about who can authenticate changes: active users, unknown users and all other checks behave exactly as before. WebSocket connections do not accept API tokens, so there is nothing to change there. Tests: api-token-auth.middleware.spec.ts (a deactivated user's token is refused and not recorded; an explicitly active user is accepted), mcp-oauth.controller.spec.ts (a deactivated user is sent to login from /authorize; /token issues nothing for a user deactivated after consent)."
+        area: auth
+        affectedPaths:
+          - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+          - libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+        verification:
+          - pnpm exec nx test api-custom --skip-nx-cache
+          - pnpm exec nx build api
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-29-refuse-deactivated-api-tokens.diff
+      - id: 2026-10-29-remove-use-emulation-status
+        title: Delete the unused useEmulationStatus hook, which could never work
+        delivery: code-patch
+        intent: libs/web/src/lib/hooks/use-emulation-status.ts and its `export * from './use-emulation-status'` line in libs/web/src/lib/hooks/index.ts are deleted. Nothing in the template imports `useEmulationStatus`. It read the session cookie from `document.cookie`, but the session cookie is HttpOnly, so in the browser it always saw no token and reported "not emulating"; it also logged token details to the console on every render. Emulation state comes from the API (the `isEmulating` and `originalAdminId` fields JwtStrategy puts on the current user), which is what the app already uses. The template promotion mirror cannot propagate a deletion. Downstream projects must delete the file and the export line themselves.
+        area: web
+        affectedPaths:
+          - libs/web/src/lib/hooks/use-emulation-status.ts
+          - libs/web/src/lib/hooks/index.ts
+        verification:
+          - pnpm typecheck
+          - pnpm exec nx build web
+          - pnpm exec nx test web --skip-nx-cache
+        patch: patches/2026-10-29-remove-use-emulation-status.diff
+      - id: 2026-10-29-server-session-cookie-selection
+        title: Choose the session cookie that verifies on every server path, and stop the client trusting a future iat
+        delivery: code-patch
+        intent: "Three follow-ups to 2026-10-28-client-cookie-decoding, all about which of several same-name session cookies a request is treated as carrying. One server-side helper. A browser can hold two session cookies with the same name (host-only and parent-domain, or two paths). JwtStrategy already picked the newest of them, but by the payload's unverified `iat`, and three other server paths took whichever came first: the WebSocket connection check in libs/api/core/feature/src/lib/api-core-feature.module.ts (which also stopped at the first Cookie header and cut values at their first `=`), `getSessionFromCookie` in libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts (cookie-parser's `req.cookies`, first value), and every cookie read in libs/api/custom/src/lib/plugins/auth/auth.resolver.ts (logout, changePassword, endEmulation, getUserSessions, invalidateAllSessions and the emulation replaced-session lookup, all through `req.cookies`). A new libs/api/utils/src/lib/auth/session-cookie.ts, exported from @nestled-template/api/utils, holds the one implementation: `requestCookieValues` / `rawHeaderCookieValues` / `cookieValuesFromHeader` collect every value of the cookie (raw header first, since it keeps duplicates; `req.cookies` only as a fallback), `orderSessionTokensNewestFirst` orders them by the unverified `iat` (or `exp`), later value first on ties and non-JWTs last, and `pickVerifiedSessionToken` / `selectSessionToken` take the first one whose signature verifies. `selectSessionToken` returns a lone value without verifying it (the caller verifies it anyway) and, when nothing verifies, the newest candidate, so the caller fails exactly as it did before. Server ordering is verified. The secret is available on the server, so ordering by `iat` is only a preference: an unverifiable token never shadows a valid one. JwtStrategy builds its extractor from JWT_SECRET (`createHeaderAndCookieExtractor`) and verifies duplicates with it; the WebSocket check moves to a new libs/api/core/feature/src/lib/ws-session-token.ts and verifies with JWT_SECRET; the MCP controller tries candidates newest first and takes the first that verifies and is still current (a genuine but revoked duplicate is skipped too); the auth resolver's new private `sessionCookieToken` verifies through `AuthService.verifyToken`, with `ignoreExpiration` for logout as before. The WebSocket check still only requires that a session cookie be present; who can connect does not change. Client ordering ignores impossible tokens. The browser cannot verify, so `pickNewestJwt` in libs/shared/utils/src/lib/cookies.tsx keeps ordering by `iat` but ignores a token whose `iat` is more than `JWT_IAT_CLOCK_SKEW_SECONDS` (5 minutes, exported) in the future, and an expired token now loses to any unexpired one whatever their `iat`. It takes an optional `nowSeconds` for tests. Without these, a cookie planted from a sibling subdomain with a far-future `iat` won on the client every time. A test that did not test. The apollo.spec.ts test \"chooses the newest JWT from document.cookie without Buffer\" never removed Buffer, so it passed with the Buffer-only decoder it was written to catch. It now deletes `globalThis.Buffer` for the whole query and restores it in `finally`, and fails against the old decoder. Tests: session-cookie.spec.ts (collection, ordering, a forged far-future token in either position loses to a valid older one, fallback), ws-session-token.spec.ts, jwt.strategy.spec.ts and auth.resolver.spec.ts (valid older plus forged newer: the valid one is used), mcp-oauth.controller.spec.ts (forged duplicate in either position, revoked duplicate skipped), cookies.spec.ts (future `iat` ignored, skew tolerated, expired loses to unexpired)."
+        area: auth
+        affectedPaths:
+          - libs/api/utils/src/lib/auth/session-cookie.ts
+          - libs/api/utils/src/lib/auth/session-cookie.spec.ts
+          - libs/api/utils/src/index.ts
+          - libs/api/core/feature/src/lib/api-core-feature.module.ts
+          - libs/api/core/feature/src/lib/ws-session-token.ts
+          - libs/api/core/feature/src/lib/ws-session-token.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+          - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+          - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+          - libs/shared/utils/src/lib/cookies.tsx
+          - libs/shared/utils/src/lib/cookies.spec.ts
+          - libs/shared/apollo/src/lib/apollo.spec.ts
+        verification:
+          - pnpm exec nx test api-utils --skip-nx-cache
+          - pnpm exec nx test api-core-feature --skip-nx-cache
+          - pnpm exec nx test api-custom --skip-nx-cache
+          - pnpm exec nx test utils --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - pnpm exec nx build api
+          - pnpm exec nx build web
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-29-server-session-cookie-selection.diff

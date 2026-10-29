@@ -1,0 +1,276 @@
+diff --git a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+index 779514c..a9d5a93 100644
+--- a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
++++ b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+@@ -92,6 +92,28 @@ describe('ApiTokenAuthMiddleware', () => {
+     expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+   })
+ 
++  it("refuses a deactivated user's token, as JwtStrategy does, and does not record its use", async () => {
++    data.user.findUnique.mockResolvedValue({ ...user, isActive: false })
++
++    const { req, next } = await run(`Bearer ${token}`)
++
++    expect(req.user).toBeUndefined()
++    expect(req.apiTokenId).toBeUndefined()
++    expect(req.apiTokenOrganizationId).toBeUndefined()
++    expect(next).toHaveBeenCalledTimes(1)
++    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
++  })
++
++  it('accepts an active user explicitly marked active', async () => {
++    const active = { ...user, isActive: true }
++    data.user.findUnique.mockResolvedValue(active)
++
++    const { req } = await run(`Bearer ${token}`)
++
++    expect(req.user).toBe(active)
++    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('token-1')
++  })
++
+   describe('resource binding (RFC 8707)', () => {
+     const bound = (resource: string) => ({
+       tokenId: 'token-3',
+diff --git a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+index 51d357c..edb0fd1 100644
+--- a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
++++ b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+@@ -61,7 +61,13 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
+             },
+           })
+ 
+-          if (user) {
++          if (!user) {
++            this.logger.warn(`User not found for valid API token: ${result.userId}`)
++          } else if (user.isActive === false) {
++            // The same rule JwtStrategy applies to sessions and API tokens: a deactivated account
++            // is refused, and its token does not count as used.
++            this.logger.warn(`API token ${result.tokenId} belongs to a deactivated user; refused`)
++          } else {
+             const apiTokenReq = req as ApiTokenRequest
+             apiTokenReq.user = user
+             apiTokenReq.apiTokenId = result.tokenId
+@@ -69,8 +75,6 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
+             this.apiTokensService.recordTokenUse(result.tokenId)
+ 
+             this.logger.log(`API token authentication successful for user ${user.id}`)
+-          } else {
+-            this.logger.warn(`User not found for valid API token: ${result.userId}`)
+           }
+         } else {
+           this.logger.warn('Invalid or expired API token provided')
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+index 6e40619..f312c41 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+@@ -317,6 +317,58 @@ describe('McpOAuthController', () => {
+       )
+     })
+ 
++    it('sends a deactivated user to login rather than authorizing from their session', async () => {
++      data.user.findUnique.mockImplementation(({ select }: any) =>
++        select.emails ? null : { id: 'user-123', authGeneration: 3, isActive: false },
++      )
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
++      expect(res.redirect).toHaveBeenCalledWith(
++        expect.stringContaining('https://app.example.com/login?redirect='),
++      )
++    })
++
++    it.each([
++      ['the forged cookie comes first', `__session=fake-forged; __session=${SESSION_COOKIE}`],
++      ['the forged cookie comes last', `__session=${SESSION_COOKIE}; __session=fake-forged`],
++    ])(
++      'uses the session cookie that verifies when a forged duplicate is present (%s)',
++      async (_label, cookieHeader) => {
++        // `fake-forged` does not verify (the mocked JwtService knows no claims for it). Whatever
++        // its position or claimed age, the genuine session is the one /authorize acts on.
++        const req = {
++          ...requestWith(),
++          cookies: { __session: 'fake-forged' },
++          headers: { cookie: cookieHeader },
++        }
++        const res = createResponse()
++        await controller.authorize(authorizeQuery(), req, res)
++        expect(res.redirect).toHaveBeenCalledWith(
++          expect.stringMatching(/^https:\/\/app\.example\.com\/mcp-connect\?request=/),
++        )
++        expect(jwtService.verify).toHaveBeenCalledWith(SESSION_COOKIE)
++      },
++    )
++
++    it('skips a genuine but revoked duplicate in favour of the current session', async () => {
++      data.userSession.findUnique.mockImplementation(async ({ where }: any) =>
++        where.id === 'session-2'
++          ? { isValid: false, userId: 'user-123' }
++          : { isValid: true, userId: 'user-123' },
++      )
++      const req = {
++        ...requestWith(),
++        // Neither placeholder is a JWT, so the later value is tried first: the revoked one.
++        headers: { cookie: `__session=${SESSION_COOKIE}; __session=${OTHER_SESSION_COOKIE}` },
++      }
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(), req, res)
++      expect(res.redirect).toHaveBeenCalledWith(
++        expect.stringMatching(/^https:\/\/app\.example\.com\/mcp-connect\?request=/),
++      )
++      expect(jwtService.verify).toHaveBeenCalledWith(OTHER_SESSION_COOKIE)
++    })
++
+     it('refuses to authorize a client from an emulation session', async () => {
+       sessions[SESSION_COOKIE] = {
+         userId: 'user-123',
+@@ -617,6 +669,40 @@ describe('McpOAuthController', () => {
+       })
+     })
+ 
++    it('issues no token when the user was deactivated after the code was issued', async () => {
++      const requestId = await startAuthorization()
++      const pending = await readPending(requestId)
++      const { csrfToken } = pending.json.mock.calls[0][0]
++      const decision = await decide({
++        request: requestId,
++        csrf_token: csrfToken,
++        decision: 'approve',
++        organization_id: 'org-123',
++      })
++      const code = new URL(decision.json.mock.calls[0][0].redirect_to).searchParams.get('code')
++
++      data.user.findUnique.mockImplementation(({ select }: any) =>
++        select.isActive && !select.authGeneration ? { isActive: false } : null,
++      )
++      const tokenRes = createResponse()
++      await controller.token(
++        {
++          grant_type: 'authorization_code',
++          code: code as string,
++          redirect_uri: REDIRECT_URI,
++          code_verifier: VERIFIER,
++          client_id: clientId,
++        },
++        tokenRes,
++      )
++
++      expect(tokenRes.status).toHaveBeenCalledWith(400)
++      expect(tokenRes.json).toHaveBeenCalledWith(
++        expect.objectContaining({ error: 'invalid_grant' }),
++      )
++      expect(apiTokens.generateApiToken).not.toHaveBeenCalled()
++    })
++
+     it('lets a multi-organization user choose the organization', async () => {
+       memberships = [
+         { organization: { id: 'org-123', name: 'Acme' } },
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+index abf88d6..0915854 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+@@ -16,7 +16,11 @@ import { JwtService } from '@nestjs/jwt'
+ import { Request, Response } from 'express'
+ import { ConfigService } from '@nestjs/config'
+ import { McpOAuthService, OAuthClientError, PKCE_METHOD } from './mcp-oauth.service'
+-import { Public } from '@nestled-template/api/utils'
++import {
++  orderSessionTokensNewestFirst,
++  Public,
++  requestCookieValues,
++} from '@nestled-template/api/utils'
+ import { AuthTokenClaims, claimedAuthGeneration } from '../auth/auth-token-claims'
+ 
+ interface AuthorizeQuery {
+@@ -483,6 +487,15 @@ export class McpOAuthController {
+       return res.status(400).json(INVALID_TARGET)
+     }
+ 
++    // The same rule JwtStrategy applies: a deactivated account gets no new token, even from a code
++    // issued before it was deactivated.
++    if (!(await this.oauth.isUserActive(authCode.userId))) {
++      return res.status(400).json({
++        error: 'invalid_grant',
++        error_description: 'Invalid or expired authorization code',
++      })
++    }
++
+     await this.oauth.touchClient(authCode.clientId)
+     const accessToken = await this.oauth.createAccessToken(
+       authCode.userId,
+@@ -497,21 +510,28 @@ export class McpOAuthController {
+     return res.json({ access_token: accessToken, token_type: 'bearer', scope: authCode.scope })
+   }
+ 
+-  /** The verified, still-current session token from the cookie, or null. */
++  /**
++   * The verified, still-current session token from the cookie, or null. With several same-name
++   * session cookies (host-only and parent-domain, say) they are tried newest first and the first
++   * that verifies and is still current wins, so neither a stale cookie that comes first nor a
++   * forged one with a far-future `iat` can shadow the valid session.
++   */
+   private async getSessionFromCookie(req: Request): Promise<AuthTokenClaims | null> {
+     const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
+-    const cookieToken = (req.cookies as Record<string, string>)?.[cookieName]
+-    if (!cookieToken) return null
+-    let payload: AuthTokenClaims
+-    try {
+-      payload = this.jwtService.verify<AuthTokenClaims>(cookieToken)
+-    } catch {
+-      return null
+-    }
+-    if (!payload?.userId) return null
+-    // A genuine but revoked session must not authorize a new client, any more than it can make an
+-    // API request.
+-    return (await this.oauth.isSessionTokenCurrent(payload)) ? payload : null
++    const candidates = orderSessionTokensNewestFirst(requestCookieValues(req, cookieName))
++    for (const cookieToken of candidates) {
++      let payload: AuthTokenClaims
++      try {
++        payload = this.jwtService.verify<AuthTokenClaims>(cookieToken)
++      } catch {
++        continue
++      }
++      if (!payload?.userId) continue
++      // A genuine but revoked session must not authorize a new client, any more than it can make
++      // an API request.
++      if (await this.oauth.isSessionTokenCurrent(payload)) return payload
++    }
++    return null
+   }
+ 
+   private buildMetadata(req: Request) {
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+index 96c2db9..aa7ce7a 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+@@ -127,14 +127,28 @@ export class McpOAuthService {
+ 
+   /**
+    * The same check JwtStrategy applies, for the session cookie /authorize reads directly: pass
+-   * claims only from a verified token.
++   * claims only from a verified token. A deactivated account's session is not current.
+    */
+   async isSessionTokenCurrent(claims: AuthTokenClaims): Promise<boolean> {
+     const user = await this.data.user.findUnique({
+       where: { id: claims.userId },
+-      select: { id: true, authGeneration: true },
++      select: { id: true, authGeneration: true, isActive: true },
+     })
+-    return user ? isAuthTokenCurrent(this.data, claims, user) : false
++    // JwtStrategy refuses a deactivated account's session; so does /authorize.
++    if (!user || user.isActive === false) return false
++    return isAuthTokenCurrent(this.data, claims, user)
++  }
++
++  /**
++   * Whether the account exists and is not deactivated: the check JwtStrategy applies to every
++   * session and API token, applied by /token before it issues one.
++   */
++  async isUserActive(userId: string): Promise<boolean> {
++    const user = await this.data.user.findUnique({
++      where: { id: userId },
++      select: { isActive: true },
++    })
++    return !!user && user.isActive !== false
+   }
+ 
+   getMcpBaseUrl(req?: { protocol: string; get: (name: string) => string | undefined }): string {

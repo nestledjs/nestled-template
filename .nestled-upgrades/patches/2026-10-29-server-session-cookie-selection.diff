@@ -1,0 +1,1143 @@
+diff --git a/libs/api/core/feature/src/lib/api-core-feature.module.ts b/libs/api/core/feature/src/lib/api-core-feature.module.ts
+index ba6a63f..5ac73a9 100644
+--- a/libs/api/core/feature/src/lib/api-core-feature.module.ts
++++ b/libs/api/core/feature/src/lib/api-core-feature.module.ts
+@@ -10,45 +10,12 @@ import { ApiCoreFeatureResolver } from './api-core-feature.resolver'
+ import { ApiCoreFeatureService } from './api-core-feature.service'
+ import { ComplexityPlugin } from './plugins/complexity.plugin'
+ import { NoCachePlugin } from './plugins/no-cache.plugin'
++import { extractTokenFromWsContext } from './ws-session-token'
+ 
+ interface ConnectionParameters {
+   headers?: Record<string, string>
+ }
+ 
+-type WsContextExtra = {
+-  request?: {
+-    rawHeaders?: string[]
+-  }
+-}
+-
+-function extractTokenFromWsContext(extra: unknown): string {
+-  if (
+-    extra &&
+-    typeof extra === 'object' &&
+-    'request' in extra &&
+-    extra.request &&
+-    typeof extra.request === 'object' &&
+-    'rawHeaders' in extra.request
+-  ) {
+-    const rawHeaders = (extra as WsContextExtra).request?.rawHeaders
+-    const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
+-    return rawHeaders ? extractTokenFromRawHeaders(rawHeaders, cookieName) : ''
+-  }
+-  return ''
+-}
+-
+-function extractTokenFromRawHeaders(rawHeaders: string[], cookieName: string): string {
+-  for (let i = 0; i < rawHeaders.length; i += 2) {
+-    if (rawHeaders[i].toLowerCase() !== 'cookie') continue
+-    for (const cookie of rawHeaders[i + 1].split(';')) {
+-      const [name, value] = cookie.trim().split('=')
+-      if (name === cookieName) return value
+-    }
+-    break
+-  }
+-  return ''
+-}
+-
+ const redisPubSubProvider = {
+   provide: 'REDIS_PUB_SUB',
+   useValue: apiCorePubSub,
+diff --git a/libs/api/core/feature/src/lib/ws-session-token.spec.ts b/libs/api/core/feature/src/lib/ws-session-token.spec.ts
+new file mode 100644
+index 0000000..c1672c4
+--- /dev/null
++++ b/libs/api/core/feature/src/lib/ws-session-token.spec.ts
+@@ -0,0 +1,47 @@
++import { JwtService } from '@nestjs/jwt'
++import { extractTokenFromWsContext } from './ws-session-token'
++
++describe('extractTokenFromWsContext', () => {
++  const originalSecret = process.env['JWT_SECRET']
++  const originalName = process.env['VITE_COOKIE_NAME']
++  const now = Math.floor(Date.now() / 1000)
++
++  beforeEach(() => {
++    process.env['JWT_SECRET'] = 'test-secret'
++    delete process.env['VITE_COOKIE_NAME']
++  })
++
++  afterEach(() => {
++    if (originalSecret === undefined) delete process.env['JWT_SECRET']
++    else process.env['JWT_SECRET'] = originalSecret
++    if (originalName === undefined) delete process.env['VITE_COOKIE_NAME']
++    else process.env['VITE_COOKIE_NAME'] = originalName
++  })
++
++  const contextWith = (...cookieHeaders: string[]) => ({
++    request: { rawHeaders: cookieHeaders.flatMap(value => ['Cookie', value]) },
++  })
++
++  it.each([
++    ['first', (valid: string, forged: string) => `__session=${forged}; __session=${valid}`],
++    ['last', (valid: string, forged: string) => `__session=${valid}; __session=${forged}`],
++  ])('uses the valid older session over a forged newer duplicate (forged %s)', (_l, header) => {
++    const valid = new JwtService({ secret: 'test-secret' }).sign({ userId: 'u1', iat: now - 3600 })
++    const forged = new JwtService({ secret: 'other-secret' }).sign({
++      userId: 'u2',
++      iat: now + 10 * 365 * 24 * 3600,
++    })
++
++    expect(extractTokenFromWsContext(contextWith(header(valid, forged)))).toBe(valid)
++  })
++
++  it('reads a value containing = in full and finds the cookie in a later Cookie header', () => {
++    expect(extractTokenFromWsContext(contextWith('theme=dark', '__session=abc=='))).toBe('abc==')
++  })
++
++  it('returns an empty string when there is no session cookie or no request', () => {
++    expect(extractTokenFromWsContext(contextWith('theme=dark'))).toBe('')
++    expect(extractTokenFromWsContext({})).toBe('')
++    expect(extractTokenFromWsContext(undefined)).toBe('')
++  })
++})
+diff --git a/libs/api/core/feature/src/lib/ws-session-token.ts b/libs/api/core/feature/src/lib/ws-session-token.ts
+new file mode 100644
+index 0000000..ac41149
+--- /dev/null
++++ b/libs/api/core/feature/src/lib/ws-session-token.ts
+@@ -0,0 +1,43 @@
++import { JwtService } from '@nestjs/jwt'
++import { rawHeaderCookieValues, selectSessionToken } from '@nestled-template/api/utils'
++
++type WsContextExtra = {
++  request?: {
++    rawHeaders?: string[]
++  }
++}
++
++/** The JWT_SECRET signature check, or null when the token (or the configuration) does not verify. */
++function verifyWithJwtSecret(token: string): object | null {
++  const secret = process.env['JWT_SECRET']
++  if (!secret) return null
++  try {
++    return new JwtService({ secret }).verify<object>(token)
++  } catch {
++    return null
++  }
++}
++
++/**
++ * The session token on a WebSocket upgrade request, or '' when there is none. With several
++ * same-name session cookies the newest one that verifies is chosen (see selectSessionToken), as
++ * JwtStrategy does for HTTP requests.
++ */
++export function extractTokenFromWsContext(extra: unknown): string {
++  if (
++    extra &&
++    typeof extra === 'object' &&
++    'request' in extra &&
++    extra.request &&
++    typeof extra.request === 'object' &&
++    'rawHeaders' in extra.request
++  ) {
++    const rawHeaders = (extra as WsContextExtra).request?.rawHeaders
++    const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
++    if (!rawHeaders) return ''
++    return (
++      selectSessionToken(rawHeaderCookieValues(rawHeaders, cookieName), verifyWithJwtSecret) ?? ''
++    )
++  }
++  return ''
++}
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+index 5b42047..1688c12 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+@@ -215,6 +215,50 @@ describe('AuthResolver', () => {
+     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
+   })
+ 
++  describe('duplicate session cookies', () => {
++    // A host-only and a parent-domain cookie with the same name both arrive in the Cookie header.
++    // cookie-parser's req.cookies keeps the first; the resolver must use the one that verifies.
++    const verifies = (valid: string) => (token: string) =>
++      token === valid ? { sessionId: 'session-1', userId: 'user-1' } : null
++
++    it.each([
++      ['comes first', '__session=forged-newer; __session=valid-older'],
++      ['comes last', '__session=valid-older; __session=forged-newer'],
++    ])(
++      'logs out the session that verifies when an unverifiable duplicate %s',
++      async (_l, cookie) => {
++        authService.verifyToken.mockImplementation(verifies('valid-older') as any)
++        context.req.cookies = { __session: 'forged-newer' }
++        context.req.headers = { cookie }
++
++        await expect(resolver.logout(context)).resolves.toBe(true)
++
++        expect(authService.logout).toHaveBeenCalledWith('session-1', 'user-1')
++        expect(authService.verifyToken).toHaveBeenCalledWith('valid-older', {
++          ignoreExpiration: true,
++        })
++      },
++    )
++
++    it('keeps the verified session as current when changing the password', async () => {
++      authService.verifyToken.mockImplementation(verifies('valid-older') as any)
++      context.req.cookies = { __session: 'forged-newer' }
++      context.req.headers = { cookie: '__session=forged-newer; __session=valid-older' }
++
++      await resolver.changePassword(context, user, {
++        currentPassword: 'a',
++        newPassword: 'b',
++      } as any)
++
++      expect(authService.changePassword).toHaveBeenCalledWith(
++        user.id,
++        expect.anything(),
++        sessionInfo,
++        'session-1',
++      )
++    })
++  })
++
+   it("ends an emulation token's session as the emulating admin's", async () => {
+     authService.verifyToken.mockReturnValueOnce({
+       sessionId: 'emulation-session',
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+index aad73fe..d50d529 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+@@ -20,6 +20,8 @@ import {
+   GqlThrottlerGuard,
+   Public,
+   RequirePlatformPermission,
++  requestCookieValues,
++  selectSessionToken,
+ } from '@nestled-template/api/utils'
+ import type { NestContextType } from '@nestled-template/api/utils'
+ import { UserToken } from './models'
+@@ -173,7 +175,7 @@ export class AuthResolver {
+ 
+     // Get session ID from JWT and invalidate it
+     // Check both cookie and Authorization header
+-    let token = context.req.cookies?.[this.service.getCookieName()]
++    let token = this.sessionCookieToken(context, { ignoreExpiration: true })
+ 
+     // If no cookie token, check Authorization header
+     if (!token) {
+@@ -338,7 +340,7 @@ export class AuthResolver {
+     @Args('input') input: ChangePasswordInput,
+   ): Promise<boolean> {
+     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
+-    const token = context.req.cookies?.[this.service.getCookieName()]
++    const token = this.sessionCookieToken(context)
+     const currentSessionId = this.getSessionIdFromToken(token)
+ 
+     return this.service.changePassword(user.id, input, sessionInfo, currentSessionId)
+@@ -362,7 +364,7 @@ export class AuthResolver {
+     )
+ 
+     // Get token from cookie
+-    const token = context.req.cookies?.[this.service.getCookieName()]
++    const token = this.sessionCookieToken(context)
+     if (!token) {
+       throw new Error('No authentication token found')
+     }
+@@ -485,7 +487,7 @@ export class AuthResolver {
+     @CtxUser() user: User,
+   ): Promise<UserSessionOutput[]> {
+     // Get current session ID from JWT
+-    const token = context.req.cookies?.[this.service.getCookieName()]
++    const token = this.sessionCookieToken(context)
+     const currentSessionId = this.getSessionIdFromToken(token)
+ 
+     return this.service.getUserSessions(user.id, currentSessionId)
+@@ -509,7 +511,7 @@ export class AuthResolver {
+     @CtxUser() user: User,
+   ): Promise<number> {
+     // Get current session ID from JWT to exclude it
+-    const token = context.req.cookies?.[this.service.getCookieName()]
++    const token = this.sessionCookieToken(context)
+     const currentSessionId = this.getSessionIdFromToken(token)
+ 
+     return this.service.invalidateAllSessions(user.id, currentSessionId)
+@@ -572,7 +574,7 @@ export class AuthResolver {
+     if (context.req.headers?.authorization?.startsWith('Bearer ')) {
+       return undefined
+     }
+-    const token = context.req.cookies?.[this.service.getCookieName()]
++    const token = this.sessionCookieToken(context)
+     const claims = token ? this.service.verifyToken<SessionTokenPayload>(token) : null
+     if (!claims?.sessionId || claims.isEmulating || claims.userId !== adminId) {
+       return undefined
+@@ -580,6 +582,19 @@ export class AuthResolver {
+     return claims.sessionId
+   }
+ 
++  /**
++   * The session cookie this request carries. With several same-name session cookies (host-only and
++   * parent-domain, say) the newest one whose signature verifies is used, the same choice JwtStrategy
++   * made when it authenticated the request; cookie-parser's `req.cookies` keeps only the first.
++   */
++  private sessionCookieToken(
++    context: NestContextType,
++    options: { ignoreExpiration?: boolean } = {},
++  ): string | undefined {
++    const values = requestCookieValues(context.req, this.service.getCookieName())
++    return selectSessionToken(values, token => this.service.verifyToken(token, options))
++  }
++
+   private getSessionIdFromToken(token?: string): string | undefined {
+     if (!token) {
+       return undefined
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+index 8903d4f..d1f5208 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+@@ -1,3 +1,4 @@
++import { JwtService } from '@nestjs/jwt'
+ import { JwtStrategy } from './jwt.strategy'
+ import type { Request } from 'express'
+ 
+@@ -243,6 +244,41 @@ describe('JwtStrategy API token authentication', () => {
+     expect(extractJwt(strategy, req)).toBe(second)
+   })
+ 
++  it.each([
++    ['comes first', (valid: string, forged: string) => `__session=${forged}; __session=${valid}`],
++    ['comes last', (valid: string, forged: string) => `__session=${valid}; __session=${forged}`],
++  ])(
++    'uses the older valid session over a newer cookie that does not verify (forged %s)',
++    (_label, header) => {
++      // Signed with the strategy's secret, issued an hour ago.
++      const valid = new JwtService({ secret: 'test-secret' }).sign(
++        { userId: 'user-1' },
++        { expiresIn: '1d' },
++      )
++      // Planted from a sibling subdomain: a far-future iat, signed with a secret the API does not
++      // hold. Ordering by the unverified iat alone would pick it.
++      const forged = new JwtService({ secret: 'attacker-secret' }).sign({
++        userId: 'user-2',
++        iat: Math.floor(Date.now() / 1000) + 10 * 365 * 24 * 3600,
++      })
++      const req = { headers: { cookie: header(valid, forged) } } as unknown as Request
++
++      expect(extractJwt(strategy, req)).toBe(valid)
++    },
++  )
++
++  it('prefers the newest of two valid sessions', () => {
++    const jwt = new JwtService({ secret: 'test-secret' })
++    const now = Math.floor(Date.now() / 1000)
++    const older = jwt.sign({ userId: 'user-1', iat: now - 60 }, { expiresIn: '1d' })
++    const newer = jwt.sign({ userId: 'user-1', iat: now - 10 }, { expiresIn: '1d' })
++    const req = {
++      headers: { cookie: `__session=${newer}; __session=${older}` },
++    } as unknown as Request
++
++    expect(extractJwt(strategy, req)).toBe(newer)
++  })
++
+   it('falls back to the parsed cookie when the raw cookie header is unavailable', () => {
+     const tokenFromCookieParser = jwtWithIssuedAt(1)
+     const req = { cookies: { __session: tokenFromCookieParser }, headers: {} } as Request
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+index cf52c5b..fd8335a 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+@@ -2,7 +2,9 @@ import { Injectable, Logger, UnauthorizedException } from '@nestjs/common'
+ import { PassportStrategy } from '@nestjs/passport'
+ import { Request } from 'express'
+ import { ExtractJwt, Strategy } from 'passport-jwt'
++import { JwtService } from '@nestjs/jwt'
+ import { User } from '@nestled-template/api/core/models'
++import { requestCookieValues, selectSessionToken } from '@nestled-template/api/utils'
+ import { AuthService } from '../auth.service'
+ import { ApiTokensService } from '../../api-tokens/api-tokens.service'
+ import type { AuthTokenClaims } from '../auth-token-claims'
+@@ -15,79 +17,40 @@ type ApiTokenRequest = Request & {
+   apiTokenOrganizationId?: string | null
+ }
+ 
+-function headerAndCookieExtractor(req: Request): string | null {
+-  const authHeaderToken = ExtractJwt.fromAuthHeaderAsBearerToken()(req)
+-  if (authHeaderToken) {
+-    return authHeaderToken
+-  }
+-  const cookieToken = cookieExtractor(req)
+-  if (cookieToken) {
+-    return cookieToken
+-  }
+-  return null
+-}
++type TokenExtractor = (req: Request) => string | null
+ 
+-function decodeCookieValue(value: string): string {
+-  try {
+-    return decodeURIComponent(value)
+-  } catch {
+-    return value
+-  }
++function sessionCookieName(): string {
++  return process.env['VITE_COOKIE_NAME'] || process.env['API_COOKIE_NAME'] || '__session'
+ }
+ 
+-function jwtTimestamp(token: string): number | null {
+-  try {
+-    const parts = token.split('.')
+-    if (parts.length !== 3) return null
+-
+-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
+-      iat?: unknown
+-      exp?: unknown
++/**
++ * The bearer header, else the session cookie. With several same-name session cookies the newest
++ * one whose signature verifies is used (see selectSessionToken), so neither a stale cookie that
++ * happens to come first nor a forged one with a far-future `iat` can shadow the valid session.
++ */
++function createHeaderAndCookieExtractor(jwtSecret: string): TokenExtractor {
++  const verifier = new JwtService({ secret: jwtSecret })
++  const verify = (token: string): object | null => {
++    try {
++      return verifier.verify<object>(token)
++    } catch {
++      return null
+     }
+-    if (typeof payload.iat === 'number') return payload.iat
+-    if (typeof payload.exp === 'number') return payload.exp
+-    return 0
+-  } catch {
+-    return null
+   }
+-}
+ 
+-function pickNewestJwt(values: string[]): string {
+-  let newest: { token: string; timestamp: number } | null = null
+-  for (const token of values) {
+-    const timestamp = jwtTimestamp(token)
+-    if (timestamp !== null && (!newest || timestamp >= newest.timestamp)) {
+-      newest = { token, timestamp }
++  return (req: Request) => {
++    const authHeaderToken = ExtractJwt.fromAuthHeaderAsBearerToken()(req)
++    if (authHeaderToken) {
++      return authHeaderToken
+     }
++    return selectSessionToken(requestCookieValues(req, sessionCookieName()), verify) ?? null
+   }
+-
+-  return newest?.token ?? values[values.length - 1]
+-}
+-
+-function cookieValues(cookieHeader: string, name: string): string[] {
+-  const values: string[] = []
+-  for (const pair of cookieHeader.split(';')) {
+-    const separator = pair.indexOf('=')
+-    if (separator < 0 || pair.slice(0, separator).trim() !== name) continue
+-    values.push(decodeCookieValue(pair.slice(separator + 1)))
+-  }
+-  return values
+-}
+-
+-function cookieExtractor(req: Request): string | undefined {
+-  const name = process.env['VITE_COOKIE_NAME'] || process.env['API_COOKIE_NAME'] || '__session'
+-  const rawCookie = (req?.headers as Record<string, string> | undefined)?.['cookie']
+-  if (rawCookie) {
+-    const values = cookieValues(rawCookie, name)
+-    if (values.length > 0) return pickNewestJwt(values)
+-  }
+-
+-  return req?.cookies?.[name]
+ }
+ 
+ @Injectable()
+ export class JwtStrategy extends PassportStrategy(Strategy) {
+   private readonly logger = new Logger(JwtStrategy.name)
++  private readonly extractToken: TokenExtractor
+ 
+   constructor(
+     private readonly auth: AuthService,
+@@ -98,12 +61,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
+       throw new Error('JWT_SECRET environment variable is not set')
+     }
+ 
++    const extractToken = createHeaderAndCookieExtractor(jwtSecret)
+     super({
+-      jwtFromRequest: headerAndCookieExtractor,
++      jwtFromRequest: extractToken,
+       secretOrKey: jwtSecret,
+       ignoreExpiration: false,
+       passReqToCallback: true,
+     })
++    this.extractToken = extractToken
+   }
+ 
+   async validate(req: Request, payload: AuthTokenClaims): Promise<User> {
+@@ -143,7 +108,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
+    * passport-jwt attempts to parse the bearer value as a JWT.
+    */
+   override async authenticate(req: Request, options?: object): Promise<void> {
+-    const token = headerAndCookieExtractor(req)
++    const token = this.extractToken(req)
+ 
+     if (token && /^[a-f0-9]{64}$/i.test(token)) {
+       try {
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+index 6e40619..f312c41 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+@@ -317,6 +317,58 @@ describe('McpOAuthController', () => {
+       )
+     })
+ 
++    it('sends a deactivated user to login rather than authorizing from their session', async () => {
++      data.user.findUnique.mockImplementation(({ select }: any) =>
++        select.emails ? null : { id: 'user-123', authGeneration: 3, isActive: false },
++      )
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
++      expect(res.redirect).toHaveBeenCalledWith(
++        expect.stringContaining('https://app.example.com/login?redirect='),
++      )
++    })
++
++    it.each([
++      ['the forged cookie comes first', `__session=fake-forged; __session=${SESSION_COOKIE}`],
++      ['the forged cookie comes last', `__session=${SESSION_COOKIE}; __session=fake-forged`],
++    ])(
++      'uses the session cookie that verifies when a forged duplicate is present (%s)',
++      async (_label, cookieHeader) => {
++        // `fake-forged` does not verify (the mocked JwtService knows no claims for it). Whatever
++        // its position or claimed age, the genuine session is the one /authorize acts on.
++        const req = {
++          ...requestWith(),
++          cookies: { __session: 'fake-forged' },
++          headers: { cookie: cookieHeader },
++        }
++        const res = createResponse()
++        await controller.authorize(authorizeQuery(), req, res)
++        expect(res.redirect).toHaveBeenCalledWith(
++          expect.stringMatching(/^https:\/\/app\.example\.com\/mcp-connect\?request=/),
++        )
++        expect(jwtService.verify).toHaveBeenCalledWith(SESSION_COOKIE)
++      },
++    )
++
++    it('skips a genuine but revoked duplicate in favour of the current session', async () => {
++      data.userSession.findUnique.mockImplementation(async ({ where }: any) =>
++        where.id === 'session-2'
++          ? { isValid: false, userId: 'user-123' }
++          : { isValid: true, userId: 'user-123' },
++      )
++      const req = {
++        ...requestWith(),
++        // Neither placeholder is a JWT, so the later value is tried first: the revoked one.
++        headers: { cookie: `__session=${SESSION_COOKIE}; __session=${OTHER_SESSION_COOKIE}` },
++      }
++      const res = createResponse()
++      await controller.authorize(authorizeQuery(), req, res)
++      expect(res.redirect).toHaveBeenCalledWith(
++        expect.stringMatching(/^https:\/\/app\.example\.com\/mcp-connect\?request=/),
++      )
++      expect(jwtService.verify).toHaveBeenCalledWith(OTHER_SESSION_COOKIE)
++    })
++
+     it('refuses to authorize a client from an emulation session', async () => {
+       sessions[SESSION_COOKIE] = {
+         userId: 'user-123',
+@@ -617,6 +669,40 @@ describe('McpOAuthController', () => {
+       })
+     })
+ 
++    it('issues no token when the user was deactivated after the code was issued', async () => {
++      const requestId = await startAuthorization()
++      const pending = await readPending(requestId)
++      const { csrfToken } = pending.json.mock.calls[0][0]
++      const decision = await decide({
++        request: requestId,
++        csrf_token: csrfToken,
++        decision: 'approve',
++        organization_id: 'org-123',
++      })
++      const code = new URL(decision.json.mock.calls[0][0].redirect_to).searchParams.get('code')
++
++      data.user.findUnique.mockImplementation(({ select }: any) =>
++        select.isActive && !select.authGeneration ? { isActive: false } : null,
++      )
++      const tokenRes = createResponse()
++      await controller.token(
++        {
++          grant_type: 'authorization_code',
++          code: code as string,
++          redirect_uri: REDIRECT_URI,
++          code_verifier: VERIFIER,
++          client_id: clientId,
++        },
++        tokenRes,
++      )
++
++      expect(tokenRes.status).toHaveBeenCalledWith(400)
++      expect(tokenRes.json).toHaveBeenCalledWith(
++        expect.objectContaining({ error: 'invalid_grant' }),
++      )
++      expect(apiTokens.generateApiToken).not.toHaveBeenCalled()
++    })
++
+     it('lets a multi-organization user choose the organization', async () => {
+       memberships = [
+         { organization: { id: 'org-123', name: 'Acme' } },
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+index abf88d6..0915854 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+@@ -16,7 +16,11 @@ import { JwtService } from '@nestjs/jwt'
+ import { Request, Response } from 'express'
+ import { ConfigService } from '@nestjs/config'
+ import { McpOAuthService, OAuthClientError, PKCE_METHOD } from './mcp-oauth.service'
+-import { Public } from '@nestled-template/api/utils'
++import {
++  orderSessionTokensNewestFirst,
++  Public,
++  requestCookieValues,
++} from '@nestled-template/api/utils'
+ import { AuthTokenClaims, claimedAuthGeneration } from '../auth/auth-token-claims'
+ 
+ interface AuthorizeQuery {
+@@ -483,6 +487,15 @@ export class McpOAuthController {
+       return res.status(400).json(INVALID_TARGET)
+     }
+ 
++    // The same rule JwtStrategy applies: a deactivated account gets no new token, even from a code
++    // issued before it was deactivated.
++    if (!(await this.oauth.isUserActive(authCode.userId))) {
++      return res.status(400).json({
++        error: 'invalid_grant',
++        error_description: 'Invalid or expired authorization code',
++      })
++    }
++
+     await this.oauth.touchClient(authCode.clientId)
+     const accessToken = await this.oauth.createAccessToken(
+       authCode.userId,
+@@ -497,21 +510,28 @@ export class McpOAuthController {
+     return res.json({ access_token: accessToken, token_type: 'bearer', scope: authCode.scope })
+   }
+ 
+-  /** The verified, still-current session token from the cookie, or null. */
++  /**
++   * The verified, still-current session token from the cookie, or null. With several same-name
++   * session cookies (host-only and parent-domain, say) they are tried newest first and the first
++   * that verifies and is still current wins, so neither a stale cookie that comes first nor a
++   * forged one with a far-future `iat` can shadow the valid session.
++   */
+   private async getSessionFromCookie(req: Request): Promise<AuthTokenClaims | null> {
+     const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
+-    const cookieToken = (req.cookies as Record<string, string>)?.[cookieName]
+-    if (!cookieToken) return null
+-    let payload: AuthTokenClaims
+-    try {
+-      payload = this.jwtService.verify<AuthTokenClaims>(cookieToken)
+-    } catch {
+-      return null
+-    }
+-    if (!payload?.userId) return null
+-    // A genuine but revoked session must not authorize a new client, any more than it can make an
+-    // API request.
+-    return (await this.oauth.isSessionTokenCurrent(payload)) ? payload : null
++    const candidates = orderSessionTokensNewestFirst(requestCookieValues(req, cookieName))
++    for (const cookieToken of candidates) {
++      let payload: AuthTokenClaims
++      try {
++        payload = this.jwtService.verify<AuthTokenClaims>(cookieToken)
++      } catch {
++        continue
++      }
++      if (!payload?.userId) continue
++      // A genuine but revoked session must not authorize a new client, any more than it can make
++      // an API request.
++      if (await this.oauth.isSessionTokenCurrent(payload)) return payload
++    }
++    return null
+   }
+ 
+   private buildMetadata(req: Request) {
+diff --git a/libs/api/utils/src/index.ts b/libs/api/utils/src/index.ts
+index 4521149..1994391 100644
+--- a/libs/api/utils/src/index.ts
++++ b/libs/api/utils/src/index.ts
+@@ -15,6 +15,7 @@ export * from './lib/decorators/ctx-organization.decorator'
+ export * from './lib/services/auth-cache.service'
+ export * from './lib/services/auth-loader.service'
+ export * from './lib/services/organization-context.service'
++export * from './lib/auth/session-cookie'
+ 
+ // Explicitly export types for webpack compatibility
+ export type { OrganizationContext, NestContextType } from './lib/types/nest-context-type'
+diff --git a/libs/api/utils/src/lib/auth/session-cookie.spec.ts b/libs/api/utils/src/lib/auth/session-cookie.spec.ts
+new file mode 100644
+index 0000000..779169a
+--- /dev/null
++++ b/libs/api/utils/src/lib/auth/session-cookie.spec.ts
+@@ -0,0 +1,106 @@
++import { JwtService } from '@nestjs/jwt'
++import {
++  cookieValuesFromHeader,
++  orderSessionTokensNewestFirst,
++  pickVerifiedSessionToken,
++  rawHeaderCookieValues,
++  requestCookieValues,
++  selectSessionToken,
++} from './session-cookie'
++
++const SECRET = 'test-secret'
++const now = Math.floor(Date.now() / 1000)
++const signer = new JwtService({ secret: SECRET })
++const forger = new JwtService({ secret: 'not-the-api-secret' })
++
++function verify(token: string): object | null {
++  try {
++    return signer.verify<object>(token)
++  } catch {
++    return null
++  }
++}
++
++function unsigned(iat: number): string {
++  return `header.${Buffer.from(JSON.stringify({ iat })).toString('base64url')}.signature`
++}
++
++describe('session cookie values', () => {
++  it('collects every same-name value in header order, decoded, keeping = in values', () => {
++    expect(
++      cookieValuesFromHeader('a=1; __session=x%3Dy; theme=dark; __session=z==', '__session'),
++    ).toEqual(['x=y', 'z=='])
++  })
++
++  it('keeps a badly encoded value raw instead of throwing', () => {
++    expect(cookieValuesFromHeader('__session=%E0%A4%A; other=%', '__session')).toEqual(['%E0%A4%A'])
++  })
++
++  it('reads every Cookie header in rawHeaders, not just the first', () => {
++    const rawHeaders = ['Host', 'api.example.com', 'Cookie', '__session=a', 'cookie', '__session=b']
++    expect(rawHeaderCookieValues(rawHeaders, '__session')).toEqual(['a', 'b'])
++  })
++
++  it('prefers the raw header, which keeps duplicates, over cookie-parser', () => {
++    const req = { headers: { cookie: '__session=a; __session=b' }, cookies: { __session: 'a' } }
++    expect(requestCookieValues(req, '__session')).toEqual(['a', 'b'])
++    expect(requestCookieValues({ headers: {}, cookies: { __session: 'a' } }, '__session')).toEqual([
++      'a',
++    ])
++    expect(requestCookieValues(undefined, '__session')).toEqual([])
++  })
++})
++
++describe('session token selection', () => {
++  it('orders newest first, later value first on ties, non-JWTs last', () => {
++    const one = unsigned(1)
++    const twoA = unsigned(2)
++    const twoB = `${unsigned(2)}x`
++    expect(orderSessionTokensNewestFirst(['opaque-a', one, twoA, 'opaque-b', twoB])).toEqual([
++      twoB,
++      twoA,
++      one,
++      'opaque-b',
++      'opaque-a',
++    ])
++  })
++
++  it.each([
++    ['first', (valid: string, forged: string) => [forged, valid]],
++    ['last', (valid: string, forged: string) => [valid, forged]],
++  ])(
++    'never lets a forged far-future token shadow a valid older one (forged %s)',
++    (_label, arrange) => {
++      const valid = signer.sign({ userId: 'u1', iat: now - 3600 })
++      const forged = forger.sign({ userId: 'u2', iat: now + 10 * 365 * 24 * 3600 })
++      const values = arrange(valid, forged)
++
++      expect(selectSessionToken(values, verify)).toBe(valid)
++      expect(pickVerifiedSessionToken(values, verify)).toEqual({
++        token: valid,
++        claims: expect.objectContaining({ userId: 'u1' }),
++      })
++    },
++  )
++
++  it('picks the newest of several valid tokens', () => {
++    const older = signer.sign({ userId: 'u1', iat: now - 60 })
++    const newer = signer.sign({ userId: 'u1', iat: now - 5 })
++    expect(selectSessionToken([newer, older], verify)).toBe(newer)
++    expect(selectSessionToken([older, newer], verify)).toBe(newer)
++  })
++
++  it('falls back to the newest candidate when none verifies, so the caller fails as before', () => {
++    const a = unsigned(1)
++    const b = unsigned(2)
++    expect(selectSessionToken([b, a], verify)).toBe(b)
++    expect(pickVerifiedSessionToken([a, b], verify)).toBeNull()
++  })
++
++  it('returns a lone value without verifying it, and nothing for no values', () => {
++    const verifySpy = jest.fn(verify)
++    expect(selectSessionToken(['only'], verifySpy)).toBe('only')
++    expect(selectSessionToken([], verifySpy)).toBeUndefined()
++    expect(verifySpy).not.toHaveBeenCalled()
++  })
++})
+diff --git a/libs/api/utils/src/lib/auth/session-cookie.ts b/libs/api/utils/src/lib/auth/session-cookie.ts
+new file mode 100644
+index 0000000..28de7e5
+--- /dev/null
++++ b/libs/api/utils/src/lib/auth/session-cookie.ts
+@@ -0,0 +1,148 @@
++/**
++ * Server-side selection of the session cookie when a request carries more than one.
++ *
++ * A browser can hold two cookies with the same name: a host-only one and a parent-domain one, or
++ * two at different paths, typically after a re-login or a change of cookie domain. Both arrive in
++ * the Cookie header, in an order that says nothing about age. `cookie-parser` (`req.cookies`) and a
++ * naive split keep only the first, which can be the stale or revoked session.
++ *
++ * Ordering by the payload's `iat` alone is not enough either: the payload is unverified, so a
++ * cookie planted from a sibling subdomain with a far-future `iat` would always win. The server has
++ * the secret, so it orders newest first and then takes the first token whose signature verifies.
++ * An unverifiable token never shadows a valid one.
++ *
++ * Every server path that reads the session cookie goes through here: JwtStrategy, the WebSocket
++ * connection check, the MCP OAuth /authorize session read and the auth resolver.
++ */
++
++/** A cookie-bearing request: Express's, or the subset of it a GraphQL or WebSocket context has. */
++export type SessionCookieRequest = {
++  headers?: Record<string, string | string[] | undefined> | null
++  cookies?: Record<string, unknown> | null
++}
++
++/** Verifies a token's signature (and whatever else the caller requires), or returns null. */
++export type SessionTokenVerifier<TClaims> = (token: string) => TClaims | null
++
++/** Percent-decode a cookie value, keeping it raw when it is not valid percent-encoding. */
++export function decodeSessionCookieValue(value: string): string {
++  try {
++    return decodeURIComponent(value)
++  } catch {
++    return value
++  }
++}
++
++/**
++ * Every value of the named cookie in one or more Cookie header values, in header order and
++ * percent-decoded. Values may contain `=`; only the first `=` in a pair separates name and value.
++ */
++export function cookieValuesFromHeader(
++  cookieHeader: string | readonly string[] | null | undefined,
++  name: string,
++): string[] {
++  if (!cookieHeader) return []
++  const headers = typeof cookieHeader === 'string' ? [cookieHeader] : cookieHeader
++  const values: string[] = []
++  for (const header of headers) {
++    for (const pair of header.split(';')) {
++      const separator = pair.indexOf('=')
++      if (separator < 0 || pair.slice(0, separator).trim() !== name) continue
++      const value = pair.slice(separator + 1).trim()
++      if (value) values.push(decodeSessionCookieValue(value))
++    }
++  }
++  return values
++}
++
++/**
++ * Every value of the named cookie on a request. The raw Cookie header is read first because it
++ * keeps duplicates; `req.cookies` (cookie-parser keeps only the first) is the fallback when the
++ * request has no header, as in a hand-built context.
++ */
++export function requestCookieValues(
++  req: SessionCookieRequest | null | undefined,
++  name: string,
++): string[] {
++  const values = cookieValuesFromHeader(req?.headers?.['cookie'], name)
++  if (values.length > 0) return values
++  const parsed = req?.cookies?.[name]
++  return typeof parsed === 'string' && parsed ? [parsed] : []
++}
++
++/**
++ * Every value of the named cookie in Node's flat `rawHeaders` list ([name, value, name, value…]),
++ * across all Cookie headers. A WebSocket upgrade request exposes only this.
++ */
++export function rawHeaderCookieValues(rawHeaders: readonly string[], name: string): string[] {
++  const cookieHeaders: string[] = []
++  for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
++    if (rawHeaders[i].toLowerCase() === 'cookie') cookieHeaders.push(rawHeaders[i + 1])
++  }
++  return cookieValuesFromHeader(cookieHeaders, name)
++}
++
++/** The unverified `iat` (or `exp`) of a JWT, for ordering only; null when it is not a JWT. */
++function unverifiedTimestamp(token: string): number | null {
++  const parts = token.split('.')
++  if (parts.length !== 3) return null
++  try {
++    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
++      iat?: unknown
++      exp?: unknown
++    }
++    if (typeof payload.iat === 'number') return payload.iat
++    if (typeof payload.exp === 'number') return payload.exp
++    return 0
++  } catch {
++    return null
++  }
++}
++
++/**
++ * Candidates newest first by their unverified timestamp. Equal timestamps put the later value
++ * first (equal-path cookies arrive oldest first, and rapid re-logins can share a second); values
++ * that are not JWTs go last, later ones first. The order is a preference only: nothing here is
++ * trusted until it verifies.
++ */
++export function orderSessionTokensNewestFirst(values: readonly string[]): string[] {
++  return values
++    .map((token, index) => ({ token, index, timestamp: unverifiedTimestamp(token) }))
++    .sort((a, b) => {
++      if (a.timestamp === null || b.timestamp === null) {
++        if (a.timestamp !== b.timestamp) return a.timestamp === null ? 1 : -1
++        return b.index - a.index
++      }
++      return b.timestamp - a.timestamp || b.index - a.index
++    })
++    .map(candidate => candidate.token)
++}
++
++/**
++ * The newest candidate that verifies, with its claims, or null when none does. A single value is
++ * still verified: callers that need the claims must never act on an unverified token.
++ */
++export function pickVerifiedSessionToken<TClaims>(
++  values: readonly string[],
++  verify: SessionTokenVerifier<TClaims>,
++): { token: string; claims: TClaims } | null {
++  for (const token of orderSessionTokensNewestFirst(values)) {
++    const claims = verify(token)
++    if (claims) return { token, claims }
++  }
++  return null
++}
++
++/**
++ * The session token a request should be treated as carrying: the newest one that verifies. When
++ * none verifies, the newest by unverified timestamp is returned so the caller's own verification
++ * fails exactly as it would have with a single cookie. A lone value is returned without verifying
++ * it here, since the caller verifies it anyway.
++ */
++export function selectSessionToken(
++  values: readonly string[],
++  verify: SessionTokenVerifier<unknown>,
++): string | undefined {
++  if (values.length <= 1) return values[0]
++  return pickVerifiedSessionToken(values, verify)?.token ?? orderSessionTokensNewestFirst(values)[0]
++}
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index d718c36..3565582 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -97,10 +97,12 @@ describe('makeClient', () => {
+     // every token. The throw never surfaced -- pickNewestJwt's catch treats it as a malformed
+     // token and falls back to the LAST cookie value, which is what this whole path exists to stop
+     // relying on. document.cookie orders by path specificity, not by age, so `older` last is the
+-    // realistic hostile ordering.
++    // realistic hostile ordering. Buffer is removed from globalThis for the whole query (tokens are
++    // built before it goes) and restored in `finally`, so the browser decoder is the one exercised.
+     process.env.VITE_COOKIE_NAME = '__session'
+     const older = jwtWithIssuedAt(1)
+     const newer = jwtWithIssuedAt(2)
++    const originalBuffer = globalThis.Buffer
+ 
+     const fetchMock = vi.fn().mockResolvedValue(
+       new Response(JSON.stringify({ data: { ping: 'pong' } }), {
+@@ -119,6 +121,9 @@ describe('makeClient', () => {
+     })
+ 
+     try {
++      Reflect.deleteProperty(globalThis, 'Buffer')
++      expect(typeof Buffer).toBe('undefined')
++
+       const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+ 
+       await client.query({
+@@ -131,6 +136,7 @@ describe('makeClient', () => {
+ 
+       expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(`Bearer ${newer}`)
+     } finally {
++      globalThis.Buffer = originalBuffer
+       Reflect.deleteProperty(document, 'cookie')
+     }
+   })
+diff --git a/libs/shared/utils/src/lib/cookies.spec.ts b/libs/shared/utils/src/lib/cookies.spec.ts
+index e337d3e..0c508db 100644
+--- a/libs/shared/utils/src/lib/cookies.spec.ts
++++ b/libs/shared/utils/src/lib/cookies.spec.ts
+@@ -5,6 +5,7 @@ import {
+   getCookie,
+   getJsonCookie,
+   getSessionCookieName,
++  JWT_IAT_CLOCK_SKEW_SECONDS,
+   pickNewestJwt,
+ } from './cookies'
+ 
+@@ -47,6 +48,49 @@ describe('cookie utilities', () => {
+   })
+ })
+ 
++describe('session cookie picking with untrusted payloads', () => {
++  // The client cannot verify signatures, so it must not let a payload's own claims win outright.
++  const now = 1_800_000_000
++  const token = (payload: Record<string, number>) =>
++    `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`
++
++  afterEach(() => {
++    vi.restoreAllMocks()
++  })
++
++  it.each([
++    ['first', (valid: string, forged: string) => [forged, valid]],
++    ['last', (valid: string, forged: string) => [valid, forged]],
++  ])('ignores a cookie whose iat is far in the future (forged %s)', (_label, arrange) => {
++    const valid = token({ iat: now - 3600, exp: now + 3600 })
++    const forged = token({ iat: now + 10 * 365 * 24 * 3600 })
++
++    expect(pickNewestJwt(arrange(valid, forged), now)).toBe(valid)
++  })
++
++  it('tolerates an iat within the clock-skew allowance', () => {
++    const older = token({ iat: now - 60 })
++    const slightlyAhead = token({ iat: now + JWT_IAT_CLOCK_SKEW_SECONDS - 1 })
++
++    expect(pickNewestJwt([slightlyAhead, older], now)).toBe(slightlyAhead)
++  })
++
++  it('lets an unexpired token beat an expired one even when the expired one is newer', () => {
++    const unexpired = token({ iat: now - 7200, exp: now + 3600 })
++    const expiredNewer = token({ iat: now - 60, exp: now - 1 })
++
++    expect(pickNewestJwt([unexpired, expiredNewer], now)).toBe(unexpired)
++    expect(pickNewestJwt([expiredNewer, unexpired], now)).toBe(unexpired)
++  })
++
++  it('still picks the newest when every token is expired', () => {
++    const older = token({ iat: now - 7200, exp: now - 3600 })
++    const newer = token({ iat: now - 3000, exp: now - 60 })
++
++    expect(pickNewestJwt([newer, older], now)).toBe(newer)
++  })
++})
++
+ describe('session cookie picking without Buffer', () => {
+   // Browsers have no Buffer and the web bundle polyfills nothing. Decoding through it threw inside
+   // the picker's catch, so every token looked malformed and the LAST value won -- which can be the
+diff --git a/libs/shared/utils/src/lib/cookies.tsx b/libs/shared/utils/src/lib/cookies.tsx
+index e241586..ebef55d 100644
+--- a/libs/shared/utils/src/lib/cookies.tsx
++++ b/libs/shared/utils/src/lib/cookies.tsx
+@@ -50,6 +50,37 @@ function parseCookies(header: string | null): Record<string, string[]> {
+   return result
+ }
+ 
++/**
++ * How far into the future a token's `iat` may be before the picker ignores it, in seconds. Covers
++ * ordinary clock skew between the API that signed the token and the machine reading it.
++ */
++export const JWT_IAT_CLOCK_SKEW_SECONDS = 5 * 60
++
++type JwtCandidate = { token: string; issuedAt: number; expired: boolean }
++
++function jwtCandidate(token: string, nowSeconds: number): JwtCandidate | null {
++  try {
++    const parts = token.split('.')
++    if (parts.length !== 3) return null
++    const payload = JSON.parse(decodeBase64UrlSegment(parts[1])) as {
++      iat?: unknown
++      exp?: unknown
++    }
++    const iat = typeof payload.iat === 'number' ? payload.iat : undefined
++    const exp = typeof payload.exp === 'number' ? payload.exp : undefined
++    // A token cannot have been issued in the future. One that claims to be is forged or from a
++    // badly wrong clock, and must not outrank a real session just by naming a late date.
++    if (iat !== undefined && iat > nowSeconds + JWT_IAT_CLOCK_SKEW_SECONDS) return null
++    return {
++      token,
++      issuedAt: iat ?? exp ?? 0,
++      expired: exp !== undefined && exp <= nowSeconds,
++    }
++  } catch {
++    return null
++  }
++}
++
+ /**
+  * Pick the newest JWT from several same-name session cookies.
+  *
+@@ -57,37 +88,33 @@ function parseCookies(header: string | null): Record<string, string[]> {
+  * one. Neither the cookie header nor `document.cookie` orders them by age, so the token's own
+  * `iat` (or `exp`) decides. Ties go to the later value: equal-path cookies arrive oldest first,
+  * and rapid re-logins can share a whole-second timestamp.
++ *
++ * The client cannot verify signatures (the secret stays on the API), so the payload is untrusted.
++ * Two rules keep an untrusted payload from winning on its say-so: a token whose `iat` is further
++ * in the future than JWT_IAT_CLOCK_SKEW_SECONDS is ignored, and an expired token loses to any
++ * unexpired one whatever their `iat`. The API, which can verify, makes the final choice the same
++ * way and never lets an unverifiable token shadow a valid one.
+  */
+-export function pickNewestJwt(values: string[]): string {
+-  let best: { token: string; iat: number } | null = null
++export function pickNewestJwt(
++  values: string[],
++  nowSeconds = Math.floor(Date.now() / 1000),
++): string {
++  let best: JwtCandidate | null = null
+   for (const token of values) {
+-    try {
+-      const parts = token.split('.')
+-      if (parts.length !== 3) continue
+-      const payload = JSON.parse(decodeBase64UrlSegment(parts[1])) as {
+-        iat?: number
+-        exp?: number
+-      }
+-      let iat: number
+-      if (typeof payload.iat === 'number') {
+-        iat = payload.iat
+-      } else if (typeof payload.exp === 'number') {
+-        iat = payload.exp
+-      } else {
+-        iat = 0
+-      }
+-      if (!best || iat >= best.iat) {
+-        best = { token, iat }
+-      }
+-    } catch {
+-      // ignore malformed
++    const candidate = jwtCandidate(token, nowSeconds)
++    if (!candidate) continue
++    if (
++      !best ||
++      (best.expired && !candidate.expired) ||
++      (best.expired === candidate.expired && candidate.issuedAt >= best.issuedAt)
++    ) {
++      best = candidate
+     }
+   }
+ 
+-  // The catch above cannot tell a malformed token from a broken environment: when the decoder
+-  // threw on every token (as `Buffer` did in the browser), `best` stayed null and the positional
+-  // fallback below became the normal path. With several values that fallback is a guess, so say
+-  // so out loud.
++  // The parse cannot tell a malformed token from a broken environment: when the decoder threw on
++  // every token (as `Buffer` did in the browser), `best` stayed null and the positional fallback
++  // below became the normal path. With several values that fallback is a guess, so say so out loud.
+   if (!best && values.length > 1) {
+     console.warn(
+       `[cookies] Could not decode any of ${values.length} session cookies; ` +
