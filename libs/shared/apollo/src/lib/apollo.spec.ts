@@ -97,10 +97,12 @@ describe('makeClient', () => {
     // every token. The throw never surfaced -- pickNewestJwt's catch treats it as a malformed
     // token and falls back to the LAST cookie value, which is what this whole path exists to stop
     // relying on. document.cookie orders by path specificity, not by age, so `older` last is the
-    // realistic hostile ordering.
+    // realistic hostile ordering. Buffer is removed from globalThis for the whole query (tokens are
+    // built before it goes) and restored in `finally`, so the browser decoder is the one exercised.
     process.env.VITE_COOKIE_NAME = '__session'
     const older = jwtWithIssuedAt(1)
     const newer = jwtWithIssuedAt(2)
+    const originalBuffer = globalThis.Buffer
 
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ data: { ping: 'pong' } }), {
@@ -119,6 +121,9 @@ describe('makeClient', () => {
     })
 
     try {
+      Reflect.deleteProperty(globalThis, 'Buffer')
+      expect(typeof Buffer).toBe('undefined')
+
       const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
 
       await client.query({
@@ -131,6 +136,7 @@ describe('makeClient', () => {
 
       expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(`Bearer ${newer}`)
     } finally {
+      globalThis.Buffer = originalBuffer
       Reflect.deleteProperty(document, 'cookie')
     }
   })

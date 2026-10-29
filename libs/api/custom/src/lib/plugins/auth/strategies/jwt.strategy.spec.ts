@@ -1,3 +1,4 @@
+import { JwtService } from '@nestjs/jwt'
 import { JwtStrategy } from './jwt.strategy'
 import type { Request } from 'express'
 
@@ -241,6 +242,41 @@ describe('JwtStrategy API token authentication', () => {
     } as Request
 
     expect(extractJwt(strategy, req)).toBe(second)
+  })
+
+  it.each([
+    ['comes first', (valid: string, forged: string) => `__session=${forged}; __session=${valid}`],
+    ['comes last', (valid: string, forged: string) => `__session=${valid}; __session=${forged}`],
+  ])(
+    'uses the older valid session over a newer cookie that does not verify (forged %s)',
+    (_label, header) => {
+      // Signed with the strategy's secret, issued an hour ago.
+      const valid = new JwtService({ secret: 'test-secret' }).sign(
+        { userId: 'user-1' },
+        { expiresIn: '1d' },
+      )
+      // Planted from a sibling subdomain: a far-future iat, signed with a secret the API does not
+      // hold. Ordering by the unverified iat alone would pick it.
+      const forged = new JwtService({ secret: 'attacker-secret' }).sign({
+        userId: 'user-2',
+        iat: Math.floor(Date.now() / 1000) + 10 * 365 * 24 * 3600,
+      })
+      const req = { headers: { cookie: header(valid, forged) } } as unknown as Request
+
+      expect(extractJwt(strategy, req)).toBe(valid)
+    },
+  )
+
+  it('prefers the newest of two valid sessions', () => {
+    const jwt = new JwtService({ secret: 'test-secret' })
+    const now = Math.floor(Date.now() / 1000)
+    const older = jwt.sign({ userId: 'user-1', iat: now - 60 }, { expiresIn: '1d' })
+    const newer = jwt.sign({ userId: 'user-1', iat: now - 10 }, { expiresIn: '1d' })
+    const req = {
+      headers: { cookie: `__session=${newer}; __session=${older}` },
+    } as unknown as Request
+
+    expect(extractJwt(strategy, req)).toBe(newer)
   })
 
   it('falls back to the parsed cookie when the raw cookie header is unavailable', () => {

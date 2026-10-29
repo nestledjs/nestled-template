@@ -317,6 +317,58 @@ describe('McpOAuthController', () => {
       )
     })
 
+    it('sends a deactivated user to login rather than authorizing from their session', async () => {
+      data.user.findUnique.mockImplementation(({ select }: any) =>
+        select.emails ? null : { id: 'user-123', authGeneration: 3, isActive: false },
+      )
+      const res = createResponse()
+      await controller.authorize(authorizeQuery(), requestWith(SESSION_COOKIE), res)
+      expect(res.redirect).toHaveBeenCalledWith(
+        expect.stringContaining('https://app.example.com/login?redirect='),
+      )
+    })
+
+    it.each([
+      ['the forged cookie comes first', `__session=fake-forged; __session=${SESSION_COOKIE}`],
+      ['the forged cookie comes last', `__session=${SESSION_COOKIE}; __session=fake-forged`],
+    ])(
+      'uses the session cookie that verifies when a forged duplicate is present (%s)',
+      async (_label, cookieHeader) => {
+        // `fake-forged` does not verify (the mocked JwtService knows no claims for it). Whatever
+        // its position or claimed age, the genuine session is the one /authorize acts on.
+        const req = {
+          ...requestWith(),
+          cookies: { __session: 'fake-forged' },
+          headers: { cookie: cookieHeader },
+        }
+        const res = createResponse()
+        await controller.authorize(authorizeQuery(), req, res)
+        expect(res.redirect).toHaveBeenCalledWith(
+          expect.stringMatching(/^https:\/\/app\.example\.com\/mcp-connect\?request=/),
+        )
+        expect(jwtService.verify).toHaveBeenCalledWith(SESSION_COOKIE)
+      },
+    )
+
+    it('skips a genuine but revoked duplicate in favour of the current session', async () => {
+      data.userSession.findUnique.mockImplementation(async ({ where }: any) =>
+        where.id === 'session-2'
+          ? { isValid: false, userId: 'user-123' }
+          : { isValid: true, userId: 'user-123' },
+      )
+      const req = {
+        ...requestWith(),
+        // Neither placeholder is a JWT, so the later value is tried first: the revoked one.
+        headers: { cookie: `__session=${SESSION_COOKIE}; __session=${OTHER_SESSION_COOKIE}` },
+      }
+      const res = createResponse()
+      await controller.authorize(authorizeQuery(), req, res)
+      expect(res.redirect).toHaveBeenCalledWith(
+        expect.stringMatching(/^https:\/\/app\.example\.com\/mcp-connect\?request=/),
+      )
+      expect(jwtService.verify).toHaveBeenCalledWith(OTHER_SESSION_COOKIE)
+    })
+
     it('refuses to authorize a client from an emulation session', async () => {
       sessions[SESSION_COOKIE] = {
         userId: 'user-123',
@@ -615,6 +667,40 @@ describe('McpOAuthController', () => {
         token_type: 'bearer',
         scope: 'openid',
       })
+    })
+
+    it('issues no token when the user was deactivated after the code was issued', async () => {
+      const requestId = await startAuthorization()
+      const pending = await readPending(requestId)
+      const { csrfToken } = pending.json.mock.calls[0][0]
+      const decision = await decide({
+        request: requestId,
+        csrf_token: csrfToken,
+        decision: 'approve',
+        organization_id: 'org-123',
+      })
+      const code = new URL(decision.json.mock.calls[0][0].redirect_to).searchParams.get('code')
+
+      data.user.findUnique.mockImplementation(({ select }: any) =>
+        select.isActive && !select.authGeneration ? { isActive: false } : null,
+      )
+      const tokenRes = createResponse()
+      await controller.token(
+        {
+          grant_type: 'authorization_code',
+          code: code as string,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: VERIFIER,
+          client_id: clientId,
+        },
+        tokenRes,
+      )
+
+      expect(tokenRes.status).toHaveBeenCalledWith(400)
+      expect(tokenRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'invalid_grant' }),
+      )
+      expect(apiTokens.generateApiToken).not.toHaveBeenCalled()
     })
 
     it('lets a multi-organization user choose the organization', async () => {
