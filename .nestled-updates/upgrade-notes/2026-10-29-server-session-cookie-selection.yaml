@@ -1,0 +1,121 @@
+id: 2026-10-29-server-session-cookie-selection
+title: 'Choose the session cookie that verifies on every server path, and stop the client trusting a future iat'
+priority: normal
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  Three follow-ups to 2026-10-28-client-cookie-decoding, all about which of several same-name
+  session cookies a request is treated as carrying.
+
+  One server-side helper. A browser can hold two session cookies with the same name (host-only and
+  parent-domain, or two paths). JwtStrategy already picked the newest of them, but by the payload's
+  unverified `iat`, and three other server paths took whichever came first: the WebSocket
+  connection check in libs/api/core/feature/src/lib/api-core-feature.module.ts (which also stopped
+  at the first Cookie header and cut values at their first `=`), `getSessionFromCookie` in
+  libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts (cookie-parser's `req.cookies`, first
+  value), and every cookie read in libs/api/custom/src/lib/plugins/auth/auth.resolver.ts (logout,
+  changePassword, endEmulation, getUserSessions, invalidateAllSessions and the emulation
+  replaced-session lookup, all through `req.cookies`). A new
+  libs/api/utils/src/lib/auth/session-cookie.ts, exported from @nestled-template/api/utils, holds
+  the one implementation: `requestCookieValues` / `rawHeaderCookieValues` /
+  `cookieValuesFromHeader` collect every value of the cookie (raw header first, since it keeps
+  duplicates; `req.cookies` only as a fallback), `orderSessionTokensNewestFirst` orders them by the
+  unverified `iat` (or `exp`), later value first on ties and non-JWTs last, and
+  `pickVerifiedSessionToken` / `selectSessionToken` take the first one whose signature verifies.
+  `selectSessionToken` returns a lone value without verifying it (the caller verifies it anyway)
+  and, when nothing verifies, the newest candidate, so the caller fails exactly as it did before.
+
+  Server ordering is verified. The secret is available on the server, so ordering by `iat` is only
+  a preference: an unverifiable token never shadows a valid one. JwtStrategy builds its extractor
+  from JWT_SECRET (`createHeaderAndCookieExtractor`) and verifies duplicates with it; the WebSocket
+  check moves to a new libs/api/core/feature/src/lib/ws-session-token.ts and verifies with
+  JWT_SECRET; the MCP controller tries candidates newest first and takes the first that verifies
+  and is still current (a genuine but revoked duplicate is skipped too); the auth resolver's new
+  private `sessionCookieToken` verifies through `AuthService.verifyToken`, with
+  `ignoreExpiration` for logout as before. The WebSocket check still only requires that a session
+  cookie be present; who can connect does not change.
+
+  Client ordering ignores impossible tokens. The browser cannot verify, so `pickNewestJwt` in
+  libs/shared/utils/src/lib/cookies.tsx keeps ordering by `iat` but ignores a token whose `iat` is
+  more than `JWT_IAT_CLOCK_SKEW_SECONDS` (5 minutes, exported) in the future, and an expired token
+  now loses to any unexpired one whatever their `iat`. It takes an optional `nowSeconds` for
+  tests. Without these, a cookie planted from a sibling subdomain with a far-future `iat` won on
+  the client every time.
+
+  A test that did not test. The apollo.spec.ts test "chooses the newest JWT from document.cookie
+  without Buffer" never removed Buffer, so it passed with the Buffer-only decoder it was written to
+  catch. It now deletes `globalThis.Buffer` for the whole query and restores it in `finally`, and
+  fails against the old decoder.
+
+  Tests: session-cookie.spec.ts (collection, ordering, a forged far-future token in either position
+  loses to a valid older one, fallback), ws-session-token.spec.ts, jwt.strategy.spec.ts and
+  auth.resolver.spec.ts (valid older plus forged newer: the valid one is used),
+  mcp-oauth.controller.spec.ts (forged duplicate in either position, revoked duplicate skipped),
+  cookies.spec.ts (future `iat` ignored, skew tolerated, expired loses to unexpired).
+
+why: >
+  Which cookie wins decides which session a request acts as. Taking the first cookie meant logout
+  could end the wrong session (or none), changePassword could keep the wrong session alive, and
+  /authorize could send a signed-in user back to login. Ordering by an unverified `iat` let anyone
+  able to set a cookie on a parent domain, such as a sibling subdomain, pin a victim's requests to
+  a cookie that fails verification, signing them out of the API until it is cleared.
+
+affectedPaths:
+  - libs/api/utils/src/lib/auth/session-cookie.ts
+  - libs/api/utils/src/lib/auth/session-cookie.spec.ts
+  - libs/api/utils/src/index.ts
+  - libs/api/core/feature/src/lib/api-core-feature.module.ts
+  - libs/api/core/feature/src/lib/ws-session-token.ts
+  - libs/api/core/feature/src/lib/ws-session-token.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+  - libs/shared/utils/src/lib/cookies.tsx
+  - libs/shared/utils/src/lib/cookies.spec.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+
+skipIf:
+  - >
+    The project does not use a session cookie at all (bearer headers only). Record
+    not-applicable.
+
+verification:
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec nx test api-core-feature --skip-nx-cache
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test utils --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build api
+  - pnpm exec nx build web
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Apply 2026-10-28-client-cookie-decoding first; this note changes the picker it introduced.
+  - >
+    Keep the project's cookie name. Every changed call site still resolves the name the way it did
+    (VITE_COOKIE_NAME, API_COOKIE_NAME, AuthService.getCookieName or the project's own); only the
+    choice among same-name values changes. A project that renamed the session cookie passes its
+    own name to requestCookieValues / rawHeaderCookieValues.
+  - >
+    A project that moved JwtStrategy's cookie helpers (decodeCookieValue, jwtTimestamp,
+    pickNewestJwt, cookieValues) elsewhere should delete its copies and use the api/utils helper,
+    not keep a second implementation. If its api/utils lib has another name, put session-cookie.ts
+    in whichever lib both libs/api/core/feature and libs/api/custom already import.
+  - >
+    Search the API for its own session cookie reads that this note does not list:
+    `req.cookies?.[`, `cookies[`, `headers.cookie`, `rawHeaders`, `split(';')` and
+    `decodeURIComponent` on a cookie header. Route each through requestCookieValues plus
+    selectSessionToken (or pickVerifiedSessionToken when the claims are needed), verifying with
+    the same secret and options that path already uses.
+  - >
+    If the project's WebSocket onConnect does more than check presence (for example verifies the
+    token or loads the user), keep that, and verify with the token the helper selected.
+  - >
+    The client cannot verify, so do not try to make pickNewestJwt "verify" with a public key or a
+    second request; the server makes the final choice.

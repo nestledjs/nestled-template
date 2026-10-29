@@ -61,7 +61,13 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
             },
           })
 
-          if (user) {
+          if (!user) {
+            this.logger.warn(`User not found for valid API token: ${result.userId}`)
+          } else if (user.isActive === false) {
+            // The same rule JwtStrategy applies to sessions and API tokens: a deactivated account
+            // is refused, and its token does not count as used.
+            this.logger.warn(`API token ${result.tokenId} belongs to a deactivated user; refused`)
+          } else {
             const apiTokenReq = req as ApiTokenRequest
             apiTokenReq.user = user
             apiTokenReq.apiTokenId = result.tokenId
@@ -69,8 +75,6 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
             this.apiTokensService.recordTokenUse(result.tokenId)
 
             this.logger.log(`API token authentication successful for user ${user.id}`)
-          } else {
-            this.logger.warn(`User not found for valid API token: ${result.userId}`)
           }
         } else {
           this.logger.warn('Invalid or expired API token provided')

@@ -215,6 +215,50 @@ describe('AuthResolver', () => {
     expect(authService.clearCookie).toHaveBeenCalledTimes(2)
   })
 
+  describe('duplicate session cookies', () => {
+    // A host-only and a parent-domain cookie with the same name both arrive in the Cookie header.
+    // cookie-parser's req.cookies keeps the first; the resolver must use the one that verifies.
+    const verifies = (valid: string) => (token: string) =>
+      token === valid ? { sessionId: 'session-1', userId: 'user-1' } : null
+
+    it.each([
+      ['comes first', '__session=forged-newer; __session=valid-older'],
+      ['comes last', '__session=valid-older; __session=forged-newer'],
+    ])(
+      'logs out the session that verifies when an unverifiable duplicate %s',
+      async (_l, cookie) => {
+        authService.verifyToken.mockImplementation(verifies('valid-older') as any)
+        context.req.cookies = { __session: 'forged-newer' }
+        context.req.headers = { cookie }
+
+        await expect(resolver.logout(context)).resolves.toBe(true)
+
+        expect(authService.logout).toHaveBeenCalledWith('session-1', 'user-1')
+        expect(authService.verifyToken).toHaveBeenCalledWith('valid-older', {
+          ignoreExpiration: true,
+        })
+      },
+    )
+
+    it('keeps the verified session as current when changing the password', async () => {
+      authService.verifyToken.mockImplementation(verifies('valid-older') as any)
+      context.req.cookies = { __session: 'forged-newer' }
+      context.req.headers = { cookie: '__session=forged-newer; __session=valid-older' }
+
+      await resolver.changePassword(context, user, {
+        currentPassword: 'a',
+        newPassword: 'b',
+      } as any)
+
+      expect(authService.changePassword).toHaveBeenCalledWith(
+        user.id,
+        expect.anything(),
+        sessionInfo,
+        'session-1',
+      )
+    })
+  })
+
   it("ends an emulation token's session as the emulating admin's", async () => {
     authService.verifyToken.mockReturnValueOnce({
       sessionId: 'emulation-session',

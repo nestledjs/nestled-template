@@ -15,6 +15,7 @@ export * from './lib/decorators/ctx-organization.decorator'
 export * from './lib/services/auth-cache.service'
 export * from './lib/services/auth-loader.service'
 export * from './lib/services/organization-context.service'
+export * from './lib/auth/session-cookie'
 
 // Explicitly export types for webpack compatibility
 export type { OrganizationContext, NestContextType } from './lib/types/nest-context-type'

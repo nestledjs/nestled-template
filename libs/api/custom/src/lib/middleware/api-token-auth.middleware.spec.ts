@@ -92,6 +92,28 @@ describe('ApiTokenAuthMiddleware', () => {
     expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
   })
 
+  it("refuses a deactivated user's token, as JwtStrategy does, and does not record its use", async () => {
+    data.user.findUnique.mockResolvedValue({ ...user, isActive: false })
+
+    const { req, next } = await run(`Bearer ${token}`)
+
+    expect(req.user).toBeUndefined()
+    expect(req.apiTokenId).toBeUndefined()
+    expect(req.apiTokenOrganizationId).toBeUndefined()
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+  })
+
+  it('accepts an active user explicitly marked active', async () => {
+    const active = { ...user, isActive: true }
+    data.user.findUnique.mockResolvedValue(active)
+
+    const { req } = await run(`Bearer ${token}`)
+
+    expect(req.user).toBe(active)
+    expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('token-1')
+  })
+
   describe('resource binding (RFC 8707)', () => {
     const bound = (resource: string) => ({
       tokenId: 'token-3',

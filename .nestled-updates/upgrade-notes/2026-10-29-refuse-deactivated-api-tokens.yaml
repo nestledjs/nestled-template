@@ -1,0 +1,73 @@
+id: 2026-10-29-refuse-deactivated-api-tokens
+title: "Refuse a deactivated user's API token on the MCP path, and their session at MCP OAuth"
+priority: normal
+area: auth
+type: security
+delivery: code-patch
+
+intent: >
+  JwtStrategy refuses a session or API token whose user is deactivated (`!user ||
+  user.isActive === false`). Three other accept paths did not apply that rule themselves.
+
+  ApiTokenAuthMiddleware (libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts), which
+  turns an API token into `req.user` in front of the MCP endpoint, loaded the user and attached it
+  without looking at `isActive`. It now refuses a user with `isActive === false` the same way: the
+  request continues unauthenticated, nothing is attached, and `recordTokenUse` is not called. In
+  the template, `ApiTokensService.validateApiToken` already returns null for a deactivated owner,
+  so this is defence in depth there; it matters wherever a project's validateApiToken lacks that
+  check, and closes the window between that query and the user load.
+
+  MCP OAuth (libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts and mcp-oauth.controller.ts).
+  `isSessionTokenCurrent`, which /authorize and the consent endpoints use for the session cookie,
+  now selects `isActive` and treats a deactivated account's session as not current, so the user is
+  sent to sign in instead of being able to authorize a client. /token checks a new
+  `McpOAuthService.isUserActive(userId)` before issuing a token, and answers `invalid_grant` for a
+  code whose user was deactivated after it was issued.
+
+  Nothing else about who can authenticate changes: active users, unknown users and all other
+  checks behave exactly as before. WebSocket connections do not accept API tokens, so there is
+  nothing to change there.
+
+  Tests: api-token-auth.middleware.spec.ts (a deactivated user's token is refused and not recorded;
+  an explicitly active user is accepted), mcp-oauth.controller.spec.ts (a deactivated user is sent
+  to login from /authorize; /token issues nothing for a user deactivated after consent).
+
+why: >
+  Deactivating an account is meant to cut off all of its access at once. Any accept path that
+  skips the check, or relies on a different layer to have made it, can let a deactivated account
+  keep using a long-lived API token or authorize a new MCP client.
+
+affectedPaths:
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.service.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.spec.ts
+
+skipIf:
+  - >
+    The project has no API tokens and no MCP plugin (no libs/api/custom/src/lib/plugins/api-tokens
+    and no ApiTokenAuthMiddleware). Record not-applicable.
+
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx build api
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Use the project's own deactivation condition, the one its JwtStrategy uses. If the project
+    marks deactivated users another way (a status enum, deletedAt, a lock), apply that condition
+    here rather than isActive.
+  - >
+    Check the project's ApiTokensService.validateApiToken as well: if it does not refuse a
+    deactivated owner, the middleware change is the only thing stopping that token on the MCP path,
+    and adding the same check to validateApiToken covers every caller.
+  - >
+    Search for other places the project accepts an API token or a session outside JwtStrategy: a
+    second middleware or guard, a WebSocket onConnect that resolves the user, a webhook or CLI
+    endpoint that calls validateApiToken, a custom OAuth token endpoint. Apply the same refusal at
+    each, before attaching the user and before recordTokenUse.
+  - >
+    Do not widen this into other changes to who can sign in; it is only the deactivated-account
+    rule applied consistently.

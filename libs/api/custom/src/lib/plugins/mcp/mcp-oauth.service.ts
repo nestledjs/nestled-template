@@ -127,14 +127,28 @@ export class McpOAuthService {
 
   /**
    * The same check JwtStrategy applies, for the session cookie /authorize reads directly: pass
-   * claims only from a verified token.
+   * claims only from a verified token. A deactivated account's session is not current.
    */
   async isSessionTokenCurrent(claims: AuthTokenClaims): Promise<boolean> {
     const user = await this.data.user.findUnique({
       where: { id: claims.userId },
-      select: { id: true, authGeneration: true },
+      select: { id: true, authGeneration: true, isActive: true },
     })
-    return user ? isAuthTokenCurrent(this.data, claims, user) : false
+    // JwtStrategy refuses a deactivated account's session; so does /authorize.
+    if (!user || user.isActive === false) return false
+    return isAuthTokenCurrent(this.data, claims, user)
+  }
+
+  /**
+   * Whether the account exists and is not deactivated: the check JwtStrategy applies to every
+   * session and API token, applied by /token before it issues one.
+   */
+  async isUserActive(userId: string): Promise<boolean> {
+    const user = await this.data.user.findUnique({
+      where: { id: userId },
+      select: { isActive: true },
+    })
+    return !!user && user.isActive !== false
   }
 
   getMcpBaseUrl(req?: { protocol: string; get: (name: string) => string | undefined }): string {

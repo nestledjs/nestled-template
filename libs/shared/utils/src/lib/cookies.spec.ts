@@ -5,6 +5,7 @@ import {
   getCookie,
   getJsonCookie,
   getSessionCookieName,
+  JWT_IAT_CLOCK_SKEW_SECONDS,
   pickNewestJwt,
 } from './cookies'
 
@@ -44,6 +45,49 @@ describe('cookie utilities', () => {
     })
     expect(getJsonCookie({ cookie: 'prefs=not-json' }, 'prefs')).toBeNull()
     expect(getJsonCookie({ cookie: '' }, 'prefs')).toBeNull()
+  })
+})
+
+describe('session cookie picking with untrusted payloads', () => {
+  // The client cannot verify signatures, so it must not let a payload's own claims win outright.
+  const now = 1_800_000_000
+  const token = (payload: Record<string, number>) =>
+    `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each([
+    ['first', (valid: string, forged: string) => [forged, valid]],
+    ['last', (valid: string, forged: string) => [valid, forged]],
+  ])('ignores a cookie whose iat is far in the future (forged %s)', (_label, arrange) => {
+    const valid = token({ iat: now - 3600, exp: now + 3600 })
+    const forged = token({ iat: now + 10 * 365 * 24 * 3600 })
+
+    expect(pickNewestJwt(arrange(valid, forged), now)).toBe(valid)
+  })
+
+  it('tolerates an iat within the clock-skew allowance', () => {
+    const older = token({ iat: now - 60 })
+    const slightlyAhead = token({ iat: now + JWT_IAT_CLOCK_SKEW_SECONDS - 1 })
+
+    expect(pickNewestJwt([slightlyAhead, older], now)).toBe(slightlyAhead)
+  })
+
+  it('lets an unexpired token beat an expired one even when the expired one is newer', () => {
+    const unexpired = token({ iat: now - 7200, exp: now + 3600 })
+    const expiredNewer = token({ iat: now - 60, exp: now - 1 })
+
+    expect(pickNewestJwt([unexpired, expiredNewer], now)).toBe(unexpired)
+    expect(pickNewestJwt([expiredNewer, unexpired], now)).toBe(unexpired)
+  })
+
+  it('still picks the newest when every token is expired', () => {
+    const older = token({ iat: now - 7200, exp: now - 3600 })
+    const newer = token({ iat: now - 3000, exp: now - 60 })
+
+    expect(pickNewestJwt([newer, older], now)).toBe(newer)
   })
 })
 

@@ -16,7 +16,11 @@ import { JwtService } from '@nestjs/jwt'
 import { Request, Response } from 'express'
 import { ConfigService } from '@nestjs/config'
 import { McpOAuthService, OAuthClientError, PKCE_METHOD } from './mcp-oauth.service'
-import { Public } from '@nestled-template/api/utils'
+import {
+  orderSessionTokensNewestFirst,
+  Public,
+  requestCookieValues,
+} from '@nestled-template/api/utils'
 import { AuthTokenClaims, claimedAuthGeneration } from '../auth/auth-token-claims'
 
 interface AuthorizeQuery {
@@ -483,6 +487,15 @@ export class McpOAuthController {
       return res.status(400).json(INVALID_TARGET)
     }
 
+    // The same rule JwtStrategy applies: a deactivated account gets no new token, even from a code
+    // issued before it was deactivated.
+    if (!(await this.oauth.isUserActive(authCode.userId))) {
+      return res.status(400).json({
+        error: 'invalid_grant',
+        error_description: 'Invalid or expired authorization code',
+      })
+    }
+
     await this.oauth.touchClient(authCode.clientId)
     const accessToken = await this.oauth.createAccessToken(
       authCode.userId,
@@ -497,21 +510,28 @@ export class McpOAuthController {
     return res.json({ access_token: accessToken, token_type: 'bearer', scope: authCode.scope })
   }
 
-  /** The verified, still-current session token from the cookie, or null. */
+  /**
+   * The verified, still-current session token from the cookie, or null. With several same-name
+   * session cookies (host-only and parent-domain, say) they are tried newest first and the first
+   * that verifies and is still current wins, so neither a stale cookie that comes first nor a
+   * forged one with a far-future `iat` can shadow the valid session.
+   */
   private async getSessionFromCookie(req: Request): Promise<AuthTokenClaims | null> {
     const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
-    const cookieToken = (req.cookies as Record<string, string>)?.[cookieName]
-    if (!cookieToken) return null
-    let payload: AuthTokenClaims
-    try {
-      payload = this.jwtService.verify<AuthTokenClaims>(cookieToken)
-    } catch {
-      return null
+    const candidates = orderSessionTokensNewestFirst(requestCookieValues(req, cookieName))
+    for (const cookieToken of candidates) {
+      let payload: AuthTokenClaims
+      try {
+        payload = this.jwtService.verify<AuthTokenClaims>(cookieToken)
+      } catch {
+        continue
+      }
+      if (!payload?.userId) continue
+      // A genuine but revoked session must not authorize a new client, any more than it can make
+      // an API request.
+      if (await this.oauth.isSessionTokenCurrent(payload)) return payload
     }
-    if (!payload?.userId) return null
-    // A genuine but revoked session must not authorize a new client, any more than it can make an
-    // API request.
-    return (await this.oauth.isSessionTokenCurrent(payload)) ? payload : null
+    return null
   }
 
   private buildMetadata(req: Request) {

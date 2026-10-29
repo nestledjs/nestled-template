@@ -1,0 +1,46 @@
+id: 2026-10-29-remove-use-emulation-status
+title: 'Delete the unused useEmulationStatus hook, which could never work'
+priority: normal
+area: web
+type: cleanup
+delivery: code-patch
+
+intent: >
+  libs/web/src/lib/hooks/use-emulation-status.ts and its `export * from './use-emulation-status'`
+  line in libs/web/src/lib/hooks/index.ts are deleted. Nothing in the template imports
+  `useEmulationStatus`. It read the session cookie from `document.cookie`, but the session cookie
+  is HttpOnly, so in the browser it always saw no token and reported "not emulating"; it also
+  logged token details to the console on every render. Emulation state comes from the API (the
+  `isEmulating` and `originalAdminId` fields JwtStrategy puts on the current user), which is what
+  the app already uses.
+
+  The template promotion mirror cannot propagate a deletion. Downstream projects must delete the
+  file and the export line themselves.
+
+why: >
+  Dead code that looks usable: a project reaching for it would get a hook that silently always
+  answers "not emulating", and console output describing the session token.
+
+affectedPaths:
+  - libs/web/src/lib/hooks/use-emulation-status.ts
+  - libs/web/src/lib/hooks/index.ts
+
+skipIf:
+  - >
+    libs/web/src/lib/hooks/use-emulation-status.ts does not exist in the project. Record
+    not-applicable.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx build web
+  - pnpm exec nx test web --skip-nx-cache
+
+agentHints:
+  - >
+    Before deleting, search apps/ and libs/ for `useEmulationStatus` and `use-emulation-status`.
+    If the project uses it, replace each use with the current user's `isEmulating` /
+    `originalAdminId` from the API (the same source the template's emulation banner reads), then
+    delete the hook. Never make the session cookie readable from JavaScript to keep it working.
+  - >
+    Delete by hand; promotion only adds and updates files, so the file stays in a project until
+    someone removes it.

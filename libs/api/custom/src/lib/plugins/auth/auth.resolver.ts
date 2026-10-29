@@ -20,6 +20,8 @@ import {
   GqlThrottlerGuard,
   Public,
   RequirePlatformPermission,
+  requestCookieValues,
+  selectSessionToken,
 } from '@nestled-template/api/utils'
 import type { NestContextType } from '@nestled-template/api/utils'
 import { UserToken } from './models'
@@ -173,7 +175,7 @@ export class AuthResolver {
 
     // Get session ID from JWT and invalidate it
     // Check both cookie and Authorization header
-    let token = context.req.cookies?.[this.service.getCookieName()]
+    let token = this.sessionCookieToken(context, { ignoreExpiration: true })
 
     // If no cookie token, check Authorization header
     if (!token) {
@@ -338,7 +340,7 @@ export class AuthResolver {
     @Args('input') input: ChangePasswordInput,
   ): Promise<boolean> {
     const sessionInfo = this.sessionService.extractSessionInfo(context.req)
-    const token = context.req.cookies?.[this.service.getCookieName()]
+    const token = this.sessionCookieToken(context)
     const currentSessionId = this.getSessionIdFromToken(token)
 
     return this.service.changePassword(user.id, input, sessionInfo, currentSessionId)
@@ -362,7 +364,7 @@ export class AuthResolver {
     )
 
     // Get token from cookie
-    const token = context.req.cookies?.[this.service.getCookieName()]
+    const token = this.sessionCookieToken(context)
     if (!token) {
       throw new Error('No authentication token found')
     }
@@ -485,7 +487,7 @@ export class AuthResolver {
     @CtxUser() user: User,
   ): Promise<UserSessionOutput[]> {
     // Get current session ID from JWT
-    const token = context.req.cookies?.[this.service.getCookieName()]
+    const token = this.sessionCookieToken(context)
     const currentSessionId = this.getSessionIdFromToken(token)
 
     return this.service.getUserSessions(user.id, currentSessionId)
@@ -509,7 +511,7 @@ export class AuthResolver {
     @CtxUser() user: User,
   ): Promise<number> {
     // Get current session ID from JWT to exclude it
-    const token = context.req.cookies?.[this.service.getCookieName()]
+    const token = this.sessionCookieToken(context)
     const currentSessionId = this.getSessionIdFromToken(token)
 
     return this.service.invalidateAllSessions(user.id, currentSessionId)
@@ -572,12 +574,25 @@ export class AuthResolver {
     if (context.req.headers?.authorization?.startsWith('Bearer ')) {
       return undefined
     }
-    const token = context.req.cookies?.[this.service.getCookieName()]
+    const token = this.sessionCookieToken(context)
     const claims = token ? this.service.verifyToken<SessionTokenPayload>(token) : null
     if (!claims?.sessionId || claims.isEmulating || claims.userId !== adminId) {
       return undefined
     }
     return claims.sessionId
+  }
+
+  /**
+   * The session cookie this request carries. With several same-name session cookies (host-only and
+   * parent-domain, say) the newest one whose signature verifies is used, the same choice JwtStrategy
+   * made when it authenticated the request; cookie-parser's `req.cookies` keeps only the first.
+   */
+  private sessionCookieToken(
+    context: NestContextType,
+    options: { ignoreExpiration?: boolean } = {},
+  ): string | undefined {
+    const values = requestCookieValues(context.req, this.service.getCookieName())
+    return selectSessionToken(values, token => this.service.verifyToken(token, options))
   }
 
   private getSessionIdFromToken(token?: string): string | undefined {
