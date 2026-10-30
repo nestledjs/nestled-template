@@ -70,7 +70,7 @@ import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
 import { getMainDefinition } from '@apollo/client/utilities'
 import { createClient } from 'graphql-ws'
 import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
-import { decodeCookieValue, pickNewestJwt } from '@nestled-template/shared/utils'
+import { decodeCookieValue, isFetchFailure, pickNewestJwt } from '@nestled-template/shared/utils'
 import { createCache } from './cache-config'
 
 export type ClientOptions = {
@@ -83,8 +83,12 @@ export type ClientOptions = {
 
 export const APOLLO_ACCESS_FORBIDDEN_EVENT = 'apollo-access-forbidden'
 
-// Global flag to track if we've already shown the "service-unavailable" message
-let hasShownServiceUnavailableMessage = false
+/**
+ * Dispatched on `window` when a request fails without reaching the server. It is a report, not a
+ * verdict: the web app confirms it with its own reachability probe before showing anything, and
+ * clears the screen again by itself once the API answers (apps/web/app/api-availability.ts).
+ */
+export const APOLLO_SERVICE_UNAVAILABLE_EVENT = 'apollo-service-unavailable'
 
 /**
  * Get the session cookie name from environment variable.
@@ -260,7 +264,7 @@ function handleNetworkError(networkError: Error, operation: ApolloLink.Operation
     return
   }
 
-  if (isNetworkConnectivityError(networkError) && shouldShowServiceUnavailableMessage()) {
+  if (isNetworkConnectivityError(networkError)) {
     dispatchServiceUnavailableEvent(networkError, operation)
   }
 }
@@ -274,57 +278,53 @@ function networkErrorStatus(networkError: Error): number | undefined {
   return enrichedError.statusCode ?? enrichedError.status ?? enrichedError.response?.status
 }
 
+const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+
+/**
+ * A request that never got an HTTP response. This used to match any `TypeError`, any
+ * `ApolloError`, and any message containing "fetch" or "event stream", so one unrelated failure
+ * was enough to report the API as down. An error that carries an HTTP status is an answered
+ * request and does not count, except the 502/503/504 a proxy returns while the API restarts; 401
+ * and 403 are handled before this is reached.
+ */
 function isNetworkConnectivityError(networkError: Error): boolean {
+  const status = networkErrorStatus(networkError)
+  if (typeof status === 'number' && status > 0) return GATEWAY_UNAVAILABLE_STATUSES.has(status)
+
   const errorMessage = networkError.message || ''
-  const errorName = networkError.name || ''
-  const constructorName = networkError.constructor?.name || ''
   const enrichedError = networkError as Error & {
     statusCode?: number
     code?: string
   }
 
   return (
-    errorName === 'NetworkError' ||
-    errorName === 'TypeError' ||
-    constructorName === 'ApolloError' ||
-    errorMessage.includes('fetch') ||
-    errorMessage.includes('NetworkError') ||
-    errorMessage.includes('Failed to fetch') ||
-    errorMessage.includes('event stream') ||
-    errorMessage.includes('Connection refused') ||
+    isFetchFailure(networkError) ||
+    networkError.name === 'NetworkError' ||
     errorMessage.includes('ECONNREFUSED') ||
     errorMessage.includes('ERR_CONNECTION_REFUSED') ||
     errorMessage.includes('net::ERR_') ||
-    errorMessage.includes('Redacted for security concerns') ||
     enrichedError.statusCode === 0 ||
     enrichedError.code === 'NETWORK_ERROR'
   )
-}
-
-function shouldShowServiceUnavailableMessage(): boolean {
-  return globalThis.window !== undefined && !hasShownServiceUnavailableMessage
 }
 
 function dispatchServiceUnavailableEvent(
   networkError: Error,
   operation: ApolloLink.Operation,
 ): void {
-  hasShownServiceUnavailableMessage = true
+  if (globalThis.window === undefined) return
 
-  const serviceUnavailableEvent = new CustomEvent('apollo-service-unavailable', {
-    detail: {
-      error: networkError,
-      operation: operation.operationName,
-      timestamp: new Date().toISOString(),
-    },
-  })
-
-  globalThis.window.dispatchEvent(serviceUnavailableEvent)
-
-  // Reset the flag after a delay to allow retry
-  setTimeout(() => {
-    hasShownServiceUnavailableMessage = false
-  }, 30000) // 30 seconds
+  // No once-per-30-seconds latch: the listener ignores reports while it is already checking, and a
+  // latch here only meant that an outage starting soon after a recovery went unreported.
+  globalThis.window.dispatchEvent(
+    new CustomEvent(APOLLO_SERVICE_UNAVAILABLE_EVENT, {
+      detail: {
+        error: networkError,
+        operation: operation.operationName,
+        timestamp: new Date().toISOString(),
+      },
+    }),
+  )
 }
 
 function getActiveOrganizationId(): string | null {

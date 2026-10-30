@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   handleViteCacheError,
   isAuthError,
+  isFetchFailure,
   isNetworkError,
   isViteCacheError,
 } from './error-detection'
@@ -26,6 +27,31 @@ describe('error detection utilities', () => {
         graphQLErrors: [{ message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } }],
       }),
     ).toBe(false)
+  })
+
+  it('recognises each browser fetch failure and nothing else', () => {
+    for (const message of [
+      'Failed to fetch',
+      'NetworkError when attempting to fetch resource.',
+      'Load failed',
+      'fetch failed',
+      'The network connection was lost.',
+      'The Internet connection appears to be offline.',
+    ]) {
+      expect(isFetchFailure(new TypeError(message))).toBe(true)
+      expect(isNetworkError(new TypeError(message))).toBe(true)
+    }
+    expect(isFetchFailure(new TypeError('Image load failed'))).toBe(false)
+    expect(isFetchFailure(new Error('Something else'))).toBe(false)
+    expect(isFetchFailure(null)).toBe(false)
+  })
+
+  it('does not treat an ordinary TypeError as a network failure', () => {
+    // These used to replace the whole app with the "API unavailable" screen.
+    expect(
+      isNetworkError(new TypeError("Cannot read properties of undefined (reading 'id')")),
+    ).toBe(false)
+    expect(isNetworkError(new TypeError('x.map is not a function'))).toBe(false)
   })
 
   describe('isAuthError', () => {
