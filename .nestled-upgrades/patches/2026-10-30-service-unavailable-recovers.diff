@@ -1,0 +1,1277 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-10-30-service-unavailable-recovers.yaml b/.nestled-updates/upgrade-notes/2026-10-30-service-unavailable-recovers.yaml
+new file mode 100644
+index 0000000..d1a1c3f
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-10-30-service-unavailable-recovers.yaml
+@@ -0,0 +1,129 @@
++id: 2026-10-30-service-unavailable-recovers
++title: 'The "API Unavailable" screen recovers by itself, ignores one-off failures, and says when you are offline'
++priority: high
++area: web
++type: correctness
++delivery: code-patch
++
++intent: >
++  On release 2026.10.x the web app's "API Unavailable" screen latched. In apps/web/app/app.tsx the
++  `runtimeServiceUnavailable` flag was set to true by the `apollo-service-unavailable` event, by the
++  global `error` handler and by `unhandledrejection` whenever `isNetworkError` matched, and nothing
++  ever set it back. Once set, `App` rendered `<ServiceUnavailable>` in place of the whole app until
++  the user reloaded. The triggers were broad: Apollo's `isNetworkConnectivityError` in
++  libs/shared/apollo/src/lib/apollo.ts matched any `TypeError`, any `ApolloError`, and any message
++  containing "fetch" or "event stream", and the shared `isNetworkError` in
++  libs/shared/utils/src/lib/error-detection.ts matched any `TypeError`, so an ordinary runtime bug
++  ("Cannot read properties of undefined") reaching the global handler also took the app down. The
++  root route's `ErrorBoundary` showed the package's static "Service Unavailable" screen for a
++  network error, with the same manual-refresh-only behaviour, and `MeQueryErrorBoundary` never
++  reset, so one failed `Me` preload rendered the session as signed out until a full page load.
++
++  The fix, all in the app (no package change):
++
++  - New apps/web/app/api-availability.ts: `probeApi()` GETs the API's public liveness route
++    (`${VITE_API_URL}/api/uptime`, no credentials, no cache, 5 s timeout) and treats any HTTP
++    response as reachable except a proxy's 502/503/504. `useApiAvailability()` owns the screen:
++    a reported connectivity error is confirmed with three probes over about three seconds before
++    the screen shows; while it shows, the API is probed with backoff (2 s doubling to a 30 s cap),
++    at once on the browser `online` event, on `visibilitychange` to visible and on window `focus`;
++    the first probe that gets an answer clears the screen. It also tracks `navigator.onLine` and
++    the `offline`/`online` events. `reloadForRecovery()` reloads at most once a minute per tab.
++  - New apps/web/app/api-unavailable.tsx: `ApiUnavailableScreen` renders the published
++    `ServiceUnavailable` with "You're offline / We'll reconnect automatically when your connection
++    is back." when the browser is offline and "Can't reach the server / We can't reach our servers
++    right now. Retrying automatically…" otherwise; its button probes at once instead of reloading.
++    `RecoveringApiUnavailable` is the same screen for an error boundary, and reloads (rate-limited)
++    once the API answers, since a boundary cannot re-render the route that threw.
++  - apps/web/app/app.tsx: the event and the two global handlers now call
++    `reportConnectivityError()` instead of setting a flag. A root-loader `serviceUnavailable` puts
++    the screen up at once; on recovery the app calls `useRevalidator().revalidate()` rather than
++    reloading, and if the loader still reports an outage the screen stays and probing continues
++    at a widening interval (no reload loop when only the server cannot reach the API). A runtime
++    outage clears by remounting the app tree, whose queries refetch. `MeQueryErrorBoundary` takes
++    a `resetKey` (the Me query ref) and clears its error when the root loader produces a new one.
++  - apps/web/app/root.tsx: the route `ErrorBoundary` renders `RecoveringApiUnavailable` for a
++    network error (no route status) instead of falling through to the package's static screen.
++  - libs/shared/utils/src/lib/error-detection.ts: new exported `isFetchFailure()` recognises the
++    browsers' and Node's fetch-failure messages ("Failed to fetch", Firefox's "NetworkError when
++    attempting to fetch resource.", Safari's "Load failed" and connection-lost messages, Node's
++    "fetch failed"). `isNetworkError` counts a `TypeError` only when it is one of those.
++  - libs/shared/apollo/src/lib/apollo.ts: `isNetworkConnectivityError` uses `isFetchFailure`
++    and the explicit connection-refused codes; an error carrying an HTTP status counts only for
++    502/503/504. The once-per-30-seconds `hasShownServiceUnavailableMessage` latch is removed
++    (the listener de-duplicates) and the event name is exported as
++    `APOLLO_SERVICE_UNAVAILABLE_EVENT`. 401 and 403 handling is unchanged.
++
++  Tests: apps/web/tests/api-availability.spec.tsx (one failed request does not show the screen,
++  a confirmed outage does, the screen clears by itself, `online` and `visibilitychange` probe at
++  once, offline copy, an ordinary TypeError is ignored, forbidden handling unchanged, loader
++  outage revalidates and backs off, error-boundary recovery, reload rate limit, probe status
++  handling), apollo.spec.ts and error-detection.spec.ts.
++
++why: >
++  A laptop that slept, a Wi-Fi drop, or a few seconds of API redeploy replaced the whole app with
++  "API Unavailable" until the user noticed and refreshed by hand, and any unrelated TypeError could
++  do the same. Users read it as the site being down. The screen now appears only for an outage
++  that lasts, tells offline apart from a server problem, and goes away on its own.
++
++affectedPaths:
++  - apps/web/app/api-availability.ts
++  - apps/web/app/api-unavailable.tsx
++  - apps/web/app/app.tsx
++  - apps/web/app/root.tsx
++  - libs/shared/utils/src/lib/error-detection.ts
++  - libs/shared/apollo/src/lib/apollo.ts
++  - apps/web/tests/api-availability.spec.tsx
++  - libs/shared/apollo/src/lib/apollo.spec.ts
++  - libs/shared/utils/src/lib/error-detection.spec.ts
++
++skipIf:
++  - The project has no web app, or its web app never renders a service-unavailable screen.
++
++verification:
++  - pnpm exec nx test web --skip-nx-cache
++  - pnpm exec nx test apollo --skip-nx-cache
++  - pnpm exec nx test utils --skip-nx-cache
++  - pnpm typecheck
++  - pnpm exec nx build web
++  - pnpm run nestled-doctor
++  - >
++    Manual: run the web app against a local API, stop the API, trigger a query (navigate or
++    refocus the tab) and confirm the screen appears after about three seconds; start the API again
++    and confirm the screen clears within 30 seconds without a refresh.
++
++agentHints:
++  - >
++    A project that customised app.tsx (extra providers, its own error states, a different layout
++    around the outlet) keeps its customisations. Adopt the shape: a failed request calls
++    reportConnectivityError(), the screen renders only while the hook says unavailable, and nothing
++    sets an "unavailable" flag that is never cleared. Search the web app for any other
++    useState(true)-style "service unavailable" or "offline" flag and route it through the same hook.
++  - >
++    A project with its own unavailable copy may keep it, but should keep the two cases apart:
++    offline (navigator.onLine false or the offline event) versus the server not answering. Keep the
++    copy short; the screen is shown to end users.
++  - >
++    A project whose API serves the liveness route somewhere other than /api/uptime (a different
++    global prefix, or a removed controller) should point apiProbeUrl() at a public, unauthenticated
++    GET on the API origin. Any HTTP answer counts as reachable, so a 404 still works, but the route
++    must be on the API origin and covered by its CORS policy; check it with curl -i -H "Origin:
++    <web origin>" <url> and look for Access-Control-Allow-Origin.
++  - >
++    A project that customised isNetworkError, isNetworkConnectivityError or the Apollo error link
++    should keep its extra cases only if they are real transport failures. Remove any bare "name ===
++    'TypeError'" or "message includes 'fetch'" test; that is what let unrelated bugs show the
++    screen. Keep 401 handling (logout redirect) and 403 handling (access-denied event) exactly as
++    the project has them.
++  - >
++    A project with its own polling (pollInterval, startPolling), GraphQL subscriptions, SSE or
++    websocket reconnects will see more transient failures after a sleep or a redeploy. That is
++    fine now that each report is confirmed by probing, but check that those paths report through
++    the Apollo error link or reportConnectivityError rather than setting their own latched error
++    state, and that a subscription reconnect does not itself render a full-page error.
++  - >
++    A project whose route-level ErrorBoundary is customised should render RecoveringApiUnavailable
++    for a network error (isNetworkError, no route status) and leave 401 and 403 branches before it.
++  - >
++    If the project imports the 'apollo-service-unavailable' string anywhere, switch it to the
++    exported APOLLO_SERVICE_UNAVAILABLE_EVENT; the value is unchanged.
+diff --git a/apps/web/app/api-availability.ts b/apps/web/app/api-availability.ts
+new file mode 100644
+index 0000000..f20ec24
+--- /dev/null
++++ b/apps/web/app/api-availability.ts
+@@ -0,0 +1,248 @@
++import { useCallback, useEffect, useRef, useState } from 'react'
++
++/**
++ * Whether the browser can reach the API, and the "API unavailable" screen's lifecycle.
++ *
++ * A failed request is only a report. Before the screen goes up the API is probed a few times over
++ * a few seconds, so one dropped request, or a request made the instant a laptop wakes and before
++ * Wi-Fi reconnects, does not take the app down. While the screen is up the API is probed with
++ * backoff, and at once when the browser comes back online or the tab becomes visible again; the
++ * first probe that gets an answer clears the screen without the user doing anything.
++ */
++
++/** Probe delays before the screen goes up: one now, then two more over about three seconds. */
++export const CONFIRM_DELAYS_MS: readonly number[] = [0, 1500, 1500]
++const RETRY_BASE_MS = 2000
++const RETRY_CAP_MS = 30000
++const PROBE_TIMEOUT_MS = 5000
++
++/** Proxies return these while the API process restarts; anything else means the API answered. */
++const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
++
++export function retryDelayMs(attempt: number): number {
++  return Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_CAP_MS)
++}
++
++/**
++ * The API's public liveness route (ApiCoreFeatureController's `GET /api/uptime`). It needs no
++ * session and the API's CORS policy covers it like every other route.
++ */
++export function apiProbeUrl(): string {
++  const base = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/+$/, '')
++  return `${base}/api/uptime`
++}
++
++/**
++ * True when the API answered at all. Any HTTP response counts, 4xx included (a project that
++ * removed the uptime route still gets a 404 from a running API), except a proxy's 502/503/504. A
++ * rejected fetch (offline, DNS, refused, CORS-less proxy error page) or a timeout is "unreachable".
++ */
++export async function probeApi(
++  url: string = apiProbeUrl(),
++  timeoutMs: number = PROBE_TIMEOUT_MS,
++): Promise<boolean> {
++  const controller = typeof AbortController === 'function' ? new AbortController() : undefined
++  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined
++  try {
++    const response = await fetch(url, {
++      method: 'GET',
++      cache: 'no-store',
++      credentials: 'omit',
++      signal: controller?.signal,
++    })
++    return !GATEWAY_UNAVAILABLE_STATUSES.has(response.status)
++  } catch {
++    return false
++  } finally {
++    if (timer !== undefined) clearTimeout(timer)
++  }
++}
++
++const RECOVERY_RELOAD_KEY = 'nestled:api-recovery-reload'
++const RECOVERY_RELOAD_WINDOW_MS = 60000
++
++/**
++ * Reload the page because the API is reachable again, at most once a minute per tab. Without the
++ * limit, a page that fails again straight after the reload (the server cannot reach the API even
++ * though the browser can, or a misclassified error) would reload every few seconds. Returns false
++ * when the reload was held back.
++ */
++export function reloadForRecovery(now: number = Date.now()): boolean {
++  try {
++    const last = Number(globalThis.sessionStorage?.getItem(RECOVERY_RELOAD_KEY))
++    if (last && now - last < RECOVERY_RELOAD_WINDOW_MS) return false
++    globalThis.sessionStorage?.setItem(RECOVERY_RELOAD_KEY, String(now))
++  } catch {
++    // Storage blocked: reload anyway rather than leave the screen up.
++  }
++  globalThis.location.reload()
++  return true
++}
++
++export function browserIsOffline(): boolean {
++  return typeof navigator !== 'undefined' && navigator.onLine === false
++}
++
++type Phase = 'available' | 'confirming' | 'unavailable'
++
++export interface ApiAvailabilityOptions {
++  /** Called once each time the API answers again after the screen was up. */
++  onRecover?: () => void
++  /** Replaces the network probe (tests). */
++  probe?: () => Promise<boolean>
++  /** Mount with the screen already up, e.g. in an error boundary that caught a network error. */
++  initiallyUnavailable?: boolean
++}
++
++export interface ApiAvailability {
++  /** The screen should be shown. False while a report is still being confirmed. */
++  unavailable: boolean
++  /** The browser says it has no network connection. */
++  offline: boolean
++  /** A request failed without reaching the API: confirm it, and show the screen if it holds. */
++  reportConnectivityError: () => void
++  /** Show the screen without confirming (the server already found the API unreachable). */
++  markUnavailable: () => void
++  /** Probe now, e.g. from the screen's button. */
++  retryNow: () => void
++}
++
++export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAvailability {
++  const [phase, setPhaseState] = useState<Phase>(
++    options.initiallyUnavailable ? 'unavailable' : 'available',
++  )
++  const [offline, setOffline] = useState(false)
++
++  const phaseRef = useRef<Phase>(phase)
++  const confirmAttemptRef = useRef(0)
++  const retryAttemptRef = useRef(0)
++  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
++  const probingRef = useRef(false)
++  const mountedRef = useRef(true)
++  const optionsRef = useRef(options)
++  optionsRef.current = options
++
++  const setPhase = useCallback((next: Phase) => {
++    phaseRef.current = next
++    setPhaseState(next)
++  }, [])
++
++  const clearTimer = useCallback(() => {
++    if (timerRef.current !== undefined) {
++      clearTimeout(timerRef.current)
++      timerRef.current = undefined
++    }
++  }, [])
++
++  // runProbe and schedule call each other; the ref breaks the cycle without a stale closure.
++  const runProbeRef = useRef<() => void>(() => undefined)
++
++  const schedule = useCallback(
++    (delayMs: number) => {
++      clearTimer()
++      timerRef.current = setTimeout(() => {
++        timerRef.current = undefined
++        runProbeRef.current()
++      }, delayMs)
++    },
++    [clearTimer],
++  )
++
++  const scheduleRetry = useCallback(() => {
++    schedule(retryDelayMs(retryAttemptRef.current))
++    retryAttemptRef.current += 1
++  }, [schedule])
++
++  const runProbe = useCallback(async () => {
++    if (probingRef.current || phaseRef.current === 'available') return
++    probingRef.current = true
++    let reachable = false
++    try {
++      reachable = await (optionsRef.current.probe ?? probeApi)()
++    } finally {
++      probingRef.current = false
++    }
++    if (!mountedRef.current) return
++
++    const current = phaseRef.current
++    if (reachable) {
++      clearTimer()
++      setPhase('available')
++      if (current === 'unavailable') optionsRef.current.onRecover?.()
++      return
++    }
++
++    if (current === 'confirming') {
++      confirmAttemptRef.current += 1
++      if (confirmAttemptRef.current < CONFIRM_DELAYS_MS.length) {
++        schedule(CONFIRM_DELAYS_MS[confirmAttemptRef.current])
++        return
++      }
++      setPhase('unavailable')
++    }
++    if (phaseRef.current === 'unavailable') scheduleRetry()
++  }, [clearTimer, schedule, scheduleRetry, setPhase])
++
++  runProbeRef.current = () => {
++    void runProbe()
++  }
++
++  const reportConnectivityError = useCallback(() => {
++    if (phaseRef.current !== 'available') return
++    confirmAttemptRef.current = 0
++    retryAttemptRef.current = 0
++    setPhase('confirming')
++    schedule(CONFIRM_DELAYS_MS[0])
++  }, [schedule, setPhase])
++
++  // Keeps the backoff where it was, so a server that keeps saying "unavailable" after the browser
++  // could reach the API is retried at a widening interval rather than every two seconds.
++  const markUnavailable = useCallback(() => {
++    if (phaseRef.current === 'unavailable') return
++    setPhase('unavailable')
++    scheduleRetry()
++  }, [scheduleRetry, setPhase])
++
++  const retryNow = useCallback(() => {
++    if (phaseRef.current === 'available') return
++    retryAttemptRef.current = 0
++    clearTimer()
++    runProbeRef.current()
++  }, [clearTimer])
++
++  useEffect(() => {
++    mountedRef.current = true
++    setOffline(browserIsOffline())
++    if (phaseRef.current === 'unavailable' && timerRef.current === undefined) scheduleRetry()
++
++    const handleOnline = () => {
++      setOffline(false)
++      retryNow()
++    }
++    const handleOffline = () => setOffline(true)
++    const handleVisible = () => {
++      if (typeof document === 'undefined' || document.visibilityState === 'visible') retryNow()
++    }
++
++    globalThis.addEventListener('online', handleOnline)
++    globalThis.addEventListener('offline', handleOffline)
++    globalThis.addEventListener('focus', handleVisible)
++    document.addEventListener('visibilitychange', handleVisible)
++    return () => {
++      mountedRef.current = false
++      clearTimer()
++      globalThis.removeEventListener('online', handleOnline)
++      globalThis.removeEventListener('offline', handleOffline)
++      globalThis.removeEventListener('focus', handleVisible)
++      document.removeEventListener('visibilitychange', handleVisible)
++    }
++  }, [clearTimer, retryNow, scheduleRetry])
++
++  return {
++    unavailable: phase === 'unavailable',
++    offline,
++    reportConnectivityError,
++    markUnavailable,
++    retryNow,
++  }
++}
+diff --git a/apps/web/app/api-unavailable.tsx b/apps/web/app/api-unavailable.tsx
+new file mode 100644
+index 0000000..3d88414
+--- /dev/null
++++ b/apps/web/app/api-unavailable.tsx
+@@ -0,0 +1,51 @@
++import { useState } from 'react'
++import { ServiceUnavailable } from '@nestledjs/shared-components'
++import {
++  reloadForRecovery,
++  useApiAvailability,
++  type ApiAvailabilityOptions,
++} from './api-availability'
++
++export const OFFLINE_TITLE = 'You’re offline'
++export const OFFLINE_MESSAGE = 'We’ll reconnect automatically when your connection is back.'
++export const SERVER_DOWN_TITLE = 'Can’t reach the server'
++export const SERVER_DOWN_MESSAGE = 'We can’t reach our servers right now. Retrying automatically…'
++
++/**
++ * The "API unavailable" screen. It says whether the browser is offline or the servers are, and its
++ * button checks the API at once instead of reloading a page that may not load.
++ */
++export function ApiUnavailableScreen({
++  offline,
++  onRetry,
++}: Readonly<{ offline: boolean; onRetry: () => void }>) {
++  return (
++    <ServiceUnavailable
++      title={offline ? OFFLINE_TITLE : SERVER_DOWN_TITLE}
++      message={offline ? OFFLINE_MESSAGE : SERVER_DOWN_MESSAGE}
++      showRefreshButton={true}
++      onRefresh={onRetry}
++    />
++  )
++}
++
++/**
++ * The screen for a route error boundary that caught a network error. A boundary cannot re-render
++ * the route that threw, so recovery reloads the page once the API answers (at most once a minute;
++ * after that the button reloads by hand).
++ */
++export function RecoveringApiUnavailable({
++  probe,
++  reload = reloadForRecovery,
++}: Readonly<Pick<ApiAvailabilityOptions, 'probe'> & { reload?: () => boolean }>) {
++  const [reloadHeldBack, setReloadHeldBack] = useState(false)
++  const { unavailable, offline, retryNow } = useApiAvailability({
++    initiallyUnavailable: true,
++    probe,
++    onRecover: () => {
++      if (!reload()) setReloadHeldBack(true)
++    },
++  })
++  const onRetry = unavailable || !reloadHeldBack ? retryNow : () => globalThis.location.reload()
++  return <ApiUnavailableScreen offline={offline} onRetry={onRetry} />
++}
+diff --git a/apps/web/app/app.tsx b/apps/web/app/app.tsx
+index da7ece3..d8c4ace 100644
+--- a/apps/web/app/app.tsx
++++ b/apps/web/app/app.tsx
+@@ -1,15 +1,22 @@
+-import { Outlet, useLoaderData, useLocation } from 'react-router'
++import { Outlet, useLoaderData, useLocation, useRevalidator } from 'react-router'
+ import { GlobalContextProvider } from '@nestled-template/web'
+ import { useReadQuery, type QueryRef } from '@apollo/client/react'
+ import type { MeQuery } from '@nestled-template/shared/sdk'
+-import { Component, type ReactNode, useEffect, useState } from 'react'
++import { Component, type ReactNode, useEffect, useRef, useState } from 'react'
+ import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils'
+-import { ServiceUnavailable, ViteCacheError } from '@nestledjs/shared-components'
+-import { APOLLO_ACCESS_FORBIDDEN_EVENT } from '@nestled-template/shared/apollo'
++import { ViteCacheError } from '@nestledjs/shared-components'
++import {
++  APOLLO_ACCESS_FORBIDDEN_EVENT,
++  APOLLO_SERVICE_UNAVAILABLE_EVENT,
++} from '@nestled-template/shared/apollo'
+ import { AccessDenied } from './access-denied'
++import { useApiAvailability } from './api-availability'
++import { ApiUnavailableScreen } from './api-unavailable'
+ 
+-class MeQueryErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+-  constructor(props: { children: ReactNode }) {
++type MeQueryErrorBoundaryProps = { children: ReactNode; resetKey?: unknown }
++
++class MeQueryErrorBoundary extends Component<MeQueryErrorBoundaryProps, { hasError: boolean }> {
++  constructor(props: MeQueryErrorBoundaryProps) {
+     super(props)
+     this.state = { hasError: false }
+   }
+@@ -18,6 +25,14 @@ class MeQueryErrorBoundary extends Component<{ children: ReactNode }, { hasError
+     return { hasError: true }
+   }
+ 
++  // A new Me query (the root loader ran again) gets a fresh chance. Without this, one failed Me
++  // preload left the whole session rendering as signed out until a full page load.
++  componentDidUpdate(prevProps: MeQueryErrorBoundaryProps) {
++    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
++      this.setState({ hasError: false })
++    }
++  }
++
+   render() {
+     if (this.state.hasError) {
+       return (
+@@ -42,15 +57,33 @@ export function App() {
+     serviceUnavailable?: boolean
+   }
+   const { meQueryRef, serviceUnavailable: loaderServiceUnavailable } = data
+-  const [runtimeServiceUnavailable, setRuntimeServiceUnavailable] = useState(false)
++  const revalidator = useRevalidator()
+   const [viteCacheError, setViteCacheError] = useState(false)
+   const [accessForbidden, setAccessForbidden] = useState(false)
+ 
+-  // Service unavailable can come from either the root loader or runtime Apollo errors
+-  const serviceUnavailable = loaderServiceUnavailable || runtimeServiceUnavailable
++  // The root loader says "unavailable" when the server could not reach the API. Once the browser
++  // can, revalidate rather than reload: the loader runs again without a full page load, and if the
++  // server still cannot reach the API the effect below puts the screen back and the probe carries
++  // on at a widening interval, so a server-only failure cannot turn into a reload loop.
++  const loaderUnavailableRef = useRef(loaderServiceUnavailable)
++  loaderUnavailableRef.current = loaderServiceUnavailable
++  const api = useApiAvailability({
++    onRecover: () => {
++      if (loaderUnavailableRef.current) void revalidator.revalidate()
++    },
++  })
++  const { reportConnectivityError, markUnavailable } = api
+ 
+   useEffect(() => {
+-    const handleServiceUnavailable = () => setRuntimeServiceUnavailable(true)
++    if (loaderServiceUnavailable) markUnavailable()
++  }, [data, loaderServiceUnavailable, markUnavailable])
++
++  // A runtime outage clears as soon as the probe gets an answer; the app tree mounts again and its
++  // queries refetch. A loader outage clears when the revalidated loader stops reporting one.
++  const serviceUnavailable = loaderServiceUnavailable || api.unavailable
++
++  useEffect(() => {
++    const handleServiceUnavailable = () => reportConnectivityError()
+     const handleAccessForbidden = () => setAccessForbidden(true)
+ 
+     const handleGlobalError = (event: ErrorEvent) => {
+@@ -65,8 +98,7 @@ export function App() {
+         }
+ 
+         if (isNetworkError(error)) {
+-          // noisy during normal usage
+-          setRuntimeServiceUnavailable(true)
++          reportConnectivityError()
+         }
+       }
+     }
+@@ -84,8 +116,7 @@ export function App() {
+         }
+ 
+         if (isNetworkError(reason)) {
+-          // noisy during normal usage
+-          setRuntimeServiceUnavailable(true)
++          reportConnectivityError()
+           event.preventDefault() // Prevent default error handling
+         }
+       }
+@@ -94,7 +125,7 @@ export function App() {
+     // noisy during normal usage
+ 
+     // Listen for Apollo service unavailable events
+-    globalThis.addEventListener('apollo-service-unavailable', handleServiceUnavailable)
++    globalThis.addEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
+     globalThis.addEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
+ 
+     // Fallback: Listen for global errors
+@@ -103,12 +134,12 @@ export function App() {
+ 
+     return () => {
+       // noisy during normal usage
+-      globalThis.removeEventListener('apollo-service-unavailable', handleServiceUnavailable)
++      globalThis.removeEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
+       globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
+       globalThis.removeEventListener('error', handleGlobalError)
+       globalThis.removeEventListener('unhandledrejection', handleUnhandledRejection)
+     }
+-  }, [])
++  }, [reportConnectivityError])
+ 
+   // Keyed on the whole navigation, not the pathname. A route that changes only its query string
+   // -- switching the active organization, say -- is a new request that may well be permitted, and
+@@ -123,14 +154,9 @@ export function App() {
+     return <ViteCacheError autoRefresh={true} autoRefreshDelay={3000} />
+   }
+ 
+-  // Show service unavailable UI if Apollo detected network issues
++  // Shown only for a confirmed outage, and cleared by itself when the API answers again
+   if (serviceUnavailable) {
+-    return (
+-      <ServiceUnavailable
+-        title="API Unavailable"
+-        message="Our servers are currently unreachable. Please check your internet connection or refresh the page to try again."
+-      />
+-    )
++    return <ApiUnavailableScreen offline={api.offline} onRetry={api.retryNow} />
+   }
+ 
+   if (accessForbidden) {
+@@ -147,7 +173,7 @@ export function App() {
+   }
+   // Only call useReadQuery if meQueryRef is present
+   return (
+-    <MeQueryErrorBoundary>
++    <MeQueryErrorBoundary resetKey={meQueryRef}>
+       <AppWithUser meQueryRef={meQueryRef} />
+     </MeQueryErrorBoundary>
+   )
+diff --git a/apps/web/app/root.tsx b/apps/web/app/root.tsx
+index 364a6a2..a775a82 100644
+--- a/apps/web/app/root.tsx
++++ b/apps/web/app/root.tsx
+@@ -23,6 +23,7 @@ import {
+ import { GTMNoScript, GTMScript } from './gtm'
+ import App from './app'
+ import { AccessDenied } from './access-denied'
++import { RecoveringApiUnavailable } from './api-unavailable'
+ 
+ export const meta: MetaFunction = () => [
+   {
+@@ -226,6 +227,12 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
+     return <AccessDenied />
+   }
+ 
++  // The package boundary shows a static "Service Unavailable" for network errors that only a
++  // manual refresh clears. This one probes the API and reloads by itself once it answers.
++  if (routeStatus === undefined && isNetworkError(error)) {
++    return <RecoveringApiUnavailable />
++  }
++
+   // Layout always wraps this component and provides <html>/<head>/<body> —
+   // do not render document-level tags here.
+   return <AppErrorBoundary error={normalizedError} autoRefresh={true} autoRefreshDelay={3000} />
+diff --git a/apps/web/tests/api-availability.spec.tsx b/apps/web/tests/api-availability.spec.tsx
+new file mode 100644
+index 0000000..d02b9b5
+--- /dev/null
++++ b/apps/web/tests/api-availability.spec.tsx
+@@ -0,0 +1,325 @@
++import { act, fireEvent, render, screen } from '@testing-library/react'
++import { createMemoryRouter, RouterProvider } from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import {
++  APOLLO_ACCESS_FORBIDDEN_EVENT,
++  APOLLO_SERVICE_UNAVAILABLE_EVENT,
++} from '@nestled-template/shared/apollo'
++import { App } from '../app/app'
++import { ErrorBoundary } from '../app/root'
++import {
++  CONFIRM_DELAYS_MS,
++  probeApi,
++  reloadForRecovery,
++  retryDelayMs,
++} from '../app/api-availability'
++import { RecoveringApiUnavailable } from '../app/api-unavailable'
++
++const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
++const SERVER_DOWN = 'Can’t reach the server'
++const OFFLINE = 'You’re offline'
++
++const fetchMock = vi.fn()
++
++function apiUp() {
++  fetchMock.mockResolvedValue(new Response('12.3', { status: 200 }))
++}
++
++function apiDown() {
++  fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
++}
++
++async function advance(ms: number) {
++  await act(async () => {
++    await vi.advanceTimersByTimeAsync(ms)
++  })
++}
++
++async function renderApp(loader: () => unknown = () => ({})) {
++  const router = createMemoryRouter(
++    [
++      {
++        path: '/',
++        loader,
++        element: <App />,
++        children: [{ index: true, element: <p>Protected page</p> }],
++      },
++    ],
++    { initialEntries: ['/'] },
++  )
++  await act(async () => {
++    render(<RouterProvider router={router} />)
++  })
++  return router
++}
++
++async function reportOutage() {
++  await act(async () => {
++    globalThis.dispatchEvent(new CustomEvent(APOLLO_SERVICE_UNAVAILABLE_EVENT))
++  })
++}
++
++describe('API unavailable screen', () => {
++  beforeEach(() => {
++    vi.useFakeTimers()
++    fetchMock.mockReset()
++    vi.stubGlobal('fetch', fetchMock)
++  })
++
++  afterEach(() => {
++    vi.useRealTimers()
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    sessionStorage.clear()
++  })
++
++  it('does not take the app down for one failed request', async () => {
++    apiUp()
++    await renderApp()
++
++    await reportOutage()
++    expect(screen.queryByText(SERVER_DOWN)).not.toBeInTheDocument()
++    await advance(CONFIRM_WINDOW_MS + 1000)
++
++    expect(fetchMock).toHaveBeenCalledTimes(1)
++    expect(fetchMock.mock.calls[0][0]).toMatch(/\/api\/uptime$/)
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++    expect(screen.queryByText(SERVER_DOWN)).not.toBeInTheDocument()
++  })
++
++  it('shows the screen only once the outage is confirmed', async () => {
++    apiDown()
++    await renderApp()
++
++    await reportOutage()
++    await advance(CONFIRM_WINDOW_MS - 1)
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++
++    await advance(1)
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++    expect(
++      screen.getByText('We can’t reach our servers right now. Retrying automatically…'),
++    ).toBeInTheDocument()
++    expect(fetchMock).toHaveBeenCalledTimes(CONFIRM_DELAYS_MS.length)
++  })
++
++  it('clears the screen by itself when the API answers again', async () => {
++    apiDown()
++    await renderApp()
++    await reportOutage()
++    await advance(CONFIRM_WINDOW_MS)
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++
++    // Still down at the first retry; the second backs off further.
++    await advance(retryDelayMs(0))
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++
++    apiUp()
++    await advance(retryDelayMs(1))
++    expect(screen.queryByText(SERVER_DOWN)).not.toBeInTheDocument()
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++  })
++
++  it('probes at once when the browser comes back online or the tab is shown', async () => {
++    apiDown()
++    await renderApp()
++    await reportOutage()
++    await advance(CONFIRM_WINDOW_MS)
++    const callsBefore = fetchMock.mock.calls.length
++
++    await act(async () => {
++      document.dispatchEvent(new Event('visibilitychange'))
++    })
++    expect(fetchMock).toHaveBeenCalledTimes(callsBefore + 1)
++
++    apiUp()
++    await act(async () => {
++      globalThis.dispatchEvent(new Event('online'))
++    })
++    expect(fetchMock).toHaveBeenCalledTimes(callsBefore + 2)
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++  })
++
++  it('says the browser is offline when it is', async () => {
++    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
++    apiDown()
++    await renderApp()
++    await reportOutage()
++    await advance(CONFIRM_WINDOW_MS)
++
++    expect(screen.getByRole('heading', { name: OFFLINE })).toBeInTheDocument()
++    expect(
++      screen.getByText('We’ll reconnect automatically when your connection is back.'),
++    ).toBeInTheDocument()
++  })
++
++  it('switches to the offline copy when the offline event fires', async () => {
++    apiDown()
++    await renderApp()
++    await reportOutage()
++    await advance(CONFIRM_WINDOW_MS)
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++
++    await act(async () => {
++      globalThis.dispatchEvent(new Event('offline'))
++    })
++    expect(screen.getByRole('heading', { name: OFFLINE })).toBeInTheDocument()
++  })
++
++  it('checks again at once from the button', async () => {
++    apiDown()
++    await renderApp()
++    await reportOutage()
++    await advance(CONFIRM_WINDOW_MS)
++
++    apiUp()
++    await act(async () => {
++      fireEvent.click(screen.getByRole('button'))
++    })
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++  })
++
++  it('ignores an ordinary TypeError that reaches the global handler', async () => {
++    apiDown()
++    await renderApp()
++
++    await act(async () => {
++      globalThis.dispatchEvent(
++        new ErrorEvent('error', {
++          error: new TypeError("Cannot read properties of undefined (reading 'id')"),
++        }),
++      )
++    })
++    await advance(CONFIRM_WINDOW_MS + 1000)
++
++    expect(fetchMock).not.toHaveBeenCalled()
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++  })
++
++  it('leaves forbidden handling as it was', async () => {
++    apiUp()
++    await renderApp()
++
++    await act(async () => {
++      globalThis.dispatchEvent(new CustomEvent(APOLLO_ACCESS_FORBIDDEN_EVENT))
++    })
++
++    expect(
++      screen.getByRole('heading', { name: 'You don’t have permission to view this page' }),
++    ).toBeInTheDocument()
++    expect(fetchMock).not.toHaveBeenCalled()
++  })
++
++  it('revalidates the loader that reported the outage once the API answers', async () => {
++    apiUp()
++    let loaderCalls = 0
++    await renderApp(() => {
++      loaderCalls += 1
++      return loaderCalls === 1 ? { serviceUnavailable: true } : {}
++    })
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++
++    await advance(retryDelayMs(0))
++
++    expect(loaderCalls).toBe(2)
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++  })
++
++  it('keeps retrying at a widening interval while the loader still reports an outage', async () => {
++    apiUp()
++    let loaderCalls = 0
++    await renderApp(() => {
++      loaderCalls += 1
++      return { serviceUnavailable: true }
++    })
++
++    await advance(retryDelayMs(0))
++    expect(loaderCalls).toBe(2)
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++
++    await advance(retryDelayMs(1) - 1)
++    expect(loaderCalls).toBe(2)
++    await advance(1)
++    expect(loaderCalls).toBe(3)
++  })
++})
++
++describe('root error boundary for a network error', () => {
++  beforeEach(() => {
++    vi.useFakeTimers()
++  })
++
++  afterEach(() => {
++    vi.useRealTimers()
++    vi.unstubAllGlobals()
++    sessionStorage.clear()
++  })
++
++  it('renders the recovering screen instead of a static one', () => {
++    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
++    render(<ErrorBoundary error={new TypeError('Failed to fetch')} />)
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++  })
++
++  it('reloads once the API answers, but not in a loop', async () => {
++    const reload = vi.fn().mockReturnValue(true)
++    const probe = vi.fn().mockResolvedValue(true)
++    render(<RecoveringApiUnavailable probe={probe} reload={reload} />)
++
++    await advance(retryDelayMs(0))
++    expect(probe).toHaveBeenCalledTimes(1)
++    expect(reload).toHaveBeenCalledTimes(1)
++  })
++})
++
++describe('reloadForRecovery', () => {
++  afterEach(() => {
++    vi.unstubAllGlobals()
++    sessionStorage.clear()
++  })
++
++  it('reloads at most once a minute', () => {
++    const reload = vi.fn()
++    vi.stubGlobal('location', { reload })
++
++    expect(reloadForRecovery(1_000_000)).toBe(true)
++    expect(reloadForRecovery(1_030_000)).toBe(false)
++    expect(reload).toHaveBeenCalledTimes(1)
++    expect(reloadForRecovery(1_061_000)).toBe(true)
++    expect(reload).toHaveBeenCalledTimes(2)
++  })
++})
++
++describe('probeApi', () => {
++  afterEach(() => {
++    vi.unstubAllGlobals()
++  })
++
++  it.each([
++    [200, true],
++    [404, true],
++    [401, true],
++    [500, true],
++    [502, false],
++    [503, false],
++    [504, false],
++  ])('treats HTTP %i as reachable=%s', async (status, reachable) => {
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status })))
++    await expect(probeApi('https://api.example.com/api/uptime')).resolves.toBe(reachable)
++  })
++
++  it('treats a rejected fetch as unreachable', async () => {
++    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Load failed')))
++    await expect(probeApi('https://api.example.com/api/uptime')).resolves.toBe(false)
++  })
++
++  it('sends no credentials and bypasses the cache', async () => {
++    const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
++    vi.stubGlobal('fetch', fetchSpy)
++    await probeApi('https://api.example.com/api/uptime')
++    expect(fetchSpy).toHaveBeenCalledWith(
++      'https://api.example.com/api/uptime',
++      expect.objectContaining({ credentials: 'omit', cache: 'no-store', method: 'GET' }),
++    )
++  })
++})
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index 3565582..995cbd7 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -1,6 +1,10 @@
+ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+ import { gql } from '@apollo/client'
+-import { APOLLO_ACCESS_FORBIDDEN_EVENT, makeClient } from './apollo'
++import {
++  APOLLO_ACCESS_FORBIDDEN_EVENT,
++  APOLLO_SERVICE_UNAVAILABLE_EVENT,
++  makeClient,
++} from './apollo'
+ 
+ function jwtWithIssuedAt(iat: number): string {
+   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
+@@ -230,8 +234,7 @@ describe('makeClient', () => {
+     expect(requestInit.headers['apollo-require-preflight']).toBe('true')
+   })
+ 
+-  it('dispatches a service-unavailable event once for network connectivity failures', async () => {
+-    vi.useFakeTimers()
++  it('reports every request that fails without reaching the server', async () => {
+     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+     const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
+     globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+@@ -252,13 +255,69 @@ describe('makeClient', () => {
+     expect(consoleError).toHaveBeenCalledWith(
+       '[Apollo Error Link] Network error for operation: Ping',
+     )
+-    expect(dispatchEvent).toHaveBeenCalledTimes(1)
+-    expect(dispatchEvent.mock.calls[0][0]).toMatchObject({
+-      type: 'apollo-service-unavailable',
++    // No 30-second latch: the web app de-duplicates while it confirms, and a latch here hid an
++    // outage that began soon after a recovery.
++    const reports = dispatchEvent.mock.calls.filter(
++      ([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT,
++    )
++    expect(reports).toHaveLength(2)
++  })
++
++  it.each([
++    ['Safari', new TypeError('Load failed')],
++    ['Firefox', new TypeError('NetworkError when attempting to fetch resource.')],
++    ['Node', new TypeError('fetch failed')],
++  ])('reports a %s fetch failure', async (_browser, failure) => {
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
++    globalThis.fetch = vi.fn().mockRejectedValue(failure)
++    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++
++    await client.query({
++      query: gql`
++        query Ping {
++          ping
++        }
++      `,
+     })
+ 
+-    vi.advanceTimersByTime(30000)
+-    vi.useRealTimers()
++    expect(
++      dispatchEvent.mock.calls.filter(([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT),
++    ).toHaveLength(1)
++  })
++
++  it('reports a gateway 503 but not an ordinary TypeError or a 500', async () => {
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
++    const query = gql`
++      query Ping {
++        ping
++      }
++    `
++    const reports = () =>
++      dispatchEvent.mock.calls.filter(([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT)
++
++    globalThis.fetch = vi
++      .fn()
++      .mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'x')"))
++    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
++    expect(reports()).toHaveLength(0)
++
++    globalThis.fetch = vi
++      .fn()
++      .mockResolvedValue(
++        new Response('boom', { status: 500, headers: { 'content-type': 'text/plain' } }),
++      )
++    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
++    expect(reports()).toHaveLength(0)
++
++    globalThis.fetch = vi
++      .fn()
++      .mockResolvedValue(
++        new Response('Bad gateway', { status: 503, headers: { 'content-type': 'text/html' } }),
++      )
++    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
++    expect(reports()).toHaveLength(1)
+   })
+ 
+   it('redirects through logout when a transport response is unauthorized', async () => {
+diff --git a/libs/shared/apollo/src/lib/apollo.ts b/libs/shared/apollo/src/lib/apollo.ts
+index c2c29e4..364ba8b 100644
+--- a/libs/shared/apollo/src/lib/apollo.ts
++++ b/libs/shared/apollo/src/lib/apollo.ts
+@@ -70,7 +70,7 @@ import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
+ import { getMainDefinition } from '@apollo/client/utilities'
+ import { createClient } from 'graphql-ws'
+ import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
+-import { decodeCookieValue, pickNewestJwt } from '@nestled-template/shared/utils'
++import { decodeCookieValue, isFetchFailure, pickNewestJwt } from '@nestled-template/shared/utils'
+ import { createCache } from './cache-config'
+ 
+ export type ClientOptions = {
+@@ -83,8 +83,12 @@ export type ClientOptions = {
+ 
+ export const APOLLO_ACCESS_FORBIDDEN_EVENT = 'apollo-access-forbidden'
+ 
+-// Global flag to track if we've already shown the "service-unavailable" message
+-let hasShownServiceUnavailableMessage = false
++/**
++ * Dispatched on `window` when a request fails without reaching the server. It is a report, not a
++ * verdict: the web app confirms it with its own reachability probe before showing anything, and
++ * clears the screen again by itself once the API answers (apps/web/app/api-availability.ts).
++ */
++export const APOLLO_SERVICE_UNAVAILABLE_EVENT = 'apollo-service-unavailable'
+ 
+ /**
+  * Get the session cookie name from environment variable.
+@@ -260,7 +264,7 @@ function handleNetworkError(networkError: Error, operation: ApolloLink.Operation
+     return
+   }
+ 
+-  if (isNetworkConnectivityError(networkError) && shouldShowServiceUnavailableMessage()) {
++  if (isNetworkConnectivityError(networkError)) {
+     dispatchServiceUnavailableEvent(networkError, operation)
+   }
+ }
+@@ -274,57 +278,53 @@ function networkErrorStatus(networkError: Error): number | undefined {
+   return enrichedError.statusCode ?? enrichedError.status ?? enrichedError.response?.status
+ }
+ 
++const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
++
++/**
++ * A request that never got an HTTP response. This used to match any `TypeError`, any
++ * `ApolloError`, and any message containing "fetch" or "event stream", so one unrelated failure
++ * was enough to report the API as down. An error that carries an HTTP status is an answered
++ * request and does not count, except the 502/503/504 a proxy returns while the API restarts; 401
++ * and 403 are handled before this is reached.
++ */
+ function isNetworkConnectivityError(networkError: Error): boolean {
++  const status = networkErrorStatus(networkError)
++  if (typeof status === 'number' && status > 0) return GATEWAY_UNAVAILABLE_STATUSES.has(status)
++
+   const errorMessage = networkError.message || ''
+-  const errorName = networkError.name || ''
+-  const constructorName = networkError.constructor?.name || ''
+   const enrichedError = networkError as Error & {
+     statusCode?: number
+     code?: string
+   }
+ 
+   return (
+-    errorName === 'NetworkError' ||
+-    errorName === 'TypeError' ||
+-    constructorName === 'ApolloError' ||
+-    errorMessage.includes('fetch') ||
+-    errorMessage.includes('NetworkError') ||
+-    errorMessage.includes('Failed to fetch') ||
+-    errorMessage.includes('event stream') ||
+-    errorMessage.includes('Connection refused') ||
++    isFetchFailure(networkError) ||
++    networkError.name === 'NetworkError' ||
+     errorMessage.includes('ECONNREFUSED') ||
+     errorMessage.includes('ERR_CONNECTION_REFUSED') ||
+     errorMessage.includes('net::ERR_') ||
+-    errorMessage.includes('Redacted for security concerns') ||
+     enrichedError.statusCode === 0 ||
+     enrichedError.code === 'NETWORK_ERROR'
+   )
+ }
+ 
+-function shouldShowServiceUnavailableMessage(): boolean {
+-  return globalThis.window !== undefined && !hasShownServiceUnavailableMessage
+-}
+-
+ function dispatchServiceUnavailableEvent(
+   networkError: Error,
+   operation: ApolloLink.Operation,
+ ): void {
+-  hasShownServiceUnavailableMessage = true
++  if (globalThis.window === undefined) return
+ 
+-  const serviceUnavailableEvent = new CustomEvent('apollo-service-unavailable', {
+-    detail: {
+-      error: networkError,
+-      operation: operation.operationName,
+-      timestamp: new Date().toISOString(),
+-    },
+-  })
+-
+-  globalThis.window.dispatchEvent(serviceUnavailableEvent)
+-
+-  // Reset the flag after a delay to allow retry
+-  setTimeout(() => {
+-    hasShownServiceUnavailableMessage = false
+-  }, 30000) // 30 seconds
++  // No once-per-30-seconds latch: the listener ignores reports while it is already checking, and a
++  // latch here only meant that an outage starting soon after a recovery went unreported.
++  globalThis.window.dispatchEvent(
++    new CustomEvent(APOLLO_SERVICE_UNAVAILABLE_EVENT, {
++      detail: {
++        error: networkError,
++        operation: operation.operationName,
++        timestamp: new Date().toISOString(),
++      },
++    }),
++  )
+ }
+ 
+ function getActiveOrganizationId(): string | null {
+diff --git a/libs/shared/utils/src/lib/error-detection.spec.ts b/libs/shared/utils/src/lib/error-detection.spec.ts
+index 1e402ef..2193695 100644
+--- a/libs/shared/utils/src/lib/error-detection.spec.ts
++++ b/libs/shared/utils/src/lib/error-detection.spec.ts
+@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
+ import {
+   handleViteCacheError,
+   isAuthError,
++  isFetchFailure,
+   isNetworkError,
+   isViteCacheError,
+ } from './error-detection'
+@@ -28,6 +29,31 @@ describe('error detection utilities', () => {
+     ).toBe(false)
+   })
+ 
++  it('recognises each browser fetch failure and nothing else', () => {
++    for (const message of [
++      'Failed to fetch',
++      'NetworkError when attempting to fetch resource.',
++      'Load failed',
++      'fetch failed',
++      'The network connection was lost.',
++      'The Internet connection appears to be offline.',
++    ]) {
++      expect(isFetchFailure(new TypeError(message))).toBe(true)
++      expect(isNetworkError(new TypeError(message))).toBe(true)
++    }
++    expect(isFetchFailure(new TypeError('Image load failed'))).toBe(false)
++    expect(isFetchFailure(new Error('Something else'))).toBe(false)
++    expect(isFetchFailure(null)).toBe(false)
++  })
++
++  it('does not treat an ordinary TypeError as a network failure', () => {
++    // These used to replace the whole app with the "API unavailable" screen.
++    expect(
++      isNetworkError(new TypeError("Cannot read properties of undefined (reading 'id')")),
++    ).toBe(false)
++    expect(isNetworkError(new TypeError('x.map is not a function'))).toBe(false)
++  })
++
+   describe('isAuthError', () => {
+     it('classifies GraphQL codes into the two states', () => {
+       expect(
+diff --git a/libs/shared/utils/src/lib/error-detection.ts b/libs/shared/utils/src/lib/error-detection.ts
+index 988ce19..f567b3c 100644
+--- a/libs/shared/utils/src/lib/error-detection.ts
++++ b/libs/shared/utils/src/lib/error-detection.ts
+@@ -67,7 +67,38 @@ export function isViteCacheError(error: unknown): boolean {
+ }
+ 
+ /**
+- * Detects if an error is network-related (for API/Apollo errors)
++ * The messages browsers and Node give a `fetch` that never got a response: Chromium ("Failed to
++ * fetch"), Firefox ("NetworkError when attempting to fetch resource."), Safari ("Load failed",
++ * "The network connection was lost.", "The Internet connection appears to be offline.") and
++ * Node/undici ("fetch failed"). All of them reject with a plain `TypeError`, so the message is the
++ * only thing that tells a dropped connection apart from an ordinary bug.
++ */
++const FETCH_FAILURE_PATTERN =
++  /failed to fetch|fetch failed|networkerror when attempting|network request failed|network connection was lost|internet connection appears to be offline/i
++
++// Safari's message is just "Load failed"; matched whole so an unrelated "image load failed" or
++// "module load failed" message does not count.
++const SAFARI_LOAD_FAILED = /^load failed$/i
++
++/**
++ * True when `error` is a `fetch` that failed before any HTTP response arrived: offline, DNS
++ * failure, connection refused or reset. An arbitrary `TypeError` ("Cannot read properties of
++ * undefined") is not one.
++ */
++export function isFetchFailure(error: unknown): boolean {
++  if (!isRecord(error)) {
++    return false
++  }
++  const message = stringProperty(error, 'message').trim()
++  return FETCH_FAILURE_PATTERN.test(message) || SAFARI_LOAD_FAILED.test(message)
++}
++
++/**
++ * Detects if an error is network-related (for API/Apollo errors).
++ *
++ * A bare `TypeError` used to count, which meant any runtime bug that reached the global error
++ * handler ("Cannot read properties of undefined") replaced the whole app with the "API
++ * unavailable" screen. Only a `TypeError` whose message is a known fetch failure counts now.
+  */
+ export function isNetworkError(error: unknown): boolean {
+   if (!error || typeof error !== 'object') {
+@@ -105,7 +136,7 @@ export function isNetworkError(error: unknown): boolean {
+     errorMessage.includes('Connection refused') ||
+     errorMessage.includes('timeout') ||
+     errorMessage.includes('ENOTFOUND') ||
+-    errorName === 'TypeError' ||
++    isFetchFailure(error) ||
+     errorName === 'NetworkError' ||
+     // GraphQL/API explicit service down wording
+     errorMessage.includes('service unavailable') ||
