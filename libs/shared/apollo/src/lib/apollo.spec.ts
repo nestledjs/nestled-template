@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { gql } from '@apollo/client'
-import { APOLLO_ACCESS_FORBIDDEN_EVENT, makeClient } from './apollo'
+import {
+  APOLLO_ACCESS_FORBIDDEN_EVENT,
+  APOLLO_SERVICE_UNAVAILABLE_EVENT,
+  makeClient,
+} from './apollo'
 
 function jwtWithIssuedAt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
@@ -230,8 +234,7 @@ describe('makeClient', () => {
     expect(requestInit.headers['apollo-require-preflight']).toBe('true')
   })
 
-  it('dispatches a service-unavailable event once for network connectivity failures', async () => {
-    vi.useFakeTimers()
+  it('reports every request that fails without reaching the server', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
     globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
@@ -252,13 +255,69 @@ describe('makeClient', () => {
     expect(consoleError).toHaveBeenCalledWith(
       '[Apollo Error Link] Network error for operation: Ping',
     )
-    expect(dispatchEvent).toHaveBeenCalledTimes(1)
-    expect(dispatchEvent.mock.calls[0][0]).toMatchObject({
-      type: 'apollo-service-unavailable',
+    // No 30-second latch: the web app de-duplicates while it confirms, and a latch here hid an
+    // outage that began soon after a recovery.
+    const reports = dispatchEvent.mock.calls.filter(
+      ([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT,
+    )
+    expect(reports).toHaveLength(2)
+  })
+
+  it.each([
+    ['Safari', new TypeError('Load failed')],
+    ['Firefox', new TypeError('NetworkError when attempting to fetch resource.')],
+    ['Node', new TypeError('fetch failed')],
+  ])('reports a %s fetch failure', async (_browser, failure) => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
+    globalThis.fetch = vi.fn().mockRejectedValue(failure)
+    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+
+    await client.query({
+      query: gql`
+        query Ping {
+          ping
+        }
+      `,
     })
 
-    vi.advanceTimersByTime(30000)
-    vi.useRealTimers()
+    expect(
+      dispatchEvent.mock.calls.filter(([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT),
+    ).toHaveLength(1)
+  })
+
+  it('reports a gateway 503 but not an ordinary TypeError or a 500', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
+    const query = gql`
+      query Ping {
+        ping
+      }
+    `
+    const reports = () =>
+      dispatchEvent.mock.calls.filter(([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT)
+
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'x')"))
+    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+    expect(reports()).toHaveLength(0)
+
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('boom', { status: 500, headers: { 'content-type': 'text/plain' } }),
+      )
+    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+    expect(reports()).toHaveLength(0)
+
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('Bad gateway', { status: 503, headers: { 'content-type': 'text/html' } }),
+      )
+    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+    expect(reports()).toHaveLength(1)
   })
 
   it('redirects through logout when a transport response is unauthorized', async () => {

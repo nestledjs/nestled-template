@@ -1,0 +1,129 @@
+id: 2026-10-30-service-unavailable-recovers
+title: 'The "API Unavailable" screen recovers by itself, ignores one-off failures, and says when you are offline'
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  On release 2026.10.x the web app's "API Unavailable" screen latched. In apps/web/app/app.tsx the
+  `runtimeServiceUnavailable` flag was set to true by the `apollo-service-unavailable` event, by the
+  global `error` handler and by `unhandledrejection` whenever `isNetworkError` matched, and nothing
+  ever set it back. Once set, `App` rendered `<ServiceUnavailable>` in place of the whole app until
+  the user reloaded. The triggers were broad: Apollo's `isNetworkConnectivityError` in
+  libs/shared/apollo/src/lib/apollo.ts matched any `TypeError`, any `ApolloError`, and any message
+  containing "fetch" or "event stream", and the shared `isNetworkError` in
+  libs/shared/utils/src/lib/error-detection.ts matched any `TypeError`, so an ordinary runtime bug
+  ("Cannot read properties of undefined") reaching the global handler also took the app down. The
+  root route's `ErrorBoundary` showed the package's static "Service Unavailable" screen for a
+  network error, with the same manual-refresh-only behaviour, and `MeQueryErrorBoundary` never
+  reset, so one failed `Me` preload rendered the session as signed out until a full page load.
+
+  The fix, all in the app (no package change):
+
+  - New apps/web/app/api-availability.ts: `probeApi()` GETs the API's public liveness route
+    (`${VITE_API_URL}/api/uptime`, no credentials, no cache, 5 s timeout) and treats any HTTP
+    response as reachable except a proxy's 502/503/504. `useApiAvailability()` owns the screen:
+    a reported connectivity error is confirmed with three probes over about three seconds before
+    the screen shows; while it shows, the API is probed with backoff (2 s doubling to a 30 s cap),
+    at once on the browser `online` event, on `visibilitychange` to visible and on window `focus`;
+    the first probe that gets an answer clears the screen. It also tracks `navigator.onLine` and
+    the `offline`/`online` events. `reloadForRecovery()` reloads at most once a minute per tab.
+  - New apps/web/app/api-unavailable.tsx: `ApiUnavailableScreen` renders the published
+    `ServiceUnavailable` with "You're offline / We'll reconnect automatically when your connection
+    is back." when the browser is offline and "Can't reach the server / We can't reach our servers
+    right now. Retrying automatically…" otherwise; its button probes at once instead of reloading.
+    `RecoveringApiUnavailable` is the same screen for an error boundary, and reloads (rate-limited)
+    once the API answers, since a boundary cannot re-render the route that threw.
+  - apps/web/app/app.tsx: the event and the two global handlers now call
+    `reportConnectivityError()` instead of setting a flag. A root-loader `serviceUnavailable` puts
+    the screen up at once; on recovery the app calls `useRevalidator().revalidate()` rather than
+    reloading, and if the loader still reports an outage the screen stays and probing continues
+    at a widening interval (no reload loop when only the server cannot reach the API). A runtime
+    outage clears by remounting the app tree, whose queries refetch. `MeQueryErrorBoundary` takes
+    a `resetKey` (the Me query ref) and clears its error when the root loader produces a new one.
+  - apps/web/app/root.tsx: the route `ErrorBoundary` renders `RecoveringApiUnavailable` for a
+    network error (no route status) instead of falling through to the package's static screen.
+  - libs/shared/utils/src/lib/error-detection.ts: new exported `isFetchFailure()` recognises the
+    browsers' and Node's fetch-failure messages ("Failed to fetch", Firefox's "NetworkError when
+    attempting to fetch resource.", Safari's "Load failed" and connection-lost messages, Node's
+    "fetch failed"). `isNetworkError` counts a `TypeError` only when it is one of those.
+  - libs/shared/apollo/src/lib/apollo.ts: `isNetworkConnectivityError` uses `isFetchFailure`
+    and the explicit connection-refused codes; an error carrying an HTTP status counts only for
+    502/503/504. The once-per-30-seconds `hasShownServiceUnavailableMessage` latch is removed
+    (the listener de-duplicates) and the event name is exported as
+    `APOLLO_SERVICE_UNAVAILABLE_EVENT`. 401 and 403 handling is unchanged.
+
+  Tests: apps/web/tests/api-availability.spec.tsx (one failed request does not show the screen,
+  a confirmed outage does, the screen clears by itself, `online` and `visibilitychange` probe at
+  once, offline copy, an ordinary TypeError is ignored, forbidden handling unchanged, loader
+  outage revalidates and backs off, error-boundary recovery, reload rate limit, probe status
+  handling), apollo.spec.ts and error-detection.spec.ts.
+
+why: >
+  A laptop that slept, a Wi-Fi drop, or a few seconds of API redeploy replaced the whole app with
+  "API Unavailable" until the user noticed and refreshed by hand, and any unrelated TypeError could
+  do the same. Users read it as the site being down. The screen now appears only for an outage
+  that lasts, tells offline apart from a server problem, and goes away on its own.
+
+affectedPaths:
+  - apps/web/app/api-availability.ts
+  - apps/web/app/api-unavailable.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/root.tsx
+  - libs/shared/utils/src/lib/error-detection.ts
+  - libs/shared/apollo/src/lib/apollo.ts
+  - apps/web/tests/api-availability.spec.tsx
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - libs/shared/utils/src/lib/error-detection.spec.ts
+
+skipIf:
+  - The project has no web app, or its web app never renders a service-unavailable screen.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test utils --skip-nx-cache
+  - pnpm typecheck
+  - pnpm exec nx build web
+  - pnpm run nestled-doctor
+  - >
+    Manual: run the web app against a local API, stop the API, trigger a query (navigate or
+    refocus the tab) and confirm the screen appears after about three seconds; start the API again
+    and confirm the screen clears within 30 seconds without a refresh.
+
+agentHints:
+  - >
+    A project that customised app.tsx (extra providers, its own error states, a different layout
+    around the outlet) keeps its customisations. Adopt the shape: a failed request calls
+    reportConnectivityError(), the screen renders only while the hook says unavailable, and nothing
+    sets an "unavailable" flag that is never cleared. Search the web app for any other
+    useState(true)-style "service unavailable" or "offline" flag and route it through the same hook.
+  - >
+    A project with its own unavailable copy may keep it, but should keep the two cases apart:
+    offline (navigator.onLine false or the offline event) versus the server not answering. Keep the
+    copy short; the screen is shown to end users.
+  - >
+    A project whose API serves the liveness route somewhere other than /api/uptime (a different
+    global prefix, or a removed controller) should point apiProbeUrl() at a public, unauthenticated
+    GET on the API origin. Any HTTP answer counts as reachable, so a 404 still works, but the route
+    must be on the API origin and covered by its CORS policy; check it with curl -i -H "Origin:
+    <web origin>" <url> and look for Access-Control-Allow-Origin.
+  - >
+    A project that customised isNetworkError, isNetworkConnectivityError or the Apollo error link
+    should keep its extra cases only if they are real transport failures. Remove any bare "name ===
+    'TypeError'" or "message includes 'fetch'" test; that is what let unrelated bugs show the
+    screen. Keep 401 handling (logout redirect) and 403 handling (access-denied event) exactly as
+    the project has them.
+  - >
+    A project with its own polling (pollInterval, startPolling), GraphQL subscriptions, SSE or
+    websocket reconnects will see more transient failures after a sleep or a redeploy. That is
+    fine now that each report is confirmed by probing, but check that those paths report through
+    the Apollo error link or reportConnectivityError rather than setting their own latched error
+    state, and that a subscription reconnect does not itself render a full-page error.
+  - >
+    A project whose route-level ErrorBoundary is customised should render RecoveringApiUnavailable
+    for a network error (isNetworkError, no route status) and leave 401 and 403 branches before it.
+  - >
+    If the project imports the 'apollo-service-unavailable' string anywhere, switch it to the
+    exported APOLLO_SERVICE_UNAVAILABLE_EVENT; the value is unchanged.

@@ -67,7 +67,38 @@ export function isViteCacheError(error: unknown): boolean {
 }
 
 /**
- * Detects if an error is network-related (for API/Apollo errors)
+ * The messages browsers and Node give a `fetch` that never got a response: Chromium ("Failed to
+ * fetch"), Firefox ("NetworkError when attempting to fetch resource."), Safari ("Load failed",
+ * "The network connection was lost.", "The Internet connection appears to be offline.") and
+ * Node/undici ("fetch failed"). All of them reject with a plain `TypeError`, so the message is the
+ * only thing that tells a dropped connection apart from an ordinary bug.
+ */
+const FETCH_FAILURE_PATTERN =
+  /failed to fetch|fetch failed|networkerror when attempting|network request failed|network connection was lost|internet connection appears to be offline/i
+
+// Safari's message is just "Load failed"; matched whole so an unrelated "image load failed" or
+// "module load failed" message does not count.
+const SAFARI_LOAD_FAILED = /^load failed$/i
+
+/**
+ * True when `error` is a `fetch` that failed before any HTTP response arrived: offline, DNS
+ * failure, connection refused or reset. An arbitrary `TypeError` ("Cannot read properties of
+ * undefined") is not one.
+ */
+export function isFetchFailure(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false
+  }
+  const message = stringProperty(error, 'message').trim()
+  return FETCH_FAILURE_PATTERN.test(message) || SAFARI_LOAD_FAILED.test(message)
+}
+
+/**
+ * Detects if an error is network-related (for API/Apollo errors).
+ *
+ * A bare `TypeError` used to count, which meant any runtime bug that reached the global error
+ * handler ("Cannot read properties of undefined") replaced the whole app with the "API
+ * unavailable" screen. Only a `TypeError` whose message is a known fetch failure counts now.
  */
 export function isNetworkError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
@@ -105,7 +136,7 @@ export function isNetworkError(error: unknown): boolean {
     errorMessage.includes('Connection refused') ||
     errorMessage.includes('timeout') ||
     errorMessage.includes('ENOTFOUND') ||
-    errorName === 'TypeError' ||
+    isFetchFailure(error) ||
     errorName === 'NetworkError' ||
     // GraphQL/API explicit service down wording
     errorMessage.includes('service unavailable') ||

@@ -23,6 +23,7 @@ import {
 import { GTMNoScript, GTMScript } from './gtm'
 import App from './app'
 import { AccessDenied } from './access-denied'
+import { RecoveringApiUnavailable } from './api-unavailable'
 
 export const meta: MetaFunction = () => [
   {
@@ -224,6 +225,12 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
 
   if (routeStatus === 403) {
     return <AccessDenied />
+  }
+
+  // The package boundary shows a static "Service Unavailable" for network errors that only a
+  // manual refresh clears. This one probes the API and reloads by itself once it answers.
+  if (routeStatus === undefined && isNetworkError(error)) {
+    return <RecoveringApiUnavailable />
   }
 
   // Layout always wraps this component and provides <html>/<head>/<body> —
