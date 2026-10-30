@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-29
+generatedAt: 2026-10-30
 channels:
-  canary: 2026.10.24
+  canary: 2026.10.25
   stable: 2026.10.23
 releases:
   - id: 2026.08.0
@@ -1216,3 +1216,32 @@ releases:
           - pnpm exec nx build web
           - pnpm run nestled-doctor
         patch: patches/2026-10-29-server-session-cookie-selection.diff
+  - id: 2026.10.25
+    date: 2026-10-30
+    title: Release 2026.10.25
+    templateCommit: "9212883"
+    notes:
+      - id: 2026-10-30-service-unavailable-recovers
+        title: The "API Unavailable" screen recovers by itself, ignores one-off failures, and says when you are offline
+        delivery: code-patch
+        intent: "On release 2026.10.x the web app's \"API Unavailable\" screen latched. In apps/web/app/app.tsx the `runtimeServiceUnavailable` flag was set to true by the `apollo-service-unavailable` event, by the global `error` handler and by `unhandledrejection` whenever `isNetworkError` matched, and nothing ever set it back. Once set, `App` rendered `<ServiceUnavailable>` in place of the whole app until the user reloaded. The triggers were broad: Apollo's `isNetworkConnectivityError` in libs/shared/apollo/src/lib/apollo.ts matched any `TypeError`, any `ApolloError`, and any message containing \"fetch\" or \"event stream\", and the shared `isNetworkError` in libs/shared/utils/src/lib/error-detection.ts matched any `TypeError`, so an ordinary runtime bug (\"Cannot read properties of undefined\") reaching the global handler also took the app down. The root route's `ErrorBoundary` showed the package's static \"Service Unavailable\" screen for a network error, with the same manual-refresh-only behaviour, and `MeQueryErrorBoundary` never reset, so one failed `Me` preload rendered the session as signed out until a full page load. The fix, all in the app (no package change): - New apps/web/app/api-availability.ts: `probeApi()` GETs the API's public liveness route (`${VITE_API_URL}/api/uptime`, no credentials, no cache, 5 s timeout) and treats any HTTP response as reachable except a proxy's 502/503/504. `useApiAvailability()` owns the screen: a reported connectivity error is confirmed with three probes over about three seconds before the screen shows; while it shows, the API is probed with backoff (2 s doubling to a 30 s cap), at once on the browser `online` event, on `visibilitychange` to visible and on window `focus`; the first probe that gets an answer clears the screen. It also tracks `navigator.onLine` and the `offline`/`online` events. `reloadForRecovery()` reloads at most once a minute per tab. - New apps/web/app/api-unavailable.tsx: `ApiUnavailableScreen` renders the published `ServiceUnavailable` with \"You're offline / We'll reconnect automatically when your connection is back.\" when the browser is offline and \"Can't reach the server / We can't reach our servers right now. Retrying automatically…\" otherwise; its button probes at once instead of reloading. `RecoveringApiUnavailable` is the same screen for an error boundary, and reloads (rate-limited) once the API answers, since a boundary cannot re-render the route that threw. - apps/web/app/app.tsx: the event and the two global handlers now call `reportConnectivityError()` instead of setting a flag. A root-loader `serviceUnavailable` puts the screen up at once; on recovery the app calls `useRevalidator().revalidate()` rather than reloading, and if the loader still reports an outage the screen stays and probing continues at a widening interval (no reload loop when only the server cannot reach the API). A runtime outage clears by remounting the app tree, whose queries refetch. `MeQueryErrorBoundary` takes a `resetKey` (the Me query ref) and clears its error when the root loader produces a new one. - apps/web/app/root.tsx: the route `ErrorBoundary` renders `RecoveringApiUnavailable` for a network error (no route status) instead of falling through to the package's static screen. - libs/shared/utils/src/lib/error-detection.ts: new exported `isFetchFailure()` recognises the browsers' and Node's fetch-failure messages (\"Failed to fetch\", Firefox's \"NetworkError when attempting to fetch resource.\", Safari's \"Load failed\" and connection-lost messages, Node's \"fetch failed\"). `isNetworkError` counts a `TypeError` only when it is one of those. - libs/shared/apollo/src/lib/apollo.ts: `isNetworkConnectivityError` uses `isFetchFailure` and the explicit connection-refused codes; an error carrying an HTTP status counts only for 502/503/504. The once-per-30-seconds `hasShownServiceUnavailableMessage` latch is removed (the listener de-duplicates) and the event name is exported as `APOLLO_SERVICE_UNAVAILABLE_EVENT`. 401 and 403 handling is unchanged. Tests: apps/web/tests/api-availability.spec.tsx (one failed request does not show the screen, a confirmed outage does, the screen clears by itself, `online` and `visibilitychange` probe at once, offline copy, an ordinary TypeError is ignored, forbidden handling unchanged, loader outage revalidates and backs off, error-boundary recovery, reload rate limit, probe status handling), apollo.spec.ts and error-detection.spec.ts."
+        area: web
+        affectedPaths:
+          - apps/web/app/api-availability.ts
+          - apps/web/app/api-unavailable.tsx
+          - apps/web/app/app.tsx
+          - apps/web/app/root.tsx
+          - libs/shared/utils/src/lib/error-detection.ts
+          - libs/shared/apollo/src/lib/apollo.ts
+          - apps/web/tests/api-availability.spec.tsx
+          - libs/shared/apollo/src/lib/apollo.spec.ts
+          - libs/shared/utils/src/lib/error-detection.spec.ts
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - pnpm exec nx test utils --skip-nx-cache
+          - pnpm typecheck
+          - pnpm exec nx build web
+          - pnpm run nestled-doctor
+          - "Manual: run the web app against a local API, stop the API, trigger a query (navigate or refocus the tab) and confirm the screen appears after about three seconds; start the API again and confirm the screen clears within 30 seconds without a refresh."
+        patch: patches/2026-10-30-service-unavailable-recovers.diff
