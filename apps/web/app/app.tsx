@@ -10,7 +10,7 @@ import {
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
 } from '@nestled-template/shared/apollo'
 import { AccessDenied } from './access-denied'
-import { useApiAvailability } from './api-availability'
+import { useApiAvailability, useRefetchFailedQueries } from './api-availability'
 import { ApiUnavailableScreen } from './api-unavailable'
 
 type MeQueryErrorBoundaryProps = { children: ReactNode; resetKey?: unknown }
@@ -67,10 +67,15 @@ export function App() {
   // on at a widening interval, so a server-only failure cannot turn into a reload loop.
   const loaderUnavailableRef = useRef(loaderServiceUnavailable)
   loaderUnavailableRef.current = loaderServiceUnavailable
+  // Queries that failed during an outage, or during a blip too short to show the screen, refetch
+  // once the API answers, the browser comes back online or the tab is shown again.
+  const refetchFailedQueries = useRefetchFailedQueries()
   const api = useApiAvailability({
     onRecover: () => {
       if (loaderUnavailableRef.current) void revalidator.revalidate()
+      refetchFailedQueries()
     },
+    onBlipCleared: refetchFailedQueries,
   })
   const { reportConnectivityError, markUnavailable } = api
 

@@ -68,7 +68,11 @@ export function headers() {
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "frame-ancestors 'none'",
     'Cache-Control': 'no-store',
-    'Referrer-Policy': 'no-referrer',
+    // same-origin, not no-referrer: the URL (with its request id) still never goes to another
+    // site, but under no-referrer Chrome sends `Origin: null` on this page's own form POST, and
+    // React Router's action CSRF check rejects that as a foreign origin (400 "Bad Request" on
+    // Approve, so the connector never gets its code).
+    'Referrer-Policy': 'same-origin',
   }
 }
 

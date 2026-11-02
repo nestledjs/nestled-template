@@ -1,0 +1,155 @@
+id: 2026-10-30-error-screens-recover-everywhere
+title: >-
+  No error screen stays stuck: the root boundary, the admin data browser and failed queries
+  recover by themselves (@nestledjs/shared-components 1.0.19, @nestledjs/data-browser 1.0.26)
+priority: high
+area: web
+type: correctness
+delivery: hybrid
+
+intent: >
+  Follow-up to 2026-10-30-service-unavailable-recovers, which made the app-level "API
+  unavailable" screen recover by itself. That note must be applied first: this one uses its
+  apps/web/app/api-availability.ts and api-unavailable.tsx. Five parts.
+
+  1. Packages. Upgrade `@nestledjs/shared-components` to 1.0.19 and `@nestledjs/data-browser` to
+  1.0.26 in package.json and the lockfile. Do not copy files from libs/shared-components or
+  libs/data-browser.
+  - shared-components 1.0.19: `ServiceUnavailable` takes an optional `refreshLabel?: string`, the
+    button's text. Its default stays "Refresh Page", so existing callers render as before. No
+    other API change.
+  - data-browser 1.0.26: `AdminDataErrorBoundary`, `AdminDataCreateErrorBoundary` and
+    `AdminDataEditErrorBoundary` no longer show shared-components' static "Service Unavailable"
+    screen for a network error (it needed a manual reload). They show a "Can't reach the server"
+    (or "You're offline") panel inside the admin layout that probes with backoff (2 s doubling to
+    a 30 s cap), probes at once on the browser `online` event and when the tab becomes visible,
+    keeps a manual "Try Again" button, and on success calls react-router's
+    `useRevalidator().revalidate()`, which clears the route error boundary. Other errors still go
+    to shared-components' `ErrorBoundary`. Additions: `AdminDataProvider` takes an optional
+    `probe?: () => Promise<boolean>` (resolves true when the API answers); the three boundaries
+    take an optional `probe` that overrides it; new exports `AdminRouteErrorBoundary`,
+    `AdminApiUnavailable`, `useAdminApiRecovery`, `resetAdminRecoveryBackoff`,
+    `useOptionalAdminDataContext`, the `AdminApiProbe` and `AdminDataErrorBoundaryProps` types and
+    the `ADMIN_*_TITLE` / `ADMIN_*_MESSAGE` copy constants. Without a probe the boundary
+    revalidates with the same backoff while the browser is online, so it still recovers; the
+    backoff carries over if the route fails again and the boundary mounts again within a minute.
+    The peer range on shared-components stays `^1.0.14`: data-browser uses nothing new from it.
+
+  2. apps/web/app/routes/admin/data/_layout.tsx: pass the app's probe to the provider:
+  `const probeAdminApi = () => probeApi()` (probeApi from apps/web/app/api-availability.ts) and
+  `<AdminDataProvider ... probe={probeAdminApi}>`. The package cannot import app code and does
+  not know the API origin, so the app supplies its probe; that keeps one probe implementation
+  (GET `${VITE_API_URL}/api/uptime`, any answer but 502/503/504 counts) instead of a second copy
+  inside the package.
+
+  3. apps/web/app/api-unavailable.tsx: `ApiUnavailableScreen` passes `refreshLabel="Try again"`
+  (exported as `RETRY_LABEL`), since its button probes rather than reloading.
+
+  4. apps/web/app/root.tsx, the route `ErrorBoundary`:
+  - a connectivity failure renders `RecoveringApiUnavailable`: no route status and
+    `isFetchFailure(error) || isNetworkError(error)`, or a route error response with status 502,
+    503 or 504;
+  - a Vite cache error still goes to the package `ErrorBoundary` (it reloads by itself);
+  - any other error renders `ErrorBoundaryUi` (from @nestledjs/shared-components) with a
+    "Try again" button that reloads the page, instead of the package boundary. Nothing on the
+    root error screens says "refresh" any more.
+  The 401 (force-logout) and 403 (AccessDenied) branches before these are unchanged.
+
+  5. Queries that failed stay failed no longer.
+  - apps/web/app/api-availability.ts: new `refetchFailedQueries(client)` refetches every active
+    Apollo query whose last result is a transport error (not `CombinedGraphQLErrors`, so a
+    forbidden or validation error is not retried), and `useRefetchFailedQueries()` does it on the
+    browser `online` event and when the tab becomes visible, and returns a function to do it on
+    demand. Refetches are spaced with the probe's backoff (2 s doubling to 30 s), reset only when a
+    pass finds no failed query, and a request inside the window is deferred, not dropped; without
+    that, an API whose /api/uptime answers while /graphql keeps failing refetched in a tight loop. `useApiAvailability` takes a new `onBlipCleared` callback, called when a reported
+    failure turns out to be a blip (the API answered before the screen went up).
+  - apps/web/app/app.tsx: `App` calls `useRefetchFailedQueries()` and passes it as
+    `onBlipCleared` and from `onRecover`. Before this, a query that failed during a blip too short
+    to show the screen kept rendering its error (for example the admin billing plans and
+    subscriptions pages' "Error loading ..." text) until the user navigated away.
+  - libs/shared/apollo/src/lib/apollo.ts: the graphql-ws client retries without a limit
+    (`retryAttempts: Number.POSITIVE_INFINITY`) with `retryWait` from the new exported
+    `subscriptionRetryDelayMs` (2 s doubling to 30 s, plus up to 1 s of jitter). graphql-ws gave up
+    after 5 attempts by default (about 30 s), after which every active subscription errored and
+    stayed dead until a reload. Its fatal close codes (4400, 4401, 4500 and the like) are still
+    not retried, and `lazy: true` closes the socket when nothing is subscribed.
+    The WebSocket server's session check is not changed.
+
+  Tests: apps/web/tests/api-availability.spec.tsx (root boundary: "Try again" label, 503 route
+  response, generic error with manual reload and no "refresh" wording; refetchFailedQueries;
+  onBlipCleared), libs/shared/apollo/src/lib/apollo.spec.ts (subscriptionRetryDelayMs), and in
+  the packages service-unavailable.spec.tsx and AdminRecoveringErrorBoundary.spec.tsx.
+
+why: >
+  The owner's rule is that nothing in an app can get stuck on an error screen after a sleep, a
+  network drop or an API redeploy. After the app-level screen was fixed, four places still could:
+  the admin data browser's boundary (static, reload only), the root boundary's generic error
+  screen (no way out but the browser's reload), queries that failed during a short blip, and
+  subscriptions after graphql-ws ran out of retries.
+
+affectedPaths:
+  - apps/web/app/root.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/api-availability.ts
+  - apps/web/app/api-unavailable.tsx
+  - apps/web/app/routes/admin/data/_layout.tsx
+  - libs/shared/apollo/src/lib/apollo.ts
+  - apps/web/tests/api-availability.spec.tsx
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+
+packageReleases:
+  - name: '@nestledjs/shared-components'
+    sourcePath: libs/shared-components
+    targetVersion: 1.0.19
+    versionRange: ^1.0.19
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.26
+    versionRange: ^1.0.26
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm install
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+  - >
+    Manual: with the web app running against a local API, open /admin/data/<model>, stop the
+    API, reload the admin page (the "Can't reach the server" panel shows inside the admin layout),
+    start the API again and confirm the panel clears within 30 seconds without a reload.
+
+agentHints:
+  - >
+    Apply 2026-10-30-service-unavailable-recovers first; this note's app changes import from its
+    api-availability.ts and api-unavailable.tsx. If the project adapted that note under other
+    names, use its equivalents.
+  - >
+    Update package.json and the lockfile to the published versions; do not copy files from
+    libs/shared-components or libs/data-browser. If the project wraps the data-browser
+    boundaries in its own route ErrorBoundary, keep the wrapper and pass `probe` through.
+  - >
+    A project with its own route or component error boundaries, polling (`pollInterval`,
+    `startPolling`), GraphQL subscriptions, SSE or WebSocket consumers should apply the same
+    pattern: no error flag that is set on failure and never cleared; a connectivity failure probes
+    with backoff (2 s to 30 s), retries at once on `online` and `visibilitychange`, and clears the
+    error (reset the boundary, revalidate, or refetch) on success; a manual retry stays; an
+    unrelated error keeps a manual "Try again". A subscription or SSE consumer must reconnect
+    rather than give up after one error. An "offline" or "connection lost" banner must clear when
+    the connection is back. List what you checked in the report, including the ones that were
+    already fine.
+  - >
+    If the project already reloads, refetches or revalidates its failed queries some other way
+    (its own focus or online handler, Apollo `refetchOnWindowFocus`-style code), keep one
+    mechanism, not two.
+  - >
+    A project whose generic root error screen is customised keeps its design; add a manual
+    "Try again" if it has none and drop any "refresh the page" copy.
+  - >
+    If the project calls `createClient` from graphql-ws itself (outside libs/shared/apollo), give
+    that client the same `retryAttempts` and capped `retryWait`. Do not change the server's
+    WebSocket session check under this note.

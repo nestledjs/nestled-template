@@ -1,0 +1,87 @@
+id: 2026-10-30-drop-graphql-scalars-and-audit-pins
+title: >-
+  Remove the unused graphql-scalars dependency, and fix the qs, morgan and vitest audit
+  moderates within their current majors
+priority: normal
+area: infra
+type: security
+delivery: code-patch
+
+intent: >
+  Root package.json and pnpm-lock.yaml only. Each project applies the same changes to its own
+  manifest and re-resolves its own lockfile with pnpm; the template's lockfile is not copied.
+
+  1. Remove `graphql-scalars` (was `^1.25.0`) from `dependencies` with `pnpm remove
+  graphql-scalars`, not by editing the lockfile. Nothing in the template's apps,
+  libs or tools imports it. It carries the high-severity advisory GHSA-x8rm-f576-gq67 (the PhoneNumber
+  scalar; vulnerable >=1.24.1 <=2.0.0, fixed in 2.0.1).
+
+  2. Moderates fixed inside their current major:
+  `morgan` `^1.11.0` -> `^1.12.1` (dependencies; two log-injection advisories, fixed in 1.12.0
+  and 1.12.1);
+  `vitest`, `@vitest/browser-playwright`, `@vitest/coverage-v8` and `@vitest/ui` `4.1.10` ->
+  `4.1.12` (devDependencies; the vitest and @vitest/mocker advisories, fixed in 4.1.11 and
+  4.1.12). Bump all four together; they must stay on the same version.
+
+  3. pnpm.overrides: the existing qs entry is widened. `"qs@>=6.11.1 <=6.15.1": "6.15.2"` becomes
+  `"qs@>=6.7.0 <6.16.1": "6.16.2"` (three qs advisories, all fixed by 6.16.1; 6.16.2 is the
+  latest 6.16 patch). qs is reached only transitively (express, @cypress/request). All other
+  overrides stay as they are.
+
+  Left as they were, with no fix inside the current major or only reachable through tooling:
+  `type-graphql` -> `graphql-scalars` 1.25.0 (see the agent hints), `fast-uri` 3.1.7,
+  `postcss-selector-parser` 6.0.10 and 7.1.5, `baseline-browser-mapping` 2.10.30 (pinned by an
+  existing override), `serialize-javascript` 7.1.0 and `deepmerge` 4.3.1 (no fixed version).
+
+  Template audit, before -> after. `pnpm audit --prod`: 17 (1 high, 13 moderate, 3 low) -> 9
+  (1 high, 5 moderate, 3 low). `pnpm audit`: 19 (1 high, 14 moderate, 4 low) -> 11 (1 high,
+  6 moderate, 4 low). The remaining high is graphql-scalars installed as the required peer of
+  `type-graphql` 2.0.0-rc.3 (next hint).
+
+why: >
+  graphql-scalars was the template's only high-severity audit finding and nothing uses it. The
+  qs, morgan and vitest moderates each had a fix inside the major already in use, so they are
+  taken now rather than left to accumulate.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+
+skipIf:
+  - >
+    The project has none of graphql-scalars, morgan below 1.12.1, vitest below 4.1.12, or a qs
+    override, and `pnpm audit` reports none of these packages.
+
+verification:
+  - pnpm install --frozen-lockfile
+  - pnpm audit --prod
+  - pnpm audit
+  - pnpm typecheck
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+
+agentHints:
+  - >
+    Before removing graphql-scalars, search the project for it, including generated code:
+    `grep -rn "graphql-scalars" apps libs tools --include='*.ts'`. The @nestledjs/generators
+    models and crud generators emit `import { GraphQLBigInt } from 'graphql-scalars'` for any
+    Prisma model with a `BigInt` field or a `BigInt` id. A project with such a model keeps the
+    dependency (and should move it to `^2.0.1` or later, checking the BigInt scalar still
+    serializes the same way) and records this part as `adapted`. Re-run the generators after the
+    change and build the api to confirm nothing imports it.
+  - >
+    `type-graphql` (2.0.0-rc.3 in the template) declares graphql-scalars `^1.25.0` as a required
+    peer, so pnpm keeps installing graphql-scalars 1.25.0 even after the direct dependency is
+    removed, and the high advisory stays in `pnpm audit` as `type-graphql > graphql-scalars`.
+    Nothing in the template imports type-graphql either; removing it is a separate decision the
+    template has not made yet. Do not remove it under this note; report it.
+  - >
+    The qs override is a single entry; replace the old `"qs@>=6.11.1 <=6.15.1"` key rather than
+    adding a second qs key. If the project has its own qs override with a different range, merge
+    them into one whose target is 6.16.2 or later in the 6.x line.
+  - >
+    package.json and the lockfile changing can redeploy every service that watches them. A
+    project with a long-running worker should confirm it is idle, or that an interrupted job is
+    safe, before merging, and say in its report which services the merge restarts.

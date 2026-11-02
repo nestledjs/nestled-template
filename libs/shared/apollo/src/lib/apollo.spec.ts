@@ -4,6 +4,7 @@ import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   makeClient,
+  subscriptionRetryDelayMs,
 } from './apollo'
 
 function jwtWithIssuedAt(iat: number): string {
@@ -415,5 +416,23 @@ describe('makeClient', () => {
 
     expect(forbiddenHandler).not.toHaveBeenCalled()
     globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, forbiddenHandler)
+  })
+})
+
+describe('subscriptionRetryDelayMs', () => {
+  it('backs off from 2 s to a 30 s cap', () => {
+    expect([0, 1, 2, 3, 4, 5, 20].map(retries => subscriptionRetryDelayMs(retries, 0))).toEqual([
+      2000, 4000, 8000, 16000, 30000, 30000, 30000,
+    ])
+  })
+
+  it('adds under a second of jitter', () => {
+    expect(subscriptionRetryDelayMs(0, 0.999)).toBe(2999)
+  })
+
+  it('draws the default jitter from the platform CSPRNG', () => {
+    const delay = subscriptionRetryDelayMs(0)
+    expect(delay).toBeGreaterThanOrEqual(2000)
+    expect(delay).toBeLessThan(3000)
   })
 })

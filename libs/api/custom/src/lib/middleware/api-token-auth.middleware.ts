@@ -10,6 +10,8 @@ type ApiTokenRequest = Request & {
   apiTokenOrganizationId?: string | null
 }
 
+type ValidatedApiToken = NonNullable<Awaited<ReturnType<ApiTokensService['validateApiToken']>>>
+
 @Injectable()
 export class ApiTokenAuthMiddleware implements NestMiddleware {
   private readonly logger = new Logger(ApiTokenAuthMiddleware.name)
@@ -44,38 +46,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
         }
 
         if (result) {
-          // Load the user and attach to request
-          const user = await this.data.user.findUnique({
-            where: { id: result.userId },
-            include: {
-              organizations: {
-                include: {
-                  role: {
-                    include: {
-                      permissions: true,
-                    },
-                  },
-                  organization: true,
-                },
-              },
-            },
-          })
-
-          if (!user) {
-            this.logger.warn(`User not found for valid API token: ${result.userId}`)
-          } else if (user.isActive === false) {
-            // The same rule JwtStrategy applies to sessions and API tokens: a deactivated account
-            // is refused, and its token does not count as used.
-            this.logger.warn(`API token ${result.tokenId} belongs to a deactivated user; refused`)
-          } else {
-            const apiTokenReq = req as ApiTokenRequest
-            apiTokenReq.user = user
-            apiTokenReq.apiTokenId = result.tokenId
-            apiTokenReq.apiTokenOrganizationId = result.organizationId
-            this.apiTokensService.recordTokenUse(result.tokenId)
-
-            this.logger.log(`API token authentication successful for user ${user.id}`)
-          }
+          await this.attachTokenUser(req, result)
         } else {
           this.logger.warn('Invalid or expired API token provided')
         }
@@ -86,5 +57,44 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
 
     // Continue to next middleware/handler
     next()
+  }
+
+  /**
+   * Load the token's user and attach it to the request. A missing or deactivated user is refused
+   * (logged, nothing attached) and the token does not count as used.
+   */
+  private async attachTokenUser(req: Request, result: ValidatedApiToken): Promise<void> {
+    // Load the user and attach to request
+    const user = await this.data.user.findUnique({
+      where: { id: result.userId },
+      include: {
+        organizations: {
+          include: {
+            role: {
+              include: {
+                permissions: true,
+              },
+            },
+            organization: true,
+          },
+        },
+      },
+    })
+
+    if (!user) {
+      this.logger.warn(`User not found for valid API token: ${result.userId}`)
+    } else if (user.isActive === false) {
+      // The same rule JwtStrategy applies to sessions and API tokens: a deactivated account
+      // is refused, and its token does not count as used.
+      this.logger.warn(`API token ${result.tokenId} belongs to a deactivated user; refused`)
+    } else {
+      const apiTokenReq = req as ApiTokenRequest
+      apiTokenReq.user = user
+      apiTokenReq.apiTokenId = result.tokenId
+      apiTokenReq.apiTokenOrganizationId = result.organizationId
+      this.apiTokensService.recordTokenUse(result.tokenId)
+
+      this.logger.log(`API token authentication successful for user ${user.id}`)
+    }
   }
 }

@@ -10,6 +10,7 @@ export const OFFLINE_TITLE = 'You’re offline'
 export const OFFLINE_MESSAGE = 'We’ll reconnect automatically when your connection is back.'
 export const SERVER_DOWN_TITLE = 'Can’t reach the server'
 export const SERVER_DOWN_MESSAGE = 'We can’t reach our servers right now. Retrying automatically…'
+export const RETRY_LABEL = 'Try again'
 
 /**
  * The "API unavailable" screen. It says whether the browser is offline or the servers are, and its
@@ -25,6 +26,7 @@ export function ApiUnavailableScreen({
       message={offline ? OFFLINE_MESSAGE : SERVER_DOWN_MESSAGE}
       showRefreshButton={true}
       onRefresh={onRetry}
+      refreshLabel={RETRY_LABEL}
     />
   )
 }
