@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-10-30
+generatedAt: 2026-11-02
 channels:
-  canary: 2026.10.25
+  canary: 2026.11.1
   stable: 2026.10.23
 releases:
   - id: 2026.08.0
@@ -1245,3 +1245,86 @@ releases:
           - pnpm run nestled-doctor
           - "Manual: run the web app against a local API, stop the API, trigger a query (navigate or refocus the tab) and confirm the screen appears after about three seconds; start the API again and confirm the screen clears within 30 seconds without a refresh."
         patch: patches/2026-10-30-service-unavailable-recovers.diff
+  - id: 2026.11.1
+    date: 2026-11-02
+    title: Release 2026.11.1
+    templateCommit: d4a4311
+    notes:
+      - id: 2026-10-30-drop-graphql-scalars-and-audit-pins
+        title: Remove the unused graphql-scalars dependency, and fix the qs, morgan and vitest audit moderates within their current majors
+        delivery: code-patch
+        intent: "Root package.json and pnpm-lock.yaml only. Each project applies the same changes to its own manifest and re-resolves its own lockfile with pnpm; the template's lockfile is not copied. 1. Remove `graphql-scalars` (was `^1.25.0`) from `dependencies` with `pnpm remove graphql-scalars`, not by editing the lockfile. Nothing in the template's apps, libs or tools imports it. It carries the high-severity advisory GHSA-x8rm-f576-gq67 (the PhoneNumber scalar; vulnerable >=1.24.1 <=2.0.0, fixed in 2.0.1). 2. Moderates fixed inside their current major: `morgan` `^1.11.0` -> `^1.12.1` (dependencies; two log-injection advisories, fixed in 1.12.0 and 1.12.1); `vitest`, `@vitest/browser-playwright`, `@vitest/coverage-v8` and `@vitest/ui` `4.1.10` -> `4.1.12` (devDependencies; the vitest and @vitest/mocker advisories, fixed in 4.1.11 and 4.1.12). Bump all four together; they must stay on the same version. 3. pnpm.overrides: the existing qs entry is widened. `\"qs@>=6.11.1 <=6.15.1\": \"6.15.2\"` becomes `\"qs@>=6.7.0 <6.16.1\": \"6.16.2\"` (three qs advisories, all fixed by 6.16.1; 6.16.2 is the latest 6.16 patch). qs is reached only transitively (express, @cypress/request). All other overrides stay as they are. Left as they were, with no fix inside the current major or only reachable through tooling: `type-graphql` -> `graphql-scalars` 1.25.0 (see the agent hints), `fast-uri` 3.1.7, `postcss-selector-parser` 6.0.10 and 7.1.5, `baseline-browser-mapping` 2.10.30 (pinned by an existing override), `serialize-javascript` 7.1.0 and `deepmerge` 4.3.1 (no fixed version). Template audit, before -> after. `pnpm audit --prod`: 17 (1 high, 13 moderate, 3 low) -> 9 (1 high, 5 moderate, 3 low). `pnpm audit`: 19 (1 high, 14 moderate, 4 low) -> 11 (1 high, 6 moderate, 4 low). The remaining high is graphql-scalars installed as the required peer of `type-graphql` 2.0.0-rc.3 (next hint)."
+        area: infra
+        affectedPaths:
+          - package.json
+          - pnpm-lock.yaml
+        verification:
+          - pnpm install --frozen-lockfile
+          - pnpm audit --prod
+          - pnpm audit
+          - pnpm typecheck
+          - pnpm exec nx build api --skip-nx-cache
+          - pnpm exec nx build web --skip-nx-cache
+          - pnpm exec nx test api-custom --skip-nx-cache
+          - pnpm exec nx test web --skip-nx-cache
+        patch: patches/2026-10-30-drop-graphql-scalars-and-audit-pins.diff
+      - id: 2026-10-30-error-screens-recover-everywhere
+        title: "No error screen stays stuck: the root boundary, the admin data browser and failed queries recover by themselves (@nestledjs/shared-components 1.0.19, @nestledjs/data-browser 1.0.26)"
+        delivery: hybrid
+        intent: "Follow-up to 2026-10-30-service-unavailable-recovers, which made the app-level \"API unavailable\" screen recover by itself. That note must be applied first: this one uses its apps/web/app/api-availability.ts and api-unavailable.tsx. Five parts. 1. Packages. Upgrade `@nestledjs/shared-components` to 1.0.19 and `@nestledjs/data-browser` to 1.0.26 in package.json and the lockfile. Do not copy files from libs/shared-components or libs/data-browser. - shared-components 1.0.19: `ServiceUnavailable` takes an optional `refreshLabel?: string`, the button's text. Its default stays \"Refresh Page\", so existing callers render as before. No other API change. - data-browser 1.0.26: `AdminDataErrorBoundary`, `AdminDataCreateErrorBoundary` and `AdminDataEditErrorBoundary` no longer show shared-components' static \"Service Unavailable\" screen for a network error (it needed a manual reload). They show a \"Can't reach the server\" (or \"You're offline\") panel inside the admin layout that probes with backoff (2 s doubling to a 30 s cap), probes at once on the browser `online` event and when the tab becomes visible, keeps a manual \"Try Again\" button, and on success calls react-router's `useRevalidator().revalidate()`, which clears the route error boundary. Other errors still go to shared-components' `ErrorBoundary`. Additions: `AdminDataProvider` takes an optional `probe?: () => Promise<boolean>` (resolves true when the API answers); the three boundaries take an optional `probe` that overrides it; new exports `AdminRouteErrorBoundary`, `AdminApiUnavailable`, `useAdminApiRecovery`, `resetAdminRecoveryBackoff`, `useOptionalAdminDataContext`, the `AdminApiProbe` and `AdminDataErrorBoundaryProps` types and the `ADMIN_*_TITLE` / `ADMIN_*_MESSAGE` copy constants. Without a probe the boundary revalidates with the same backoff while the browser is online, so it still recovers; the backoff carries over if the route fails again and the boundary mounts again within a minute. The peer range on shared-components stays `^1.0.14`: data-browser uses nothing new from it. 2. apps/web/app/routes/admin/data/_layout.tsx: pass the app's probe to the provider: `const probeAdminApi = () => probeApi()` (probeApi from apps/web/app/api-availability.ts) and `<AdminDataProvider ... probe={probeAdminApi}>`. The package cannot import app code and does not know the API origin, so the app supplies its probe; that keeps one probe implementation (GET `${VITE_API_URL}/api/uptime`, any answer but 502/503/504 counts) instead of a second copy inside the package. 3. apps/web/app/api-unavailable.tsx: `ApiUnavailableScreen` passes `refreshLabel=\"Try again\"` (exported as `RETRY_LABEL`), since its button probes rather than reloading. 4. apps/web/app/root.tsx, the route `ErrorBoundary`: - a connectivity failure renders `RecoveringApiUnavailable`: no route status and `isFetchFailure(error) || isNetworkError(error)`, or a route error response with status 502, 503 or 504; - a Vite cache error still goes to the package `ErrorBoundary` (it reloads by itself); - any other error renders `ErrorBoundaryUi` (from @nestledjs/shared-components) with a \"Try again\" button that reloads the page, instead of the package boundary. Nothing on the root error screens says \"refresh\" any more. The 401 (force-logout) and 403 (AccessDenied) branches before these are unchanged. 5. Queries that failed stay failed no longer. - apps/web/app/api-availability.ts: new `refetchFailedQueries(client)` refetches every active Apollo query whose last result is a transport error (not `CombinedGraphQLErrors`, so a forbidden or validation error is not retried), and `useRefetchFailedQueries()` does it on the browser `online` event and when the tab becomes visible, and returns a function to do it on demand. Refetches are spaced with the probe's backoff (2 s doubling to 30 s), reset only when a pass finds no failed query, and a request inside the window is deferred, not dropped; without that, an API whose /api/uptime answers while /graphql keeps failing refetched in a tight loop. `useApiAvailability` takes a new `onBlipCleared` callback, called when a reported failure turns out to be a blip (the API answered before the screen went up). - apps/web/app/app.tsx: `App` calls `useRefetchFailedQueries()` and passes it as `onBlipCleared` and from `onRecover`. Before this, a query that failed during a blip too short to show the screen kept rendering its error (for example the admin billing plans and subscriptions pages' \"Error loading ...\" text) until the user navigated away. - libs/shared/apollo/src/lib/apollo.ts: the graphql-ws client retries without a limit (`retryAttempts: Number.POSITIVE_INFINITY`) with `retryWait` from the new exported `subscriptionRetryDelayMs` (2 s doubling to 30 s, plus up to 1 s of jitter). graphql-ws gave up after 5 attempts by default (about 30 s), after which every active subscription errored and stayed dead until a reload. Its fatal close codes (4400, 4401, 4500 and the like) are still not retried, and `lazy: true` closes the socket when nothing is subscribed. The WebSocket server's session check is not changed. Tests: apps/web/tests/api-availability.spec.tsx (root boundary: \"Try again\" label, 503 route response, generic error with manual reload and no \"refresh\" wording; refetchFailedQueries; onBlipCleared), libs/shared/apollo/src/lib/apollo.spec.ts (subscriptionRetryDelayMs), and in the packages service-unavailable.spec.tsx and AdminRecoveringErrorBoundary.spec.tsx."
+        area: web
+        affectedPaths:
+          - apps/web/app/root.tsx
+          - apps/web/app/app.tsx
+          - apps/web/app/api-availability.ts
+          - apps/web/app/api-unavailable.tsx
+          - apps/web/app/routes/admin/data/_layout.tsx
+          - libs/shared/apollo/src/lib/apollo.ts
+          - apps/web/tests/api-availability.spec.tsx
+          - libs/shared/apollo/src/lib/apollo.spec.ts
+        verification:
+          - pnpm install
+          - pnpm typecheck
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - pnpm exec nx build web --skip-nx-cache
+          - pnpm run nestled-doctor
+          - "Manual: with the web app running against a local API, open /admin/data/<model>, stop the API, reload the admin page (the \"Can't reach the server\" panel shows inside the admin layout), start the API again and confirm the panel clears within 30 seconds without a reload."
+        patch: patches/2026-10-30-error-screens-recover-everywhere.diff
+        packageReleases:
+          - name: "@nestledjs/shared-components"
+            sourcePath: libs/shared-components
+            targetVersion: 1.0.19
+            versionRange: ^1.0.19
+          - name: "@nestledjs/data-browser"
+            sourcePath: libs/data-browser
+            targetVersion: 1.0.26
+            versionRange: ^1.0.26
+      - id: 2026-10-30-mcp-consent-origin-null
+        title: "MCP consent page: Referrer-Policy same-origin, so Approve no longer fails with 400 Bad Request"
+        delivery: code-patch
+        intent: "apps/web/app/routes/mcp-connect.tsx's `headers()` sent `Referrer-Policy: no-referrer` (added in 2026-10-25-mcp-oauth-consent-and-s256-pkce). With that policy Chrome sends `Origin: null` on the page's own form POST. React Router 7's action CSRF check (`throwIfPotentialCSRFAttack`) treats the string \"null\" as a foreign origin, throws \"The `request.url` host does not match `origin` header from a forwarded action request\" and answers 400. So a user who clicks Approve (or Deny) on the consent page sees \"Bad Request\", and the API's `/api/mcp/authorize/decision` and `/api/mcp/token` are never reached: no remote MCP connector (for example a claude.ai custom connector) can finish connecting. The fix changes that one header to `Referrer-Policy: same-origin`. The page's URL, with its pending request id, is still never sent to another site, and the browser sends the real Origin on the same-origin POST. The other consent-page headers (X-Frame-Options DENY, CSP `frame-ancestors 'none'`, Cache-Control no-store) are unchanged. The CSRF check is not loosened and no `allowedActionOrigins` is added. Reproduce: `curl -i -X POST https://<web-host>/mcp-connect?request=x -H 'Origin: https://<web-host>' ...` gets a 302 (or the action's own answer); the same request with `-H 'Origin: null'` gets 400. Test: apps/web/tests/routes/mcp-connect.spec.tsx asserts the header value."
+        area: auth
+        affectedPaths:
+          - apps/web/app/routes/mcp-connect.tsx
+          - apps/web/tests/routes/mcp-connect.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx build web --skip-nx-cache
+          - "After deploy: `curl -s -o /dev/null -w '%{http_code}\\n' -X POST 'https://<web-host>/mcp-connect?request=x' -H 'Origin: https://<web-host>' -H 'Content-Type: application/x-www-form-urlencoded' --data 'decision=deny'` does not answer 400, and `curl -sI 'https://<web-host>/mcp-connect?request=x'` shows `Referrer-Policy: same-origin`. Then connect a remote MCP client and click Approve."
+        patch: patches/2026-10-30-mcp-consent-origin-null.diff
+      - id: 2026-10-30-sonar-tidy-ups-and-mcp-cloudflare-docs
+        title: SonarCloud tidy-ups (S3776 in ApiTokenAuthMiddleware, S8786 and S6754 in api-availability.ts) and an MCP plugin README on Cloudflare bot protection
+        delivery: code-patch
+        intent: "Three small changes with no behaviour change, plus a new README. 1. libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts (SonarCloud S3776, cognitive complexity of `use`): the user lookup and attach step moves into a private `attachTokenUser(req, result)`, typed with `ValidatedApiToken` (the non-null result of `ApiTokensService.validateApiToken`). `use` calls `await this.attachTokenUser(req, result)` inside the same try block. The not-found and deactivated-user refusals, their log lines, `recordTokenUse` (called only after the user is attached), the resource-binding refusal and the \"Invalid or expired API token provided\" branch are unchanged, and the existing spec passes unchanged. 2. apps/web/app/api-availability.ts: - S8786: `apiProbeUrl()` trimmed trailing slashes with `.replace(/\\/+$/, '')`, which SonarCloud flags as a slow-regex risk. It now uses a new exported `trimTrailingSlashes(value)`, a loop over `value.endsWith('/', end)`. - S6754: the `useState` pair in `useApiAvailability` is `[phase, setPhase]`; the callback that updates both the ref and the state is renamed from `setPhase` to `changePhase`. 3. New libs/api/custom/src/lib/plugins/mcp/README.md: the MCP endpoint and OAuth routes a remote connector reaches, and a section for an API behind Cloudflare. With bot protection on (Bot Fight Mode, Super Bot Fight Mode or a managed challenge), non-browser MCP clients get a challenge page instead of JSON and connecting fails. Fix it on the API hostname only: make it DNS-only (grey cloud), or add a WAF skip rule for paths starting with `/api/mcp` (the endpoint and `/api/mcp/register`, `/authorize`, `/token`, `/jwks`, `/.well-known/*`), `/.well-known/oauth-` and `/.well-known/openid-configuration`. The web app stays proxied."
+        area: api
+        affectedPaths:
+          - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+          - apps/web/app/api-availability.ts
+          - libs/api/custom/src/lib/plugins/mcp/README.md
+        verification:
+          - pnpm exec nx test api-custom --skip-nx-cache
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm typecheck
+          - pnpm run nestled-doctor
+        patch: patches/2026-10-30-sonar-tidy-ups-and-mcp-cloudflare-docs.diff
