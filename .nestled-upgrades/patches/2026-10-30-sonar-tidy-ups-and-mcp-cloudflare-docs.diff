@@ -1,0 +1,338 @@
+diff --git a/apps/web/app/api-availability.ts b/apps/web/app/api-availability.ts
+index f20ec24..0741358 100644
+--- a/apps/web/app/api-availability.ts
++++ b/apps/web/app/api-availability.ts
+@@ -1,4 +1,6 @@
+-import { useCallback, useEffect, useRef, useState } from 'react'
++import { useCallback, useContext, useEffect, useRef, useState } from 'react'
++import { CombinedGraphQLErrors, type ApolloClient } from '@apollo/client'
++import { getApolloContext } from '@apollo/client/react'
+ 
+ /**
+  * Whether the browser can reach the API, and the "API unavailable" screen's lifecycle.
+@@ -28,8 +30,14 @@ export function retryDelayMs(attempt: number): number {
+  * session and the API's CORS policy covers it like every other route.
+  */
+ export function apiProbeUrl(): string {
+-  const base = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/+$/, '')
+-  return `${base}/api/uptime`
++  return `${trimTrailingSlashes(import.meta.env.VITE_API_URL || 'http://localhost:3000')}/api/uptime`
++}
++
++/** Drops trailing slashes. A loop, not a regex: SonarCloud flags the regex form as a slow-regex risk. */
++export function trimTrailingSlashes(value: string): string {
++  let end = value.length
++  while (end > 0 && value.endsWith('/', end)) end -= 1
++  return value.slice(0, end)
+ }
+ 
+ /**
+@@ -88,6 +96,8 @@ type Phase = 'available' | 'confirming' | 'unavailable'
+ export interface ApiAvailabilityOptions {
+   /** Called once each time the API answers again after the screen was up. */
+   onRecover?: () => void
++  /** Called when a reported failure was a blip: the API answered before the screen went up. */
++  onBlipCleared?: () => void
+   /** Replaces the network probe (tests). */
+   probe?: () => Promise<boolean>
+   /** Mount with the screen already up, e.g. in an error boundary that caught a network error. */
+@@ -108,7 +118,7 @@ export interface ApiAvailability {
+ }
+ 
+ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAvailability {
+-  const [phase, setPhaseState] = useState<Phase>(
++  const [phase, setPhase] = useState<Phase>(
+     options.initiallyUnavailable ? 'unavailable' : 'available',
+   )
+   const [offline, setOffline] = useState(false)
+@@ -122,9 +132,9 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+   const optionsRef = useRef(options)
+   optionsRef.current = options
+ 
+-  const setPhase = useCallback((next: Phase) => {
++  const changePhase = useCallback((next: Phase) => {
+     phaseRef.current = next
+-    setPhaseState(next)
++    setPhase(next)
+   }, [])
+ 
+   const clearTimer = useCallback(() => {
+@@ -167,8 +177,9 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+     const current = phaseRef.current
+     if (reachable) {
+       clearTimer()
+-      setPhase('available')
++      changePhase('available')
+       if (current === 'unavailable') optionsRef.current.onRecover?.()
++      if (current === 'confirming') optionsRef.current.onBlipCleared?.()
+       return
+     }
+ 
+@@ -178,10 +189,10 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+         schedule(CONFIRM_DELAYS_MS[confirmAttemptRef.current])
+         return
+       }
+-      setPhase('unavailable')
++      changePhase('unavailable')
+     }
+     if (phaseRef.current === 'unavailable') scheduleRetry()
+-  }, [clearTimer, schedule, scheduleRetry, setPhase])
++  }, [clearTimer, schedule, scheduleRetry, changePhase])
+ 
+   runProbeRef.current = () => {
+     void runProbe()
+@@ -191,17 +202,17 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+     if (phaseRef.current !== 'available') return
+     confirmAttemptRef.current = 0
+     retryAttemptRef.current = 0
+-    setPhase('confirming')
++    changePhase('confirming')
+     schedule(CONFIRM_DELAYS_MS[0])
+-  }, [schedule, setPhase])
++  }, [schedule, changePhase])
+ 
+   // Keeps the backoff where it was, so a server that keeps saying "unavailable" after the browser
+   // could reach the API is retried at a widening interval rather than every two seconds.
+   const markUnavailable = useCallback(() => {
+     if (phaseRef.current === 'unavailable') return
+-    setPhase('unavailable')
++    changePhase('unavailable')
+     scheduleRetry()
+-  }, [scheduleRetry, setPhase])
++  }, [scheduleRetry, changePhase])
+ 
+   const retryNow = useCallback(() => {
+     if (phaseRef.current === 'available') return
+@@ -246,3 +257,74 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+     retryNow,
+   }
+ }
++
++/**
++ * Refetch every active query whose last result is a transport error (no response, or a non-GraphQL
++ * HTTP failure). Without this a query that failed during a blip too short to put the screen up
++ * kept showing its error until the user navigated away. Queries that failed with GraphQL errors
++ * (validation, forbidden, a resolver bug) are left alone: retrying them would only fail again.
++ */
++export function refetchFailedQueries(client: Pick<ApolloClient, 'getObservableQueries'>): number {
++  let refetched = 0
++  for (const query of client.getObservableQueries('active')) {
++    const { error } = query.getCurrentResult()
++    if (error && !CombinedGraphQLErrors.is(error)) {
++      refetched += 1
++      query.refetch().catch(() => undefined)
++    }
++  }
++  return refetched
++}
++
++/**
++ * Refetch failed queries when the browser comes back online or the tab is shown again, and hand
++ * back a function to do it on demand (after a blip, or when the outage screen clears). A no-op
++ * outside an ApolloProvider.
++ *
++ * Refetches are spaced with the same backoff as the probe (2 s doubling to 30 s), reset only when
++ * a pass finds no failed query left. Without it, an API whose liveness route answers while
++ * GraphQL keeps failing looped: each failure reported a blip, the probe succeeded at once, and
++ * the same queries were refetched straight away, forever. A request that arrives inside the
++ * backoff window is deferred to the end of it, not dropped.
++ */
++export function useRefetchFailedQueries(): () => void {
++  const client = useContext(getApolloContext()).client
++  const attemptRef = useRef(0)
++  const nextAllowedAtRef = useRef(0)
++  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
++
++  const run = useCallback(() => {
++    timerRef.current = undefined
++    if (!client) return
++    if (refetchFailedQueries(client) === 0) {
++      attemptRef.current = 0
++      nextAllowedAtRef.current = 0
++      return
++    }
++    nextAllowedAtRef.current = Date.now() + retryDelayMs(attemptRef.current)
++    attemptRef.current += 1
++  }, [client])
++
++  const refetch = useCallback(() => {
++    if (timerRef.current !== undefined) return
++    const wait = nextAllowedAtRef.current - Date.now()
++    if (wait <= 0) run()
++    else timerRef.current = setTimeout(run, wait)
++  }, [run])
++
++  useEffect(() => {
++    const handleVisible = () => {
++      if (document.visibilityState === 'visible') refetch()
++    }
++    globalThis.addEventListener('online', refetch)
++    document.addEventListener('visibilitychange', handleVisible)
++    return () => {
++      globalThis.removeEventListener('online', refetch)
++      document.removeEventListener('visibilitychange', handleVisible)
++      if (timerRef.current !== undefined) clearTimeout(timerRef.current)
++      timerRef.current = undefined
++    }
++  }, [refetch])
++
++  return refetch
++}
+diff --git a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+index edb0fd1..0084b45 100644
+--- a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
++++ b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+@@ -10,6 +10,8 @@ type ApiTokenRequest = Request & {
+   apiTokenOrganizationId?: string | null
+ }
+ 
++type ValidatedApiToken = NonNullable<Awaited<ReturnType<ApiTokensService['validateApiToken']>>>
++
+ @Injectable()
+ export class ApiTokenAuthMiddleware implements NestMiddleware {
+   private readonly logger = new Logger(ApiTokenAuthMiddleware.name)
+@@ -44,38 +46,7 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
+         }
+ 
+         if (result) {
+-          // Load the user and attach to request
+-          const user = await this.data.user.findUnique({
+-            where: { id: result.userId },
+-            include: {
+-              organizations: {
+-                include: {
+-                  role: {
+-                    include: {
+-                      permissions: true,
+-                    },
+-                  },
+-                  organization: true,
+-                },
+-              },
+-            },
+-          })
+-
+-          if (!user) {
+-            this.logger.warn(`User not found for valid API token: ${result.userId}`)
+-          } else if (user.isActive === false) {
+-            // The same rule JwtStrategy applies to sessions and API tokens: a deactivated account
+-            // is refused, and its token does not count as used.
+-            this.logger.warn(`API token ${result.tokenId} belongs to a deactivated user; refused`)
+-          } else {
+-            const apiTokenReq = req as ApiTokenRequest
+-            apiTokenReq.user = user
+-            apiTokenReq.apiTokenId = result.tokenId
+-            apiTokenReq.apiTokenOrganizationId = result.organizationId
+-            this.apiTokensService.recordTokenUse(result.tokenId)
+-
+-            this.logger.log(`API token authentication successful for user ${user.id}`)
+-          }
++          await this.attachTokenUser(req, result)
+         } else {
+           this.logger.warn('Invalid or expired API token provided')
+         }
+@@ -87,4 +58,43 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
+     // Continue to next middleware/handler
+     next()
+   }
++
++  /**
++   * Load the token's user and attach it to the request. A missing or deactivated user is refused
++   * (logged, nothing attached) and the token does not count as used.
++   */
++  private async attachTokenUser(req: Request, result: ValidatedApiToken): Promise<void> {
++    // Load the user and attach to request
++    const user = await this.data.user.findUnique({
++      where: { id: result.userId },
++      include: {
++        organizations: {
++          include: {
++            role: {
++              include: {
++                permissions: true,
++              },
++            },
++            organization: true,
++          },
++        },
++      },
++    })
++
++    if (!user) {
++      this.logger.warn(`User not found for valid API token: ${result.userId}`)
++    } else if (user.isActive === false) {
++      // The same rule JwtStrategy applies to sessions and API tokens: a deactivated account
++      // is refused, and its token does not count as used.
++      this.logger.warn(`API token ${result.tokenId} belongs to a deactivated user; refused`)
++    } else {
++      const apiTokenReq = req as ApiTokenRequest
++      apiTokenReq.user = user
++      apiTokenReq.apiTokenId = result.tokenId
++      apiTokenReq.apiTokenOrganizationId = result.organizationId
++      this.apiTokensService.recordTokenUse(result.tokenId)
++
++      this.logger.log(`API token authentication successful for user ${user.id}`)
++    }
++  }
+ }
+diff --git a/libs/api/custom/src/lib/plugins/mcp/README.md b/libs/api/custom/src/lib/plugins/mcp/README.md
+new file mode 100644
+index 0000000..bfbe563
+--- /dev/null
++++ b/libs/api/custom/src/lib/plugins/mcp/README.md
+@@ -0,0 +1,55 @@
++# MCP plugin
++
++The API serves a remote MCP endpoint at `/api/mcp`, with its own OAuth authorization server so
++remote connectors (for example a custom connector added in claude.ai) can connect with the user's
++consent. Personal and organization API tokens created in settings also work as bearer tokens.
++
++## Routes a remote connector reaches
++
++All on the API origin (`VITE_API_URL`), not the web app:
++
++| Path                                              | Purpose                                                               |
++| ------------------------------------------------- | --------------------------------------------------------------------- |
++| `/api/mcp`                                        | The MCP endpoint (Streamable HTTP).                                   |
++| `/.well-known/oauth-protected-resource/api/mcp`   | Protected-resource metadata, named in the endpoint's `401` challenge. |
++| `/.well-known/oauth-authorization-server/api/mcp` | Authorization-server metadata (RFC 8414).                             |
++| `/.well-known/openid-configuration/api/mcp`       | The same metadata at the OpenID location clients also try.            |
++| `/api/mcp/.well-known/*`                          | The same documents under the API prefix.                              |
++| `/api/mcp/register`                               | Dynamic client registration (`POST`).                                 |
++| `/api/mcp/authorize`, `/api/mcp/authorize/*`      | Authorization; the user signs in and approves in the browser.         |
++| `/api/mcp/token`                                  | Token exchange and refresh (`POST`).                                  |
++| `/api/mcp/jwks`                                   | Signing keys.                                                         |
++
++The root `/.well-known/...` paths are rewritten to the `/api/mcp/.well-known/...` routes by
++`mcpRootWellKnownRewrite` (mcp-well-known.ts), mounted in apps/api/src/main.ts.
++
++## Behind Cloudflare: let MCP clients through bot protection
++
++If the API hostname is proxied by Cloudflare (orange cloud) with bot protection on (Bot Fight
++Mode, Super Bot Fight Mode, or a WAF rule that issues a managed or JS challenge), MCP clients
++cannot connect. They are servers, not browsers: instead of JSON from the discovery, registration
++or token routes they get Cloudflare's challenge page (HTML, often with a `403` or `503`), and the
++connector fails with a vague "couldn't connect" or "invalid metadata" error. The API's own logs
++show nothing, because the requests never reach it.
++
++Fix it on the API hostname only, in one of two ways:
++
++1. **DNS-only API hostname.** Set the API's DNS record to DNS only (grey cloud). Cloudflare no
++   longer sits in front of the API, so nothing challenges the MCP routes. The API's own rate
++   limits and auth still apply.
++2. **A WAF skip rule.** Keep the API proxied and add a custom rule with the action **Skip** that
++   skips the bot-protection and managed-challenge features for requests to the API hostname whose
++   path is one of:
++   - starts with `/api/mcp` (the endpoint, `/api/mcp/register`, `/api/mcp/authorize`,
++     `/api/mcp/token`, `/api/mcp/jwks` and `/api/mcp/.well-known/*`);
++   - starts with `/.well-known/oauth-` (the protected-resource and authorization-server
++     metadata);
++   - starts with `/.well-known/openid-configuration`.
++
++   On plans where Bot Fight Mode cannot be skipped by a rule, turn Bot Fight Mode off for the
++   zone, or use option 1.
++
++Keep the **web app's** hostname proxied with whatever protection it has; only the API's MCP and
++OAuth routes need to be reachable by non-browser clients. To check, run
++`curl -i https://<api-host>/.well-known/oauth-protected-resource/api/mcp` from a server: it should
++return `200` with JSON, not an HTML challenge.
