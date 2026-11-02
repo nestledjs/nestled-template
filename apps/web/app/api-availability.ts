@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { CombinedGraphQLErrors, type ApolloClient } from '@apollo/client'
+import { getApolloContext } from '@apollo/client/react'
 
 /**
  * Whether the browser can reach the API, and the "API unavailable" screen's lifecycle.
@@ -28,8 +30,14 @@ export function retryDelayMs(attempt: number): number {
  * session and the API's CORS policy covers it like every other route.
  */
 export function apiProbeUrl(): string {
-  const base = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/+$/, '')
-  return `${base}/api/uptime`
+  return `${trimTrailingSlashes(import.meta.env.VITE_API_URL || 'http://localhost:3000')}/api/uptime`
+}
+
+/** Drops trailing slashes. A loop, not a regex: SonarCloud flags the regex form as a slow-regex risk. */
+export function trimTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.endsWith('/', end)) end -= 1
+  return value.slice(0, end)
 }
 
 /**
@@ -88,6 +96,8 @@ type Phase = 'available' | 'confirming' | 'unavailable'
 export interface ApiAvailabilityOptions {
   /** Called once each time the API answers again after the screen was up. */
   onRecover?: () => void
+  /** Called when a reported failure was a blip: the API answered before the screen went up. */
+  onBlipCleared?: () => void
   /** Replaces the network probe (tests). */
   probe?: () => Promise<boolean>
   /** Mount with the screen already up, e.g. in an error boundary that caught a network error. */
@@ -108,7 +118,7 @@ export interface ApiAvailability {
 }
 
 export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAvailability {
-  const [phase, setPhaseState] = useState<Phase>(
+  const [phase, setPhase] = useState<Phase>(
     options.initiallyUnavailable ? 'unavailable' : 'available',
   )
   const [offline, setOffline] = useState(false)
@@ -122,9 +132,9 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
   const optionsRef = useRef(options)
   optionsRef.current = options
 
-  const setPhase = useCallback((next: Phase) => {
+  const changePhase = useCallback((next: Phase) => {
     phaseRef.current = next
-    setPhaseState(next)
+    setPhase(next)
   }, [])
 
   const clearTimer = useCallback(() => {
@@ -167,8 +177,9 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
     const current = phaseRef.current
     if (reachable) {
       clearTimer()
-      setPhase('available')
+      changePhase('available')
       if (current === 'unavailable') optionsRef.current.onRecover?.()
+      if (current === 'confirming') optionsRef.current.onBlipCleared?.()
       return
     }
 
@@ -178,10 +189,10 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
         schedule(CONFIRM_DELAYS_MS[confirmAttemptRef.current])
         return
       }
-      setPhase('unavailable')
+      changePhase('unavailable')
     }
     if (phaseRef.current === 'unavailable') scheduleRetry()
-  }, [clearTimer, schedule, scheduleRetry, setPhase])
+  }, [clearTimer, schedule, scheduleRetry, changePhase])
 
   runProbeRef.current = () => {
     void runProbe()
@@ -191,17 +202,17 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
     if (phaseRef.current !== 'available') return
     confirmAttemptRef.current = 0
     retryAttemptRef.current = 0
-    setPhase('confirming')
+    changePhase('confirming')
     schedule(CONFIRM_DELAYS_MS[0])
-  }, [schedule, setPhase])
+  }, [schedule, changePhase])
 
   // Keeps the backoff where it was, so a server that keeps saying "unavailable" after the browser
   // could reach the API is retried at a widening interval rather than every two seconds.
   const markUnavailable = useCallback(() => {
     if (phaseRef.current === 'unavailable') return
-    setPhase('unavailable')
+    changePhase('unavailable')
     scheduleRetry()
-  }, [scheduleRetry, setPhase])
+  }, [scheduleRetry, changePhase])
 
   const retryNow = useCallback(() => {
     if (phaseRef.current === 'available') return
@@ -245,4 +256,75 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
     markUnavailable,
     retryNow,
   }
+}
+
+/**
+ * Refetch every active query whose last result is a transport error (no response, or a non-GraphQL
+ * HTTP failure). Without this a query that failed during a blip too short to put the screen up
+ * kept showing its error until the user navigated away. Queries that failed with GraphQL errors
+ * (validation, forbidden, a resolver bug) are left alone: retrying them would only fail again.
+ */
+export function refetchFailedQueries(client: Pick<ApolloClient, 'getObservableQueries'>): number {
+  let refetched = 0
+  for (const query of client.getObservableQueries('active')) {
+    const { error } = query.getCurrentResult()
+    if (error && !CombinedGraphQLErrors.is(error)) {
+      refetched += 1
+      query.refetch().catch(() => undefined)
+    }
+  }
+  return refetched
+}
+
+/**
+ * Refetch failed queries when the browser comes back online or the tab is shown again, and hand
+ * back a function to do it on demand (after a blip, or when the outage screen clears). A no-op
+ * outside an ApolloProvider.
+ *
+ * Refetches are spaced with the same backoff as the probe (2 s doubling to 30 s), reset only when
+ * a pass finds no failed query left. Without it, an API whose liveness route answers while
+ * GraphQL keeps failing looped: each failure reported a blip, the probe succeeded at once, and
+ * the same queries were refetched straight away, forever. A request that arrives inside the
+ * backoff window is deferred to the end of it, not dropped.
+ */
+export function useRefetchFailedQueries(): () => void {
+  const client = useContext(getApolloContext()).client
+  const attemptRef = useRef(0)
+  const nextAllowedAtRef = useRef(0)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const run = useCallback(() => {
+    timerRef.current = undefined
+    if (!client) return
+    if (refetchFailedQueries(client) === 0) {
+      attemptRef.current = 0
+      nextAllowedAtRef.current = 0
+      return
+    }
+    nextAllowedAtRef.current = Date.now() + retryDelayMs(attemptRef.current)
+    attemptRef.current += 1
+  }, [client])
+
+  const refetch = useCallback(() => {
+    if (timerRef.current !== undefined) return
+    const wait = nextAllowedAtRef.current - Date.now()
+    if (wait <= 0) run()
+    else timerRef.current = setTimeout(run, wait)
+  }, [run])
+
+  useEffect(() => {
+    const handleVisible = () => {
+      if (document.visibilityState === 'visible') refetch()
+    }
+    globalThis.addEventListener('online', refetch)
+    document.addEventListener('visibilitychange', handleVisible)
+    return () => {
+      globalThis.removeEventListener('online', refetch)
+      document.removeEventListener('visibilitychange', handleVisible)
+      if (timerRef.current !== undefined) clearTimeout(timerRef.current)
+      timerRef.current = undefined
+    }
+  }, [refetch])
+
+  return refetch
 }

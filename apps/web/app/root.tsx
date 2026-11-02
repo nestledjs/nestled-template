@@ -5,10 +5,12 @@ import { Me, type MeQuery } from '@nestled-template/shared/sdk'
 import {
   getCookie,
   getSessionCookieName,
+  isFetchFailure,
   isJwtExpired,
   isNetworkError,
+  isViteCacheError,
 } from '@nestled-template/shared/utils'
-import { ErrorBoundary as AppErrorBoundary } from '@nestledjs/shared-components'
+import { ErrorBoundary as AppErrorBoundary, ErrorBoundaryUi } from '@nestledjs/shared-components'
 import { ReactNode } from 'react'
 import {
   Links,
@@ -23,7 +25,7 @@ import {
 import { GTMNoScript, GTMScript } from './gtm'
 import App from './app'
 import { AccessDenied } from './access-denied'
-import { RecoveringApiUnavailable } from './api-unavailable'
+import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
 
 export const meta: MetaFunction = () => [
   {
@@ -227,13 +229,42 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
     return <AccessDenied />
   }
 
-  // The package boundary shows a static "Service Unavailable" for network errors that only a
-  // manual refresh clears. This one probes the API and reloads by itself once it answers.
-  if (routeStatus === undefined && isNetworkError(error)) {
+  // A connectivity failure (no response from the API, or a proxy's 502/503/504 while it
+  // restarts) gets the screen that probes the API and reloads by itself once it answers.
+  if (isConnectivityFailure(error, routeStatus)) {
     return <RecoveringApiUnavailable />
   }
 
   // Layout always wraps this component and provides <html>/<head>/<body> —
   // do not render document-level tags here.
-  return <AppErrorBoundary error={normalizedError} autoRefresh={true} autoRefreshDelay={3000} />
+  if (isViteCacheError(normalizedError)) {
+    return <AppErrorBoundary error={normalizedError} autoRefresh={true} autoRefreshDelay={3000} />
+  }
+
+  return <RootErrorScreen error={normalizedError} />
+}
+
+const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+
+function isConnectivityFailure(error: unknown, routeStatus: number | undefined): boolean {
+  if (routeStatus !== undefined) return GATEWAY_UNAVAILABLE_STATUSES.has(routeStatus)
+  return isFetchFailure(error) || isNetworkError(error)
+}
+
+/** Any other error: the details, and a manual "Try again" that loads the page again. */
+function RootErrorScreen({ error }: Readonly<{ error: Error }>) {
+  return (
+    <div>
+      <ErrorBoundaryUi error={error} />
+      <div className="flex justify-center pb-10">
+        <button
+          type="button"
+          onClick={() => globalThis.location.reload()}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+        >
+          {RETRY_LABEL}
+        </button>
+      </div>
+    </div>
+  )
 }

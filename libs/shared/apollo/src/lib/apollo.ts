@@ -372,12 +372,38 @@ function createLogLink(): ApolloLink {
   })
 }
 
+const SUBSCRIPTION_RETRY_BASE_MS = 2000
+const SUBSCRIPTION_RETRY_CAP_MS = 30000
+
+/** A number in [0, 1) from the platform CSPRNG (browsers and Node 22), for retry jitter. */
+function randomUnit(): number {
+  return globalThis.crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32
+}
+
+/**
+ * How long the subscription socket waits before reconnect attempt `retries`: 2 s doubling to a
+ * 30 s cap, plus up to a second of jitter so many tabs do not reconnect in step after a redeploy.
+ */
+export function subscriptionRetryDelayMs(retries: number, jitter: number = randomUnit()): number {
+  const base = Math.min(SUBSCRIPTION_RETRY_BASE_MS * 2 ** retries, SUBSCRIPTION_RETRY_CAP_MS)
+  return base + Math.floor(jitter * 1000)
+}
+
+// graphql-ws gives up after 5 attempts by default (about half a minute), after which every active
+// subscription errors and stays dead until the page reloads: a laptop that slept or an API
+// redeploy longer than that left live views frozen. Retry without a limit at a capped interval
+// instead. graphql-ws still refuses to retry its fatal close codes (4400 bad request, 4401
+// unauthorized, 4500 internal error and the like), and `lazy` closes the socket when nothing is
+// subscribed, so this only keeps reconnecting while something is listening.
 function createWebSocketLink(wsUri: string, token: string | null): GraphQLWsLink {
   return new GraphQLWsLink(
     createClient({
       url: wsUri,
       connectionParams: () => (token ? { Authorization: `Bearer ${token}` } : {}),
       lazy: true,
+      retryAttempts: Number.POSITIVE_INFINITY,
+      retryWait: retries =>
+        new Promise(resolve => setTimeout(resolve, subscriptionRetryDelayMs(retries))),
     }),
   )
 }

@@ -74,6 +74,12 @@ describe('mcp-connect consent route', () => {
         }),
       )
     })
+
+    it('keeps the URL on this site without making the form POST send Origin: null', () => {
+      // no-referrer makes Chrome send `Origin: null` on the consent form's POST, which React
+      // Router's action CSRF check rejects with a 400. same-origin keeps a real Origin.
+      expect(headers()['Referrer-Policy']).toBe('same-origin')
+    })
   })
 
   describe('loader', () => {

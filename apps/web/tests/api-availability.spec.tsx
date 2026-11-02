@@ -1,5 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { createMemoryRouter, RouterProvider } from 'react-router'
+import {
+  createMemoryRouter,
+  RouterProvider,
+  UNSAFE_ErrorResponseImpl as ErrorResponseImpl,
+} from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
@@ -10,9 +14,15 @@ import { ErrorBoundary } from '../app/root'
 import {
   CONFIRM_DELAYS_MS,
   probeApi,
+  refetchFailedQueries,
   reloadForRecovery,
   retryDelayMs,
+  trimTrailingSlashes,
+  useApiAvailability,
+  useRefetchFailedQueries,
 } from '../app/api-availability'
+import { ApolloProvider } from '@apollo/client/react'
+import { CombinedGraphQLErrors } from '@apollo/client'
 import { RecoveringApiUnavailable } from '../app/api-unavailable'
 
 const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
@@ -261,6 +271,32 @@ describe('root error boundary for a network error', () => {
     expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
   })
 
+  it('labels the button "Try again", not "Refresh Page"', () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    render(<ErrorBoundary error={new TypeError('Load failed')} />)
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+    expect(screen.queryByText(/refresh/i)).not.toBeInTheDocument()
+  })
+
+  it('treats a proxy 503 route response as a connectivity failure', () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    render(<ErrorBoundary error={new ErrorResponseImpl(503, 'Service Unavailable', null)} />)
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+  })
+
+  it('gives any other error a manual "Try again" that reloads, with no "refresh" wording', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const reload = vi.fn()
+    vi.stubGlobal('location', { ...globalThis.location, reload })
+    render(<ErrorBoundary error={new Error('Cannot read properties of undefined')} />)
+
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+    expect(screen.queryByText(/refresh/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
   it('reloads once the API answers, but not in a loop', async () => {
     const reload = vi.fn().mockReturnValue(true)
     const probe = vi.fn().mockResolvedValue(true)
@@ -287,6 +323,125 @@ describe('reloadForRecovery', () => {
     expect(reload).toHaveBeenCalledTimes(1)
     expect(reloadForRecovery(1_061_000)).toBe(true)
     expect(reload).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('refetchFailedQueries', () => {
+  function query(error?: unknown) {
+    return {
+      getCurrentResult: () => ({ error }),
+      refetch: vi.fn().mockResolvedValue({}),
+    }
+  }
+
+  it('refetches queries that failed on the network, not GraphQL errors or healthy ones', () => {
+    const network = query(new TypeError('Failed to fetch'))
+    const graphql = query(new CombinedGraphQLErrors({ errors: [{ message: 'Forbidden' }] }))
+    const healthy = query()
+    const client = { getObservableQueries: () => new Set([network, graphql, healthy]) }
+
+    expect(refetchFailedQueries(client as never)).toBe(1)
+    expect(network.refetch).toHaveBeenCalledTimes(1)
+    expect(graphql.refetch).not.toHaveBeenCalled()
+    expect(healthy.refetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('useRefetchFailedQueries', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('backs off while the same queries keep failing, and resets once they succeed', async () => {
+    let failing = true
+    const failed = {
+      getCurrentResult: () => ({ error: failing ? new TypeError('Failed to fetch') : undefined }),
+      refetch: vi.fn().mockResolvedValue({}),
+    }
+    const client = { getObservableQueries: () => new Set([failed]) }
+    let refetch: () => void = () => undefined
+    function Harness() {
+      refetch = useRefetchFailedQueries()
+      return null
+    }
+    // Only the client's getObservableQueries is used; the rest of ApolloClient is not needed.
+    render(
+      <ApolloProvider client={client as never}>
+        <Harness />
+      </ApolloProvider>,
+    )
+
+    // A burst of requests (each a "blip" from a failing /graphql) refetches once, not each time.
+    act(() => {
+      refetch()
+      refetch()
+      refetch()
+    })
+    expect(failed.refetch).toHaveBeenCalledTimes(1)
+
+    // The next is deferred to the end of the 2 s window, then 4 s.
+    act(() => refetch())
+    expect(failed.refetch).toHaveBeenCalledTimes(1)
+    await advance(retryDelayMs(0))
+    expect(failed.refetch).toHaveBeenCalledTimes(2)
+    act(() => refetch())
+    await advance(retryDelayMs(1) - 1)
+    expect(failed.refetch).toHaveBeenCalledTimes(2)
+    await advance(1)
+    expect(failed.refetch).toHaveBeenCalledTimes(3)
+
+    // Once nothing is failing the backoff resets: the next request runs at once.
+    failing = false
+    await advance(retryDelayMs(2))
+    act(() => refetch())
+    failing = true
+    act(() => refetch())
+    expect(failed.refetch).toHaveBeenCalledTimes(4)
+  })
+})
+
+describe('useApiAvailability onBlipCleared', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('fires when a reported failure clears before the screen goes up', async () => {
+    const onBlipCleared = vi.fn()
+    const onRecover = vi.fn()
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true)
+    let report: () => void = () => undefined
+    function Harness() {
+      const api = useApiAvailability({ probe, onBlipCleared, onRecover })
+      report = api.reportConnectivityError
+      return <p>{api.unavailable ? 'down' : 'up'}</p>
+    }
+    render(<Harness />)
+
+    await act(async () => report())
+    await advance(CONFIRM_WINDOW_MS)
+    expect(screen.getByText('up')).toBeInTheDocument()
+    expect(onBlipCleared).toHaveBeenCalledTimes(1)
+    expect(onRecover).not.toHaveBeenCalled()
+  })
+})
+
+describe('trimTrailingSlashes', () => {
+  it.each([
+    ['https://api.example.com', 'https://api.example.com'],
+    ['https://api.example.com/', 'https://api.example.com'],
+    ['https://api.example.com///', 'https://api.example.com'],
+    ['/', ''],
+    ['', ''],
+  ])('trims %j to %j', (input, expected) => {
+    expect(trimTrailingSlashes(input)).toBe(expected)
   })
 })
 

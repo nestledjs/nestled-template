@@ -1,0 +1,66 @@
+id: 2026-10-30-mcp-consent-origin-null
+title: >-
+  MCP consent page: Referrer-Policy same-origin, so Approve no longer fails with 400 Bad Request
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  apps/web/app/routes/mcp-connect.tsx's `headers()` sent `Referrer-Policy: no-referrer`
+  (added in 2026-10-25-mcp-oauth-consent-and-s256-pkce). With that policy Chrome sends
+  `Origin: null` on the page's own form POST. React Router 7's action CSRF check
+  (`throwIfPotentialCSRFAttack`) treats the string "null" as a foreign origin, throws "The
+  `request.url` host does not match `origin` header from a forwarded action request" and answers
+  400. So a user who clicks Approve (or Deny) on the consent page sees "Bad Request", and the
+  API's `/api/mcp/authorize/decision` and `/api/mcp/token` are never reached: no remote MCP
+  connector (for example a claude.ai custom connector) can finish connecting.
+
+  The fix changes that one header to `Referrer-Policy: same-origin`. The page's URL, with its
+  pending request id, is still never sent to another site, and the browser sends the real Origin
+  on the same-origin POST. The other consent-page headers (X-Frame-Options DENY, CSP
+  `frame-ancestors 'none'`, Cache-Control no-store) are unchanged. The CSRF check is not
+  loosened and no `allowedActionOrigins` is added.
+
+  Reproduce: `curl -i -X POST https://<web-host>/mcp-connect?request=x -H 'Origin:
+  https://<web-host>' ...` gets a 302 (or the action's own answer); the same request with
+  `-H 'Origin: null'` gets 400.
+
+  Test: apps/web/tests/routes/mcp-connect.spec.tsx asserts the header value.
+
+why: >
+  It blocks every MCP connect that goes through the consent page in Chromium browsers, and the
+  failure is a bare 400 from the web server with nothing in the API logs.
+
+affectedPaths:
+  - apps/web/app/routes/mcp-connect.tsx
+  - apps/web/tests/routes/mcp-connect.spec.tsx
+
+skipIf:
+  - The project has no MCP consent page (no apps/web/app/routes/mcp-connect.tsx or equivalent).
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - >
+    After deploy: `curl -s -o /dev/null -w '%{http_code}\n' -X POST
+    'https://<web-host>/mcp-connect?request=x' -H 'Origin: https://<web-host>'
+    -H 'Content-Type: application/x-www-form-urlencoded' --data 'decision=deny'` does not
+    answer 400, and `curl -sI 'https://<web-host>/mcp-connect?request=x'` shows
+    `Referrer-Policy: same-origin`. Then connect a remote MCP client and click Approve.
+
+agentHints:
+  - >
+    Search the whole web app for `no-referrer` (`grep -rn "no-referrer" apps/web libs/web`),
+    including headers() exports, entry.server.tsx, server middleware and `<meta name="referrer">`.
+    A project may also have a local `mcp-connect.resume.tsx` or other consent or OAuth routes
+    that set it. For each route that sets `no-referrer`, check whether it has an `action` export
+    or renders a `<form method="post">` / React Router `<Form>`: if it does, change it to
+    `same-origin`; if it has neither, it can keep `no-referrer`. Note in the report which routes
+    you checked. A `rel="noopener noreferrer"` link attribute is unrelated; leave it.
+  - >
+    Do not fix this by loosening React Router's CSRF check, accepting `Origin: null`, or adding
+    `allowedActionOrigins`; the header change is the whole fix.
+  - >
+    If a reverse proxy or CDN in front of the web app sets its own `Referrer-Policy:
+    no-referrer`, it overrides the route header; change it there for the consent routes too.

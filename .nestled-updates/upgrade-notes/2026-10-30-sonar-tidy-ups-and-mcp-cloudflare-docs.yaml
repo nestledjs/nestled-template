@@ -1,0 +1,70 @@
+id: 2026-10-30-sonar-tidy-ups-and-mcp-cloudflare-docs
+title: >-
+  SonarCloud tidy-ups (S3776 in ApiTokenAuthMiddleware, S8786 and S6754 in api-availability.ts)
+  and an MCP plugin README on Cloudflare bot protection
+priority: low
+area: api
+type: cleanup
+delivery: code-patch
+
+intent: >
+  Three small changes with no behaviour change, plus a new README.
+
+  1. libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts (SonarCloud S3776,
+  cognitive complexity of `use`): the user lookup and attach step moves into a private
+  `attachTokenUser(req, result)`, typed with `ValidatedApiToken` (the non-null result of
+  `ApiTokensService.validateApiToken`). `use` calls `await this.attachTokenUser(req, result)`
+  inside the same try block. The not-found and deactivated-user refusals, their log lines,
+  `recordTokenUse` (called only after the user is attached), the resource-binding refusal and the
+  "Invalid or expired API token provided" branch are unchanged, and the existing spec passes
+  unchanged.
+
+  2. apps/web/app/api-availability.ts:
+  - S8786: `apiProbeUrl()` trimmed trailing slashes with `.replace(/\/+$/, '')`, which SonarCloud
+    flags as a slow-regex risk. It now uses a new exported `trimTrailingSlashes(value)`, a loop
+    over `value.endsWith('/', end)`.
+  - S6754: the `useState` pair in `useApiAvailability` is `[phase, setPhase]`; the callback that
+    updates both the ref and the state is renamed from `setPhase` to `changePhase`.
+
+  3. New libs/api/custom/src/lib/plugins/mcp/README.md: the MCP endpoint and OAuth routes a remote
+  connector reaches, and a section for an API behind Cloudflare. With bot protection on (Bot
+  Fight Mode, Super Bot Fight Mode or a managed challenge), non-browser MCP clients get a
+  challenge page instead of JSON and connecting fails. Fix it on the API hostname only: make it
+  DNS-only (grey cloud), or add a WAF skip rule for paths starting with `/api/mcp` (the endpoint
+  and `/api/mcp/register`, `/authorize`, `/token`, `/jwks`, `/.well-known/*`),
+  `/.well-known/oauth-` and `/.well-known/openid-configuration`. The web app stays proxied.
+
+why: >
+  Clears three SonarCloud findings on the template so they stop showing on every downstream
+  analysis, and documents a connection failure that is invisible from the API's own logs.
+
+affectedPaths:
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+  - apps/web/app/api-availability.ts
+  - libs/api/custom/src/lib/plugins/mcp/README.md
+
+skipIf:
+  - The project has none of these files.
+
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm typecheck
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Several projects already fixed S3776 in the middleware, or S8786 / S6754 in
+    api-availability.ts, locally. Where the local fix is equivalent (no regex on the trailing
+    slashes; the state setter named after its state; `use` under the complexity limit with the
+    same refusals and the same `recordTokenUse` placement), record that part as `superseded` and
+    keep the local code.
+  - >
+    The middleware refactor must not change behaviour: a deactivated user is refused and its token
+    is not counted as used, a resource-bound token is refused on the wrong resource, and the
+    error responses and log lines stay the same. If the project's middleware has extra steps
+    (scopes, organization checks), keep them in `use` or in the extracted method, wherever they
+    were in the flow.
+  - >
+    Copy the README if the project has the MCP plugin. If the project changed its global prefix or
+    MCP paths, use its own paths in the table and the WAF rule. Never name a site in it.
