@@ -1,0 +1,895 @@
+diff --git a/apps/web/app/api-availability.ts b/apps/web/app/api-availability.ts
+index 0741358..22c4799 100644
+--- a/apps/web/app/api-availability.ts
++++ b/apps/web/app/api-availability.ts
+@@ -1,6 +1,7 @@
+ import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+-import { CombinedGraphQLErrors, type ApolloClient } from '@apollo/client'
++import type { ApolloClient } from '@apollo/client'
+ import { getApolloContext } from '@apollo/client/react'
++import { isRetryableConnectivityError } from '@nestled-template/shared/apollo'
+ 
+ /**
+  * Whether the browser can reach the API, and the "API unavailable" screen's lifecycle.
+@@ -259,16 +260,22 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+ }
+ 
+ /**
+- * Refetch every active query whose last result is a transport error (no response, or a non-GraphQL
+- * HTTP failure). Without this a query that failed during a blip too short to put the screen up
+- * kept showing its error until the user navigated away. Queries that failed with GraphQL errors
+- * (validation, forbidden, a resolver bug) are left alone: retrying them would only fail again.
++ * Refetch every active query whose last result is a connectivity failure: no response at all, or a
++ * proxy's 502/503/504 while the API restarts (`isRetryableConnectivityError`, the same test the
++ * error link uses to report an outage). Without this a query that failed during a blip too short
++ * to put the screen up kept showing its error until the user navigated away.
++ *
++ * Anything else is left alone, because retrying it would only fail again: GraphQL errors
++ * (validation, forbidden, a resolver bug), an HTTP 401 or 403 (the error link already sends the
++ * user to log in, or to the access-denied screen), any other answered HTTP status, and an error
++ * thrown by application code. Refetching those on every return to the tab replayed the same auth
++ * failure, and with it the same logout redirect or access-denied screen, again and again.
+  */
+ export function refetchFailedQueries(client: Pick<ApolloClient, 'getObservableQueries'>): number {
+   let refetched = 0
+   for (const query of client.getObservableQueries('active')) {
+     const { error } = query.getCurrentResult()
+-    if (error && !CombinedGraphQLErrors.is(error)) {
++    if (isRetryableConnectivityError(error)) {
+       refetched += 1
+       query.refetch().catch(() => undefined)
+     }
+@@ -277,9 +284,20 @@ export function refetchFailedQueries(client: Pick<ApolloClient, 'getObservableQu
+ }
+ 
+ /**
+- * Refetch failed queries when the browser comes back online or the tab is shown again, and hand
+- * back a function to do it on demand (after a blip, or when the outage screen clears). A no-op
+- * outside an ApolloProvider.
++ * How long the browser's "you're back" events are gathered into one refetch. Coming back to a
++ * window fires `focus` and, if the tab was hidden, `visibilitychange` within a few milliseconds of
++ * each other; `online` can land in the same moment after a laptop wakes.
++ */
++export const RETURN_TRIGGER_DEBOUNCE_MS = 250
++
++/**
++ * Refetch failed queries when the browser comes back online, the tab is shown again, or a window
++ * that stayed visible (side by side with another, say) regains focus, and hand back a function to
++ * do it on demand (after a blip, or when the outage screen clears). A no-op outside an
++ * ApolloProvider.
++ *
++ * The browser events are debounced together, so one return to the window refetches once rather
++ * than once per event.
+  *
+  * Refetches are spaced with the same backoff as the probe (2 s doubling to 30 s), reset only when
+  * a pass finds no failed query left. Without it, an API whose liveness route answers while
+@@ -292,6 +310,7 @@ export function useRefetchFailedQueries(): () => void {
+   const attemptRef = useRef(0)
+   const nextAllowedAtRef = useRef(0)
+   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
++  const returnTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+ 
+   const run = useCallback(() => {
+     timerRef.current = undefined
+@@ -313,16 +332,27 @@ export function useRefetchFailedQueries(): () => void {
+   }, [run])
+ 
+   useEffect(() => {
++    const handleReturn = () => {
++      if (returnTimerRef.current !== undefined) clearTimeout(returnTimerRef.current)
++      returnTimerRef.current = setTimeout(() => {
++        returnTimerRef.current = undefined
++        refetch()
++      }, RETURN_TRIGGER_DEBOUNCE_MS)
++    }
+     const handleVisible = () => {
+-      if (document.visibilityState === 'visible') refetch()
++      if (document.visibilityState === 'visible') handleReturn()
+     }
+-    globalThis.addEventListener('online', refetch)
++    globalThis.addEventListener('online', handleReturn)
++    globalThis.addEventListener('focus', handleReturn)
+     document.addEventListener('visibilitychange', handleVisible)
+     return () => {
+-      globalThis.removeEventListener('online', refetch)
++      globalThis.removeEventListener('online', handleReturn)
++      globalThis.removeEventListener('focus', handleReturn)
+       document.removeEventListener('visibilitychange', handleVisible)
+       if (timerRef.current !== undefined) clearTimeout(timerRef.current)
+       timerRef.current = undefined
++      if (returnTimerRef.current !== undefined) clearTimeout(returnTimerRef.current)
++      returnTimerRef.current = undefined
+     }
+   }, [refetch])
+ 
+diff --git a/apps/web/app/app.tsx b/apps/web/app/app.tsx
+index 530016d..866cda1 100644
+--- a/apps/web/app/app.tsx
++++ b/apps/web/app/app.tsx
+@@ -2,38 +2,62 @@ import { Outlet, useLoaderData, useLocation, useRevalidator } from 'react-router
+ import { GlobalContextProvider } from '@nestled-template/web'
+ import { useReadQuery, type QueryRef } from '@apollo/client/react'
+ import type { MeQuery } from '@nestled-template/shared/sdk'
+-import { Component, type ReactNode, useEffect, useRef, useState } from 'react'
++import { Component, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+ import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils'
+ import { ViteCacheError } from '@nestledjs/shared-components'
+ import {
+   APOLLO_ACCESS_FORBIDDEN_EVENT,
+   APOLLO_SERVICE_UNAVAILABLE_EVENT,
++  isRetryableConnectivityError,
+ } from '@nestled-template/shared/apollo'
+ import { AccessDenied } from './access-denied'
+-import { useApiAvailability, useRefetchFailedQueries } from './api-availability'
++import { retryDelayMs, useApiAvailability, useRefetchFailedQueries } from './api-availability'
+ import { ApiUnavailableScreen } from './api-unavailable'
+ 
+-type MeQueryErrorBoundaryProps = { children: ReactNode; resetKey?: unknown }
++type MeQueryErrorBoundaryProps = {
++  children: ReactNode
++  resetKey?: unknown
++  /** Told what the Me query failed with, so a connectivity failure can be retried on recovery. */
++  onError?: (error: unknown) => void
++  /**
++   * Rendered while a Me query that failed for want of a connection waits to be retried. It must
++   * not be the signed-out outlet: a signed-in layout reads `user: null` as "not authenticated" and
++   * sends the browser to /force-logout, which clears the session cookie before the retry can sign
++   * the user back in.
++   */
++  recoveringFallback?: ReactNode
++}
++
++type MeQueryErrorBoundaryState = { hasError: boolean; connectivityFailure: boolean }
+ 
+-class MeQueryErrorBoundary extends Component<MeQueryErrorBoundaryProps, { hasError: boolean }> {
++class MeQueryErrorBoundary extends Component<MeQueryErrorBoundaryProps, MeQueryErrorBoundaryState> {
+   constructor(props: MeQueryErrorBoundaryProps) {
+     super(props)
+-    this.state = { hasError: false }
++    this.state = { hasError: false, connectivityFailure: false }
+   }
+ 
+-  static getDerivedStateFromError() {
+-    return { hasError: true }
++  static getDerivedStateFromError(error: unknown): MeQueryErrorBoundaryState {
++    return { hasError: true, connectivityFailure: isRetryableConnectivityError(error) }
++  }
++
++  componentDidCatch(error: unknown) {
++    this.props.onError?.(error)
+   }
+ 
+   // A new Me query (the root loader ran again) gets a fresh chance. Without this, one failed Me
+   // preload left the whole session rendering as signed out until a full page load.
+   componentDidUpdate(prevProps: MeQueryErrorBoundaryProps) {
+     if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+-      this.setState({ hasError: false })
++      this.setState({ hasError: false, connectivityFailure: false })
+     }
+   }
+ 
+   render() {
++    if (this.state.hasError && this.state.connectivityFailure && this.props.recoveringFallback) {
++      return this.props.recoveringFallback
++    }
++    // Any other failure (a 401 among them) renders as signed out, as before: the error link and the
++    // signed-in layout's redirect take it through logout.
+     if (this.state.hasError) {
+       return (
+         <GlobalContextProvider user={null}>
+@@ -70,15 +94,73 @@ export function App() {
+   // Queries that failed during an outage, or during a blip too short to show the screen, refetch
+   // once the API answers, the browser comes back online or the tab is shown again.
+   const refetchFailedQueries = useRefetchFailedQueries()
++
++  // The signed-in user's Me query failed for want of a connection, and the session is rendering as
++  // signed out because of it. The query ref cannot be read again (it holds the error), so once the
++  // API answers the root loader runs again for a fresh one, and the boundary resets on the new ref.
++  // Without this a short blip left a signed-in user looking signed out until they navigated.
++  // Only connectivity failures are retried: a 401 still goes through the error link's logout.
++  // Retries back off like the refetches, so a /graphql that keeps failing while the liveness route
++  // answers cannot turn this into a revalidation loop.
++  const meFailedOfflineRef = useRef(false)
++  const meRetry = useRef<{ attempt: number; timer?: ReturnType<typeof setTimeout> }>({ attempt: 0 })
++  const retryMeQuery = () => {
++    if (!meFailedOfflineRef.current || meRetry.current.timer !== undefined) return
++    const delay = meRetry.current.attempt === 0 ? 0 : retryDelayMs(meRetry.current.attempt - 1)
++    meRetry.current.attempt += 1
++    meRetry.current.timer = setTimeout(() => {
++      meRetry.current.timer = undefined
++      meFailedOfflineRef.current = false
++      void revalidator.revalidate()
++    }, delay)
++  }
++  // The recovering screen's button: retry the Me query now instead of waiting out the backoff.
++  // While the failure is still being confirmed there is no timer yet and the probe decides.
++  const retryMeQueryNow = () => {
++    if (!meFailedOfflineRef.current || meRetry.current.timer === undefined) return
++    clearTimeout(meRetry.current.timer)
++    meRetry.current.timer = undefined
++    meFailedOfflineRef.current = false
++    void revalidator.revalidate()
++  }
++  useEffect(() => {
++    const retry = meRetry.current
++    return () => clearTimeout(retry.timer)
++  }, [])
++  const handleMeLoaded = useCallback(() => {
++    meRetry.current.attempt = 0
++  }, [])
++
+   const api = useApiAvailability({
+     onRecover: () => {
+-      if (loaderUnavailableRef.current) void revalidator.revalidate()
++      if (loaderUnavailableRef.current) {
++        // Revalidating also brings a fresh Me query, so a pending Me retry is covered.
++        meFailedOfflineRef.current = false
++        void revalidator.revalidate()
++      } else {
++        retryMeQuery()
++      }
++      refetchFailedQueries()
++    },
++    onBlipCleared: () => {
++      retryMeQuery()
+       refetchFailedQueries()
+     },
+-    onBlipCleared: refetchFailedQueries,
+   })
+   const { reportConnectivityError, markUnavailable } = api
+ 
++  const handleMeQueryError = useCallback(
++    (error: unknown) => {
++      if (!isRetryableConnectivityError(error)) return
++      meFailedOfflineRef.current = true
++      // Confirm the failure with the probe; whichever way it clears (a blip, or the outage screen
++      // coming down) calls back above. During SSR the error link reports nothing, so this is the
++      // only report a Me query that failed on the server gets.
++      reportConnectivityError()
++    },
++    [reportConnectivityError],
++  )
++
+   useEffect(() => {
+     if (loaderServiceUnavailable) markUnavailable()
+   }, [data, loaderServiceUnavailable, markUnavailable])
+@@ -178,15 +260,33 @@ export function App() {
+   }
+   // Only call useReadQuery if meQueryRef is present
+   return (
+-    <MeQueryErrorBoundary resetKey={meQueryRef}>
+-      <AppWithUser meQueryRef={meQueryRef} />
++    <MeQueryErrorBoundary
++      resetKey={meQueryRef}
++      onError={handleMeQueryError}
++      recoveringFallback={
++        <ApiUnavailableScreen
++          offline={api.offline}
++          onRetry={() => {
++            api.retryNow()
++            retryMeQueryNow()
++          }}
++        />
++      }
++    >
++      <AppWithUser meQueryRef={meQueryRef} onLoaded={handleMeLoaded} />
+     </MeQueryErrorBoundary>
+   )
+ }
+ 
+-function AppWithUser({ meQueryRef }: Readonly<{ meQueryRef: QueryRef<MeQuery> }>) {
++function AppWithUser({
++  meQueryRef,
++  onLoaded,
++}: Readonly<{ meQueryRef: QueryRef<MeQuery>; onLoaded?: () => void }>) {
+   const { data } = useReadQuery(meQueryRef)
+   const user = data?.me ?? null
++  useEffect(() => {
++    onLoaded?.()
++  }, [meQueryRef, onLoaded])
+   return (
+     <GlobalContextProvider key={user?.id ?? 'nouser'} user={user}>
+       <Outlet />
+diff --git a/apps/web/app/root.tsx b/apps/web/app/root.tsx
+index 820eeb5..98ed005 100644
+--- a/apps/web/app/root.tsx
++++ b/apps/web/app/root.tsx
+@@ -235,6 +235,12 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
+     return <RecoveringApiUnavailable />
+   }
+ 
++  // Any other route error response (a loader's 404, a 500 thrown as a Response) keeps its status.
++  // Rendering it as the generic error turned every missing page into "Something went wrong".
++  if (isRouteErrorResponse(error)) {
++    return <RouteStatusScreen status={error.status} statusText={error.statusText} />
++  }
++
+   // Layout always wraps this component and provides <html>/<head>/<body> —
+   // do not render document-level tags here.
+   if (isViteCacheError(normalizedError)) {
+@@ -251,6 +257,42 @@ function isConnectivityFailure(error: unknown, routeStatus: number | undefined):
+   return isFetchFailure(error) || isNetworkError(error)
+ }
+ 
++export const NOT_FOUND_TITLE = 'Page not found'
++export const NOT_FOUND_MESSAGE = 'The page you’re looking for doesn’t exist or has moved.'
++
++/** A route error response: a not-found page for 404, otherwise its status and status text. */
++function RouteStatusScreen({
++  status,
++  statusText,
++}: Readonly<{ status: number; statusText: string }>) {
++  const notFound = status === 404
++  return (
++    <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
++      <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">{status}</p>
++      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
++        {notFound ? NOT_FOUND_TITLE : statusText || 'Something went wrong'}
++      </h1>
++      {notFound && <p className="text-gray-600 dark:text-gray-300">{NOT_FOUND_MESSAGE}</p>}
++      {notFound ? (
++        <a
++          href="/"
++          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
++        >
++          Go to the home page
++        </a>
++      ) : (
++        <button
++          type="button"
++          onClick={() => globalThis.location.reload()}
++          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
++        >
++          {RETRY_LABEL}
++        </button>
++      )}
++    </main>
++  )
++}
++
+ /** Any other error: the details, and a manual "Try again" that loads the page again. */
+ function RootErrorScreen({ error }: Readonly<{ error: Error }>) {
+   return (
+diff --git a/apps/web/tests/api-availability.spec.tsx b/apps/web/tests/api-availability.spec.tsx
+index 91fc75e..dcea557 100644
+--- a/apps/web/tests/api-availability.spec.tsx
++++ b/apps/web/tests/api-availability.spec.tsx
+@@ -13,6 +13,7 @@ import { App } from '../app/app'
+ import { ErrorBoundary } from '../app/root'
+ import {
+   CONFIRM_DELAYS_MS,
++  RETURN_TRIGGER_DEBOUNCE_MS,
+   probeApi,
+   refetchFailedQueries,
+   reloadForRecovery,
+@@ -21,8 +22,17 @@ import {
+   useApiAvailability,
+   useRefetchFailedQueries,
+ } from '../app/api-availability'
+-import { ApolloProvider } from '@apollo/client/react'
+-import { CombinedGraphQLErrors } from '@apollo/client'
++import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
++import {
++  ApolloClient,
++  ApolloLink,
++  CombinedGraphQLErrors,
++  gql,
++  InMemoryCache,
++  Observable,
++  ServerError,
++} from '@apollo/client'
++import { useGlobalCtx } from '@nestled-template/web'
+ import { RecoveringApiUnavailable } from '../app/api-unavailable'
+ 
+ const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
+@@ -478,3 +488,230 @@ describe('probeApi', () => {
+     )
+   })
+ })
++
++describe('refetchFailedQueries only replays connectivity failures', () => {
++  function query(error: unknown) {
++    return {
++      getCurrentResult: () => ({ error }),
++      refetch: vi.fn().mockResolvedValue({}),
++    }
++  }
++
++  function serverError(status: number) {
++    return new ServerError('Response not successful', {
++      response: new Response(null, { status }),
++      bodyText: '',
++    })
++  }
++
++  it.each([
++    ['an HTTP 401', serverError(401)],
++    ['an HTTP 403', serverError(403)],
++    ['an HTTP 500', serverError(500)],
++    [
++      'a TypeError thrown by application code',
++      new TypeError("Cannot read properties of undefined (reading 'id')"),
++    ],
++  ])('does not refetch a query that failed with %s', (_label, error) => {
++    const failed = query(error)
++    const client = { getObservableQueries: () => new Set([failed]) }
++
++    expect(refetchFailedQueries(client as never)).toBe(0)
++    expect(failed.refetch).not.toHaveBeenCalled()
++  })
++
++  it.each([
++    ['a network failure', new TypeError('Failed to fetch')],
++    ['an HTTP 502', serverError(502)],
++    ['an HTTP 503', serverError(503)],
++    ['an HTTP 504', serverError(504)],
++  ])('refetches a query that failed with %s', (_label, error) => {
++    const failed = query(error)
++    const client = { getObservableQueries: () => new Set([failed]) }
++
++    expect(refetchFailedQueries(client as never)).toBe(1)
++    expect(failed.refetch).toHaveBeenCalledTimes(1)
++  })
++})
++
++describe('useRefetchFailedQueries on returning to the window', () => {
++  beforeEach(() => {
++    vi.useFakeTimers()
++  })
++
++  afterEach(() => {
++    vi.useRealTimers()
++  })
++
++  function renderHarness() {
++    const failed = {
++      getCurrentResult: () => ({ error: new TypeError('Failed to fetch') }),
++      refetch: vi.fn().mockResolvedValue({}),
++    }
++    const client = { getObservableQueries: () => new Set([failed]) }
++    function Harness() {
++      useRefetchFailedQueries()
++      return null
++    }
++    render(
++      <ApolloProvider client={client as never}>
++        <Harness />
++      </ApolloProvider>,
++    )
++    return failed
++  }
++
++  it('refetches when a window that stayed visible regains focus', async () => {
++    const failed = renderHarness()
++
++    await act(async () => {
++      globalThis.dispatchEvent(new Event('focus'))
++    })
++    await advance(RETURN_TRIGGER_DEBOUNCE_MS)
++
++    expect(failed.refetch).toHaveBeenCalledTimes(1)
++  })
++
++  it('refetches once when one return fires visibilitychange, focus and online together', async () => {
++    const failed = renderHarness()
++
++    await act(async () => {
++      document.dispatchEvent(new Event('visibilitychange'))
++      globalThis.dispatchEvent(new Event('focus'))
++      globalThis.dispatchEvent(new Event('online'))
++    })
++    await advance(RETURN_TRIGGER_DEBOUNCE_MS)
++    expect(failed.refetch).toHaveBeenCalledTimes(1)
++
++    // Nothing was left queued behind the backoff window by the extra events.
++    await advance(retryDelayMs(0) * 4)
++    expect(failed.refetch).toHaveBeenCalledTimes(1)
++  })
++})
++
++describe('signed-in user after a connectivity blip', () => {
++  const ME = gql`
++    query Me {
++      me {
++        id
++      }
++    }
++  `
++
++  function CurrentUser() {
++    const { user } = useGlobalCtx()
++    return <p>{user ? `Signed in as ${user.id}` : 'Signed out'}</p>
++  }
++
++  beforeEach(() => {
++    vi.useFakeTimers()
++    fetchMock.mockReset()
++    vi.stubGlobal('fetch', fetchMock)
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.useRealTimers()
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    sessionStorage.clear()
++  })
++
++  async function renderSignedIn(responses: Array<() => Observable<ApolloLink.Result>>) {
++    let requests = 0
++    const link = new ApolloLink(() => {
++      const respond = responses[Math.min(requests, responses.length - 1)]
++      requests += 1
++      return respond()
++    })
++    const client = new ApolloClient({ link, cache: new InMemoryCache() })
++    const preload = createQueryPreloader(client)
++    let loaderCalls = 0
++    const router = createMemoryRouter(
++      [
++        {
++          path: '/',
++          loader: async () => {
++            loaderCalls += 1
++            const meQueryRef = preload(ME)
++            await preload.toPromise(meQueryRef).catch(() => undefined)
++            return { meQueryRef }
++          },
++          element: <App />,
++          children: [{ index: true, element: <CurrentUser /> }],
++        },
++      ],
++      { initialEntries: ['/'] },
++    )
++    await act(async () => {
++      render(
++        <ApolloProvider client={client}>
++          <RouterProvider router={router} />
++        </ApolloProvider>,
++      )
++    })
++    return { loaderCalls: () => loaderCalls }
++  }
++
++  const fails = (error: Error) => () => new Observable<ApolloLink.Result>(o => o.error(error))
++  const signedIn = () =>
++    new Observable<ApolloLink.Result>(o => {
++      o.next({ data: { me: { __typename: 'User', id: 'user-1' } } })
++      o.complete()
++    })
++
++  it('signs the user back in once the API answers, without a navigation', async () => {
++    apiUp()
++    const app = await renderSignedIn([fails(new TypeError('Failed to fetch')), signedIn])
++    // Waiting on the retry, not rendered as signed out (which a signed-in layout turns into logout).
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++    expect(screen.queryByText('Signed out')).not.toBeInTheDocument()
++
++    await advance(CONFIRM_WINDOW_MS)
++
++    expect(app.loaderCalls()).toBe(2)
++    expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
++  })
++
++  it('leaves a 401 to the logout flow instead of retrying it', async () => {
++    apiUp()
++    const unauthorized = new ServerError('Response not successful', {
++      response: new Response(null, { status: 401 }),
++      bodyText: '',
++    })
++    const app = await renderSignedIn([fails(unauthorized), signedIn])
++
++    await advance(CONFIRM_WINDOW_MS + retryDelayMs(3))
++
++    expect(fetchMock).not.toHaveBeenCalled()
++    expect(app.loaderCalls()).toBe(1)
++    expect(screen.getByText('Signed out')).toBeInTheDocument()
++  })
++})
++
++describe('root error boundary for a route error response', () => {
++  afterEach(() => {
++    vi.unstubAllGlobals()
++  })
++
++  it('shows a not-found page for a 404', () => {
++    render(<ErrorBoundary error={new ErrorResponseImpl(404, 'Not Found', null)} />)
++
++    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
++    expect(screen.getByText('404')).toBeInTheDocument()
++    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument()
++    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
++  })
++
++  it('shows the status and its text for a 500', () => {
++    const reload = vi.fn()
++    vi.stubGlobal('location', { ...globalThis.location, reload })
++    render(<ErrorBoundary error={new ErrorResponseImpl(500, 'Internal Server Error', null)} />)
++
++    expect(screen.getByText('500')).toBeInTheDocument()
++    expect(screen.getByRole('heading', { name: 'Internal Server Error' })).toBeInTheDocument()
++    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
++    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
++    expect(reload).toHaveBeenCalledTimes(1)
++  })
++})
+diff --git a/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx b/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+new file mode 100644
+index 0000000..3c55766
+--- /dev/null
++++ b/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+@@ -0,0 +1,161 @@
++import type { ReactNode } from 'react'
++import { act, render, screen } from '@testing-library/react'
++import { createMemoryRouter, RouterProvider } from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
++import {
++  ApolloClient,
++  ApolloLink,
++  gql,
++  InMemoryCache,
++  Observable,
++  ServerError,
++} from '@apollo/client'
++import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
++import { App } from '../../app/app'
++import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
++import { CONFIRM_DELAYS_MS, retryDelayMs } from '../../app/api-availability'
++
++// The layout's chrome is not under test; only its "no user -> /force-logout" redirect is.
++vi.mock('@nestled-template/web-ui', () => ({
++  WebUiHeader: () => null,
++  WebUiFooter: () => null,
++}))
++vi.mock('@nestled-template/web', async importOriginal => ({
++  ...(await importOriginal<typeof import('@nestled-template/web')>()),
++  SubscriptionProvider: ({ children }: { children: ReactNode }) => children,
++  SubscriptionStatusBanner: () => null,
++  EmulationBanner: () => null,
++}))
++
++const ME = gql`
++  query Me {
++    me {
++      id
++    }
++  }
++`
++
++const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
++const SERVER_DOWN = 'Can’t reach the server'
++const fetchMock = vi.fn()
++
++type Respond = () => Observable<ApolloLink.Result>
++
++const fails = (error: Error) => () => new Observable<ApolloLink.Result>(o => o.error(error))
++const signedIn = () =>
++  new Observable<ApolloLink.Result>(o => {
++    o.next({ data: { me: { __typename: 'User', id: 'user-1' } } })
++    o.complete()
++  })
++const noOrganizations = () =>
++  new Observable<ApolloLink.Result>(o => {
++    o.next({ data: { myOrganizations: [] } })
++    o.complete()
++  })
++
++async function renderMembersPage(meResponses: Respond[]) {
++  let meRequests = 0
++  const link = new ApolloLink(operation => {
++    if (operation.operationName !== 'Me') return noOrganizations()
++    const respond = meResponses[Math.min(meRequests, meResponses.length - 1)]
++    meRequests += 1
++    return respond()
++  })
++  const client = new ApolloClient({ link, cache: new InMemoryCache() })
++  const preload = createQueryPreloader(client)
++  let rootLoaderCalls = 0
++  const router = createMemoryRouter(
++    [
++      {
++        path: '/',
++        loader: async () => {
++          rootLoaderCalls += 1
++          const meQueryRef = preload(ME)
++          await preload.toPromise(meQueryRef).catch(() => undefined)
++          return { meQueryRef }
++        },
++        element: <App />,
++        children: [
++          {
++            path: 'members',
++            loader: async () => {
++              const myOrganizationsQueryRef = preload(MyOrganizationsWithMembers, {
++                fetchPolicy: 'network-only',
++              })
++              await preload.toPromise(myOrganizationsQueryRef)
++              return { myOrganizationsQueryRef }
++            },
++            element: <AuthenticatedLayout />,
++            children: [{ index: true, element: <p>Members page</p> }],
++          },
++          { path: 'force-logout', element: <p>Force logout page</p> },
++        ],
++      },
++    ],
++    { initialEntries: ['/members'] },
++  )
++  await act(async () => {
++    render(
++      <ApolloProvider client={client}>
++        <RouterProvider router={router} />
++      </ApolloProvider>,
++    )
++  })
++  return { router, rootLoaderCalls: () => rootLoaderCalls }
++}
++
++async function advance(ms: number) {
++  await act(async () => {
++    await vi.advanceTimersByTimeAsync(ms)
++  })
++}
++
++describe('authenticated layout when the Me query fails', () => {
++  beforeEach(() => {
++    vi.useFakeTimers()
++    fetchMock.mockReset()
++    vi.stubGlobal('fetch', fetchMock)
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.useRealTimers()
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    sessionStorage.clear()
++  })
++
++  it('waits on a connectivity failure instead of logging out, then signs the user back in', async () => {
++    fetchMock.mockResolvedValue(new Response('12.3', { status: 200 }))
++    const app = await renderMembersPage([fails(new TypeError('Failed to fetch')), signedIn])
++
++    // While the retry is pending the signed-out outlet is not mounted, so nothing redirects.
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++    expect(screen.queryByText('Force logout page')).not.toBeInTheDocument()
++    expect(app.router.state.location.pathname).toBe('/members')
++
++    await advance(CONFIRM_WINDOW_MS)
++
++    expect(app.rootLoaderCalls()).toBe(2)
++    expect(app.router.state.location.pathname).toBe('/members')
++    expect(screen.getByText('Members page')).toBeInTheDocument()
++    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
++  })
++
++  it('still sends a 401 through /force-logout', async () => {
++    fetchMock.mockResolvedValue(new Response('12.3', { status: 200 }))
++    const unauthorized = new ServerError('Response not successful', {
++      response: new Response(null, { status: 401 }),
++      bodyText: '',
++    })
++    const app = await renderMembersPage([fails(unauthorized)])
++    await advance(CONFIRM_WINDOW_MS + retryDelayMs(3))
++
++    expect(app.router.state.location.pathname).toBe('/force-logout')
++    expect(app.router.state.location.search).toBe(`?return_url=${encodeURIComponent('/members')}`)
++    expect(screen.getByText('Force logout page')).toBeInTheDocument()
++    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
++    expect(fetchMock).not.toHaveBeenCalled()
++  })
++})
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index 32d6d3b..a8459eb 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -1,8 +1,9 @@
+ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+-import { gql } from '@apollo/client'
++import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
+ import {
+   APOLLO_ACCESS_FORBIDDEN_EVENT,
+   APOLLO_SERVICE_UNAVAILABLE_EVENT,
++  isRetryableConnectivityError,
+   makeClient,
+   subscriptionRetryDelayMs,
+ } from './apollo'
+@@ -436,3 +437,39 @@ describe('subscriptionRetryDelayMs', () => {
+     expect(delay).toBeLessThan(3000)
+   })
+ })
++
++describe('isRetryableConnectivityError', () => {
++  function serverError(status: number) {
++    return new ServerError('Response not successful', {
++      response: new Response(null, { status }),
++      bodyText: '',
++    })
++  }
++
++  it.each([
++    ['a Chromium fetch failure', new TypeError('Failed to fetch')],
++    ['a Safari fetch failure', new TypeError('Load failed')],
++    ['a refused connection', new Error('connect ECONNREFUSED 127.0.0.1:3000')],
++    ['a proxy 502', serverError(502)],
++    ['a proxy 503', serverError(503)],
++    ['a proxy 504', serverError(504)],
++  ])('retries %s', (_label, error) => {
++    expect(isRetryableConnectivityError(error)).toBe(true)
++  })
++
++  it.each([
++    ['an HTTP 401', serverError(401)],
++    ['an HTTP 403', serverError(403)],
++    ['an HTTP 400', serverError(400)],
++    ['an HTTP 500', serverError(500)],
++    [
++      'a TypeError from application code',
++      new TypeError("Cannot read properties of undefined (reading 'id')"),
++    ],
++    ['a GraphQL error', new CombinedGraphQLErrors({ errors: [{ message: 'Failed to fetch' }] })],
++    ['a non-error value', 'Failed to fetch'],
++    ['undefined', undefined],
++  ])('does not retry %s', (_label, error) => {
++    expect(isRetryableConnectivityError(error)).toBe(false)
++  })
++})
+diff --git a/libs/shared/apollo/src/lib/apollo.ts b/libs/shared/apollo/src/lib/apollo.ts
+index 9a16d90..336526f 100644
+--- a/libs/shared/apollo/src/lib/apollo.ts
++++ b/libs/shared/apollo/src/lib/apollo.ts
+@@ -264,7 +264,7 @@ function handleNetworkError(networkError: Error, operation: ApolloLink.Operation
+     return
+   }
+ 
+-  if (isNetworkConnectivityError(networkError)) {
++  if (isRetryableConnectivityError(networkError)) {
+     dispatchServiceUnavailableEvent(networkError, operation)
+   }
+ }
+@@ -281,25 +281,33 @@ function networkErrorStatus(networkError: Error): number | undefined {
+ const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+ 
+ /**
+- * A request that never got an HTTP response. This used to match any `TypeError`, any
+- * `ApolloError`, and any message containing "fetch" or "event stream", so one unrelated failure
+- * was enough to report the API as down. An error that carries an HTTP status is an answered
+- * request and does not count, except the 502/503/504 a proxy returns while the API restarts; 401
+- * and 403 are handled before this is reached.
++ * A request that never got an HTTP response, or got a proxy's 502/503/504 while the API restarts:
++ * the only failures worth retrying, because the same request may well succeed once the API is
++ * reachable again. This used to match any `TypeError`, any `ApolloError`, and any message
++ * containing "fetch" or "event stream", so one unrelated failure was enough to report the API as
++ * down. An error that carries any other HTTP status is an answered request and does not count
++ * (401 and 403 included: retrying them only fails again), and neither does a `TypeError` thrown by
++ * application code, nor a GraphQL error.
++ *
++ * The error link uses this to decide when to report an outage, and the web app uses it to decide
++ * which failed queries to refetch once connectivity returns, so the two cannot drift apart.
+  */
+-function isNetworkConnectivityError(networkError: Error): boolean {
+-  const status = networkErrorStatus(networkError)
++export function isRetryableConnectivityError(error: unknown): boolean {
++  if (!(error instanceof Error)) return false
++  if (CombinedGraphQLErrors.is(error)) return false
++
++  const status = networkErrorStatus(error)
+   if (typeof status === 'number' && status > 0) return GATEWAY_UNAVAILABLE_STATUSES.has(status)
+ 
+-  const errorMessage = networkError.message || ''
+-  const enrichedError = networkError as Error & {
++  const errorMessage = error.message || ''
++  const enrichedError = error as Error & {
+     statusCode?: number
+     code?: string
+   }
+ 
+   return (
+-    isFetchFailure(networkError) ||
+-    networkError.name === 'NetworkError' ||
++    isFetchFailure(error) ||
++    error.name === 'NetworkError' ||
+     errorMessage.includes('ECONNREFUSED') ||
+     errorMessage.includes('ERR_CONNECTION_REFUSED') ||
+     errorMessage.includes('net::ERR_') ||
