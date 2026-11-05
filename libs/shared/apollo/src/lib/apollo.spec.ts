@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { gql } from '@apollo/client'
+import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
+  isRetryableConnectivityError,
   makeClient,
   subscriptionRetryDelayMs,
 } from './apollo'
@@ -434,5 +435,41 @@ describe('subscriptionRetryDelayMs', () => {
     const delay = subscriptionRetryDelayMs(0)
     expect(delay).toBeGreaterThanOrEqual(2000)
     expect(delay).toBeLessThan(3000)
+  })
+})
+
+describe('isRetryableConnectivityError', () => {
+  function serverError(status: number) {
+    return new ServerError('Response not successful', {
+      response: new Response(null, { status }),
+      bodyText: '',
+    })
+  }
+
+  it.each([
+    ['a Chromium fetch failure', new TypeError('Failed to fetch')],
+    ['a Safari fetch failure', new TypeError('Load failed')],
+    ['a refused connection', new Error('connect ECONNREFUSED 127.0.0.1:3000')],
+    ['a proxy 502', serverError(502)],
+    ['a proxy 503', serverError(503)],
+    ['a proxy 504', serverError(504)],
+  ])('retries %s', (_label, error) => {
+    expect(isRetryableConnectivityError(error)).toBe(true)
+  })
+
+  it.each([
+    ['an HTTP 401', serverError(401)],
+    ['an HTTP 403', serverError(403)],
+    ['an HTTP 400', serverError(400)],
+    ['an HTTP 500', serverError(500)],
+    [
+      'a TypeError from application code',
+      new TypeError("Cannot read properties of undefined (reading 'id')"),
+    ],
+    ['a GraphQL error', new CombinedGraphQLErrors({ errors: [{ message: 'Failed to fetch' }] })],
+    ['a non-error value', 'Failed to fetch'],
+    ['undefined', undefined],
+  ])('does not retry %s', (_label, error) => {
+    expect(isRetryableConnectivityError(error)).toBe(false)
   })
 })

@@ -1,0 +1,126 @@
+id: 2026-11-04-error-recovery-followups
+title: >-
+  Error recovery follow-ups: refetch only connectivity failures, sign the user back in after a
+  blip, refetch on window focus, keep the route status on the root error screen
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-10-30-error-screens-recover-everywhere, which must be applied first: this
+  note changes the files it added or changed. Four parts, all in the web app and the shared
+  Apollo lib. No package changes.
+
+  1. Failed-query refetch replayed the wrong errors.
+  - libs/shared/apollo/src/lib/apollo.ts: the private `isNetworkConnectivityError` is exported as
+    `isRetryableConnectivityError(error: unknown): boolean`. Same rules as before: true for a
+    request that got no HTTP response (`isFetchFailure`, `NetworkError`, ECONNREFUSED,
+    `net::ERR_`, status 0) or a proxy's 502/503/504; false for any other HTTP status (401 and 403
+    included), for a `CombinedGraphQLErrors`, for a non-Error value and for an ordinary
+    `TypeError` from application code. The error link uses it as before to decide when to report
+    an outage.
+  - apps/web/app/api-availability.ts: `refetchFailedQueries` refetched every query whose error was
+    not a `CombinedGraphQLErrors`, which included an HTTP 401 or 403 (`ServerError`) and errors
+    thrown by application code. Each return to the tab replayed them, and with them the error
+    link's logout redirect or access-denied screen. It now refetches only queries for which
+    `isRetryableConnectivityError(error)` is true.
+
+  2. A signed-in user could show as signed out after a blip. apps/web/app/app.tsx: the
+  `MeQueryErrorBoundary` around the Me query only reset when the root loader produced a new query
+  ref, so after a short network drop the session rendered as signed out until the user navigated.
+  The boundary now reports what it caught (`componentDidCatch` -> an `onError` prop). When that is
+  a connectivity failure (`isRetryableConnectivityError`), `App` marks the Me query for retry and
+  calls `reportConnectivityError()` (during SSR the error link reports nothing, so this is the only
+  report it gets). When the API answers again, through the same `onBlipCleared` / `onRecover`
+  callbacks of `useApiAvailability` that the unavailable screen uses, `App` calls
+  `useRevalidator().revalidate()`. The root loader runs again, the new Me query ref resets the
+  boundary, and the user is signed in again without a navigation. Retries back off like the
+  refetches (immediately, then 2 s doubling to 30 s), and the backoff resets once `AppWithUser`
+  renders with a loaded Me query, so a /graphql that keeps failing while /api/uptime answers cannot
+  loop. While a connectivity failure waits on that retry the boundary renders a `recoveringFallback`
+  (the same `ApiUnavailableScreen`, its button probing and retrying the Me query at once), not its
+  signed-in-as-nobody `<GlobalContextProvider user={null}><Outlet /></GlobalContextProvider>`:
+  rendering the outlet with no user let the signed-in layout
+  (apps/web/app/routes/_authenticated/_layout.tsx) navigate to /force-logout, which cleared the
+  session cookie before the retry could sign the user back in. Other errors are not retried and
+  still render as signed out, so the 401 handling is unchanged: the error link and the layout
+  still send the user through /force-logout. A visitor with no Me query is unchanged.
+
+  3. No refetch when a still-visible window regained focus. apps/web/app/api-availability.ts:
+  `useRefetchFailedQueries` listened for `online` and `visibilitychange` only, so a window left
+  visible beside another never refetched when the user came back to it. It now also listens for
+  window `focus`. The three events are debounced together (`RETURN_TRIGGER_DEBOUNCE_MS`, 250 ms),
+  so one return to the window refetches once, not once per event. The on-demand function the hook
+  returns is not debounced.
+
+  4. The root error screen dropped the route status. apps/web/app/root.tsx, the route
+  `ErrorBoundary`: a route error response (`isRouteErrorResponse`) that is not 401, 403 or
+  502/503/504 rendered as the generic "Something went wrong". It now renders a status screen: a
+  404 shows "Page not found" with a link to the home page; any other status shows the status and
+  its status text with the "Try again" button that reloads. The 401 (force-logout), 403
+  (AccessDenied) and connectivity (`RecoveringApiUnavailable` for no response or 502/503/504)
+  branches before it are unchanged, as are the Vite cache and generic branches after it.
+
+  Tests: apps/web/tests/api-availability.spec.tsx (401, 403, 500 and an application TypeError are
+  not refetched, a network failure and 502/503/504 are; focus refetches, and visibilitychange plus
+  focus plus online refetch once; a Me query that failed on the network signs the user back in
+  once the API answers, a 401 is not retried; the root boundary for a 404 and a 500),
+  apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx (through the signed-in layout: a
+  connectivity failure on Me shows the recovering screen, never navigates to /force-logout, and
+  comes back to the signed-in page; a 401 still goes to /force-logout) and
+  libs/shared/apollo/src/lib/apollo.spec.ts (isRetryableConnectivityError).
+
+why: >
+  Rolling 2026-10-30-error-screens-recover-everywhere out found four gaps in the template's own
+  code: the refetch replayed authentication failures and application bugs, a signed-in user could
+  look signed out after a blip, a visible window did not recover on focus, and a missing page
+  showed as a generic error.
+
+affectedPaths:
+  - apps/web/app/api-availability.ts
+  - apps/web/app/app.tsx
+  - apps/web/app/root.tsx
+  - libs/shared/apollo/src/lib/apollo.ts
+  - apps/web/tests/api-availability.spec.tsx
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+  - >
+    Manual: signed in, with the web app running against a local API, open a page whose data comes
+    from a query, stop the API for a few seconds and start it again; the page's data and the
+    signed-in header come back without a navigation. Stop the API, reload a signed-in page, and
+    start the API again: the "Can’t reach the server" screen shows meanwhile, the browser is never
+    sent to /force-logout, and the signed-in page comes back still signed in. Open a URL that does
+    not exist and confirm the "Page not found" screen.
+
+agentHints:
+  - >
+    If the project already narrowed the refetch filter itself, record part 1 as superseded when
+    its filter already uses the shared connectivity predicate (or an equivalent that excludes
+    401, 403, other answered statuses and application errors); otherwise switch it to
+    `isRetryableConnectivityError`. Do not write a second, broader predicate.
+  - >
+    Keep the project's own 401 and 403 handling exactly as it is (force-logout route, logout
+    redirect, access-denied screen). This note only stops those errors from being refetched; it
+    does not change what happens when they occur.
+  - >
+    A project with its own root ErrorBoundary, its own Me/current-user boundary or its own
+    unavailable screen applies the pattern to its version: preserve the route status (404 ->
+    not-found, other statuses -> status and text) without touching its 401/403/connectivity
+    branches; reset or revalidate the current-user query when its recovery signal fires, with
+    backoff, connectivity failures only. While that retry is pending, render a recovering or
+    unavailable screen, never the signed-out tree: any layout that redirects a missing user to
+    logout (force-logout, a login redirect that clears the cookie) would end the session first.
+  - >
+    If the project added its own window `focus` or `visibilitychange` refetch handler, keep one
+    mechanism, not two, and debounce the events together.

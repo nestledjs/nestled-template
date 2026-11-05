@@ -264,7 +264,7 @@ function handleNetworkError(networkError: Error, operation: ApolloLink.Operation
     return
   }
 
-  if (isNetworkConnectivityError(networkError)) {
+  if (isRetryableConnectivityError(networkError)) {
     dispatchServiceUnavailableEvent(networkError, operation)
   }
 }
@@ -281,25 +281,33 @@ function networkErrorStatus(networkError: Error): number | undefined {
 const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
 
 /**
- * A request that never got an HTTP response. This used to match any `TypeError`, any
- * `ApolloError`, and any message containing "fetch" or "event stream", so one unrelated failure
- * was enough to report the API as down. An error that carries an HTTP status is an answered
- * request and does not count, except the 502/503/504 a proxy returns while the API restarts; 401
- * and 403 are handled before this is reached.
+ * A request that never got an HTTP response, or got a proxy's 502/503/504 while the API restarts:
+ * the only failures worth retrying, because the same request may well succeed once the API is
+ * reachable again. This used to match any `TypeError`, any `ApolloError`, and any message
+ * containing "fetch" or "event stream", so one unrelated failure was enough to report the API as
+ * down. An error that carries any other HTTP status is an answered request and does not count
+ * (401 and 403 included: retrying them only fails again), and neither does a `TypeError` thrown by
+ * application code, nor a GraphQL error.
+ *
+ * The error link uses this to decide when to report an outage, and the web app uses it to decide
+ * which failed queries to refetch once connectivity returns, so the two cannot drift apart.
  */
-function isNetworkConnectivityError(networkError: Error): boolean {
-  const status = networkErrorStatus(networkError)
+export function isRetryableConnectivityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if (CombinedGraphQLErrors.is(error)) return false
+
+  const status = networkErrorStatus(error)
   if (typeof status === 'number' && status > 0) return GATEWAY_UNAVAILABLE_STATUSES.has(status)
 
-  const errorMessage = networkError.message || ''
-  const enrichedError = networkError as Error & {
+  const errorMessage = error.message || ''
+  const enrichedError = error as Error & {
     statusCode?: number
     code?: string
   }
 
   return (
-    isFetchFailure(networkError) ||
-    networkError.name === 'NetworkError' ||
+    isFetchFailure(error) ||
+    error.name === 'NetworkError' ||
     errorMessage.includes('ECONNREFUSED') ||
     errorMessage.includes('ERR_CONNECTION_REFUSED') ||
     errorMessage.includes('net::ERR_') ||

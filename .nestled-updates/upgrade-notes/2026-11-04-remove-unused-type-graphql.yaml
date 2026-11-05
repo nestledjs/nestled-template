@@ -1,0 +1,76 @@
+id: 2026-11-04-remove-unused-type-graphql
+title: >-
+  Remove the unused type-graphql dependency, which kept the vulnerable graphql-scalars 1.x
+  installed
+priority: normal
+area: infra
+type: security
+delivery: code-patch
+
+intent: >
+  Root package.json, pnpm-workspace.yaml and pnpm-lock.yaml only. Each project applies the change
+  to its own manifest and re-resolves its own lockfile with pnpm; the template's lockfile is not
+  copied.
+
+  1. Remove `type-graphql` (was `2.0.0-rc.3`) from `dependencies` with `pnpm remove
+  type-graphql`, not by editing the lockfile. Nothing in the template's apps, libs or tools
+  imports it, and no generator the template ships emits an import of it; the API uses
+  `@nestjs/graphql`.
+
+  2. Drop `type-graphql` from the pnpm `onlyBuiltDependencies` list, in both places it appears:
+  `pnpm.onlyBuiltDependencies` in package.json and `onlyBuiltDependencies` in
+  pnpm-workspace.yaml. Then run `pnpm install`.
+
+  type-graphql declares graphql-scalars `^1.25.0` as a required peer, so after
+  2026-10-30-drop-graphql-scalars-and-audit-pins removed the direct graphql-scalars dependency,
+  pnpm still installed graphql-scalars 1.25.0 for it, with the high-severity advisory
+  GHSA-x8rm-f576-gq67 (the PhoneNumber scalar; vulnerable >=1.24.1 <=2.0.0, fixed in 2.0.1).
+  Removing type-graphql removes that copy. In the template the lockfile diff only removes
+  type-graphql and packages nothing else used (graphql-scalars 1.25.0,
+  `@graphql-yoga/subscription`, `@graphql-yoga/typed-event-target`, `@whatwg-node/events`,
+  `@types/semver`), and `pnpm why graphql-scalars` finds nothing afterwards.
+
+  Template audit, `pnpm audit --prod`: 19 (4 high, 12 moderate, 3 low) -> 18 (3 high, 12
+  moderate, 3 low); the graphql-scalars high is gone.
+
+why: >
+  type-graphql was an unused release candidate whose only effect was to keep a vulnerable
+  graphql-scalars installed after the template had dropped graphql-scalars itself.
+
+affectedPaths:
+  - package.json
+  - pnpm-workspace.yaml
+  - pnpm-lock.yaml
+
+skipIf:
+  - The project has no `type-graphql` dependency.
+
+verification:
+  - git grep -n "type-graphql" -- ':!pnpm-lock.yaml'
+  - pnpm install --frozen-lockfile
+  - pnpm why graphql-scalars
+  - pnpm audit --prod
+  - pnpm typecheck
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm exec nx test api-custom --skip-nx-cache
+
+agentHints:
+  - >
+    Only remove type-graphql if `git grep -n "type-graphql" -- ':!pnpm-lock.yaml'` finds no
+    import of it in the app (references in upgrade notes or docs do not count). If the app does
+    import it, keep it, record the note `blocked` or `skipped` with the importing files, and
+    report it.
+  - >
+    If the app's generated code uses graphql-scalars (the @nestledjs/generators models and crud
+    generators emit `import { GraphQLBigInt } from 'graphql-scalars'` for a Prisma model with a
+    `BigInt` field or id), keep `graphql-scalars` as a direct dependency on `^2.0.1` or later and
+    check the BigInt scalar still serializes the same way. Removing type-graphql is what lets the
+    vulnerable 1.x stop installing; the project's own graphql-scalars stays.
+  - >
+    After `pnpm install`, `pnpm why graphql-scalars` should show nothing, or only the project's own
+    direct dependency at 2.0.1 or later. Report what remains.
+  - >
+    package.json and the lockfile changing can redeploy every service that watches them. A
+    project with a long-running worker should confirm it is idle, or that an interrupted job is
+    safe, before merging, and say in its report which services the merge restarts.
