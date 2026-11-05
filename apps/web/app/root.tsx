@@ -235,6 +235,12 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
     return <RecoveringApiUnavailable />
   }
 
+  // Any other route error response (a loader's 404, a 500 thrown as a Response) keeps its status.
+  // Rendering it as the generic error turned every missing page into "Something went wrong".
+  if (isRouteErrorResponse(error)) {
+    return <RouteStatusScreen status={error.status} statusText={error.statusText} />
+  }
+
   // Layout always wraps this component and provides <html>/<head>/<body> —
   // do not render document-level tags here.
   if (isViteCacheError(normalizedError)) {
@@ -249,6 +255,42 @@ const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
 function isConnectivityFailure(error: unknown, routeStatus: number | undefined): boolean {
   if (routeStatus !== undefined) return GATEWAY_UNAVAILABLE_STATUSES.has(routeStatus)
   return isFetchFailure(error) || isNetworkError(error)
+}
+
+export const NOT_FOUND_TITLE = 'Page not found'
+export const NOT_FOUND_MESSAGE = 'The page you’re looking for doesn’t exist or has moved.'
+
+/** A route error response: a not-found page for 404, otherwise its status and status text. */
+function RouteStatusScreen({
+  status,
+  statusText,
+}: Readonly<{ status: number; statusText: string }>) {
+  const notFound = status === 404
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
+      <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">{status}</p>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+        {notFound ? NOT_FOUND_TITLE : statusText || 'Something went wrong'}
+      </h1>
+      {notFound && <p className="text-gray-600 dark:text-gray-300">{NOT_FOUND_MESSAGE}</p>}
+      {notFound ? (
+        <a
+          href="/"
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+        >
+          Go to the home page
+        </a>
+      ) : (
+        <button
+          type="button"
+          onClick={() => globalThis.location.reload()}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+        >
+          {RETRY_LABEL}
+        </button>
+      )}
+    </main>
+  )
 }
 
 /** Any other error: the details, and a manual "Try again" that loads the page again. */

@@ -13,6 +13,7 @@ import { App } from '../app/app'
 import { ErrorBoundary } from '../app/root'
 import {
   CONFIRM_DELAYS_MS,
+  RETURN_TRIGGER_DEBOUNCE_MS,
   probeApi,
   refetchFailedQueries,
   reloadForRecovery,
@@ -21,8 +22,17 @@ import {
   useApiAvailability,
   useRefetchFailedQueries,
 } from '../app/api-availability'
-import { ApolloProvider } from '@apollo/client/react'
-import { CombinedGraphQLErrors } from '@apollo/client'
+import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
+import {
+  ApolloClient,
+  ApolloLink,
+  CombinedGraphQLErrors,
+  gql,
+  InMemoryCache,
+  Observable,
+  ServerError,
+} from '@apollo/client'
+import { useGlobalCtx } from '@nestled-template/web'
 import { RecoveringApiUnavailable } from '../app/api-unavailable'
 
 const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
@@ -476,5 +486,232 @@ describe('probeApi', () => {
       'https://api.example.com/api/uptime',
       expect.objectContaining({ credentials: 'omit', cache: 'no-store', method: 'GET' }),
     )
+  })
+})
+
+describe('refetchFailedQueries only replays connectivity failures', () => {
+  function query(error: unknown) {
+    return {
+      getCurrentResult: () => ({ error }),
+      refetch: vi.fn().mockResolvedValue({}),
+    }
+  }
+
+  function serverError(status: number) {
+    return new ServerError('Response not successful', {
+      response: new Response(null, { status }),
+      bodyText: '',
+    })
+  }
+
+  it.each([
+    ['an HTTP 401', serverError(401)],
+    ['an HTTP 403', serverError(403)],
+    ['an HTTP 500', serverError(500)],
+    [
+      'a TypeError thrown by application code',
+      new TypeError("Cannot read properties of undefined (reading 'id')"),
+    ],
+  ])('does not refetch a query that failed with %s', (_label, error) => {
+    const failed = query(error)
+    const client = { getObservableQueries: () => new Set([failed]) }
+
+    expect(refetchFailedQueries(client as never)).toBe(0)
+    expect(failed.refetch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a network failure', new TypeError('Failed to fetch')],
+    ['an HTTP 502', serverError(502)],
+    ['an HTTP 503', serverError(503)],
+    ['an HTTP 504', serverError(504)],
+  ])('refetches a query that failed with %s', (_label, error) => {
+    const failed = query(error)
+    const client = { getObservableQueries: () => new Set([failed]) }
+
+    expect(refetchFailedQueries(client as never)).toBe(1)
+    expect(failed.refetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useRefetchFailedQueries on returning to the window', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function renderHarness() {
+    const failed = {
+      getCurrentResult: () => ({ error: new TypeError('Failed to fetch') }),
+      refetch: vi.fn().mockResolvedValue({}),
+    }
+    const client = { getObservableQueries: () => new Set([failed]) }
+    function Harness() {
+      useRefetchFailedQueries()
+      return null
+    }
+    render(
+      <ApolloProvider client={client as never}>
+        <Harness />
+      </ApolloProvider>,
+    )
+    return failed
+  }
+
+  it('refetches when a window that stayed visible regains focus', async () => {
+    const failed = renderHarness()
+
+    await act(async () => {
+      globalThis.dispatchEvent(new Event('focus'))
+    })
+    await advance(RETURN_TRIGGER_DEBOUNCE_MS)
+
+    expect(failed.refetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('refetches once when one return fires visibilitychange, focus and online together', async () => {
+    const failed = renderHarness()
+
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      globalThis.dispatchEvent(new Event('focus'))
+      globalThis.dispatchEvent(new Event('online'))
+    })
+    await advance(RETURN_TRIGGER_DEBOUNCE_MS)
+    expect(failed.refetch).toHaveBeenCalledTimes(1)
+
+    // Nothing was left queued behind the backoff window by the extra events.
+    await advance(retryDelayMs(0) * 4)
+    expect(failed.refetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('signed-in user after a connectivity blip', () => {
+  const ME = gql`
+    query Me {
+      me {
+        id
+      }
+    }
+  `
+
+  function CurrentUser() {
+    const { user } = useGlobalCtx()
+    return <p>{user ? `Signed in as ${user.id}` : 'Signed out'}</p>
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+  })
+
+  async function renderSignedIn(responses: Array<() => Observable<ApolloLink.Result>>) {
+    let requests = 0
+    const link = new ApolloLink(() => {
+      const respond = responses[Math.min(requests, responses.length - 1)]
+      requests += 1
+      return respond()
+    })
+    const client = new ApolloClient({ link, cache: new InMemoryCache() })
+    const preload = createQueryPreloader(client)
+    let loaderCalls = 0
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          loader: async () => {
+            loaderCalls += 1
+            const meQueryRef = preload(ME)
+            await preload.toPromise(meQueryRef).catch(() => undefined)
+            return { meQueryRef }
+          },
+          element: <App />,
+          children: [{ index: true, element: <CurrentUser /> }],
+        },
+      ],
+      { initialEntries: ['/'] },
+    )
+    await act(async () => {
+      render(
+        <ApolloProvider client={client}>
+          <RouterProvider router={router} />
+        </ApolloProvider>,
+      )
+    })
+    return { loaderCalls: () => loaderCalls }
+  }
+
+  const fails = (error: Error) => () => new Observable<ApolloLink.Result>(o => o.error(error))
+  const signedIn = () =>
+    new Observable<ApolloLink.Result>(o => {
+      o.next({ data: { me: { __typename: 'User', id: 'user-1' } } })
+      o.complete()
+    })
+
+  it('signs the user back in once the API answers, without a navigation', async () => {
+    apiUp()
+    const app = await renderSignedIn([fails(new TypeError('Failed to fetch')), signedIn])
+    // Waiting on the retry, not rendered as signed out (which a signed-in layout turns into logout).
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+    expect(screen.queryByText('Signed out')).not.toBeInTheDocument()
+
+    await advance(CONFIRM_WINDOW_MS)
+
+    expect(app.loaderCalls()).toBe(2)
+    expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
+  })
+
+  it('leaves a 401 to the logout flow instead of retrying it', async () => {
+    apiUp()
+    const unauthorized = new ServerError('Response not successful', {
+      response: new Response(null, { status: 401 }),
+      bodyText: '',
+    })
+    const app = await renderSignedIn([fails(unauthorized), signedIn])
+
+    await advance(CONFIRM_WINDOW_MS + retryDelayMs(3))
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(app.loaderCalls()).toBe(1)
+    expect(screen.getByText('Signed out')).toBeInTheDocument()
+  })
+})
+
+describe('root error boundary for a route error response', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shows a not-found page for a 404', () => {
+    render(<ErrorBoundary error={new ErrorResponseImpl(404, 'Not Found', null)} />)
+
+    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+    expect(screen.getByText('404')).toBeInTheDocument()
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+  })
+
+  it('shows the status and its text for a 500', () => {
+    const reload = vi.fn()
+    vi.stubGlobal('location', { ...globalThis.location, reload })
+    render(<ErrorBoundary error={new ErrorResponseImpl(500, 'Internal Server Error', null)} />)
+
+    expect(screen.getByText('500')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Internal Server Error' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 })

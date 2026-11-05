@@ -1,0 +1,58 @@
+id: 2026-11-04-morgan-scoped-override
+title: >-
+  Keep @react-router/serve on morgan 1.12.1 with a scoped pnpm override
+priority: low
+area: infra
+type: security
+delivery: code-patch
+
+intent: >
+  Root package.json and pnpm-lock.yaml only. Each project applies the change to its own manifest
+  and re-resolves its own lockfile with pnpm; the template's lockfile is not copied.
+
+  2026-10-30-drop-graphql-scalars-and-audit-pins raised the root `morgan` dependency to
+  `^1.12.1`, which fixes two log-injection advisories (fixed in 1.12.0 and 1.12.1). It did not
+  cover the copy `@react-router/serve` (7.x) asks for with `^1.10.1`: a lockfile resolved before
+  that change can keep a second, older morgan (1.10.x or 1.11.0) under `@react-router/serve`,
+  and the advisories stay in `pnpm audit`.
+
+  Add one entry under `pnpm.overrides`:
+  `"@react-router/serve>morgan@<1.12.1": "1.12.1"`. It is scoped to morgan under
+  `@react-router/serve` and only to versions below 1.12.1, so it cannot hold back a later morgan
+  release. Then run `pnpm install`. All other overrides stay as they are.
+
+  In the template the lockfile already resolved a single morgan 1.12.1, so the entry is a guard
+  there: `pnpm install` added only the override line to the lockfile's `overrides:` block, no
+  package moved, and `pnpm audit --prod` is unchanged (19: 4 high, 12 moderate, 3 low, none of
+  them morgan).
+
+why: >
+  Rolling out the morgan bump left an older morgan under @react-router/serve in lockfiles that
+  had resolved it earlier, so the morgan advisories survived the bump.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+
+skipIf:
+  - >
+    `pnpm why morgan` shows only morgan 1.12.1 or later (no older copy under
+    `@react-router/serve`), and `pnpm audit --prod` reports no morgan advisory.
+
+verification:
+  - pnpm install --frozen-lockfile
+  - pnpm why morgan
+  - pnpm audit --prod
+  - pnpm exec nx build web --skip-nx-cache
+
+agentHints:
+  - >
+    Only add the override if `pnpm why morgan` shows an old copy reached through
+    `@react-router/serve`; otherwise record the note not-applicable. After `pnpm install`, confirm
+    `pnpm why morgan` finds one version, and that the lockfile diff touches only morgan and its
+    own dependencies plus the new `overrides:` line.
+  - >
+    A change to package.json and the lockfile can trigger an automatic deploy of every service
+    that watches them. A project with a long-running worker should confirm it is idle, or that an
+    interrupted job is safe, before merging, and say in its report which services the merge
+    restarts.

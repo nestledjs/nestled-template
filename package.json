@@ -186,7 +186,6 @@
     "stylus": "github:stylus/stylus#0.64.0",
     "tailwind-merge": "^3.6.0",
     "twilio": "^6.0.2",
-    "type-graphql": "2.0.0-rc.3",
     "uuid": "^14.0.1",
     "ws": "^8.21.3",
     "zod": "3.25.56",
@@ -348,7 +347,8 @@
       "compression@<1.8.2": "1.8.2",
       "@graphql-tools/utils@>=10.10.1 <12.0.2": "12.1.0",
       "zod@<4": "3.25.56",
-      "qs@>=6.7.0 <6.16.1": "6.16.2"
+      "qs@>=6.7.0 <6.16.1": "6.16.2",
+      "@react-router/serve>morgan@<1.12.1": "1.12.1"
     },
     "onlyBuiltDependencies": [
       "@apollo/protobufjs",
@@ -367,7 +367,6 @@
       "nx",
       "prisma",
       "prisma-graphql-type-decimal",
-      "type-graphql",
       "unrs-resolver"
     ]
   },

@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { CombinedGraphQLErrors, type ApolloClient } from '@apollo/client'
+import type { ApolloClient } from '@apollo/client'
 import { getApolloContext } from '@apollo/client/react'
+import { isRetryableConnectivityError } from '@nestled-template/shared/apollo'
 
 /**
  * Whether the browser can reach the API, and the "API unavailable" screen's lifecycle.
@@ -259,16 +260,22 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
 }
 
 /**
- * Refetch every active query whose last result is a transport error (no response, or a non-GraphQL
- * HTTP failure). Without this a query that failed during a blip too short to put the screen up
- * kept showing its error until the user navigated away. Queries that failed with GraphQL errors
- * (validation, forbidden, a resolver bug) are left alone: retrying them would only fail again.
+ * Refetch every active query whose last result is a connectivity failure: no response at all, or a
+ * proxy's 502/503/504 while the API restarts (`isRetryableConnectivityError`, the same test the
+ * error link uses to report an outage). Without this a query that failed during a blip too short
+ * to put the screen up kept showing its error until the user navigated away.
+ *
+ * Anything else is left alone, because retrying it would only fail again: GraphQL errors
+ * (validation, forbidden, a resolver bug), an HTTP 401 or 403 (the error link already sends the
+ * user to log in, or to the access-denied screen), any other answered HTTP status, and an error
+ * thrown by application code. Refetching those on every return to the tab replayed the same auth
+ * failure, and with it the same logout redirect or access-denied screen, again and again.
  */
 export function refetchFailedQueries(client: Pick<ApolloClient, 'getObservableQueries'>): number {
   let refetched = 0
   for (const query of client.getObservableQueries('active')) {
     const { error } = query.getCurrentResult()
-    if (error && !CombinedGraphQLErrors.is(error)) {
+    if (isRetryableConnectivityError(error)) {
       refetched += 1
       query.refetch().catch(() => undefined)
     }
@@ -277,9 +284,20 @@ export function refetchFailedQueries(client: Pick<ApolloClient, 'getObservableQu
 }
 
 /**
- * Refetch failed queries when the browser comes back online or the tab is shown again, and hand
- * back a function to do it on demand (after a blip, or when the outage screen clears). A no-op
- * outside an ApolloProvider.
+ * How long the browser's "you're back" events are gathered into one refetch. Coming back to a
+ * window fires `focus` and, if the tab was hidden, `visibilitychange` within a few milliseconds of
+ * each other; `online` can land in the same moment after a laptop wakes.
+ */
+export const RETURN_TRIGGER_DEBOUNCE_MS = 250
+
+/**
+ * Refetch failed queries when the browser comes back online, the tab is shown again, or a window
+ * that stayed visible (side by side with another, say) regains focus, and hand back a function to
+ * do it on demand (after a blip, or when the outage screen clears). A no-op outside an
+ * ApolloProvider.
+ *
+ * The browser events are debounced together, so one return to the window refetches once rather
+ * than once per event.
  *
  * Refetches are spaced with the same backoff as the probe (2 s doubling to 30 s), reset only when
  * a pass finds no failed query left. Without it, an API whose liveness route answers while
@@ -292,6 +310,7 @@ export function useRefetchFailedQueries(): () => void {
   const attemptRef = useRef(0)
   const nextAllowedAtRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const returnTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const run = useCallback(() => {
     timerRef.current = undefined
@@ -313,16 +332,27 @@ export function useRefetchFailedQueries(): () => void {
   }, [run])
 
   useEffect(() => {
-    const handleVisible = () => {
-      if (document.visibilityState === 'visible') refetch()
+    const handleReturn = () => {
+      if (returnTimerRef.current !== undefined) clearTimeout(returnTimerRef.current)
+      returnTimerRef.current = setTimeout(() => {
+        returnTimerRef.current = undefined
+        refetch()
+      }, RETURN_TRIGGER_DEBOUNCE_MS)
     }
-    globalThis.addEventListener('online', refetch)
+    const handleVisible = () => {
+      if (document.visibilityState === 'visible') handleReturn()
+    }
+    globalThis.addEventListener('online', handleReturn)
+    globalThis.addEventListener('focus', handleReturn)
     document.addEventListener('visibilitychange', handleVisible)
     return () => {
-      globalThis.removeEventListener('online', refetch)
+      globalThis.removeEventListener('online', handleReturn)
+      globalThis.removeEventListener('focus', handleReturn)
       document.removeEventListener('visibilitychange', handleVisible)
       if (timerRef.current !== undefined) clearTimeout(timerRef.current)
       timerRef.current = undefined
+      if (returnTimerRef.current !== undefined) clearTimeout(returnTimerRef.current)
+      returnTimerRef.current = undefined
     }
   }, [refetch])
 
