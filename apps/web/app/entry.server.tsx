@@ -12,7 +12,11 @@ import { createReadableStreamFromReadable } from '@react-router/node'
 import { isbot } from 'isbot'
 import type { RenderToPipeableStreamOptions } from 'react-dom/server'
 import { renderToPipeableStream } from 'react-dom/server'
-import { makeClient } from '@nestled-template/shared/apollo'
+import {
+  makeClient,
+  ssrApiFailureCause,
+  type ApiFailureCause,
+} from '@nestled-template/shared/apollo'
 import { ApolloProvider } from '@apollo/client/react'
 import { ApolloSearchProvider } from '@nestledjs/forms/apollo'
 import { disableFragmentWarnings } from 'graphql-tag'
@@ -20,6 +24,50 @@ import { disableFragmentWarnings } from 'graphql-tag'
 disableFragmentWarnings()
 
 export const streamTimeout = 5_000
+
+/** Apollo's streamed query ref replaces a failed preload's error with this redacted one. */
+function isRedactedApolloStreamError(error: unknown): boolean {
+  const message = (error as Error)?.message ?? ''
+  return message.includes('event stream') || message.includes('Redacted for security concerns')
+}
+
+/**
+ * What to do when the shell render fails. `cause` is the real reason a loader's preloaded query
+ * failed, recorded by its Apollo client (`ssrApiFailureCause`), since the error that reaches the
+ * render is redacted and cannot tell a rejected session from an unreachable API.
+ *
+ * - `force-logout`: the API really rejected the session (401 or UNAUTHENTICATED). Clear the
+ *   cookie and redirect, as before.
+ * - `unavailable`: the API was unreachable or answered 502/503/504, or a redacted Apollo error
+ *   has no recorded cause. Keep the cookie and serve the 503 recovering screen: an unknown error
+ *   must never destroy a session.
+ * - `error`: anything else (an ordinary render error, or an API that answered with some other
+ *   error) is left to React Router's error handling, as before.
+ */
+export function shellErrorOutcome(
+  error: unknown,
+  cause: ApiFailureCause | undefined,
+): 'force-logout' | 'unavailable' | 'error' {
+  if (cause === 'unauthenticated') return 'force-logout'
+  if (cause === 'unavailable') return 'unavailable'
+  if (cause === undefined && isRedactedApolloStreamError(error)) return 'unavailable'
+  return 'error'
+}
+
+function forceLogoutResponse(request: Request): Response {
+  const cookieName = process.env.VITE_COOKIE_NAME || '__session'
+  const cookieDomain = process.env.VITE_COOKIE_DOMAIN
+  const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
+  const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
+  const url = new URL(request.url)
+  const returnParam = url.pathname === '/' ? '' : `?return_url=${encodeURIComponent(url.pathname)}`
+  const headers = new Headers({ Location: `/force-logout${returnParam}` })
+  headers.append(
+    'Set-Cookie',
+    cookieDomain && cookieDomain !== 'localhost' ? `${base}; Domain=${cookieDomain}` : base,
+  )
+  return new Response(null, { status: 302, headers })
+}
 
 export default function handleRequest(
   request: Request,
@@ -67,26 +115,21 @@ export default function handleRequest(
         },
         onShellError(error: unknown) {
           console.error('[SSR] Shell render error:', error)
-          const msg = (error as Error)?.message ?? ''
-          // Apollo streaming signals auth/network failure via this redacted error.
-          // Redirect to force-logout to clear the stale cookie instead of serving 500.
-          if (msg.includes('event stream') || msg.includes('Redacted for security concerns')) {
-            console.error('[SSR] Apollo event stream error detected — redirecting to force-logout')
-            const cookieName = process.env.VITE_COOKIE_NAME || '__session'
-            const cookieDomain = process.env.VITE_COOKIE_DOMAIN
-            const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
-            const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
-            const url = new URL(request.url)
-            const returnParam =
-              url.pathname === '/' ? '' : `?return_url=${encodeURIComponent(url.pathname)}`
-            const headers = new Headers({ Location: `/force-logout${returnParam}` })
-            headers.append(
-              'Set-Cookie',
-              cookieDomain && cookieDomain !== 'localhost'
-                ? `${base}; Domain=${cookieDomain}`
-                : base,
-            )
-            resolve(new Response(null, { status: 302, headers }))
+          const outcome = shellErrorOutcome(
+            error,
+            ssrApiFailureCause(routerContext.staticHandlerContext?.loaderData),
+          )
+          if (outcome === 'force-logout') {
+            // The API rejected the session: clear the stale cookie instead of serving 500.
+            console.error('[SSR] The API rejected the session — redirecting to force-logout')
+            resolve(forceLogoutResponse(request))
+          } else if (outcome === 'unavailable') {
+            // The API could not be reached, or the cause is unknown. Keep the session: React
+            // Router renders the root ErrorBoundary for this 503, which shows the self-recovering
+            // screen and reloads once the API answers. A real 401 comes back on the client and
+            // goes through the normal 401 handling there.
+            console.error('[SSR] API unavailable during the shell render — serving 503')
+            reject(new Response(null, { status: 503, statusText: 'Service Unavailable' }))
           } else {
             reject(error)
           }

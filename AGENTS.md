@@ -135,7 +135,8 @@ a template clone in a 3 GB Linux container, uncached:
   Windows `cmd` and the template has no cross-platform env helper; on a small host set it in the
   shell (`export NX_ISOLATE_PLUGINS=false`, or `$env:NX_ISOLATE_PLUGINS='false'` in PowerShell).
   Nx already turns plugin isolation off in the sandboxes it detects.
-- CI keeps Nx's default parallelism (`.github/workflows/ci.yml`); hosted runners have the memory.
+- CI (`.github/workflows/ci.yml`) runs typecheck in its own job, three projects at a time with a
+  2 GB heap each, which fits GitHub's standard 7.9 GB runner.
 
 ### Prisma Operations
 
@@ -178,7 +179,7 @@ Unit and component tests use Jest and Vitest through Nx project targets. Place t
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
+Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. `pnpm install` wires `.githooks/pre-commit` (through the `prepare` script), which formats the staged files with Prettier and scans them with gitleaks when it is installed; never bypass it with `--no-verify`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
 
 ## Downstream Upgrade Notes
 
@@ -506,7 +507,7 @@ Do not commit secrets. Start from `.env.example` and keep local values in `.env`
 
 ## SonarQube Quality Expectations
 
-This repository is kept clean under SonarQube. When editing code, proactively avoid common Sonar findings instead of relying on a later cleanup pass:
+This repository is kept clean under SonarQube. When editing code, proactively avoid common Sonar findings instead of relying on a later cleanup pass. [docs/quality/sonar-rules.md](docs/quality/sonar-rules.md) lists every active rule of the TypeScript quality profile that applies here, grouped (React and accessibility, tests, bugs, vulnerabilities, code smells) and linked to each rule's examples; read the section for what you are changing. It is generated from the committed `docs/quality/sonar-rules.json` by `pnpm sonar:rules-digest` (`--refresh` re-fetches the list from SonarCloud). The findings that come up most often here:
 
 - Keep functions small and focused. If a function starts accumulating nested branches, loops, or mixed responsibilities, extract named helpers before cognitive complexity becomes high.
 - Avoid deeply nested control flow. Prefer early returns, guard helpers, and small validation functions.

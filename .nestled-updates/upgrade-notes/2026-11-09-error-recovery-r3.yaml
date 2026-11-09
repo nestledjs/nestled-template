@@ -1,0 +1,168 @@
+id: 2026-11-09-error-recovery-r3
+title: >-
+  Error recovery R3: keep the session when the server render cannot reach the API, Me retry
+  backoff, re-arm the confirmation timer, separate offline and server-trouble messages
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-04-error-recovery-followups (apply that first; this note changes the code it
+  added). Four parts, in the web app and the shared Apollo lib. No package changes.
+
+  1. A connectivity failure during the server render signed the user out.
+  apps/web/app/entry.server.tsx `onShellError` cleared the session cookie and 302'd to
+  /force-logout whenever the shell error was Apollo's redacted stream error ("Error from event
+  stream. Redacted for security concerns."). The streamed query ref redacts every preload failure,
+  so a rejected token and an unreachable API looked the same, and a signed-in user who reloaded
+  while the API was down or restarting was logged out. The real cause is now recorded where it is
+  still visible, in the loader's own Apollo client:
+  - libs/shared/apollo/src/lib/apollo.ts: new `classifyApiFailure(error)` returns
+    `unauthenticated` (HTTP 401, or a GraphQL authentication error such as `UNAUTHENTICATED`, by
+    the same test the error link uses to log out), `unavailable` (`isRetryableConnectivityError`:
+    no response, or a proxy's 502/503/504) or `other` (any other answered error). `makeClient`
+    takes a new `onApiFailure(cause)` option; the error link calls it for each failed operation.
+  - libs/shared/apollo/src/lib/apollo-loader.ts: `apolloLoader` builds each loader's client with
+    `onApiFailure`, records the most decisive cause (unauthenticated > unavailable > other), and
+    attaches the record to the data the loader returns under a non-enumerable symbol key (never
+    serialized to the browser, invisible to code reading the data; a returned Response passes
+    through untouched). New `ssrApiFailureCause(loaderData)` reads it back. Loaders keep the same
+    `apolloLoader()(...)` call; nothing changes in the routes.
+  - apps/web/app/entry.server.tsx: `onShellError` reads
+    `ssrApiFailureCause(routerContext.staticHandlerContext.loaderData)` and decides with the new
+    exported `shellErrorOutcome(error, cause)`. `unauthenticated` clears the cookie and 302s to
+    /force-logout exactly as before (same cookie name and domain logic, same `return_url`).
+    `unavailable`, or a redacted Apollo error with no recorded cause, keeps the cookie and rejects
+    with `new Response(null, { status: 503 })`: React Router renders the root ErrorBoundary for
+    that 503, which shows the self-recovering screen and reloads once the API answers. Any other
+    shell error (an ordinary render error, or an API that answered with some other error) is
+    rejected unchanged and gets React Router's 500 handling, as before. An unknown cause therefore
+    never destroys a session; a real 401 comes back on the client and goes through the normal 401
+    path there. No reachability probe from the server is needed: the recorded cause decides, and
+    an unknown cause fails safe either way.
+
+  2. The Me retry backoff reset on cached data. apps/web/app/app.tsx: `AppWithUser` called
+  `onLoaded` on every render with a query ref, so under the default `cache-and-network` policy a
+  cached Me reset the backoff before the network request failed again, and a /graphql that kept
+  failing while /api/uptime answered was retried without backing off. It now calls `onLoaded` only
+  when `useReadQuery` reports `networkStatus === NetworkStatus.ready` (the network answered).
+  `handleMeLoaded` then also cancels a retry still queued from the outage (`clearTimeout`, timer
+  set to undefined) and clears `meFailedOfflineRef`, so that retry no longer revalidates every
+  loader once more after recovery.
+
+  3. The confirmation timer was not re-armed after an effect replay.
+  apps/web/app/api-availability.ts, `useApiAvailability`: the mount effect's cleanup cancels the
+  pending timer, but setup only rescheduled in the `unavailable` phase. A failure reported before
+  a replay (React StrictMode in development, or any re-run) left the phase stuck at `confirming`.
+  Setup now re-arms whatever the phase needs: the confirmation step at
+  `CONFIRM_DELAYS_MS[confirmAttemptRef.current]` while `confirming`, the retry while
+  `unavailable`. The hook also returns `phase`.
+
+  4. Separate "you are offline" and "our servers are in trouble" messages.
+  - apps/web/app/api-availability.ts: new `probeConnectivity()` replaces `probeApi` as the hook's
+    default probe. With `navigator.onLine === false` it reports `offline` without a request. It
+    probes /api/uptime as before; a proxy's 502/503/504 reports `server` (the connection works).
+    When the API does not answer at all it sends a HEAD to the web app's own origin
+    (`webOriginProbeUrl()`, `/favicon.ico`; any HTTP answer counts, a 404 included, so no new
+    route is needed): an answer reports `server`, none reports `offline`. The hook returns
+    `reason: 'offline' | 'server'` (and `offline` as shorthand), re-checked on every probe, and
+    set at once by the browser's `offline` (offline) and `online` (server, until the probe it
+    triggers says otherwise) events. The `probe` option may return a boolean as before or
+    `{ reachable, reason }`; a new `initialReason` option sets the reason before the first probe.
+    Phases, delays and debounce are unchanged; `probeApi` is kept.
+  - apps/web/app/api-unavailable.tsx: `ApiUnavailableScreen` takes `reason` instead of `offline`,
+    and an optional `copy` prop (`ApiUnavailableCopy`: `offlineTitle`, `offlineMessage`,
+    `serverTitle`, `serverMessage`, `retryLabel`); keys left out fall back to the English in
+    `API_UNAVAILABLE_COPY`. The offline copy is unchanged ("You’re offline" / "We’ll reconnect
+    automatically when your connection is back."). The server copy is new and has its own keys:
+    `SERVER_TROUBLE_TITLE` "We’re having trouble reaching our servers" and
+    `SERVER_TROUBLE_MESSAGE` "Retrying automatically." (they replace `SERVER_DOWN_TITLE` "Can’t
+    reach the server" and `SERVER_DOWN_MESSAGE`). Both keep the "Try again" button.
+    `RecoveringApiUnavailable` passes `initialReason` and `copy` through.
+  - apps/web/app/root.tsx: the root ErrorBoundary passes `initialReason="server"` for a 502/503/504
+    route response, so the server-rendered 503 from part 1 always opens with the server-trouble
+    message: the page reached the browser, so the connection works.
+  - apps/web/app/app.tsx passes `reason={api.reason}` to both of its `ApiUnavailableScreen`s.
+
+  Tests: apps/web/tests/entry-server-shell-error.spec.tsx (new; renders through React Router's
+  request handler, the real entry.server.tsx and root route, with the Me preload going through the
+  production Apollo client to a stubbed fetch: unreachable API and 502/503/504 give a 503 with the
+  server-trouble screen and no Set-Cookie; 401 and UNAUTHENTICATED clear the cookie and 302 to
+  /force-logout with return_url; a redacted error with no recorded cause gives 503 and keeps the
+  cookie; an ordinary render error stays a 500), apps/web/tests/api-availability.spec.tsx (offline
+  vs server: onLine false, web answers but API does not, neither answers, online/offline events
+  and between retries, the 503 route response, translated copy; `probeConnectivity`; the effect
+  replay under StrictMode; the Me backoff and the queued retry under `cache-and-network`) and
+  libs/shared/apollo/src/lib/apollo.spec.ts (`classifyApiFailure`, `onApiFailure`, the
+  `apolloLoader` record). apps/web/vite.config.ts inlines
+  `@apollo/client-integration-react-router` in Vitest (`test.server.deps.inline`) so the
+  server-render test shares one `react-router` instance; no effect on the app build.
+
+why: >
+  Rolling out 2026-11-04-error-recovery-followups found three defects in the template's own code:
+  a reload during an API outage could sign the user out, a cached Me defeated the retry backoff
+  (and a queued retry ran after recovery), and the outage check could stick at "confirming" after
+  an effect replay. The screen also told offline users and users hit by a server outage the same
+  thing.
+
+affectedPaths:
+  - apps/web/app/entry.server.tsx
+  - apps/web/app/api-availability.ts
+  - apps/web/app/api-unavailable.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/root.tsx
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo-loader.ts
+  - apps/web/vite.config.ts
+  - apps/web/tests/entry-server-shell-error.spec.tsx
+  - apps/web/tests/api-availability.spec.tsx
+  - apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+  - >
+    Manual: build and serve the web app with the API stopped. Signed in, reload a signed-in page:
+    the response is a 503, the session cookie is still there, and the screen says "We’re having
+    trouble reaching our servers". Start the API: the page reloads by itself, still signed in.
+    Then take the browser offline (devtools, or Playwright `context.setOffline(true)`) and make a
+    request fail: the screen says "You’re offline", and changes back when the connection returns.
+
+agentHints:
+  - >
+    A project that adapted the Me boundary (app.tsx), the root ErrorBoundary or the unavailable
+    screen to its own versions applies the same pattern to its own version: call the Me "loaded"
+    callback only once the network answered, and cancel the queued retry there; re-arm the
+    confirmation step on effect setup; show the reason-specific message with server trouble for a
+    502/503/504 route response.
+  - >
+    A project with i18n adds translation keys for the new server-trouble title and message (and
+    keeps or adds the offline ones), passes them through the screen's `copy` prop (or its own
+    equivalent), falls back to the English for any missing locale, and lists the locales still
+    untranslated in its report. A project without i18n takes the English as it is.
+  - >
+    A project whose entry.server.tsx already differs keeps its own structure, but must end with the
+    same rule: clear the cookie and redirect only when the recorded cause is a real 401 or
+    UNAUTHENTICATED; an unreachable API (502/503/504 included) or an unknown redacted error keeps
+    the cookie and serves the 503 recovering screen. A project with its own loader helper instead
+    of `apolloLoader` records the cause the same way (pass `onApiFailure` to `makeClient` and
+    attach the record to the loader data).
+  - >
+    A project that already fixed the Me backoff (part 2) or the confirmation timer (part 3) locally
+    marks that part superseded, provided its fix matches: reset only after a network answer and
+    cancel the queued retry; re-arm the confirming phase as well as the unavailable one.
+  - >
+    Keep the project's 401 and 403 handling and anything app-specific in auth exactly as it is
+    (force-logout route, logout redirect, access-denied screen, the WebSocket session check). This
+    note only stops a connectivity failure during the server render from being treated as a 401.
+  - >
+    The admin screens' own recovering boundary ships in the published `@nestledjs/data-browser`
+    package and keeps its existing copy; this note does not change it.

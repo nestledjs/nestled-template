@@ -1,5 +1,6 @@
 import { Outlet, useLoaderData, useLocation, useRevalidator } from 'react-router'
 import { GlobalContextProvider } from '@nestled-template/web'
+import { NetworkStatus } from '@apollo/client'
 import { useReadQuery, type QueryRef } from '@apollo/client/react'
 import type { MeQuery } from '@nestled-template/shared/sdk'
 import { Component, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
@@ -127,8 +128,17 @@ export function App() {
     const retry = meRetry.current
     return () => clearTimeout(retry.timer)
   }, [])
+  // Me has been answered by the network (AppWithUser only calls this then, never for a cached
+  // result that a still-pending request may yet turn into a failure). The outage is over: reset the
+  // backoff, and drop a retry still queued from it, which would otherwise revalidate every loader
+  // once more after the recovery already happened.
   const handleMeLoaded = useCallback(() => {
     meRetry.current.attempt = 0
+    if (meRetry.current.timer !== undefined) {
+      clearTimeout(meRetry.current.timer)
+      meRetry.current.timer = undefined
+    }
+    meFailedOfflineRef.current = false
   }, [])
 
   const api = useApiAvailability({
@@ -243,7 +253,7 @@ export function App() {
 
   // Shown only for a confirmed outage, and cleared by itself when the API answers again
   if (serviceUnavailable) {
-    return <ApiUnavailableScreen offline={api.offline} onRetry={api.retryNow} />
+    return <ApiUnavailableScreen reason={api.reason} onRetry={api.retryNow} />
   }
 
   if (accessForbidden) {
@@ -265,7 +275,7 @@ export function App() {
       onError={handleMeQueryError}
       recoveringFallback={
         <ApiUnavailableScreen
-          offline={api.offline}
+          reason={api.reason}
           onRetry={() => {
             api.retryNow()
             retryMeQueryNow()
@@ -282,11 +292,15 @@ function AppWithUser({
   meQueryRef,
   onLoaded,
 }: Readonly<{ meQueryRef: QueryRef<MeQuery>; onLoaded?: () => void }>) {
-  const { data } = useReadQuery(meQueryRef)
+  const { data, networkStatus } = useReadQuery(meQueryRef)
   const user = data?.me ?? null
+  // Only once the network has answered. Under the default `cache-and-network` policy a cached Me
+  // renders first, with the request still in flight; treating that as loaded reset the retry
+  // backoff before the request had a chance to fail again.
+  const answered = networkStatus === NetworkStatus.ready
   useEffect(() => {
-    onLoaded?.()
-  }, [meQueryRef, onLoaded])
+    if (answered) onLoaded?.()
+  }, [meQueryRef, answered, onLoaded])
   return (
     <GlobalContextProvider key={user?.id ?? 'nouser'} user={user}>
       <Outlet />

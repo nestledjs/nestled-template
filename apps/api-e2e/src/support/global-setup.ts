@@ -2,6 +2,7 @@ import { waitForPortOpen } from '@nx/node/utils'
 import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createConnection, type Socket } from 'node:net'
 import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
+import { API_OUTPUT_TAIL_LINES, apiStartTimeoutSeconds, lastOutputLines } from './api-readiness'
 import {
   ALLOW_NON_DISPOSABLE_DB,
   assertDisposableTestDatabase,
@@ -185,15 +186,19 @@ async function startApiServer(
   ;(apiProcess.stdout as Socket | null)?.unref()
   ;(apiProcess.stderr as Socket | null)?.unref()
 
-  console.log(`⏳ Waiting for API to start...`)
+  // waitForPortOpen has no `timeout` option; it retries once a second. The budget is generous because
+  // `nx serve api` builds the API before it listens, and a cold CI build can take minutes.
+  const timeoutSeconds = apiStartTimeoutSeconds()
+  console.log(`⏳ Waiting up to ${timeoutSeconds}s for API to start...`)
   try {
-    // waitForPortOpen has no `timeout` option; it retries. A `timeout: 45000` here was ignored, so
-    // the wait was always the 120 x 1s default — keep that proven budget and state it.
-    await waitForPortOpen(port, { host, retries: 120, retryDelay: 1000 })
+    await waitForPortOpen(port, { host, retries: timeoutSeconds, retryDelay: 1000 })
   } catch (portError) {
-    console.error('❌ API server did not start within timeout')
-    console.error('Last output from API server:')
-    console.error(startupOutput.slice(-1000))
+    console.error(
+      `❌ API server did not accept connections on ${host}:${port} within ${timeoutSeconds}s ` +
+        '(raise E2E_API_START_TIMEOUT_SECONDS if a cold build needs longer).',
+    )
+    console.error(`Last ${API_OUTPUT_TAIL_LINES} lines of API output:`)
+    console.error(lastOutputLines(startupOutput))
     killApiProcessTree(apiProcess)
     throw portError
   }

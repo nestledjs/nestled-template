@@ -56,6 +56,9 @@ one test passed. A filter that matches nothing, or a run in which every test is 
   `POSTGRES_TEST_PORT` in the repo-root `.env` (default port 5433). The runners, global setup and
   `test-db.ts` all use that same answer.
 - `E2E_API_PORT`: the port the e2e API listens on (default `3100`), kept apart from the dev `PORT`.
+- `E2E_API_START_TIMEOUT_SECONDS`: how long global setup waits for the API it started to accept
+  connections (default `300`). `nx serve api` builds the API first, and a cold build in CI can take
+  minutes. On a timeout, setup prints the API's last 40 output lines and stops it.
 - `HOST`: the API host (default `localhost`).
 - `E2E_ALLOW_EXISTING_API`: set to `1` only when you started an API on `E2E_API_PORT` against the
   test database yourself.

@@ -339,6 +339,12 @@ function scrubExternalCredentials(env) {
     if (credentialName.test(name)) env[name] = 'db-update-disabled'
   }
   if (names.has('CLOUDINARY_URL')) env.CLOUDINARY_URL = 'cloudinary://db-update:disabled@local'
+  // Nx Cloud tokens are not dummied like the rest: Nx would try to authorise
+  // 'db-update-disabled' and exit ("Workspace is unable to be authorized"). Drop them and run Nx
+  // on its local cache.
+  delete env.NX_CLOUD_ACCESS_TOKEN
+  delete env.NX_CLOUD_AUTH_TOKEN
+  env.NX_NO_CLOUD = 'true'
 }
 
 function safeApiEnvironment({ databaseUrl, redisPort, apiPort }) {

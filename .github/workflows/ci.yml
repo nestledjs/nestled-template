@@ -23,13 +23,464 @@ permissions:
   contents: read
   pull-requests: read
 
+# The run is split into jobs that each get their own machine, so the wall clock is the slowest job
+# rather than the sum of every step, and a machine never runs more than its share of compilers or
+# test workers at once.
+#
+# Memory is why the split matters as much as the speed. On a private repository `ubuntu-24.04` is
+# GitHub's standard runner: 2 vCPUs and about 7.9 GB. One job-wide NODE_OPTIONS heap applies to
+# every Node process at once, and V8 does not collect until a process nears its own limit, so a
+# large job-wide heap with three compilers running lets the machine run out of memory first; the
+# runner then stops answering ("The hosted runner lost communication with the server") and GitHub
+# gives up on it only much later. Each job below sets a per-process heap that its parallelism fits
+# into the machine (heap x parallelism + 1 GB stays under 7.9 GB): 2 GB at three at once, 3 GB at
+# two at once, more only for a process that is alone on its machine. Raise a heap only together
+# with a lower --parallel. Test runners start worker processes that inherit NODE_OPTIONS; the cap
+# bounds each one, and none comes near it in practice.
+#
+# The runner label comes from the CI_RUNNER repository variable (Settings > Secrets and variables >
+# Actions > Variables), so moving every job to another runner is a setting, not a workflow change.
+# Unset, it is GitHub's standard runner.
+#
+# Every Linux job starts from .github/actions/setup (pnpm, Node, install, Prisma client). Nx Cloud's
+# remote cache is shared across the jobs and across runs, so a task whose inputs are unchanged
+# replays in seconds wherever it is scheduled. This file is in nx.json's sharedGlobals, so a change
+# to it misses the cache everywhere once.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NX_DAEMON: false
+  # Nx Cloud remote cache, per Nx's recommendation: pushes to develop (a protected branch) use the
+  # read-write token; pull requests use the read-only token, which gives each PR its own scoped
+  # cache so PR code can never write into the cache develop trusts. A fork's PR gets no secrets
+  # and runs with the anonymous access the workspace allows (none).
+  NX_CLOUD_ACCESS_TOKEN: ${{ github.event_name == 'push' && secrets.NX_CLOUD_ACCESS_TOKEN || secrets.NX_CLOUD_ACCESS_TOKEN_READ }}
+  # The projects whose tests run in the `tests-web` job. Every other project's tests run in
+  # `tests-api`, which EXCLUDES this list rather than naming its own, so a new project's tests run
+  # there without anyone remembering to list it.
+  WEB_TEST_PROJECTS: web,web-ui,web-components,data-browser,shared-components,utils,apollo,sdk,access-control
+
 jobs:
+  # Which never-cached suite this change reaches. The API e2e run is uncached by design (every
+  # green result comes from a run that just happened), so it is the one job where "run everything"
+  # costs real minutes on a change that cannot touch it. On a pull request it runs only when Nx says
+  # api-e2e is affected; on a develop push it always runs, so every develop run stays a complete
+  # baseline. Every other job runs the whole workspace (or `nx affected`) and lets the remote cache
+  # skip what is unchanged.
+  affected:
+    name: Affected
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    outputs:
+      api_e2e: ${{ steps.affected.outputs.api_e2e }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/nx-base
+      # A membership check, not `--projects`: `nx affected` forwards an unknown --projects flag to
+      # every task as an override instead of filtering by it. --json, because Nx prints a JSON array
+      # instead of one name per line when it detects an AI agent's environment.
+      - id: affected
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "api_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: every suite runs."
+            exit 0
+          fi
+          projects="$(pnpm exec nx show projects --affected --json | jq -r '.[]')"
+          echo "Affected projects:"; echo "$projects"
+          if printf '%s\n' "$projects" | grep -qx api-e2e; then
+            echo "api_e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "api_e2e=false" >> "$GITHUB_OUTPUT"
+            echo "api-e2e is not affected: the API e2e job is skipped."
+          fi
+
+  # Fast checks that read committed files and need no Nx task graph.
+  static:
+    name: Static checks
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=3072
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # nestled-template is the clone source for new projects: an nxCloudId committed here would make
+      # every new project report to the template's Nx Cloud workspace. Its own CI authenticates with
+      # NX_CLOUD_ACCESS_TOKEN alone. Inert in every other repo, so this file stays identical across
+      # dev-template, template and apps.
+      - name: Template must not carry an Nx Cloud ID
+        if: github.repository == 'nestledjs/nestled-template'
+        run: |
+          if grep -q '"nxCloudId"' nx.json; then
+            echo "::error file=nx.json::nestled-template must not commit an nxCloudId (new projects clone it)."
+            exit 1
+          fi
+
+      - name: Test public content guard
+        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+
+      - uses: ./.github/actions/setup
+
+      - run: pnpm template:validate-upgrade-notes
+
+      - run: pnpm run nestled-doctor
+
+      # Formatting is checked in CI or it is not checked at all: `nx format:check --base=<ref>`
+      # only inspects files a branch CHANGED, so anything already on the default branch is invisible
+      # to a local run. The whole repository, with the pinned prettier: a scoped glob let two dozen
+      # unformatted files elsewhere through. The pre-commit hook (.githooks/pre-commit) formats
+      # staged files, so this should only fail for a commit made without it.
+      - name: Check formatting
+        run: pnpm exec prettier --check .
+
+      # The SDL/select invariants typecheck cannot see, against the committed api-schema.graphql.
+      - name: Verify SDK selects
+        run: |
+          pnpm verify:selects
+          pnpm verify:select-coverage
+          pnpm verify:fragments
+
+      - name: Test the workspace scripts (typecheck runner, dev checkout resolution, Sonar digest)
+        run: node --test scripts/*.spec.mjs
+
+      # The workspace root's own TypeScript (scripts/, tools/) belongs to no Nx project; each folder's
+      # tsconfig.json is checked by the same runner, uncovered-file check included.
+      - run: pnpm typecheck:workspace
+
+      # docs/quality/sonar-rules.md is generated from docs/quality/sonar-rules.json; this fails when
+      # someone edited one without regenerating the other.
+      - name: Sonar rules digest is up to date
+        run: node scripts/sonar-rules-digest.mjs --check
+
+  # The enforced secret scan. The pre-commit hook runs gitleaks too, but only where it is installed
+  # and only for commits made with the hook, so this is the layer that cannot be skipped. It scans
+  # the commits this run adds: the pull request's commits, or the pushed range on develop. The
+  # binary is downloaded from the gitleaks release and checked against its published SHA-256; the
+  # gitleaks GitHub Action needs a paid licence for organisation repositories.
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan the new commits for secrets
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            range="$PR_BASE..$GITHUB_SHA"
+          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ] \
+            && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+            range="$PUSH_BEFORE..$GITHUB_SHA"
+          else
+            range=""
+            echo "No usable previous commit: scanning the whole history."
+          fi
+          echo "Scanning: ${range:-all commits}"
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose ${range:+--log-opts="$range"} .
+
+  # `lint` is every project's ESLint target (nx.json names the inferred target `lint`).
+  lint:
+    name: Lint
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=2048
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/nx-base
+      - run: pnpm exec nx affected -t lint --parallel=3
+
+  # The API's webpack build is the heaviest single process, so it builds alone with a larger heap;
+  # every other build shares a machine, two at a time at 3 GB each. Both are `affected`, so a build the diff does not
+  # touch is skipped, not replayed.
+  build-api:
+    name: Build (api)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/nx-base
+      # `nx affected` has no project filter (it forwards --projects to every task as an override),
+      # so the membership test is explicit: build only when api is in the affected set.
+      # The project list is captured first, under errexit: inside the `if`, a failing
+      # `nx show projects` would read as "api is not affected" and skip the build silently.
+      - name: Build api when affected
+        run: |
+          set -euo pipefail
+          projects="$(pnpm exec nx show projects --affected -t build --json | jq -r '.[]')"
+          if printf '%s\n' "$projects" | grep -qx api; then
+            pnpm exec nx run api:build
+          else
+            echo "api is not affected by this change; nothing to build."
+          fi
+
+  build:
+    name: Build (everything else)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=3072
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/nx-base
+      - run: pnpm exec nx affected -t build --exclude=api --parallel=2
+
+  # run-many, not affected, and unscoped: every project with a tsconfig.json gets a typecheck target
+  # from tools/nx-plugins/typecheck.js, which checks all of its configs (lib/app, spec, storybook) and
+  # fails when a config checks nothing or a tracked source is in no config. A scoped list silently
+  # stops covering new projects as they are added. The webpack build does not enforce strict, so a
+  # passing build was never a passing typecheck. The local `pnpm typecheck` runs one project at a
+  # time instead (see AGENTS.md).
+  typecheck:
+    name: Typecheck
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=2048
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/setup
+      - run: pnpm exec nx run-many -t typecheck --parallel=3
+
+  # Unit and component tests, with coverage for SonarCloud, in two jobs of similar duration. Both are
+  # cached in Nx with their coverage directory as an output, so a cache hit restores the lcov the
+  # sonar job reads. No suite is sharded: the longest (api-custom) is about as long as a typecheck.
+  #
+  # tests-api: every project not in WEB_TEST_PROJECTS. api-e2e's `test` target is its database-free
+  # support suite, so this never starts the API e2e run or a test database.
+  tests-api:
+    name: Tests (api)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=3072
+    # Service images come from Google's Docker Hub mirror (same official images, same tags and
+    # digests). Hosted runners share IP addresses, so anonymous pulls from Docker Hub
+    # (`toomanyrequests`) and public.ecr.aws (`Data limit exceeded`) fail intermittently.
+    services:
+      redis:
+        image: mirror.gcr.io/library/redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/setup
+      - name: Run tests with coverage
+        run: pnpm exec nx run-many -t test --parallel=2 --exclude="$WEB_TEST_PROJECTS" -- --coverage
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+          NODE_ENV: test
+          JWT_SECRET: test-jwt-secret-for-ci-only-not-production
+          EMAIL_PROVIDER: mock
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-api
+          path: coverage
+          retention-days: 1
+          if-no-files-found: error
+
+  # tests-web: the web app and the browser-side libraries. web-ui's `test` target also runs its
+  # Storybook interaction tests in a real Chromium, so this is the one job that installs a
+  # Playwright browser, cached by Playwright version.
+  tests-web:
+    name: Tests (web)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=3072
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/setup
+      - name: Resolve the Playwright version
+        id: playwright
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+      # The browser download is what the cache saves; --with-deps (apt) is the system libraries,
+      # which are not cached, so it runs every time.
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run tests with coverage
+        run: pnpm exec nx run-many -t test --parallel=2 --projects="$WEB_TEST_PROJECTS" -- --coverage
+        env:
+          NODE_ENV: test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-web
+          path: coverage
+          retention-days: 1
+          if-no-files-found: error
+
+  # The API e2e suite, against the service containers below, through its PASSED-checking wrapper
+  # (apps/api-e2e/run-tests.sh). It boots the API with `nx serve api`, a cold webpack build in CI,
+  # so the readiness wait is generous (E2E_API_START_TIMEOUT_SECONDS) and prints the API's last
+  # output lines if it is exceeded. One process alone on its machine, so a larger heap.
+  api-e2e:
+    name: API e2e
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    needs: [affected]
+    if: ${{ needs.affected.outputs.api_e2e == 'true' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: prisma
+          POSTGRES_PASSWORD: prisma
+          POSTGRES_DB: nestled_template_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: mirror.gcr.io/library/redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/setup
+      - name: Run API e2e with coverage
+        run: pnpm exec nx run api-e2e:e2e -- --coverage
+        env:
+          TEST_DATABASE_URL: postgresql://prisma:prisma@localhost:5432/nestled_template_test
+          REDIS_URL: redis://127.0.0.1:6379
+          NODE_ENV: test
+          JWT_SECRET: test-jwt-secret-for-ci-only-not-production
+          EMAIL_PROVIDER: mock
+          E2E_API_START_TIMEOUT_SECONDS: 300
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-api-e2e
+          path: coverage
+          retention-days: 1
+          if-no-files-found: error
+
+  # Generator output must match the schema it is generated from. Every other gate reads the
+  # COMMITTED artifacts, so a schema change that lands without a full `pnpm db-update` makes the
+  # stale output the truth they verify against, and the drift is invisible. This runs db-update
+  # (schema refresh, Prisma client, CRUD, models, SDK) and fails on any change to a tracked file.
+  generated-artifacts:
+    name: Generated artifacts are up to date
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/setup
+
+      # db-update brings up .dev/docker-compose.yml's postgres and redis. Their images come from the
+      # mirror (see the service containers above) and are tagged with the names compose expects.
+      - name: Cache official schema-refresh images
+        run: |
+          for image in postgres:16 redis:alpine; do
+            for attempt in 1 2 3; do
+              if docker pull "mirror.gcr.io/library/$image"; then
+                docker tag "mirror.gcr.io/library/$image" "$image"
+                continue 2
+              fi
+              sleep "$((attempt * 3))"
+            done
+            exit 1
+          done
+
+      - name: Generated artifacts are up to date
+        run: |
+          pnpm db-update
+          if ! git diff --quiet; then
+            echo "::error::Generated artifacts are stale. Run 'pnpm db-update' and commit the result."
+            git diff --stat
+            exit 1
+          fi
+
+  # SonarCloud, fed by the coverage every test job uploaded. It waits for the test jobs only: lint,
+  # typecheck and build have nothing it reads. SonarCloud stays wired in but only runs when the repo
+  # has a SONAR_TOKEN secret: clones pass CI without configuring it, and adding the secret enables
+  # the scan with no workflow edit.
+  sonar:
+    name: SonarCloud
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    needs: [tests-api, tests-web, api-e2e]
+    # Runs when every test job passed OR was skipped by the affected gate (a skipped job is not a
+    # missing one: a web-only PR has no API e2e coverage to report). GitHub's default would skip this
+    # job whenever any dependency was skipped.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    env:
+      # Surfaced at job scope so the steps below can gate on its presence; the secrets context is
+      # not available in a job-level `if`.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Skip SonarCloud Scan (no SONAR_TOKEN)
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: echo "SONAR_TOKEN is not configured; skipping SonarCloud scan."
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: ${{ env.SONAR_TOKEN != '' }}
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        if: ${{ env.SONAR_TOKEN != '' }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ env.SONAR_TOKEN != '' }}
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+
+      - name: Normalize coverage paths
+        if: ${{ env.SONAR_TOKEN != '' }}
+        run: pnpm coverage:normalize-lcov
+
+      - name: SonarCloud Scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+
   # Native Windows has no process groups: e2e teardown stops the API's launcher and descendants
   # with taskkill. These tests start a real launcher and descendant and check both stop.
   windows-process-cleanup:
+    name: Windows process cleanup
     runs-on: windows-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -48,175 +499,39 @@ jobs:
       - name: Test API process cleanup on Windows
         run: pnpm exec vitest run --config apps/api-e2e/vitest.support.config.mts src/support/api-process
 
-  main:
-    runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      NX_DAEMON: false
-      # Nx Cloud remote cache, per Nx's recommendation: pushes to develop (a protected branch) use the
-      # read-write token; pull requests use the read-only token, which gives each PR its own scoped
-      # cache so PR code can never write into the cache develop trusts. A fork's PR gets no secrets
-      # and runs with the anonymous access the workspace allows (none).
-      NX_CLOUD_ACCESS_TOKEN: ${{ github.event_name == 'push' && secrets.NX_CLOUD_ACCESS_TOKEN || secrets.NX_CLOUD_ACCESS_TOKEN_READ }}
-      # Surfaced at job scope so the SonarCloud steps below can gate on its presence.
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-    # Service images come from Google's Docker Hub mirror (same official images, same tags and
-    # digests). Hosted runners share IP addresses, so anonymous pulls from Docker Hub
-    # (`toomanyrequests`) and public.ecr.aws (`Data limit exceeded`) fail intermittently.
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:16
-        env:
-          POSTGRES_USER: prisma
-          POSTGRES_PASSWORD: prisma
-          POSTGRES_DB: nestled_template_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
-      redis:
-        image: mirror.gcr.io/library/redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-
+  # One status for the whole run, for branch rules and for nrwl/nx-set-shas, which bases a develop
+  # run's `affected` on the last run that succeeded. A skipped or cancelled job fails it too (a run
+  # that did not check something is not a green run), with one exception: the API e2e job the
+  # `affected` gate may skip on a pull request, which the gate itself vouches for (and the gate's
+  # own failure fails this job).
+  ci-ok:
+    name: CI
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    if: always()
+    needs:
+      - affected
+      - static
+      - gitleaks
+      - lint
+      - build-api
+      - build
+      - typecheck
+      - tests-api
+      - tests-web
+      - api-e2e
+      - generated-artifacts
+      - sonar
+      - windows-process-cleanup
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-
-      # nestled-template is the clone source for new projects: an nxCloudId committed here would make every new
-      # project report to the template's Nx Cloud workspace. Its own CI authenticates with NX_CLOUD_ACCESS_TOKEN
-      # alone. Inert in every other repo, so this file stays identical across dev-template, template and apps.
-      - name: Template must not carry an Nx Cloud ID
-        if: github.repository == 'nestledjs/nestled-template'
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if grep -q '"nxCloudId"' nx.json; then
-            echo "::error file=nx.json::nestled-template must not commit an nxCloudId (new projects clone it)."
-            exit 1
-          fi
-
-      - name: Test public content guard
-        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
-
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        name: Install pnpm
-        with:
-          run_install: false
-
-      # This enables task distribution via Nx Cloud
-      # Run this command as early as possible, before dependencies are installed
-      # Learn more at https://nx.dev/ci/reference/nx-cloud-cli#npx-nxcloud-startcirun
-      # Uncomment this line to enable task distribution
-      # - run: pnpm dlx nx-cloud start-ci-run --distribute-on="3 linux-medium-js" --stop-agents-after="build"
-
-      # Cache node_modules
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22.23.4
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-
-      # Install Playwright browsers for web-ui tests
-      - name: Install Playwright Browsers
-        run: ./node_modules/.bin/playwright install --with-deps chromium
-
-      # On a develop push, the Nx base is the commit of the last successful CI run on develop, not
-      # the previous push. A queued develop run is replaced when a newer push arrives (see
-      # concurrency above), and a run can fail or be cancelled by hand; basing on the previous push
-      # would leave the projects such a push changed out of every completed affected run. Do not
-      # override NX_BASE with `github.event.before`.
-      - uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4
-        with:
-          main-branch-name: develop
-
-      - run: pnpm template:validate-upgrade-notes
-
-      - run: pnpm run nestled-doctor
-
-      - run: pnpm verify:selects
-
-      # Formatting is checked in CI or it is not checked at all: `nx format:check --base=<ref>`
-      # only inspects files a branch CHANGED, so anything already on the default branch is invisible
-      # to a local run. Two unformatted files reached develop that way. The whole repository, with
-      # the pinned prettier: a scoped glob let two dozen unformatted files elsewhere through.
-      - name: Check formatting
-        run: pnpm exec prettier --check .
-
-      - run: pnpm verify:select-coverage
-
-      - run: pnpm verify:fragments
-
-      # Prepend any command with "nx-cloud record --" to record its logs to Nx Cloud
-      # - run: pnpm exec nx-cloud record -- echo Hello World
-      # Nx Affected runs only tasks affected by the changes in this PR/commit. Learn more: https://nx.dev/ci/features/affected
-      # `lint` is every project's ESLint target (nx.json names the inferred target `lint`). It used
-      # to be inferred as `eslint:lint`, so this step and `pnpm lint` reached one project.
-      - run: pnpm exec nx affected -t lint build
-
-      - name: Test the workspace scripts (typecheck runner, dev checkout resolution)
-        run: node --test scripts/*.spec.mjs
-
-      # run-many, not `nx run web:typecheck`: `nx affected -t build` above compiles the API through
-      # webpack, which does not enforce strict. A passing build was never a passing typecheck, and
-      # for the API no typecheck ran at all.
-      #
-      # Unscoped: every project with a tsconfig.json gets a typecheck target from
-      # tools/nx-plugins/typecheck.js, which checks all of its configs (lib/app, spec, storybook) and
-      # fails when a config checks nothing or a tracked source is in no config. Keep it unscoped — a
-      # scoped list silently stops covering new projects as they are added.
-      #
-      # Nx's default parallelism (3) on purpose: hosted runners have the memory for three compilers
-      # at once. The local `pnpm typecheck` runs one project at a time instead (see AGENTS.md).
-      - run: pnpm exec nx run-many -t typecheck
-
-      # The workspace root's own TypeScript (scripts/, tools/) belongs to no Nx project; each folder's
-      # tsconfig.json is checked by the same runner, uncovered-file check included.
-      - run: pnpm typecheck:workspace
-
-      # Unit and component tests only: api-e2e's `test` target is its support suite, so this never
-      # starts the API e2e run or a test database.
-      - name: Run tests with coverage
-        run: pnpm test:coverage
-        env:
-          REDIS_URL: redis://127.0.0.1:6379
-          NODE_ENV: test
-          JWT_SECRET: test-jwt-secret-for-ci-only-not-production
-          EMAIL_PROVIDER: mock
-
-      # The API e2e suite, against the service containers above, through its PASSED-checking wrapper.
-      - name: Run API e2e with coverage
-        run: pnpm exec nx run api-e2e:e2e -- --coverage
-        env:
-          TEST_DATABASE_URL: postgresql://prisma:prisma@localhost:5432/nestled_template_test
-          REDIS_URL: redis://127.0.0.1:6379
-          NODE_ENV: test
-          JWT_SECRET: test-jwt-secret-for-ci-only-not-production
-          EMAIL_PROVIDER: mock
-
-      - name: Normalize coverage paths
-        run: pnpm coverage:normalize-lcov
-
-      # SonarCloud stays wired in but only runs when the repo has a SONAR_TOKEN secret.
-      # Clones created from this template pass CI without configuring SonarCloud; adding a
-      # SONAR_TOKEN secret enables the scan automatically with no workflow edit.
-      - name: Skip SonarCloud Scan (no SONAR_TOKEN)
-        if: ${{ env.SONAR_TOKEN == '' }}
-        run: echo "SONAR_TOKEN is not configured; skipping SonarCloud scan."
-
-      - name: SonarCloud Scan
-        if: ${{ env.SONAR_TOKEN != '' }}
-        uses: SonarSource/sonarcloud-github-action@383f7e52eae3ab0510c3cb0e7d9d150bbaeab838 # v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          printf '%s' "$NEEDS" | jq -e --arg event "$EVENT_NAME" '
+            to_entries
+            | map(select(
+                .value.result != "success"
+                and ((($event == "pull_request") and .key == "api-e2e" and .value.result == "skipped") | not)
+              ))
+            | if length == 0 then true else (map("\(.key): \(.value.result)") | join(", ") | error) end'

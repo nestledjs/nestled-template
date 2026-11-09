@@ -1,0 +1,48 @@
+#!/usr/bin/env sh
+# Runs before every commit, on the staged files only:
+#
+# 1. Prettier formats them and they are re-staged, so CI's tree-wide formatting gate
+#    (`prettier --check .`) never fails for a file committed from here. That gate is the most
+#    common reason a run goes red, each a full CI round trip for a one-second fix.
+# 2. gitleaks scans what is staged for secrets, when it is installed. CI's gitleaks job is the
+#    enforced layer; this one only catches a secret before it is in history at all.
+#
+# Wired up by package.json's `prepare` script (`git config core.hooksPath .githooks || true`) on
+# `pnpm install`. CI installs with --ignore-scripts and never runs it; a build without `.git`
+# (Railway, Docker) skips it through the `|| true`. No dependency is involved on purpose: husky
+# and lint-staged add transitive packages that re-key the pnpm lockfile.
+#
+# Prettier gets the staged paths explicitly and still honours .prettierignore; --ignore-unknown
+# skips files it has no parser for. The formatted files are re-staged whole, so a partially staged
+# file has its unstaged hunks staged too: stage whole files, or commit the hunks you mean. Never
+# bypass this hook with --no-verify.
+set -e
+# -z: NUL-separated and never C-quoted, so a path with spaces or non-ASCII characters reaches
+# Prettier and `git add` as it is. Without it git quotes such paths ("docs/caf\303\251.md").
+staged_paths() {
+  git diff --cached --name-only --diff-filter=ACMR -z
+}
+[ -n "$(staged_paths | tr '\0' '\n')" ] || exit 0
+
+# A missing formatter must not wedge the commit. Called unconditionally, the hook would abort with
+# `xargs: node_modules/.bin/prettier: No such file or directory` in any checkout without
+# node_modules (a fresh worktree, a cloud session whose install failed), and the only way past a
+# failing hook is --no-verify, which this repository forbids. Say what is wrong and let the commit
+# through: the blocking gate is CI's `prettier --check .`, not this.
+if [ -x node_modules/.bin/prettier ]; then
+  staged_paths | xargs -0 node_modules/.bin/prettier --write --ignore-unknown --log-level warn --
+  staged_paths | xargs -0 git add --
+else
+  echo "pre-commit: NOT FORMATTED. node_modules/.bin/prettier is missing, so the staged files" >&2
+  echo "were left as they are. Run \`pnpm install\`, or \`pnpm exec prettier --write\` on the files" >&2
+  echo "you changed, before you push: CI's \`prettier --check .\` is blocking." >&2
+fi
+
+# The secret scan runs after formatting, on exactly what will be committed. gitleaks reads
+# .gitleaks.toml at the repository root. A finding blocks the commit: remove the secret from the
+# staged change (and rotate it if it was real). A false positive goes in .gitleaks.toml's allowlist.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --no-banner --verbose --log-level warn
+else
+  echo "pre-commit: gitleaks is not installed; secret scan skipped (CI runs it)." >&2
+fi

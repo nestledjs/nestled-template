@@ -95,6 +95,14 @@ export default defineConfig(() => ({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],
+    server: {
+      deps: {
+        // Processed with the app's code so that its `react-router` import is the same module
+        // instance; loaded by Node it gets a second copy, and its hooks (`useMatches` in
+        // ApolloHydrationHelper) do not see the router (tests/entry-server-shell-error.spec.tsx).
+        inline: ['@apollo/client-integration-react-router'],
+      },
+    },
     include: ['{src,tests}/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
     reporters: ['default'],
     coverage: {
