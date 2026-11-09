@@ -1,0 +1,4541 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index fb0ace6..3926f6c 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -135,7 +135,8 @@ a template clone in a 3 GB Linux container, uncached:
+   Windows `cmd` and the template has no cross-platform env helper; on a small host set it in the
+   shell (`export NX_ISOLATE_PLUGINS=false`, or `$env:NX_ISOLATE_PLUGINS='false'` in PowerShell).
+   Nx already turns plugin isolation off in the sandboxes it detects.
+-- CI keeps Nx's default parallelism (`.github/workflows/ci.yml`); hosted runners have the memory.
++- CI (`.github/workflows/ci.yml`) runs typecheck in its own job, three projects at a time with a
++  2 GB heap each, which fits GitHub's standard 7.9 GB runner.
+ 
+ ### Prisma Operations
+ 
+@@ -178,7 +179,7 @@ Unit and component tests use Jest and Vitest through Nx project targets. Place t
+ 
+ ## Commit & Pull Request Guidelines
+ 
+-Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
++Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. `pnpm install` wires `.githooks/pre-commit` (through the `prepare` script), which formats the staged files with Prettier and scans them with gitleaks when it is installed; never bypass it with `--no-verify`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
+ 
+ ## Downstream Upgrade Notes
+ 
+@@ -506,7 +507,7 @@ Do not commit secrets. Start from `.env.example` and keep local values in `.env`
+ 
+ ## SonarQube Quality Expectations
+ 
+-This repository is kept clean under SonarQube. When editing code, proactively avoid common Sonar findings instead of relying on a later cleanup pass:
++This repository is kept clean under SonarQube. When editing code, proactively avoid common Sonar findings instead of relying on a later cleanup pass. [docs/quality/sonar-rules.md](docs/quality/sonar-rules.md) lists every active rule of the TypeScript quality profile that applies here, grouped (React and accessibility, tests, bugs, vulnerabilities, code smells) and linked to each rule's examples; read the section for what you are changing. It is generated from the committed `docs/quality/sonar-rules.json` by `pnpm sonar:rules-digest` (`--refresh` re-fetches the list from SonarCloud). The findings that come up most often here:
+ 
+ - Keep functions small and focused. If a function starts accumulating nested branches, loops, or mixed responsibilities, extract named helpers before cognitive complexity becomes high.
+ - Avoid deeply nested control flow. Prefer early returns, guard helpers, and small validation functions.
+diff --git a/docs/quality/sonar-rules.json b/docs/quality/sonar-rules.json
+new file mode 100644
+index 0000000..fae6537
+--- /dev/null
++++ b/docs/quality/sonar-rules.json
+@@ -0,0 +1,3416 @@
++{
++  "source": {
++    "profile": "Sonar way comprehensive",
++    "language": "ts",
++    "fetchedAt": "2026-11-09"
++  },
++  "excludeTags": [
++    "angular",
++    "aws",
++    "bun",
++    "chai",
++    "cypress",
++    "gcp",
++    "jasmine",
++    "karma",
++    "lodash",
++    "mocha",
++    "puppeteer",
++    "sinon",
++    "underscore.js",
++    "vue"
++  ],
++  "rules": [
++    {
++      "key": "tsarchitecture:S7788",
++      "name": "Relationships should align with the intended architecture",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["architecture", "architecture-deviation"]
++    },
++    {
++      "key": "tsarchitecture:S7789",
++      "name": "Files should be located according to the intended architecture",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["architecture", "architecture-deviation"]
++    },
++    {
++      "key": "tsarchitecture:S8134",
++      "name": "Forbidden relationships should be removed to solve tangles as directed by the project's architect",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["architecture", "architecture-directive"]
++    },
++    {
++      "key": "tsarchitecture:S8464",
++      "name": "Intended architecture components should be implemented",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["architecture", "architecture-deviation"]
++    },
++    {
++      "key": "tsarchitecture:S8483",
++      "name": "Architecture directive to rename a component should be applied",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["architecture", "architecture-directive"]
++    },
++    {
++      "key": "tsarchitecture:S8484",
++      "name": "Architecture directive to move a component should be applied",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["architecture", "architecture-directive"]
++    },
++    {
++      "key": "tsarchitecture:S8487",
++      "name": "Relationships should align with the interface design of the intended architecture",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["architecture", "architecture-deviation"]
++    },
++    {
++      "key": "tssecurity:S2076",
++      "name": "OS commands should not be vulnerable to command injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S2083",
++      "name": "I/O function calls should not be vulnerable to path injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S2091",
++      "name": "XPath expressions should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S2631",
++      "name": "Regular expressions should not be vulnerable to Denial of Service attacks",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "denial-of-service"]
++    },
++    {
++      "key": "tssecurity:S3649",
++      "name": "Database queries should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe", "sql"]
++    },
++    {
++      "key": "tssecurity:S4684",
++      "name": "Database Operations should not be vulnerable to mass assignment",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5131",
++      "name": "Endpoints should not be vulnerable to reflected cross-site scripting (XSS) attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5144",
++      "name": "Server-side requests should not be vulnerable to forging attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5145",
++      "name": "Logging should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5146",
++      "name": "HTTP request redirections should not be open to forging attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5147",
++      "name": "NoSQL operations should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5334",
++      "name": "Dynamic code execution should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5335",
++      "name": "Imports should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5496",
++      "name": "Server-side templates should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe", "python3"]
++    },
++    {
++      "key": "tssecurity:S5696",
++      "name": "DOM updates should not lead to cross-site scripting (XSS) attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S5883",
++      "name": "OS commands should not be vulnerable to argument injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S6096",
++      "name": "Extracting archives should not lead to zip slip vulnerabilities",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S6105",
++      "name": "DOM updates should not lead to open redirect vulnerabilities",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S6109",
++      "name": "Objects should not be vulnerable to Prototype Pollution attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S6287",
++      "name": "Applications should not create session cookies from untrusted input",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S6350",
++      "name": "System command arguments constructed from user input should be validated",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "former-hotspot"]
++    },
++    {
++      "key": "tssecurity:S6547",
++      "name": "Environment variables should not be defined from untrusted input",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "sans-top25-insecure"]
++    },
++    {
++      "key": "tssecurity:S6549",
++      "name": "Accessing files should not lead to filesystem oracle attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S6641",
++      "name": "Connection strings should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S6776",
++      "name": "Stack traces should not be disclosed",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": []
++    },
++    {
++      "key": "tssecurity:S7044",
++      "name": "Server-side requests should not be vulnerable to traversing attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S7518",
++      "name": "Privileged prompts should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": []
++    },
++    {
++      "key": "tssecurity:S8348",
++      "name": "CORS policies should not be vulnerable to injections",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8349",
++      "name": "Content-Security policies should not be vulnerable to injections",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8378",
++      "name": "DOM XPath queries should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8387",
++      "name": "Inter-process communication should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8466",
++      "name": "LLM inference scores should not be leaked",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8475",
++      "name": "Browser storage should not be poisoned",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8476",
++      "name": "Client-side requests should not be vulnerable to forging attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8477",
++      "name": "Client-side database connections should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8478",
++      "name": "CSS should not be vulnerable to injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8480",
++      "name": "Streaming connections should not be vulnerable to hijacking attacks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8678",
++      "name": "Confidential data should not be sent to a remote LLM",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "privacy"]
++    },
++    {
++      "key": "tssecurity:S8689",
++      "name": "Confidential data should not be logged",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8690",
++      "name": "Confidential data should not be sent in HTTP GET parameters",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8691",
++      "name": "Confidential data should not be indexed into AI pipelines",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8702",
++      "name": "Agentic workflows should not be vulnerable to SQL injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "sql"]
++    },
++    {
++      "key": "tssecurity:S8703",
++      "name": "Agentic workflows should not be vulnerable to server-side request forgery",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8704",
++      "name": "Agentic workflows should not be vulnerable to code injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8705",
++      "name": "Agentic workflows should not be vulnerable to argument injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8706",
++      "name": "Agentic workflows should not be vulnerable to connection string injection",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "tssecurity:S8707",
++      "name": "Agentic workflows should not be vulnerable to path injection attacks",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "typescript:S101",
++      "name": "Class names should comply with a naming convention",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source"]
++    },
++    {
++      "key": "typescript:S1068",
++      "name": "Unused private class members should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "es2022"]
++    },
++    {
++      "key": "typescript:S107",
++      "name": "Functions should not have too many parameters",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["brain-overload", "editable-source"]
++    },
++    {
++      "key": "typescript:S1077",
++      "name": "Image, area, button with image, object and svg elements should have an alternative text",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["accessibility", "react", "wcag2-a"]
++    },
++    {
++      "key": "typescript:S108",
++      "name": "Nested blocks of code should not be left empty",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "suspicious"]
++    },
++    {
++      "key": "typescript:S1082",
++      "name": "Mouse events should have corresponding keyboard events",
++      "type": "BUG",
++      "severity": "MINOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S1090",
++      "name": "iFrames must have a title",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S1101",
++      "name": "Links with identical accessible names should have identical targets",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S1119",
++      "name": "Labels should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "editable-source"]
++    },
++    {
++      "key": "typescript:S1121",
++      "name": "Assignments should not be made from within sub-expressions",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["cwe", "suspicious"]
++    },
++    {
++      "key": "typescript:S1125",
++      "name": "Boolean literals should not be used in comparisons",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["clumsy", "editable-source"]
++    },
++    {
++      "key": "typescript:S1128",
++      "name": "Unnecessary imports should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["es2015", "type-dependent", "unused"]
++    },
++    {
++      "key": "typescript:S1134",
++      "name": "Track uses of \"FIXME\" tags",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["cwe", "editable-source"]
++    },
++    {
++      "key": "typescript:S1135",
++      "name": "Track uses of \"TODO\" tags",
++      "type": "CODE_SMELL",
++      "severity": "INFO",
++      "tags": ["cwe", "editable-source"]
++    },
++    {
++      "key": "typescript:S1143",
++      "name": "Jump statements should not occur in \"finally\" blocks",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "error-handling"]
++    },
++    {
++      "key": "typescript:S1186",
++      "name": "Functions should not be empty",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["suspicious"]
++    },
++    {
++      "key": "typescript:S1199",
++      "name": "Nested code blocks should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["bad-practice", "editable-source"]
++    },
++    {
++      "key": "typescript:S1219",
++      "name": "\"switch\" statements should not contain non-case labels",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["suspicious"]
++    },
++    {
++      "key": "typescript:S1226",
++      "name": "Initial values of parameters, caught exceptions, and loop variables should not be ignored",
++      "type": "BUG",
++      "severity": "MINOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S1244",
++      "name": "Floating point numbers should not be tested for equality",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S1264",
++      "name": "A \"while\" loop should be used instead of a \"for\" loop",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["clumsy", "editable-source"]
++    },
++    {
++      "key": "typescript:S128",
++      "name": "Switch cases should end with an unconditional \"break\" statement",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["cwe", "suspicious"]
++    },
++    {
++      "key": "typescript:S1301",
++      "name": "\"if\" statements should be preferred over \"switch\" when simpler",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["bad-practice", "editable-source", "type-dependent"]
++    },
++    {
++      "key": "typescript:S1313",
++      "name": "IP addresses should not be hardcoded",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["former-hotspot"]
++    },
++    {
++      "key": "typescript:S1314",
++      "name": "Octal values should not be used",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["pitfall"]
++    },
++    {
++      "key": "typescript:S1439",
++      "name": "Only \"while\", \"do\", \"for\" and \"switch\" statements should be labelled",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "pitfall"]
++    },
++    {
++      "key": "typescript:S1444",
++      "name": "Public \"static\" fields should be read-only",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "typescript:S1472",
++      "name": "Function call arguments should not start on new lines",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["suspicious"]
++    },
++    {
++      "key": "typescript:S1479",
++      "name": "\"switch\" statements should not have too many \"case\" clauses",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["brain-overload", "editable-source"]
++    },
++    {
++      "key": "typescript:S1515",
++      "name": "Functions should not be defined inside loops",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["suspicious"]
++    },
++    {
++      "key": "typescript:S1516",
++      "name": "Multiline string literals should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["bad-practice"]
++    },
++    {
++      "key": "typescript:S1523",
++      "name": "Dynamic code execution should not use user-controlled data",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S1529",
++      "name": "Bitwise operators should not be used in boolean contexts",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S1533",
++      "name": "Wrapper objects should not be used for primitive types",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["pitfall"]
++    },
++    {
++      "key": "typescript:S1534",
++      "name": "Member names should not be duplicated within a class or object literal",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["pitfall", "react", "vue"]
++    },
++    {
++      "key": "typescript:S1607",
++      "name": "Tests should not be skipped without providing a reason",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": [
++        "cypress",
++        "editable-source",
++        "jasmine",
++        "jest",
++        "karma",
++        "mocha",
++        "node",
++        "playwright",
++        "tests",
++        "vitest"
++      ]
++    },
++    {
++      "key": "typescript:S1656",
++      "name": "Variables should not be self-assigned",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S1751",
++      "name": "Loops with at most one iteration should be refactored",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "confusing", "editable-source"]
++    },
++    {
++      "key": "typescript:S1763",
++      "name": "All code should be reachable",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["cwe", "unused"]
++    },
++    {
++      "key": "typescript:S1764",
++      "name": "Identical expressions should not be used on both sides of a binary operator",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["suspicious"]
++    },
++    {
++      "key": "typescript:S1788",
++      "name": "Function parameters with default values should be last",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["es2015"]
++    },
++    {
++      "key": "typescript:S1848",
++      "name": "Objects should not be created to be dropped immediately without being used",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S1854",
++      "name": "Unused assignments should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["cwe", "editable-source", "unused"]
++    },
++    {
++      "key": "typescript:S1862",
++      "name": "\"if/else if\" chains and \"switch\" cases should not have the same condition",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["pitfall", "unused"]
++    },
++    {
++      "key": "typescript:S1871",
++      "name": "Two branches in a conditional structure should not have exactly the same implementation",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["design", "suspicious"]
++    },
++    {
++      "key": "typescript:S1874",
++      "name": "Deprecated APIs should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["cwe", "obsolete", "type-dependent"]
++    },
++    {
++      "key": "typescript:S1940",
++      "name": "Boolean checks should not be inverted",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "pitfall"]
++    },
++    {
++      "key": "typescript:S1994",
++      "name": "\"for\" loop increment clauses should modify the loops' counters",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["confusing", "editable-source"]
++    },
++    {
++      "key": "typescript:S2004",
++      "name": "Functions should not be nested too deeply",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["brain-overload", "editable-source"]
++    },
++    {
++      "key": "typescript:S2068",
++      "name": "Credentials should not be hard-coded",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "former-hotspot", "secret"]
++    },
++    {
++      "key": "typescript:S2077",
++      "name": "SQL queries should not be dynamically formatted",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "cwe", "former-hotspot", "sql", "type-dependent"]
++    },
++    {
++      "key": "typescript:S2092",
++      "name": "Cookies should have the \"secure\" flag",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "express.js", "former-hotspot", "privacy"]
++    },
++    {
++      "key": "typescript:S2094",
++      "name": "Classes should not be empty",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["clumsy", "editable-source"]
++    },
++    {
++      "key": "typescript:S2123",
++      "name": "Values should not be uselessly incremented",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["unused"]
++    },
++    {
++      "key": "typescript:S2137",
++      "name": "Special identifiers should not be bound or assigned",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["pitfall"]
++    },
++    {
++      "key": "typescript:S2187",
++      "name": "Test files should contain at least one test case",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": [
++        "confusing",
++        "cypress",
++        "editable-source",
++        "jasmine",
++        "jest",
++        "karma",
++        "mocha",
++        "node",
++        "playwright",
++        "tests",
++        "unused",
++        "vitest"
++      ]
++    },
++    {
++      "key": "typescript:S2201",
++      "name": "Return values from functions without side effects should not be ignored",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S2234",
++      "name": "Parameters should be passed in the correct order",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S2245",
++      "name": "Pseudorandom number generators (PRNGs) should not be used in security contexts",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S2251",
++      "name": "A \"for\" loop update clause should move the counter in the right direction",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S2301",
++      "name": "Methods should not contain selector parameters",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["design", "editable-source", "type-dependent"]
++    },
++    {
++      "key": "typescript:S2310",
++      "name": "Loop counters should not be assigned within the loop body",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S2392",
++      "name": "Variables should be used in the blocks where they are declared",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "pitfall"]
++    },
++    {
++      "key": "typescript:S2430",
++      "name": "Constructor names should start with an upper case letter",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["convention", "editable-source"]
++    },
++    {
++      "key": "typescript:S2486",
++      "name": "Exceptions should not be ignored",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["cwe", "error-handling", "suspicious"]
++    },
++    {
++      "key": "typescript:S2589",
++      "name": "Boolean expressions should not be gratuitous",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["cwe", "redundant", "suspicious"]
++    },
++    {
++      "key": "typescript:S2598",
++      "name": "File uploads should be restricted",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "express.js"]
++    },
++    {
++      "key": "typescript:S2612",
++      "name": "File permissions should not be set to world-accessible values",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S2639",
++      "name": "Empty character classes should not be used",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S2681",
++      "name": "Multiline blocks should be enclosed in curly braces",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["cwe", "editable-source"]
++    },
++    {
++      "key": "typescript:S2685",
++      "name": "\"arguments.caller\" and \"arguments.callee\" should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["obsolete"]
++    },
++    {
++      "key": "typescript:S2688",
++      "name": "\"NaN\" should not be used in comparisons",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S2692",
++      "name": "\"indexOf\" checks should not be for positive numbers",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["suspicious", "type-dependent"]
++    },
++    {
++      "key": "typescript:S2699",
++      "name": "Tests should include assertions",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": [
++        "bun",
++        "chai",
++        "cypress",
++        "editable-source",
++        "jasmine",
++        "jest",
++        "mocha",
++        "node",
++        "playwright",
++        "sinon",
++        "supertest",
++        "tests",
++        "type-dependent",
++        "vitest"
++      ]
++    },
++    {
++      "key": "typescript:S2737",
++      "name": "\"catch\" clauses should do more than rethrow",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["clumsy", "editable-source", "error-handling", "finding", "unused"]
++    },
++    {
++      "key": "typescript:S2755",
++      "name": "XML parsers should not be vulnerable to XXE attacks",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "typescript:S2757",
++      "name": "Non-existent operators '=+', '=-' and '=!' should not be used",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S2819",
++      "name": "Origins should be verified during cross-origin communications",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "html5", "type-dependent"]
++    },
++    {
++      "key": "typescript:S2870",
++      "name": "\"delete\" should not be used on arrays",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S2871",
++      "name": "\"Array.prototype.sort()\" and \"Array.prototype.toSorted()\" should use a compare function",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": ["bad-practice", "type-dependent"]
++    },
++    {
++      "key": "typescript:S2925",
++      "name": "Fixed waits should not be used in tests",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "cypress", "playwright", "puppeteer", "tests"]
++    },
++    {
++      "key": "typescript:S2933",
++      "name": "Fields that are only assigned in the constructor should be \"readonly\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "type-dependent"]
++    },
++    {
++      "key": "typescript:S2970",
++      "name": "Assertions should be complete",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["bun", "chai", "jest", "node", "playwright", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S2990",
++      "name": "The global \"this\" object should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["confusing"]
++    },
++    {
++      "key": "typescript:S2999",
++      "name": "\"new\" should only be used with functions and classes",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S3001",
++      "name": "\"delete\" should be used only with object properties",
++      "type": "BUG",
++      "severity": "MINOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S3330",
++      "name": "Cookies should have the \"HttpOnly\" flag",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "express.js", "former-hotspot", "privacy"]
++    },
++    {
++      "key": "typescript:S3358",
++      "name": "Ternary operators should not be nested",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "editable-source"]
++    },
++    {
++      "key": "typescript:S3415",
++      "name": "Assertion arguments should be passed in the correct order",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["chai", "editable-source", "suspicious", "tests"]
++    },
++    {
++      "key": "typescript:S3504",
++      "name": "Variables should be declared with \"let\" or \"const\"",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["bad-practice", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S3516",
++      "name": "Function returns should not be invariant",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S3531",
++      "name": "Generators should explicitly \"yield\" a value",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["api-design", "es2015"]
++    },
++    {
++      "key": "typescript:S3579",
++      "name": "Array indexes should be numeric",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "type-dependent"]
++    },
++    {
++      "key": "typescript:S3616",
++      "name": "Comma and logical OR operators should not be used in switch cases",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S3626",
++      "name": "Jump statements should not be redundant",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["clumsy", "editable-source", "redundant"]
++    },
++    {
++      "key": "typescript:S3696",
++      "name": "Literals should not be thrown",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["api-design", "error-handling"]
++    },
++    {
++      "key": "typescript:S3699",
++      "name": "The return value of void functions should not be used",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S3735",
++      "name": "\"void\" should not be used",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["confusing", "editable-source", "type-dependent"]
++    },
++    {
++      "key": "typescript:S3776",
++      "name": "Cognitive Complexity of functions should not be too high",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["brain-overload", "editable-source"]
++    },
++    {
++      "key": "typescript:S3799",
++      "name": "Destructuring patterns should not be empty",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S3812",
++      "name": "Parentheses should be used when negating \"in\" and \"instanceof\" operations",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": []
++    },
++    {
++      "key": "typescript:S3854",
++      "name": "\"super()\" should be invoked appropriately",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": []
++    },
++    {
++      "key": "typescript:S3863",
++      "name": "Imports from the same module should be merged",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S3923",
++      "name": "All branches in a conditional structure should not have exactly the same implementation",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S3972",
++      "name": "Conditionals should start on new lines",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["editable-source", "suspicious"]
++    },
++    {
++      "key": "typescript:S3981",
++      "name": "Collection size and array length comparisons should make sense",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S3984",
++      "name": "Errors should not be created without being thrown",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["error-handling"]
++    },
++    {
++      "key": "typescript:S4030",
++      "name": "Collection contents should be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "suspicious", "unused"]
++    },
++    {
++      "key": "typescript:S4036",
++      "name": "OS commands should not rely on PATH resolution",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S4043",
++      "name": "Array-mutating methods should not be used misleadingly",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "type-dependent"]
++    },
++    {
++      "key": "typescript:S4084",
++      "name": "Media elements should have captions",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S4123",
++      "name": "\"await\" should only be used with promises",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["es2017"]
++    },
++    {
++      "key": "typescript:S4124",
++      "name": "Constructors should not be declared inside interfaces",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S4138",
++      "name": "\"for of\" should be used with Iterables",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["clumsy"]
++    },
++    {
++      "key": "typescript:S4140",
++      "name": "Sparse arrays should not be created with extra commas",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["suspicious"]
++    },
++    {
++      "key": "typescript:S4143",
++      "name": "Collection elements should not be replaced unconditionally",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["suspicious"]
++    },
++    {
++      "key": "typescript:S4144",
++      "name": "Functions should not have identical implementations",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "duplicate", "editable-source", "suspicious"]
++    },
++    {
++      "key": "typescript:S4156",
++      "name": "\"module\" should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["obsolete"]
++    },
++    {
++      "key": "typescript:S4158",
++      "name": "Empty collections should not be accessed or iterated",
++      "type": "BUG",
++      "severity": "MINOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S4165",
++      "name": "Assignments should not be redundant",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "redundant"]
++    },
++    {
++      "key": "typescript:S4275",
++      "name": "Getters and setters should access the expected fields",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": ["pitfall"]
++    },
++    {
++      "key": "typescript:S4322",
++      "name": "Type predicates should be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["proficiency"]
++    },
++    {
++      "key": "typescript:S4323",
++      "name": "Type aliases should be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["proficiency"]
++    },
++    {
++      "key": "typescript:S4335",
++      "name": "Type intersections should use meaningful types",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": ["pitfall", "type-dependent"]
++    },
++    {
++      "key": "typescript:S4423",
++      "name": "Weak SSL/TLS protocols should not be used",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "privacy"]
++    },
++    {
++      "key": "typescript:S4426",
++      "name": "Cryptographic keys should be robust",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "privacy"]
++    },
++    {
++      "key": "typescript:S4502",
++      "name": "CSRF protections should not be disabled",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S4507",
++      "name": "Debugging features should not be enabled in production",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "debug", "error-handling", "express.js", "former-hotspot", "user-experience"]
++    },
++    {
++      "key": "typescript:S4524",
++      "name": "\"default\" clauses should be last",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S4619",
++      "name": "\"in\" should not be used on arrays",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["pitfall", "type-dependent"]
++    },
++    {
++      "key": "typescript:S4621",
++      "name": "Union and intersection types should not include duplicated constituents",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": []
++    },
++    {
++      "key": "typescript:S4623",
++      "name": "\"undefined\" should not be passed as the value of optional parameters",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "type-dependent"]
++    },
++    {
++      "key": "typescript:S4624",
++      "name": "Template literals should not be nested",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["brain-overload", "confusing", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S4634",
++      "name": "Shorthand promises should be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "es2015", "proficiency"]
++    },
++    {
++      "key": "typescript:S4782",
++      "name": "Optional property declarations should not use both '?' and 'undefined' syntax",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["redundant", "type-dependent"]
++    },
++    {
++      "key": "typescript:S4790",
++      "name": "Weak hashing algorithms should not be used",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S4822",
++      "name": "Promise rejections should not be caught by \"try\" blocks",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["es2017", "type-dependent"]
++    },
++    {
++      "key": "typescript:S4830",
++      "name": "Server certificates should be verified during SSL/TLS connections",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "privacy", "ssl"]
++    },
++    {
++      "key": "typescript:S5122",
++      "name": "Cross-Origin Resource Sharing (CORS) policy should be restricted to trusted origins",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5148",
++      "name": "Opened windows should not have access to the originating page",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "former-hotspot", "phishing"]
++    },
++    {
++      "key": "typescript:S5247",
++      "name": "Auto-escaping in HTML template engines should not be disabled",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "former-hotspot", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5254",
++      "name": "HTML elements should have a valid language attribute",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S5256",
++      "name": "Tables should have headers",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "wcag2-a"]
++    },
++    {
++      "key": "typescript:S5257",
++      "name": "HTML \"<table>\" should not be used for layout purposes",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S5264",
++      "name": "\"<object>\" tags should provide an alternative content",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["accessibility", "react", "wcag2-a"]
++    },
++    {
++      "key": "typescript:S5332",
++      "name": "Clear-text protocols should not be used",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5443",
++      "name": "Temporary files should not be created in publicly writable directories",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5527",
++      "name": "Server hostnames should be verified during SSL/TLS connections",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "privacy", "ssl"]
++    },
++    {
++      "key": "typescript:S5542",
++      "name": "Encryption algorithms should be used with secure mode and padding scheme",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "privacy"]
++    },
++    {
++      "key": "typescript:S5547",
++      "name": "Cipher algorithms should be robust",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "privacy"]
++    },
++    {
++      "key": "typescript:S5659",
++      "name": "JWT should be signed and verified with strong cipher algorithms",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cryptography", "cwe", "privacy"]
++    },
++    {
++      "key": "typescript:S5689",
++      "name": "Web application technologies should not disclose version information",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5693",
++      "name": "HTTP request content length should be limited",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe", "express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5725",
++      "name": "Remote artifacts should not be used without integrity checks",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "former-hotspot", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5728",
++      "name": "Content security policy fetch directives should not be disabled",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5734",
++      "name": "Browsers should not be allowed to perform MIME type sniffing",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5736",
++      "name": "HTTP Referrer-Policy should not be set to an unsafe value",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5739",
++      "name": "HTTP Strict-Transport-Security policy should not be disabled",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cryptography", "cwe", "express.js", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S5842",
++      "name": "Repeated patterns in regular expressions should not match the empty string",
++      "type": "BUG",
++      "severity": "MINOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S5843",
++      "name": "Regular expressions should not be too complicated",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5845",
++      "name": "Assertions comparing incompatible types should not be made",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": [
++        "bun",
++        "chai",
++        "cypress",
++        "editable-source",
++        "jasmine",
++        "jest",
++        "node",
++        "playwright",
++        "tests",
++        "type-dependent",
++        "vitest"
++      ]
++    },
++    {
++      "key": "typescript:S5850",
++      "name": "Alternatives in regular expressions should be grouped when used with anchors",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5852",
++      "name": "Regular expressions should not cause catastrophic backtracking",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "former-hotspot", "regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5856",
++      "name": "Regular expressions should be syntactically valid",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S5860",
++      "name": "Names of regular expressions named groups should be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5863",
++      "name": "Assertions should not be given twice the same argument",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "tests"]
++    },
++    {
++      "key": "typescript:S5868",
++      "name": "Unicode Grapheme Clusters should be avoided inside regex character classes",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5869",
++      "name": "Character classes in regular expressions should not contain the same character twice",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S5876",
++      "name": "A new session should be created during user authentication",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "typescript:S5906",
++      "name": "The most specific assertion should be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["chai", "cypress", "jest", "playwright", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S5958",
++      "name": "Tests should check which exception is thrown",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["chai", "editable-source", "mocha", "tests"]
++    },
++    {
++      "key": "typescript:S5973",
++      "name": "Tests should be stable",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["design", "editable-source", "tests", "unpredictable"]
++    },
++    {
++      "key": "typescript:S5976",
++      "name": "Similar tests should be grouped in a single Parameterized test",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "bun", "clumsy", "jest", "playwright", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S6019",
++      "name": "Reluctant quantifiers in regular expressions should be followed by an expression that can't match the empty string",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6035",
++      "name": "Single-character alternations in regular expressions should be replaced with character classes",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6079",
++      "name": "Tests should not execute any code after \"done()\" is called",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["mocha", "tests", "unpredictable"]
++    },
++    {
++      "key": "typescript:S6080",
++      "name": "Disabling Mocha timeouts should be explicit",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["tests"]
++    },
++    {
++      "key": "typescript:S6092",
++      "name": "Chai assertions should have only one reason to succeed",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["chai", "editable-source", "tests"]
++    },
++    {
++      "key": "typescript:S6249",
++      "name": "S3 buckets should enforce HTTPS-only access",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6252",
++      "name": "Amazon S3 buckets should have versioning enabled",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["aws", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6265",
++      "name": "S3 buckets should not grant access to all users or authenticated users",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["aws", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6268",
++      "name": "Angular built-in sanitization should not be disabled",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6270",
++      "name": "AWS resource-based policies should not grant public access",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["aws", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6275",
++      "name": "EBS volumes should be encrypted",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6281",
++      "name": "Amazon S3 bucket public access should be fully blocked",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["aws", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6302",
++      "name": "Policies should not grant all privileges",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["aws", "cwe", "former-hotspot", "gcp"]
++    },
++    {
++      "key": "typescript:S6303",
++      "name": "Amazon RDS resources should be encrypted at rest",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6308",
++      "name": "OpenSearch domains should have encryption at rest enabled",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6317",
++      "name": "AWS IAM policies should limit the scope of permissions given",
++      "type": "VULNERABILITY",
++      "severity": "CRITICAL",
++      "tags": ["aws", "cwe"]
++    },
++    {
++      "key": "typescript:S6319",
++      "name": "SageMaker notebook instances should be encrypted at rest",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6321",
++      "name": "Administration services access should be restricted to specific IP addresses",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["aws", "cwe"]
++    },
++    {
++      "key": "typescript:S6323",
++      "name": "Alternation in regular expressions should not contain empty alternatives",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6324",
++      "name": "Regular expressions should not contain control characters",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6325",
++      "name": "Regular expression literals should be used when possible",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "regex"]
++    },
++    {
++      "key": "typescript:S6326",
++      "name": "Regular expressions should not contain multiple spaces",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6327",
++      "name": "Amazon SNS topics should be encrypted at rest",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6328",
++      "name": "Replacement strings should reference existing regular expression groups",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6329",
++      "name": "Public network access to cloud resources should be disabled",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["aws", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6330",
++      "name": "SQS queues should be encrypted",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6331",
++      "name": "Regular expressions should not contain empty groups",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6332",
++      "name": "Amazon EFS file systems should be encrypted",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["aws", "cryptography", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6333",
++      "name": "AWS API Gateway should require authentication",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["aws", "cwe", "former-hotspot"]
++    },
++    {
++      "key": "typescript:S6351",
++      "name": "Regular expressions with the global flag should be used with caution",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["regex"]
++    },
++    {
++      "key": "typescript:S6353",
++      "name": "Regular expression quantifiers and character classes should be used concisely",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6397",
++      "name": "Character classes in regular expressions should not contain only one character",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6418",
++      "name": "Secrets should not be hard-coded",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe", "former-hotspot", "secret"]
++    },
++    {
++      "key": "typescript:S6426",
++      "name": "Exclusive tests should not be committed to version control",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["cypress", "jest", "mocha", "playwright", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S6435",
++      "name": "React \"render\" functions should return a value",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6437",
++      "name": "Credentials should not be hard-coded",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe", "secret"]
++    },
++    {
++      "key": "typescript:S6438",
++      "name": "Comments inside JSX expressions should be enclosed in curly braces",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["jsx", "react"]
++    },
++    {
++      "key": "typescript:S6439",
++      "name": "React components should not render non-boolean condition values",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6441",
++      "name": "Unused methods of React components should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6442",
++      "name": "React's useState hook should not be used directly in the render function or body of a component",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6443",
++      "name": "React state setter function should not be called with its matching state variable",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6477",
++      "name": "JSX list components should have a key property",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["jsx", "performance", "react"]
++    },
++    {
++      "key": "typescript:S6478",
++      "name": "React components should not be nested",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["jsx", "performance", "react"]
++    },
++    {
++      "key": "typescript:S6479",
++      "name": "JSX list components should not use array indexes as key",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["jsx", "performance", "react"]
++    },
++    {
++      "key": "typescript:S6481",
++      "name": "React Context Provider values should have stable identities",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["jsx", "performance", "react"]
++    },
++    {
++      "key": "typescript:S6486",
++      "name": "JSX list components keys should match up between renders",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["jsx", "performance", "react"]
++    },
++    {
++      "key": "typescript:S6509",
++      "name": "Extra boolean casts should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6522",
++      "name": "Import variables should not be reassigned",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "confusing", "es2015"]
++    },
++    {
++      "key": "typescript:S6523",
++      "name": "Optional chaining should not be used if returning \"undefined\" throws an error",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "es2020"]
++    },
++    {
++      "key": "typescript:S6535",
++      "name": "Unnecessary character escapes should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6544",
++      "name": "Promises should not be misused",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["async", "es2017", "lodash", "promise", "type-dependent", "underscore.js"]
++    },
++    {
++      "key": "typescript:S6550",
++      "name": "All enum members should be literals",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["enum"]
++    },
++    {
++      "key": "typescript:S6557",
++      "name": "Ends of strings should be checked with \"startsWith()\" and \"endsWith()\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "es2015", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6564",
++      "name": "Redundant type aliases should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6565",
++      "name": "Prefer the return type \"this\" in fluent interfaces",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["api-design", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6568",
++      "name": "Non-null assertions should not be used misleadingly",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["clumsy", "confusing"]
++    },
++    {
++      "key": "typescript:S6569",
++      "name": "Unnecessary type constraints should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6571",
++      "name": "Type constituents of unions and intersections should not be redundant",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["redundant", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6572",
++      "name": "Enum member values should be either all initialized or none",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6578",
++      "name": "Enum values should be unique",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6582",
++      "name": "Optional chaining should be preferred",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2020", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6583",
++      "name": "Enum members should not mix value types",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["enum", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6590",
++      "name": "\"as const\" assertions should be preferred",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["assertion"]
++    },
++    {
++      "key": "typescript:S6594",
++      "name": "\"RegExp.exec()\" should be preferred over \"String.match()\"",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "regex", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6598",
++      "name": "Function types should be preferred",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["function", "type"]
++    },
++    {
++      "key": "typescript:S6606",
++      "name": "Nullish coalescing should be preferred",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["es2020", "nullish-coalescing", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6627",
++      "name": "Users should not use internal APIs",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["gradle"]
++    },
++    {
++      "key": "typescript:S6635",
++      "name": "Constructors should not return values",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6637",
++      "name": "Unnecessary calls to \".bind()\" should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6638",
++      "name": "Binary expressions should not always return the same value",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6643",
++      "name": "Prototypes of builtin objects should not be modified",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6644",
++      "name": "Ternary operator should not be used instead of simpler alternatives",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6647",
++      "name": "Unnecessary constructors should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S6650",
++      "name": "Renaming import, export, and destructuring assignments should not be to the same name",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6654",
++      "name": "__proto__ property should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6657",
++      "name": "Octal escape sequences should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6660",
++      "name": "If statements should not be the only statement in else blocks",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6661",
++      "name": "Object spread syntax should be used instead of \"Object.assign\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "es2018"]
++    },
++    {
++      "key": "typescript:S6666",
++      "name": "Spread syntax should be used instead of \"apply()\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6671",
++      "name": "Literals should not be used for promise rejection",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S6676",
++      "name": "Calls to \".call()\" and \".apply()\" methods should not be redundant",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S6679",
++      "name": "\"Number.isNaN()\" should be used to check for \"NaN\" value",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6746",
++      "name": "In React \"this.state\" should not be mutated directly",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6747",
++      "name": "JSX elements should not use unknown properties and attributes",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["jsx", "react"]
++    },
++    {
++      "key": "typescript:S6749",
++      "name": "Redundant JSX fragments should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6750",
++      "name": "The return value of \"ReactDOM.render\" should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6754",
++      "name": "The return value of \"useState\" should be destructured and named symmetrically",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6756",
++      "name": "\"setState\" should use a callback when referencing the previous state",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6757",
++      "name": "\"this\" should not be used in functional components",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6759",
++      "name": "React props should be read-only",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["react", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6761",
++      "name": "\"children\" and \"dangerouslySetInnerHTML\" should not be used together",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6763",
++      "name": "\"shouldComponentUpdate\" should not be defined when extending \"React.PureComponent\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6767",
++      "name": "Unused React typed props should be removed",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "react", "type-dependent"]
++    },
++    {
++      "key": "typescript:S6770",
++      "name": "User-defined JSX components should use Pascal case",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6772",
++      "name": "Spacing between inline elements should be explicit",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6775",
++      "name": "All \"defaultProps\" should have non-required PropTypes",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6788",
++      "name": "React's \"findDOMNode\" should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6789",
++      "name": "React's \"isMounted\" should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6790",
++      "name": "String references should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6791",
++      "name": "React legacy lifecycle methods should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6807",
++      "name": "DOM elements with ARIA roles should have the required properties",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6811",
++      "name": "DOM elements with ARIA role should only have supported properties",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6819",
++      "name": "Prefer tag over ARIA role",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6821",
++      "name": "DOM elements with ARIA roles should have a valid non-abstract role",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6822",
++      "name": "No redundant ARIA role",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "editable-source", "react"]
++    },
++    {
++      "key": "typescript:S6823",
++      "name": "DOM elements with the `aria-activedescendant` property should be accessible via the tab key",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6824",
++      "name": "No ARIA role or property for unsupported DOM elements",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6825",
++      "name": "Focusable elements should not have \"aria-hidden\" attribute",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6827",
++      "name": "Anchors should contain accessible content",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6836",
++      "name": "\"case\" and \"default\" clauses should not contain lexical declarations",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6840",
++      "name": "DOM elements should use the \"autocomplete\" attribute correctly",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6841",
++      "name": "\"tabIndex\" values should be 0 or -1",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6842",
++      "name": "Non-interactive DOM elements should not have interactive ARIA roles",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6843",
++      "name": "Interactive DOM elements should not have non-interactive ARIA roles",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6845",
++      "name": "Non-interactive DOM elements should not have the `tabindex` attribute",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6846",
++      "name": "DOM elements should not use the \"accesskey\" property",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6847",
++      "name": "Non-interactive elements shouldn't have event handlers",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6848",
++      "name": "Non-interactive DOM elements should not have an interactive handler",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6850",
++      "name": "Heading elements should have accessible content",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6851",
++      "name": "Images should have a non-redundant alternate description",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6852",
++      "name": "Elements with an interactive role should support focus",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6853",
++      "name": "Label elements should have a text label and an associated control",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S6859",
++      "name": "Imports should not use absolute paths",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["paths", "pitfall"]
++    },
++    {
++      "key": "typescript:S6861",
++      "name": "Mutable variables should not be exported",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6957",
++      "name": "Deprecated React APIs should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["react"]
++    },
++    {
++      "key": "typescript:S6958",
++      "name": "Literals should not be used as functions",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": []
++    },
++    {
++      "key": "typescript:S6959",
++      "name": "\"Array.reduce()\" calls should include an initial value",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["type-dependent"]
++    },
++    {
++      "key": "typescript:S7059",
++      "name": "Constructors should not contain asynchronous operations",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["es2017", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7060",
++      "name": "Module should not import itself",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source"]
++    },
++    {
++      "key": "typescript:S7503",
++      "name": "Async functions should use async features",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["async", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7639",
++      "name": "Wallet phrases should not be hard-coded",
++      "type": "VULNERABILITY",
++      "severity": "BLOCKER",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "typescript:S7641",
++      "name": "Angular lifecycle methods should be used in the correct context",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["angular", "lifecycle"]
++    },
++    {
++      "key": "typescript:S7647",
++      "name": "Empty Angular lifecycle methods should be removed",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["angular", "unused"]
++    },
++    {
++      "key": "typescript:S7649",
++      "name": "Input bindings should not be aliased",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["angular", "confusing"]
++    },
++    {
++      "key": "typescript:S7650",
++      "name": "Components and directives should not use the \"inputs\" metadata property",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["angular", "style"]
++    },
++    {
++      "key": "typescript:S7651",
++      "name": "Output bindings should not be named as standard DOM events",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["angular"]
++    },
++    {
++      "key": "typescript:S7652",
++      "name": "Output bindings should not be named \"on\" or prefixed with \"on\"",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["angular", "convention"]
++    },
++    {
++      "key": "typescript:S7654",
++      "name": "The \"outputs\" metadata property should not be used in Angular components and directives",
++      "type": "CODE_SMELL",
++      "severity": "BLOCKER",
++      "tags": ["angular", "style"]
++    },
++    {
++      "key": "typescript:S7718",
++      "name": "Error parameters in catch clauses should follow a consistent naming convention",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "error-handling"]
++    },
++    {
++      "key": "typescript:S7719",
++      "name": "Date objects should be cloned directly without calling \"getTime()\"",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "readability"]
++    },
++    {
++      "key": "typescript:S7720",
++      "name": "Ternary expressions in array spreads should use consistent types",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["confusing", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S7721",
++      "name": "Functions should be moved to the highest possible scope",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "javascript", "optimization", "performance"]
++    },
++    {
++      "key": "typescript:S7722",
++      "name": "Built-in error objects should have meaningful messages",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "error-handling"]
++    },
++    {
++      "key": "typescript:S7723",
++      "name": "Built-in constructors should be called consistently with or without \"new\"",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention"]
++    },
++    {
++      "key": "typescript:S7724",
++      "name": "ESLint disable comments should specify which rules to disable",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "eslint", "linting"]
++    },
++    {
++      "key": "typescript:S7725",
++      "name": "Getters and setters should not recursively access the same property",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": ["pitfall"]
++    },
++    {
++      "key": "typescript:S7726",
++      "name": "Default exports should be named",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S7727",
++      "name": "Function references should not be passed directly to iterator methods",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["array", "callback", "iterator", "javascript", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7729",
++      "name": "Array method callbacks should not use the \"thisArg\" parameter",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["confusing", "editable-source", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7732",
++      "name": "\"instanceof\" should not be used with built-in objects",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["cross-browser"]
++    },
++    {
++      "key": "typescript:S7733",
++      "name": "HTTP GET and HEAD requests should not include a request body",
++      "type": "BUG",
++      "severity": "MINOR",
++      "tags": ["fetch", "http", "runtime-error"]
++    },
++    {
++      "key": "typescript:S7734",
++      "name": "Default imports and exports should use the dedicated syntax",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S7736",
++      "name": "Negated expressions should not be used in equality checks",
++      "type": "BUG",
++      "severity": "MINOR",
++      "tags": ["confusing", "pitfall"]
++    },
++    {
++      "key": "typescript:S7737",
++      "name": "Objects should not be used as default parameters",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["confusing", "editable-source", "pitfall"]
++    },
++    {
++      "key": "typescript:S7739",
++      "name": "Objects should not have a \"then\" property",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["async", "promise", "thenable"]
++    },
++    {
++      "key": "typescript:S7740",
++      "name": "Variables should not be assigned the value of \"this\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "editable-source", "obsolete"]
++    },
++    {
++      "key": "typescript:S7741",
++      "name": "\"typeof\" should not be used to check for \"undefined\"",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "readability", "style"]
++    },
++    {
++      "key": "typescript:S7742",
++      "name": "Polyfills should not be used when native support is available in target environments",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["bundle-size", "editable-source", "performance", "polyfill"]
++    },
++    {
++      "key": "typescript:S7743",
++      "name": "Immediately invoked arrow functions with parenthesized expressions should be avoided",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["arrow-function", "editable-source", "iife"]
++    },
++    {
++      "key": "typescript:S7744",
++      "name": "Unnecessary fallback objects should not be used when spreading in object literals",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "spread-operator", "unnecessary"]
++    },
++    {
++      "key": "typescript:S7745",
++      "name": "Array length checks should not be used before \"some()\" and \"every()\" calls",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["confusing", "editable-source"]
++    },
++    {
++      "key": "typescript:S7746",
++      "name": "Promise.resolve() and Promise.reject() should not be used in async functions or promise callbacks",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["async", "confusing", "editable-source", "promise"]
++    },
++    {
++      "key": "typescript:S7747",
++      "name": "Spread syntax should not be used unnecessarily",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "performance", "readability"]
++    },
++    {
++      "key": "typescript:S7749",
++      "name": "Numeric literals should use consistent digit grouping with separators",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "formatting", "readability"]
++    },
++    {
++      "key": "typescript:S7750",
++      "name": "Array methods \".find()\" and \".findLast()\" should be preferred over \".filter()\" for single element retrieval",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2015", "performance", "readability"]
++    },
++    {
++      "key": "typescript:S7751",
++      "name": "Array flattening should use the native \"flat()\" method",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2019", "readability"]
++    },
++    {
++      "key": "typescript:S7752",
++      "name": "Array methods \".map().flat()\" should be replaced with \".flatMap()\"",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2019", "performance"]
++    },
++    {
++      "key": "typescript:S7753",
++      "name": "\"indexOf()\" and \"lastIndexOf()\" should be used instead of \"findIndex()\" and \"findLastIndex()\" for simple equality searches",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["array", "editable-source", "javascript", "performance"]
++    },
++    {
++      "key": "typescript:S7754",
++      "name": "Use \".some()\" instead of \".filter().length\" checks or \".find()\" for existence testing",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "performance", "readability"]
++    },
++    {
++      "key": "typescript:S7755",
++      "name": "Complex index access patterns should be replaced with \".at()\" method",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2022", "performance", "readability", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7756",
++      "name": "Modern Blob methods should be used instead of FileReader",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "javascript", "modernization", "promise"]
++    },
++    {
++      "key": "typescript:S7758",
++      "name": "Unicode-aware string methods should be used for proper character handling",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["es2015", "internationalization", "unicode"]
++    },
++    {
++      "key": "typescript:S7759",
++      "name": "Use \"Date.now()\" instead of creating Date objects to get current timestamp",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "performance", "readability"]
++    },
++    {
++      "key": "typescript:S7760",
++      "name": "Default parameters should be used instead of reassigning parameters with literal fallback values",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S7761",
++      "name": "Data attributes should be accessed using \".dataset\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["api", "dom", "editable-source", "html"]
++    },
++    {
++      "key": "typescript:S7762",
++      "name": "DOM nodes should be removed using \"remove()\" instead of \"removeChild()\"",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["dom", "editable-source", "javascript", "modernize"]
++    },
++    {
++      "key": "typescript:S7763",
++      "name": "Re-exports should use \"export...from\" syntax",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S7765",
++      "name": "Existence checks should use \".includes()\" instead of \".indexOf()\" or \".lastIndexOf()\"",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2016", "readability"]
++    },
++    {
++      "key": "typescript:S7766",
++      "name": "Ternary expressions should be replaced with \"Math.min()\" or \"Math.max()\" for simple comparisons",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["confusing", "editable-source", "readability", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7767",
++      "name": "Bitwise operators should not be used to truncate numbers",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["confusing", "es2015"]
++    },
++    {
++      "key": "typescript:S7769",
++      "name": "Modern Math APIs should be used instead of legacy mathematical expressions",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2015", "performance"]
++    },
++    {
++      "key": "typescript:S7770",
++      "name": "Wrapper functions around built-in type conversion functions should be avoided",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "performance", "unnecessary"]
++    },
++    {
++      "key": "typescript:S7771",
++      "name": "Negative indices should be used instead of length calculations",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2022", "performance", "readability"]
++    },
++    {
++      "key": "typescript:S7772",
++      "name": "Node.js built-in modules should be imported using the \"node:\" protocol",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "import", "nodejs"]
++    },
++    {
++      "key": "typescript:S7773",
++      "name": "Number static methods and properties should be preferred over global equivalents",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "es2015"]
++    },
++    {
++      "key": "typescript:S7774",
++      "name": "Methods should be accessed from prototypes, not instances",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["best-practice", "editable-source", "performance", "readability"]
++    },
++    {
++      "key": "typescript:S7776",
++      "name": "Arrays used only for existence checks should be Sets",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2015", "optimization", "performance"]
++    },
++    {
++      "key": "typescript:S7777",
++      "name": "Set size should be accessed directly instead of converting to array first",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2015", "performance"]
++    },
++    {
++      "key": "typescript:S7778",
++      "name": "Multiple consecutive calls to methods that accept multiple arguments should be combined",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "performance", "readability", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7780",
++      "name": "String literals with escaped backslashes should use `String.raw` template literals",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2015", "readability"]
++    },
++    {
++      "key": "typescript:S7781",
++      "name": "Strings should use \"replaceAll()\" instead of \"replace()\" with global regex",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["editable-source", "es2021", "readability"]
++    },
++    {
++      "key": "typescript:S7783",
++      "name": "\"trimLeft()\" and \"trimRight()\" should be replaced with \"trimStart()\" and \"trimEnd()\"",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["deprecated", "editable-source", "es2019"]
++    },
++    {
++      "key": "typescript:S7784",
++      "name": "\"structuredClone()\" should be used instead of other deep cloning methods",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["es2022", "modernize", "performance"]
++    },
++    {
++      "key": "typescript:S7785",
++      "name": "Top-level await should be preferred over promise chains and async wrappers",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["async", "editable-source", "es2022", "esm-only", "modernize", "type-dependent"]
++    },
++    {
++      "key": "typescript:S7786",
++      "name": "Generic \"Error\" should be \"TypeError\" when thrown after type checking",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "editable-source", "error-handling", "type-checking"]
++    },
++    {
++      "key": "typescript:S7790",
++      "name": "Templates should not be constructed dynamically",
++      "type": "VULNERABILITY",
++      "severity": "MAJOR",
++      "tags": ["cwe"]
++    },
++    {
++      "key": "typescript:S8441",
++      "name": "Static Assets should not serve session cookies",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S8479",
++      "name": "DOMPurify configuration should not be bypassable",
++      "type": "VULNERABILITY",
++      "severity": "MINOR",
++      "tags": ["cwe", "type-dependent"]
++    },
++    {
++      "key": "typescript:S8754",
++      "name": "Test titles should be unique within the same suite",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["bun", "confusing", "jest", "mocha", "node", "playwright", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S878",
++      "name": "Comma operator should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": []
++    },
++    {
++      "key": "typescript:S8780",
++      "name": "Async test assertions should be awaited or returned",
++      "type": "BUG",
++      "severity": "CRITICAL",
++      "tags": [
++        "async-await",
++        "bun",
++        "jasmine",
++        "jest",
++        "node",
++        "playwright",
++        "promise",
++        "tests",
++        "vitest"
++      ]
++    },
++    {
++      "key": "typescript:S8781",
++      "name": "Test and suite titles should not be empty or whitespace-only",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": [
++        "bun",
++        "confusing",
++        "cypress",
++        "jasmine",
++        "jest",
++        "karma",
++        "mocha",
++        "node",
++        "playwright",
++        "tests",
++        "vitest"
++      ]
++    },
++    {
++      "key": "typescript:S8782",
++      "name": "Lifecycle hooks should not be interleaved with test cases or nested suites",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["jest", "mocha", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S8783",
++      "name": "Forced browser interactions should not bypass actionability checks",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["cypress", "playwright", "tests"]
++    },
++    {
++      "key": "typescript:S8784",
++      "name": "Assertions should be placed inside test cases or hooks",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": [
++        "bun",
++        "chai",
++        "cypress",
++        "jasmine",
++        "jest",
++        "mocha",
++        "node",
++        "pitfall",
++        "playwright",
++        "sinon",
++        "supertest",
++        "tests",
++        "vitest"
++      ]
++    },
++    {
++      "key": "typescript:S8785",
++      "name": "Tests should not be registered asynchronously in suite callbacks",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["async", "cypress", "jest", "mocha", "tests"]
++    },
++    {
++      "key": "typescript:S888",
++      "name": "Equality operators should not be used in \"for\" loop termination conditions",
++      "type": "CODE_SMELL",
++      "severity": "CRITICAL",
++      "tags": ["cwe", "suspicious"]
++    },
++    {
++      "key": "typescript:S8907",
++      "name": "Native APIs should be preferred over Lodash and Underscore.js methods",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["convention", "lodash", "modernize", "underscore.js"]
++    },
++    {
++      "key": "typescript:S8927",
++      "name": "Default imports from modular utility libraries should not be used",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["es2015", "performance"]
++    },
++    {
++      "key": "typescript:S8932",
++      "name": "Lodash and Underscore.js `memoize` calls on functions with multiple parameters should use an explicit cache key function",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["lodash", "underscore.js"]
++    },
++    {
++      "key": "typescript:S8950",
++      "name": "Vue props with a default value should not be required",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S8951",
++      "name": "Vue component props should not be mutated directly",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S8957",
++      "name": "Vue component props should declare a type",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S8959",
++      "name": "UI test debug commands should not be committed to version control",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["bad-practice", "cypress", "playwright", "testing-library", "tests"]
++    },
++    {
++      "key": "typescript:S8961",
++      "name": "Vue component events should be explicitly declared",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S8967",
++      "name": "Inline snapshots should not contain interpolations",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["editable-source", "jest", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S8968",
++      "name": "Tests should be skipped explicitly",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["bun", "mocha", "node", "playwright", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S8981",
++      "name": "Regular expressions used in Testing Library queries should not have the global flag",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["regex", "tests"]
++    },
++    {
++      "key": "typescript:S8982",
++      "name": "HTML elements with v-for should have a :key attribute",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S8984",
++      "name": "Vue v-for directives should be valid",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S8988",
++      "name": "Side effects should not be performed inside Vue computed properties",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S8990",
++      "name": "Promises should not be passed to \"fireEvent\"",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["testing-library", "tests"]
++    },
++    {
++      "key": "typescript:S8998",
++      "name": "Parameterized tests should not have empty datasets",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["bun", "jest", "pitfall", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S9011",
++      "name": "\"<button>\" elements should have a valid \"type\" attribute, explicitly set when associated with a \"<form>\"",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["react", "vue"]
++    },
++    {
++      "key": "typescript:S9019",
++      "name": "Vue refs should not be used as operands",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S9025",
++      "name": "Asynchronous actions should not be used in Vue computed properties",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S9027",
++      "name": "Testing Library queries should match presence assertions",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["testing-library", "tests"]
++    },
++    {
++      "key": "typescript:S905",
++      "name": "Non-empty statements should change control flow or have at least one side-effect",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["cwe", "unused"]
++    },
++    {
++      "key": "typescript:S9072",
++      "name": "Synchronous exception assertions should receive synchronous callbacks",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["async-await", "bun", "jest", "promise", "tests", "type-dependent", "vitest"]
++    },
++    {
++      "key": "typescript:S9078",
++      "name": "Parameterized tests should not contain duplicate test cases",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["bun", "jest", "pitfall", "tests", "vitest"]
++    },
++    {
++      "key": "typescript:S9107",
++      "name": "Vue component prop types should be constructors",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S9114",
++      "name": "Lodash and Underscore.js debounced or throttled functions should not be recreated on every React render",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["lodash", "react", "underscore.js"]
++    },
++    {
++      "key": "typescript:S9115",
++      "name": "Promises returned by Testing Library async events should be handled",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["testing-library", "tests"]
++    },
++    {
++      "key": "typescript:S9128",
++      "name": "Vue component field names should not be duplicated",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S9145",
++      "name": "Vue components should not use the deprecated \"vue-class-component\" or \"vue-property-decorator\" libraries",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S9150",
++      "name": "Vue components should not use mixins",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S9153",
++      "name": "Testing Library disappearance waits should use non-throwing queries",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["testing-library", "tests"]
++    },
++    {
++      "key": "typescript:S9162",
++      "name": "Cypress assertions should be retryable",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["cypress", "tests"]
++    },
++    {
++      "key": "typescript:S9163",
++      "name": "Reactive state should not be unconditionally mutated inside Vue's \"updated\" lifecycle hook",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["vue"]
++    },
++    {
++      "key": "typescript:S9169",
++      "name": "vi.mock should be declared at module scope",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["tests", "vitest"]
++    },
++    {
++      "key": "typescript:S9333",
++      "name": "Synchronous Testing Library queries should not be awaited",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["testing-library", "tests"]
++    },
++    {
++      "key": "typescript:S9379",
++      "name": "DOM elements should not use the \"autofocus\" attribute",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S9380",
++      "name": "The \"scope\" attribute should only be used on \"th\" elements",
++      "type": "CODE_SMELL",
++      "severity": "MAJOR",
++      "tags": ["accessibility", "react"]
++    },
++    {
++      "key": "typescript:S9382",
++      "name": "Promises should not be awaited sequentially in a loop",
++      "type": "CODE_SMELL",
++      "severity": "MINOR",
++      "tags": ["async", "es2017", "performance", "promise"]
++    },
++    {
++      "key": "typescript:S9383",
++      "name": "Promises should not be left unhandled",
++      "type": "BUG",
++      "severity": "MAJOR",
++      "tags": ["async", "es2017", "promise", "type-dependent"]
++    }
++  ]
++}
+diff --git a/docs/quality/sonar-rules.md b/docs/quality/sonar-rules.md
+new file mode 100644
+index 0000000..256a357
+--- /dev/null
++++ b/docs/quality/sonar-rules.md
+@@ -0,0 +1,456 @@
++# SonarCloud rules digest
++
++<!-- Generated by scripts/sonar-rules-digest.mjs from docs/quality/sonar-rules.json. Do not edit by hand. -->
++
++The 426 active rules of the `Sonar way comprehensive` TypeScript quality profile
++(fetched 2026-11-09) that apply to this codebase, so you can avoid a
++finding before the scan reports it. Each links to the rule description, with compliant and
++non-compliant examples.
++
++46 more rules in the profile are for frameworks this codebase does not use (tags:
++angular, aws, bun, chai, cypress, gcp, jasmine, karma, lodash, mocha, puppeteer, sinon, underscore.js, vue) and are left out.
++
++Refresh the list with `pnpm sonar:rules-digest --refresh` (a private organization needs
++`SONAR_TOKEN`), or regenerate this file from the committed list with `pnpm sonar:rules-digest`.
++CI fails when this file and `docs/quality/sonar-rules.json` disagree.
++
++## React, JSX and accessibility (65)
++
++- [S1101](https://rules.sonarsource.com/typescript/RSPEC-1101/) (major): Links with identical accessible names should have identical targets
++- [S1534](https://rules.sonarsource.com/typescript/RSPEC-1534/) (major): Member names should not be duplicated within a class or object literal
++- [S5254](https://rules.sonarsource.com/typescript/RSPEC-5254/) (major): HTML elements should have a valid language attribute
++- [S5256](https://rules.sonarsource.com/typescript/RSPEC-5256/) (major): Tables should have headers
++- [S5257](https://rules.sonarsource.com/typescript/RSPEC-5257/) (major): HTML "\<table\>" should not be used for layout purposes
++- [S6435](https://rules.sonarsource.com/typescript/RSPEC-6435/) (major): React "render" functions should return a value
++- [S6438](https://rules.sonarsource.com/typescript/RSPEC-6438/) (major): Comments inside JSX expressions should be enclosed in curly braces
++- [S6439](https://rules.sonarsource.com/typescript/RSPEC-6439/) (major): React components should not render non-boolean condition values
++- [S6441](https://rules.sonarsource.com/typescript/RSPEC-6441/) (major): Unused methods of React components should be removed
++- [S6442](https://rules.sonarsource.com/typescript/RSPEC-6442/) (major): React's useState hook should not be used directly in the render function or body of a component
++- [S6443](https://rules.sonarsource.com/typescript/RSPEC-6443/) (major): React state setter function should not be called with its matching state variable
++- [S6477](https://rules.sonarsource.com/typescript/RSPEC-6477/) (major): JSX list components should have a key property
++- [S6478](https://rules.sonarsource.com/typescript/RSPEC-6478/) (major): React components should not be nested
++- [S6479](https://rules.sonarsource.com/typescript/RSPEC-6479/) (major): JSX list components should not use array indexes as key
++- [S6481](https://rules.sonarsource.com/typescript/RSPEC-6481/) (major): React Context Provider values should have stable identities
++- [S6486](https://rules.sonarsource.com/typescript/RSPEC-6486/) (major): JSX list components keys should match up between renders
++- [S6746](https://rules.sonarsource.com/typescript/RSPEC-6746/) (major): In React "this.state" should not be mutated directly
++- [S6747](https://rules.sonarsource.com/typescript/RSPEC-6747/) (major): JSX elements should not use unknown properties and attributes
++- [S6750](https://rules.sonarsource.com/typescript/RSPEC-6750/) (major): The return value of "ReactDOM.render" should not be used
++- [S6756](https://rules.sonarsource.com/typescript/RSPEC-6756/) (major): "setState" should use a callback when referencing the previous state
++- [S6757](https://rules.sonarsource.com/typescript/RSPEC-6757/) (major): "this" should not be used in functional components
++- [S6761](https://rules.sonarsource.com/typescript/RSPEC-6761/) (major): "children" and "dangerouslySetInnerHTML" should not be used together
++- [S6763](https://rules.sonarsource.com/typescript/RSPEC-6763/) (major): "shouldComponentUpdate" should not be defined when extending "React.PureComponent"
++- [S6772](https://rules.sonarsource.com/typescript/RSPEC-6772/) (major): Spacing between inline elements should be explicit
++- [S6788](https://rules.sonarsource.com/typescript/RSPEC-6788/) (major): React's "findDOMNode" should not be used
++- [S6789](https://rules.sonarsource.com/typescript/RSPEC-6789/) (major): React's "isMounted" should not be used
++- [S6790](https://rules.sonarsource.com/typescript/RSPEC-6790/) (major): String references should not be used
++- [S6791](https://rules.sonarsource.com/typescript/RSPEC-6791/) (major): React legacy lifecycle methods should not be used
++- [S6807](https://rules.sonarsource.com/typescript/RSPEC-6807/) (major): DOM elements with ARIA roles should have the required properties
++- [S6811](https://rules.sonarsource.com/typescript/RSPEC-6811/) (major): DOM elements with ARIA role should only have supported properties
++- [S6819](https://rules.sonarsource.com/typescript/RSPEC-6819/) (major): Prefer tag over ARIA role
++- [S6821](https://rules.sonarsource.com/typescript/RSPEC-6821/) (major): DOM elements with ARIA roles should have a valid non-abstract role
++- [S6822](https://rules.sonarsource.com/typescript/RSPEC-6822/) (major): No redundant ARIA role
++- [S6823](https://rules.sonarsource.com/typescript/RSPEC-6823/) (major): DOM elements with the `aria-activedescendant` property should be accessible via the tab key
++- [S6824](https://rules.sonarsource.com/typescript/RSPEC-6824/) (major): No ARIA role or property for unsupported DOM elements
++- [S6825](https://rules.sonarsource.com/typescript/RSPEC-6825/) (major): Focusable elements should not have "aria-hidden" attribute
++- [S6840](https://rules.sonarsource.com/typescript/RSPEC-6840/) (major): DOM elements should use the "autocomplete" attribute correctly
++- [S6841](https://rules.sonarsource.com/typescript/RSPEC-6841/) (major): "tabIndex" values should be 0 or -1
++- [S6842](https://rules.sonarsource.com/typescript/RSPEC-6842/) (major): Non-interactive DOM elements should not have interactive ARIA roles
++- [S6843](https://rules.sonarsource.com/typescript/RSPEC-6843/) (major): Interactive DOM elements should not have non-interactive ARIA roles
++- [S6845](https://rules.sonarsource.com/typescript/RSPEC-6845/) (major): Non-interactive DOM elements should not have the `tabindex` attribute
++- [S6846](https://rules.sonarsource.com/typescript/RSPEC-6846/) (major): DOM elements should not use the "accesskey" property
++- [S6847](https://rules.sonarsource.com/typescript/RSPEC-6847/) (major): Non-interactive elements shouldn't have event handlers
++- [S6848](https://rules.sonarsource.com/typescript/RSPEC-6848/) (major): Non-interactive DOM elements should not have an interactive handler
++- [S6850](https://rules.sonarsource.com/typescript/RSPEC-6850/) (major): Heading elements should have accessible content
++- [S6851](https://rules.sonarsource.com/typescript/RSPEC-6851/) (major): Images should have a non-redundant alternate description
++- [S6852](https://rules.sonarsource.com/typescript/RSPEC-6852/) (major): Elements with an interactive role should support focus
++- [S6853](https://rules.sonarsource.com/typescript/RSPEC-6853/) (major): Label elements should have a text label and an associated control
++- [S9011](https://rules.sonarsource.com/typescript/RSPEC-9011/) (major): "\<button\>" elements should have a valid "type" attribute, explicitly set when associated with a "\<form\>"
++- [S9114](https://rules.sonarsource.com/typescript/RSPEC-9114/) (major): Lodash and Underscore.js debounced or throttled functions should not be recreated on every React render
++- [S9379](https://rules.sonarsource.com/typescript/RSPEC-9379/) (major): DOM elements should not use the "autofocus" attribute
++- [S9380](https://rules.sonarsource.com/typescript/RSPEC-9380/) (major): The "scope" attribute should only be used on "th" elements
++- [S1077](https://rules.sonarsource.com/typescript/RSPEC-1077/) (minor): Image, area, button with image, object and svg elements should have an alternative text
++- [S1082](https://rules.sonarsource.com/typescript/RSPEC-1082/) (minor): Mouse events should have corresponding keyboard events
++- [S1090](https://rules.sonarsource.com/typescript/RSPEC-1090/) (minor): iFrames must have a title
++- [S4084](https://rules.sonarsource.com/typescript/RSPEC-4084/) (minor): Media elements should have captions
++- [S5264](https://rules.sonarsource.com/typescript/RSPEC-5264/) (minor): "\<object\>" tags should provide an alternative content
++- [S6749](https://rules.sonarsource.com/typescript/RSPEC-6749/) (minor): Redundant JSX fragments should be removed
++- [S6754](https://rules.sonarsource.com/typescript/RSPEC-6754/) (minor): The return value of "useState" should be destructured and named symmetrically
++- [S6759](https://rules.sonarsource.com/typescript/RSPEC-6759/) (minor): React props should be read-only
++- [S6767](https://rules.sonarsource.com/typescript/RSPEC-6767/) (minor): Unused React typed props should be removed
++- [S6770](https://rules.sonarsource.com/typescript/RSPEC-6770/) (minor): User-defined JSX components should use Pascal case
++- [S6775](https://rules.sonarsource.com/typescript/RSPEC-6775/) (minor): All "defaultProps" should have non-required PropTypes
++- [S6827](https://rules.sonarsource.com/typescript/RSPEC-6827/) (minor): Anchors should contain accessible content
++- [S6957](https://rules.sonarsource.com/typescript/RSPEC-6957/) (minor): Deprecated React APIs should not be used
++
++## Tests (32)
++
++- [S2187](https://rules.sonarsource.com/typescript/RSPEC-2187/) (blocker): Test files should contain at least one test case
++- [S2699](https://rules.sonarsource.com/typescript/RSPEC-2699/) (blocker): Tests should include assertions
++- [S2970](https://rules.sonarsource.com/typescript/RSPEC-2970/) (blocker): Assertions should be complete
++- [S5845](https://rules.sonarsource.com/typescript/RSPEC-5845/) (critical): Assertions comparing incompatible types should not be made
++- [S8780](https://rules.sonarsource.com/typescript/RSPEC-8780/) (critical): Async test assertions should be awaited or returned
++- [S1607](https://rules.sonarsource.com/typescript/RSPEC-1607/) (major): Tests should not be skipped without providing a reason
++- [S2925](https://rules.sonarsource.com/typescript/RSPEC-2925/) (major): Fixed waits should not be used in tests
++- [S5863](https://rules.sonarsource.com/typescript/RSPEC-5863/) (major): Assertions should not be given twice the same argument
++- [S5973](https://rules.sonarsource.com/typescript/RSPEC-5973/) (major): Tests should be stable
++- [S5976](https://rules.sonarsource.com/typescript/RSPEC-5976/) (major): Similar tests should be grouped in a single Parameterized test
++- [S6080](https://rules.sonarsource.com/typescript/RSPEC-6080/) (major): Disabling Mocha timeouts should be explicit
++- [S6426](https://rules.sonarsource.com/typescript/RSPEC-6426/) (major): Exclusive tests should not be committed to version control
++- [S8754](https://rules.sonarsource.com/typescript/RSPEC-8754/) (major): Test titles should be unique within the same suite
++- [S8781](https://rules.sonarsource.com/typescript/RSPEC-8781/) (major): Test and suite titles should not be empty or whitespace-only
++- [S8782](https://rules.sonarsource.com/typescript/RSPEC-8782/) (major): Lifecycle hooks should not be interleaved with test cases or nested suites
++- [S8783](https://rules.sonarsource.com/typescript/RSPEC-8783/) (major): Forced browser interactions should not bypass actionability checks
++- [S8784](https://rules.sonarsource.com/typescript/RSPEC-8784/) (major): Assertions should be placed inside test cases or hooks
++- [S8785](https://rules.sonarsource.com/typescript/RSPEC-8785/) (major): Tests should not be registered asynchronously in suite callbacks
++- [S8959](https://rules.sonarsource.com/typescript/RSPEC-8959/) (major): UI test debug commands should not be committed to version control
++- [S8967](https://rules.sonarsource.com/typescript/RSPEC-8967/) (major): Inline snapshots should not contain interpolations
++- [S8968](https://rules.sonarsource.com/typescript/RSPEC-8968/) (major): Tests should be skipped explicitly
++- [S8990](https://rules.sonarsource.com/typescript/RSPEC-8990/) (major): Promises should not be passed to "fireEvent"
++- [S8998](https://rules.sonarsource.com/typescript/RSPEC-8998/) (major): Parameterized tests should not have empty datasets
++- [S9072](https://rules.sonarsource.com/typescript/RSPEC-9072/) (major): Synchronous exception assertions should receive synchronous callbacks
++- [S9078](https://rules.sonarsource.com/typescript/RSPEC-9078/) (major): Parameterized tests should not contain duplicate test cases
++- [S9115](https://rules.sonarsource.com/typescript/RSPEC-9115/) (major): Promises returned by Testing Library async events should be handled
++- [S9153](https://rules.sonarsource.com/typescript/RSPEC-9153/) (major): Testing Library disappearance waits should use non-throwing queries
++- [S9169](https://rules.sonarsource.com/typescript/RSPEC-9169/) (major): vi.mock should be declared at module scope
++- [S5906](https://rules.sonarsource.com/typescript/RSPEC-5906/) (minor): The most specific assertion should be used
++- [S8981](https://rules.sonarsource.com/typescript/RSPEC-8981/) (minor): Regular expressions used in Testing Library queries should not have the global flag
++- [S9027](https://rules.sonarsource.com/typescript/RSPEC-9027/) (minor): Testing Library queries should match presence assertions
++- [S9333](https://rules.sonarsource.com/typescript/RSPEC-9333/) (minor): Synchronous Testing Library queries should not be awaited
++
++## Bugs (54)
++
++- [S1143](https://rules.sonarsource.com/typescript/RSPEC-1143/) (critical): Jump statements should not occur in "finally" blocks
++- [S2871](https://rules.sonarsource.com/typescript/RSPEC-2871/) (critical): "Array.prototype.sort()" and "Array.prototype.toSorted()" should use a compare function
++- [S3812](https://rules.sonarsource.com/typescript/RSPEC-3812/) (critical): Parentheses should be used when negating "in" and "instanceof" operations
++- [S3854](https://rules.sonarsource.com/typescript/RSPEC-3854/) (critical): "super()" should be invoked appropriately
++- [S4275](https://rules.sonarsource.com/typescript/RSPEC-4275/) (critical): Getters and setters should access the expected fields
++- [S4335](https://rules.sonarsource.com/typescript/RSPEC-4335/) (critical): Type intersections should use meaningful types
++- [S5856](https://rules.sonarsource.com/typescript/RSPEC-5856/) (critical): Regular expressions should be syntactically valid
++- [S6958](https://rules.sonarsource.com/typescript/RSPEC-6958/) (critical): Literals should not be used as functions
++- [S7725](https://rules.sonarsource.com/typescript/RSPEC-7725/) (critical): Getters and setters should not recursively access the same property
++- [S905](https://rules.sonarsource.com/typescript/RSPEC-905/) (major): Non-empty statements should change control flow or have at least one side-effect
++- [S1244](https://rules.sonarsource.com/typescript/RSPEC-1244/) (major): Floating point numbers should not be tested for equality
++- [S1529](https://rules.sonarsource.com/typescript/RSPEC-1529/) (major): Bitwise operators should not be used in boolean contexts
++- [S1656](https://rules.sonarsource.com/typescript/RSPEC-1656/) (major): Variables should not be self-assigned
++- [S1751](https://rules.sonarsource.com/typescript/RSPEC-1751/) (major): Loops with at most one iteration should be refactored
++- [S1763](https://rules.sonarsource.com/typescript/RSPEC-1763/) (major): All code should be reachable
++- [S1764](https://rules.sonarsource.com/typescript/RSPEC-1764/) (major): Identical expressions should not be used on both sides of a binary operator
++- [S1848](https://rules.sonarsource.com/typescript/RSPEC-1848/) (major): Objects should not be created to be dropped immediately without being used
++- [S1862](https://rules.sonarsource.com/typescript/RSPEC-1862/) (major): "if/else if" chains and "switch" cases should not have the same condition
++- [S2123](https://rules.sonarsource.com/typescript/RSPEC-2123/) (major): Values should not be uselessly incremented
++- [S2137](https://rules.sonarsource.com/typescript/RSPEC-2137/) (major): Special identifiers should not be bound or assigned
++- [S2201](https://rules.sonarsource.com/typescript/RSPEC-2201/) (major): Return values from functions without side effects should not be ignored
++- [S2251](https://rules.sonarsource.com/typescript/RSPEC-2251/) (major): A "for" loop update clause should move the counter in the right direction
++- [S2639](https://rules.sonarsource.com/typescript/RSPEC-2639/) (major): Empty character classes should not be used
++- [S2688](https://rules.sonarsource.com/typescript/RSPEC-2688/) (major): "NaN" should not be used in comparisons
++- [S2757](https://rules.sonarsource.com/typescript/RSPEC-2757/) (major): Non-existent operators '=+', '=-' and '=!' should not be used
++- [S2999](https://rules.sonarsource.com/typescript/RSPEC-2999/) (major): "new" should only be used with functions and classes
++- [S3531](https://rules.sonarsource.com/typescript/RSPEC-3531/) (major): Generators should explicitly "yield" a value
++- [S3616](https://rules.sonarsource.com/typescript/RSPEC-3616/) (major): Comma and logical OR operators should not be used in switch cases
++- [S3699](https://rules.sonarsource.com/typescript/RSPEC-3699/) (major): The return value of void functions should not be used
++- [S3799](https://rules.sonarsource.com/typescript/RSPEC-3799/) (major): Destructuring patterns should not be empty
++- [S3923](https://rules.sonarsource.com/typescript/RSPEC-3923/) (major): All branches in a conditional structure should not have exactly the same implementation
++- [S3981](https://rules.sonarsource.com/typescript/RSPEC-3981/) (major): Collection size and array length comparisons should make sense
++- [S3984](https://rules.sonarsource.com/typescript/RSPEC-3984/) (major): Errors should not be created without being thrown
++- [S4124](https://rules.sonarsource.com/typescript/RSPEC-4124/) (major): Constructors should not be declared inside interfaces
++- [S4143](https://rules.sonarsource.com/typescript/RSPEC-4143/) (major): Collection elements should not be replaced unconditionally
++- [S4822](https://rules.sonarsource.com/typescript/RSPEC-4822/) (major): Promise rejections should not be caught by "try" blocks
++- [S5850](https://rules.sonarsource.com/typescript/RSPEC-5850/) (major): Alternatives in regular expressions should be grouped when used with anchors
++- [S5868](https://rules.sonarsource.com/typescript/RSPEC-5868/) (major): Unicode Grapheme Clusters should be avoided inside regex character classes
++- [S6323](https://rules.sonarsource.com/typescript/RSPEC-6323/) (major): Alternation in regular expressions should not contain empty alternatives
++- [S6324](https://rules.sonarsource.com/typescript/RSPEC-6324/) (major): Regular expressions should not contain control characters
++- [S6328](https://rules.sonarsource.com/typescript/RSPEC-6328/) (major): Replacement strings should reference existing regular expression groups
++- [S6351](https://rules.sonarsource.com/typescript/RSPEC-6351/) (major): Regular expressions with the global flag should be used with caution
++- [S6523](https://rules.sonarsource.com/typescript/RSPEC-6523/) (major): Optional chaining should not be used if returning "undefined" throws an error
++- [S6638](https://rules.sonarsource.com/typescript/RSPEC-6638/) (major): Binary expressions should not always return the same value
++- [S6959](https://rules.sonarsource.com/typescript/RSPEC-6959/) (major): "Array.reduce()" calls should include an initial value
++- [S7727](https://rules.sonarsource.com/typescript/RSPEC-7727/) (major): Function references should not be passed directly to iterator methods
++- [S7739](https://rules.sonarsource.com/typescript/RSPEC-7739/) (major): Objects should not have a "then" property
++- [S9383](https://rules.sonarsource.com/typescript/RSPEC-9383/) (major): Promises should not be left unhandled
++- [S1226](https://rules.sonarsource.com/typescript/RSPEC-1226/) (minor): Initial values of parameters, caught exceptions, and loop variables should not be ignored
++- [S3001](https://rules.sonarsource.com/typescript/RSPEC-3001/) (minor): "delete" should be used only with object properties
++- [S4158](https://rules.sonarsource.com/typescript/RSPEC-4158/) (minor): Empty collections should not be accessed or iterated
++- [S5842](https://rules.sonarsource.com/typescript/RSPEC-5842/) (minor): Repeated patterns in regular expressions should not match the empty string
++- [S7733](https://rules.sonarsource.com/typescript/RSPEC-7733/) (minor): HTTP GET and HEAD requests should not include a request body
++- [S7736](https://rules.sonarsource.com/typescript/RSPEC-7736/) (minor): Negated expressions should not be used in equality checks
++
++## Vulnerabilities (89)
++
++- S2076 (tssecurity) (blocker): OS commands should not be vulnerable to command injection attacks
++- S2083 (tssecurity) (blocker): I/O function calls should not be vulnerable to path injection attacks
++- S2091 (tssecurity) (blocker): XPath expressions should not be vulnerable to injection attacks
++- [S2755](https://rules.sonarsource.com/typescript/RSPEC-2755/) (blocker): XML parsers should not be vulnerable to XXE attacks
++- S3649 (tssecurity) (blocker): Database queries should not be vulnerable to injection attacks
++- S5131 (tssecurity) (blocker): Endpoints should not be vulnerable to reflected cross-site scripting (XSS) attacks
++- S5146 (tssecurity) (blocker): HTTP request redirections should not be open to forging attacks
++- S5147 (tssecurity) (blocker): NoSQL operations should not be vulnerable to injection attacks
++- S5334 (tssecurity) (blocker): Dynamic code execution should not be vulnerable to injection attacks
++- S5335 (tssecurity) (blocker): Imports should not be vulnerable to injection attacks
++- S5496 (tssecurity) (blocker): Server-side templates should not be vulnerable to injection attacks
++- S5696 (tssecurity) (blocker): DOM updates should not lead to cross-site scripting (XSS) attacks
++- S6096 (tssecurity) (blocker): Extracting archives should not lead to zip slip vulnerabilities
++- S6105 (tssecurity) (blocker): DOM updates should not lead to open redirect vulnerabilities
++- S6109 (tssecurity) (blocker): Objects should not be vulnerable to Prototype Pollution attacks
++- [S6268](https://rules.sonarsource.com/typescript/RSPEC-6268/) (blocker): Angular built-in sanitization should not be disabled
++- [S6418](https://rules.sonarsource.com/typescript/RSPEC-6418/) (blocker): Secrets should not be hard-coded
++- [S6437](https://rules.sonarsource.com/typescript/RSPEC-6437/) (blocker): Credentials should not be hard-coded
++- [S7639](https://rules.sonarsource.com/typescript/RSPEC-7639/) (blocker): Wallet phrases should not be hard-coded
++- [S1523](https://rules.sonarsource.com/typescript/RSPEC-1523/) (critical): Dynamic code execution should not use user-controlled data
++- [S2598](https://rules.sonarsource.com/typescript/RSPEC-2598/) (critical): File uploads should be restricted
++- S2631 (tssecurity) (critical): Regular expressions should not be vulnerable to Denial of Service attacks
++- [S2819](https://rules.sonarsource.com/typescript/RSPEC-2819/) (critical): Origins should be verified during cross-origin communications
++- [S4423](https://rules.sonarsource.com/typescript/RSPEC-4423/) (critical): Weak SSL/TLS protocols should not be used
++- [S4426](https://rules.sonarsource.com/typescript/RSPEC-4426/) (critical): Cryptographic keys should be robust
++- [S4502](https://rules.sonarsource.com/typescript/RSPEC-4502/) (critical): CSRF protections should not be disabled
++- S4684 (tssecurity) (critical): Database Operations should not be vulnerable to mass assignment
++- [S4790](https://rules.sonarsource.com/typescript/RSPEC-4790/) (critical): Weak hashing algorithms should not be used
++- [S4830](https://rules.sonarsource.com/typescript/RSPEC-4830/) (critical): Server certificates should be verified during SSL/TLS connections
++- [S5443](https://rules.sonarsource.com/typescript/RSPEC-5443/) (critical): Temporary files should not be created in publicly writable directories
++- [S5527](https://rules.sonarsource.com/typescript/RSPEC-5527/) (critical): Server hostnames should be verified during SSL/TLS connections
++- [S5542](https://rules.sonarsource.com/typescript/RSPEC-5542/) (critical): Encryption algorithms should be used with secure mode and padding scheme
++- [S5547](https://rules.sonarsource.com/typescript/RSPEC-5547/) (critical): Cipher algorithms should be robust
++- [S5659](https://rules.sonarsource.com/typescript/RSPEC-5659/) (critical): JWT should be signed and verified with strong cipher algorithms
++- [S5852](https://rules.sonarsource.com/typescript/RSPEC-5852/) (critical): Regular expressions should not cause catastrophic backtracking
++- [S5876](https://rules.sonarsource.com/typescript/RSPEC-5876/) (critical): A new session should be created during user authentication
++- S8678 (tssecurity) (critical): Confidential data should not be sent to a remote LLM
++- S8689 (tssecurity) (critical): Confidential data should not be logged
++- S8690 (tssecurity) (critical): Confidential data should not be sent in HTTP GET parameters
++- S8691 (tssecurity) (critical): Confidential data should not be indexed into AI pipelines
++- [S2068](https://rules.sonarsource.com/typescript/RSPEC-2068/) (major): Credentials should not be hard-coded
++- [S2077](https://rules.sonarsource.com/typescript/RSPEC-2077/) (major): SQL queries should not be dynamically formatted
++- [S2245](https://rules.sonarsource.com/typescript/RSPEC-2245/) (major): Pseudorandom number generators (PRNGs) should not be used in security contexts
++- [S2612](https://rules.sonarsource.com/typescript/RSPEC-2612/) (major): File permissions should not be set to world-accessible values
++- [S5122](https://rules.sonarsource.com/typescript/RSPEC-5122/) (major): Cross-Origin Resource Sharing (CORS) policy should be restricted to trusted origins
++- S5144 (tssecurity) (major): Server-side requests should not be vulnerable to forging attacks
++- [S5247](https://rules.sonarsource.com/typescript/RSPEC-5247/) (major): Auto-escaping in HTML template engines should not be disabled
++- [S5693](https://rules.sonarsource.com/typescript/RSPEC-5693/) (major): HTTP request content length should be limited
++- S6287 (tssecurity) (major): Applications should not create session cookies from untrusted input
++- S6350 (tssecurity) (major): System command arguments constructed from user input should be validated
++- S6547 (tssecurity) (major): Environment variables should not be defined from untrusted input
++- S6549 (tssecurity) (major): Accessing files should not lead to filesystem oracle attacks
++- S6641 (tssecurity) (major): Connection strings should not be vulnerable to injection attacks
++- S7044 (tssecurity) (major): Server-side requests should not be vulnerable to traversing attacks
++- [S7790](https://rules.sonarsource.com/typescript/RSPEC-7790/) (major): Templates should not be constructed dynamically
++- S8702 (tssecurity) (major): Agentic workflows should not be vulnerable to SQL injection attacks
++- S8703 (tssecurity) (major): Agentic workflows should not be vulnerable to server-side request forgery
++- S8704 (tssecurity) (major): Agentic workflows should not be vulnerable to code injection attacks
++- S8705 (tssecurity) (major): Agentic workflows should not be vulnerable to argument injection attacks
++- S8706 (tssecurity) (major): Agentic workflows should not be vulnerable to connection string injection
++- S8707 (tssecurity) (major): Agentic workflows should not be vulnerable to path injection attacks
++- [S2092](https://rules.sonarsource.com/typescript/RSPEC-2092/) (minor): Cookies should have the "secure" flag
++- [S3330](https://rules.sonarsource.com/typescript/RSPEC-3330/) (minor): Cookies should have the "HttpOnly" flag
++- [S4036](https://rules.sonarsource.com/typescript/RSPEC-4036/) (minor): OS commands should not rely on PATH resolution
++- [S4507](https://rules.sonarsource.com/typescript/RSPEC-4507/) (minor): Debugging features should not be enabled in production
++- S5145 (tssecurity) (minor): Logging should not be vulnerable to injection attacks
++- [S5148](https://rules.sonarsource.com/typescript/RSPEC-5148/) (minor): Opened windows should not have access to the originating page
++- [S5332](https://rules.sonarsource.com/typescript/RSPEC-5332/) (minor): Clear-text protocols should not be used
++- [S5689](https://rules.sonarsource.com/typescript/RSPEC-5689/) (minor): Web application technologies should not disclose version information
++- [S5725](https://rules.sonarsource.com/typescript/RSPEC-5725/) (minor): Remote artifacts should not be used without integrity checks
++- [S5728](https://rules.sonarsource.com/typescript/RSPEC-5728/) (minor): Content security policy fetch directives should not be disabled
++- [S5734](https://rules.sonarsource.com/typescript/RSPEC-5734/) (minor): Browsers should not be allowed to perform MIME type sniffing
++- [S5736](https://rules.sonarsource.com/typescript/RSPEC-5736/) (minor): HTTP Referrer-Policy should not be set to an unsafe value
++- [S5739](https://rules.sonarsource.com/typescript/RSPEC-5739/) (minor): HTTP Strict-Transport-Security policy should not be disabled
++- S5883 (tssecurity) (minor): OS commands should not be vulnerable to argument injection attacks
++- S6776 (tssecurity) (minor): Stack traces should not be disclosed
++- S7518 (tssecurity) (minor): Privileged prompts should not be vulnerable to injection attacks
++- S8348 (tssecurity) (minor): CORS policies should not be vulnerable to injections
++- S8349 (tssecurity) (minor): Content-Security policies should not be vulnerable to injections
++- S8378 (tssecurity) (minor): DOM XPath queries should not be vulnerable to injection attacks
++- S8387 (tssecurity) (minor): Inter-process communication should not be vulnerable to injection attacks
++- [S8441](https://rules.sonarsource.com/typescript/RSPEC-8441/) (minor): Static Assets should not serve session cookies
++- S8466 (tssecurity) (minor): LLM inference scores should not be leaked
++- S8475 (tssecurity) (minor): Browser storage should not be poisoned
++- S8476 (tssecurity) (minor): Client-side requests should not be vulnerable to forging attacks
++- S8477 (tssecurity) (minor): Client-side database connections should not be vulnerable to injection attacks
++- S8478 (tssecurity) (minor): CSS should not be vulnerable to injection attacks
++- [S8479](https://rules.sonarsource.com/typescript/RSPEC-8479/) (minor): DOMPurify configuration should not be bypassable
++- S8480 (tssecurity) (minor): Streaming connections should not be vulnerable to hijacking attacks
++
++## Code smells (186)
++
++- [S128](https://rules.sonarsource.com/typescript/RSPEC-128/) (blocker): Switch cases should end with an unconditional "break" statement
++- [S1219](https://rules.sonarsource.com/typescript/RSPEC-1219/) (blocker): "switch" statements should not contain non-case labels
++- [S1314](https://rules.sonarsource.com/typescript/RSPEC-1314/) (blocker): Octal values should not be used
++- [S3516](https://rules.sonarsource.com/typescript/RSPEC-3516/) (blocker): Function returns should not be invariant
++- [S888](https://rules.sonarsource.com/typescript/RSPEC-888/) (critical): Equality operators should not be used in "for" loop termination conditions
++- [S1186](https://rules.sonarsource.com/typescript/RSPEC-1186/) (critical): Functions should not be empty
++- [S1994](https://rules.sonarsource.com/typescript/RSPEC-1994/) (critical): "for" loop increment clauses should modify the loops' counters
++- [S2004](https://rules.sonarsource.com/typescript/RSPEC-2004/) (critical): Functions should not be nested too deeply
++- [S2430](https://rules.sonarsource.com/typescript/RSPEC-2430/) (critical): Constructor names should start with an upper case letter
++- [S3504](https://rules.sonarsource.com/typescript/RSPEC-3504/) (critical): Variables should be declared with "let" or "const"
++- [S3735](https://rules.sonarsource.com/typescript/RSPEC-3735/) (critical): "void" should not be used
++- [S3776](https://rules.sonarsource.com/typescript/RSPEC-3776/) (critical): Cognitive Complexity of functions should not be too high
++- [S3972](https://rules.sonarsource.com/typescript/RSPEC-3972/) (critical): Conditionals should start on new lines
++- [S4123](https://rules.sonarsource.com/typescript/RSPEC-4123/) (critical): "await" should only be used with promises
++- [S4524](https://rules.sonarsource.com/typescript/RSPEC-4524/) (critical): "default" clauses should be last
++- [S4621](https://rules.sonarsource.com/typescript/RSPEC-4621/) (critical): Union and intersection types should not include duplicated constituents
++- [S6859](https://rules.sonarsource.com/typescript/RSPEC-6859/) (critical): Imports should not use absolute paths
++- [S6861](https://rules.sonarsource.com/typescript/RSPEC-6861/) (critical): Mutable variables should not be exported
++- [S7059](https://rules.sonarsource.com/typescript/RSPEC-7059/) (critical): Constructors should not contain asynchronous operations
++- [S7783](https://rules.sonarsource.com/typescript/RSPEC-7783/) (critical): "trimLeft()" and "trimRight()" should be replaced with "trimStart()" and "trimEnd()"
++- [S107](https://rules.sonarsource.com/typescript/RSPEC-107/) (major): Functions should not have too many parameters
++- [S108](https://rules.sonarsource.com/typescript/RSPEC-108/) (major): Nested blocks of code should not be left empty
++- [S878](https://rules.sonarsource.com/typescript/RSPEC-878/) (major): Comma operator should not be used
++- [S1068](https://rules.sonarsource.com/typescript/RSPEC-1068/) (major): Unused private class members should be removed
++- [S1119](https://rules.sonarsource.com/typescript/RSPEC-1119/) (major): Labels should not be used
++- [S1121](https://rules.sonarsource.com/typescript/RSPEC-1121/) (major): Assignments should not be made from within sub-expressions
++- [S1134](https://rules.sonarsource.com/typescript/RSPEC-1134/) (major): Track uses of "FIXME" tags
++- [S1439](https://rules.sonarsource.com/typescript/RSPEC-1439/) (major): Only "while", "do", "for" and "switch" statements should be labelled
++- [S1479](https://rules.sonarsource.com/typescript/RSPEC-1479/) (major): "switch" statements should not have too many "case" clauses
++- [S1515](https://rules.sonarsource.com/typescript/RSPEC-1515/) (major): Functions should not be defined inside loops
++- [S1788](https://rules.sonarsource.com/typescript/RSPEC-1788/) (major): Function parameters with default values should be last
++- [S1854](https://rules.sonarsource.com/typescript/RSPEC-1854/) (major): Unused assignments should be removed
++- [S1871](https://rules.sonarsource.com/typescript/RSPEC-1871/) (major): Two branches in a conditional structure should not have exactly the same implementation
++- [S2234](https://rules.sonarsource.com/typescript/RSPEC-2234/) (major): Parameters should be passed in the correct order
++- [S2301](https://rules.sonarsource.com/typescript/RSPEC-2301/) (major): Methods should not contain selector parameters
++- [S2310](https://rules.sonarsource.com/typescript/RSPEC-2310/) (major): Loop counters should not be assigned within the loop body
++- [S2392](https://rules.sonarsource.com/typescript/RSPEC-2392/) (major): Variables should be used in the blocks where they are declared
++- [S2589](https://rules.sonarsource.com/typescript/RSPEC-2589/) (major): Boolean expressions should not be gratuitous
++- [S2681](https://rules.sonarsource.com/typescript/RSPEC-2681/) (major): Multiline blocks should be enclosed in curly braces
++- [S2685](https://rules.sonarsource.com/typescript/RSPEC-2685/) (major): "arguments.caller" and "arguments.callee" should not be used
++- [S2692](https://rules.sonarsource.com/typescript/RSPEC-2692/) (major): "indexOf" checks should not be for positive numbers
++- [S2870](https://rules.sonarsource.com/typescript/RSPEC-2870/) (major): "delete" should not be used on arrays
++- [S2933](https://rules.sonarsource.com/typescript/RSPEC-2933/) (major): Fields that are only assigned in the constructor should be "readonly"
++- [S3358](https://rules.sonarsource.com/typescript/RSPEC-3358/) (major): Ternary operators should not be nested
++- [S3579](https://rules.sonarsource.com/typescript/RSPEC-3579/) (major): Array indexes should be numeric
++- [S3696](https://rules.sonarsource.com/typescript/RSPEC-3696/) (major): Literals should not be thrown
++- [S4030](https://rules.sonarsource.com/typescript/RSPEC-4030/) (major): Collection contents should be used
++- [S4043](https://rules.sonarsource.com/typescript/RSPEC-4043/) (major): Array-mutating methods should not be used misleadingly
++- [S4140](https://rules.sonarsource.com/typescript/RSPEC-4140/) (major): Sparse arrays should not be created with extra commas
++- [S4144](https://rules.sonarsource.com/typescript/RSPEC-4144/) (major): Functions should not have identical implementations
++- [S4165](https://rules.sonarsource.com/typescript/RSPEC-4165/) (major): Assignments should not be redundant
++- [S4619](https://rules.sonarsource.com/typescript/RSPEC-4619/) (major): "in" should not be used on arrays
++- [S4623](https://rules.sonarsource.com/typescript/RSPEC-4623/) (major): "undefined" should not be passed as the value of optional parameters
++- [S4624](https://rules.sonarsource.com/typescript/RSPEC-4624/) (major): Template literals should not be nested
++- [S4634](https://rules.sonarsource.com/typescript/RSPEC-4634/) (major): Shorthand promises should be used
++- [S4782](https://rules.sonarsource.com/typescript/RSPEC-4782/) (major): Optional property declarations should not use both '?' and 'undefined' syntax
++- [S5843](https://rules.sonarsource.com/typescript/RSPEC-5843/) (major): Regular expressions should not be too complicated
++- [S5860](https://rules.sonarsource.com/typescript/RSPEC-5860/) (major): Names of regular expressions named groups should be used
++- [S5869](https://rules.sonarsource.com/typescript/RSPEC-5869/) (major): Character classes in regular expressions should not contain the same character twice
++- [S6019](https://rules.sonarsource.com/typescript/RSPEC-6019/) (major): Reluctant quantifiers in regular expressions should be followed by an expression that can't match the empty string
++- [S6035](https://rules.sonarsource.com/typescript/RSPEC-6035/) (major): Single-character alternations in regular expressions should be replaced with character classes
++- [S6326](https://rules.sonarsource.com/typescript/RSPEC-6326/) (major): Regular expressions should not contain multiple spaces
++- [S6331](https://rules.sonarsource.com/typescript/RSPEC-6331/) (major): Regular expressions should not contain empty groups
++- [S6397](https://rules.sonarsource.com/typescript/RSPEC-6397/) (major): Character classes in regular expressions should not contain only one character
++- [S6522](https://rules.sonarsource.com/typescript/RSPEC-6522/) (major): Import variables should not be reassigned
++- [S6535](https://rules.sonarsource.com/typescript/RSPEC-6535/) (major): Unnecessary character escapes should be removed
++- [S6550](https://rules.sonarsource.com/typescript/RSPEC-6550/) (major): All enum members should be literals
++- [S6557](https://rules.sonarsource.com/typescript/RSPEC-6557/) (major): Ends of strings should be checked with "startsWith()" and "endsWith()"
++- [S6564](https://rules.sonarsource.com/typescript/RSPEC-6564/) (major): Redundant type aliases should not be used
++- [S6569](https://rules.sonarsource.com/typescript/RSPEC-6569/) (major): Unnecessary type constraints should be removed
++- [S6572](https://rules.sonarsource.com/typescript/RSPEC-6572/) (major): Enum member values should be either all initialized or none
++- [S6578](https://rules.sonarsource.com/typescript/RSPEC-6578/) (major): Enum values should be unique
++- [S6583](https://rules.sonarsource.com/typescript/RSPEC-6583/) (major): Enum members should not mix value types
++- [S6590](https://rules.sonarsource.com/typescript/RSPEC-6590/) (major): "as const" assertions should be preferred
++- [S6627](https://rules.sonarsource.com/typescript/RSPEC-6627/) (major): Users should not use internal APIs
++- [S6643](https://rules.sonarsource.com/typescript/RSPEC-6643/) (major): Prototypes of builtin objects should not be modified
++- [S6657](https://rules.sonarsource.com/typescript/RSPEC-6657/) (major): Octal escape sequences should not be used
++- [S6660](https://rules.sonarsource.com/typescript/RSPEC-6660/) (major): If statements should not be the only statement in else blocks
++- [S6661](https://rules.sonarsource.com/typescript/RSPEC-6661/) (major): Object spread syntax should be used instead of "Object.assign"
++- [S6666](https://rules.sonarsource.com/typescript/RSPEC-6666/) (major): Spread syntax should be used instead of "apply()"
++- [S6671](https://rules.sonarsource.com/typescript/RSPEC-6671/) (major): Literals should not be used for promise rejection
++- [S6676](https://rules.sonarsource.com/typescript/RSPEC-6676/) (major): Calls to ".call()" and ".apply()" methods should not be redundant
++- [S6679](https://rules.sonarsource.com/typescript/RSPEC-6679/) (major): "Number.isNaN()" should be used to check for "NaN" value
++- [S6836](https://rules.sonarsource.com/typescript/RSPEC-6836/) (major): "case" and "default" clauses should not contain lexical declarations
++- [S7060](https://rules.sonarsource.com/typescript/RSPEC-7060/) (major): Module should not import itself
++- [S7721](https://rules.sonarsource.com/typescript/RSPEC-7721/) (major): Functions should be moved to the highest possible scope
++- [S7724](https://rules.sonarsource.com/typescript/RSPEC-7724/) (major): ESLint disable comments should specify which rules to disable
++- [S7740](https://rules.sonarsource.com/typescript/RSPEC-7740/) (major): Variables should not be assigned the value of "this"
++- [S7746](https://rules.sonarsource.com/typescript/RSPEC-7746/) (major): Promise.resolve() and Promise.reject() should not be used in async functions or promise callbacks
++- [S7760](https://rules.sonarsource.com/typescript/RSPEC-7760/) (major): Default parameters should be used instead of reassigning parameters with literal fallback values
++- [S7761](https://rules.sonarsource.com/typescript/RSPEC-7761/) (major): Data attributes should be accessed using ".dataset"
++- [S7762](https://rules.sonarsource.com/typescript/RSPEC-7762/) (major): DOM nodes should be removed using "remove()" instead of "removeChild()"
++- [S7767](https://rules.sonarsource.com/typescript/RSPEC-7767/) (major): Bitwise operators should not be used to truncate numbers
++- [S7774](https://rules.sonarsource.com/typescript/RSPEC-7774/) (major): Methods should be accessed from prototypes, not instances
++- [S7785](https://rules.sonarsource.com/typescript/RSPEC-7785/) (major): Top-level await should be preferred over promise chains and async wrappers
++- S7788 (tsarchitecture) (major): Relationships should align with the intended architecture
++- S7789 (tsarchitecture) (major): Files should be located according to the intended architecture
++- S8134 (tsarchitecture) (major): Forbidden relationships should be removed to solve tangles as directed by the project's architect
++- S8464 (tsarchitecture) (major): Intended architecture components should be implemented
++- S8483 (tsarchitecture) (major): Architecture directive to rename a component should be applied
++- S8484 (tsarchitecture) (major): Architecture directive to move a component should be applied
++- S8487 (tsarchitecture) (major): Relationships should align with the interface design of the intended architecture
++- [S101](https://rules.sonarsource.com/typescript/RSPEC-101/) (minor): Class names should comply with a naming convention
++- [S1125](https://rules.sonarsource.com/typescript/RSPEC-1125/) (minor): Boolean literals should not be used in comparisons
++- [S1128](https://rules.sonarsource.com/typescript/RSPEC-1128/) (minor): Unnecessary imports should be removed
++- [S1199](https://rules.sonarsource.com/typescript/RSPEC-1199/) (minor): Nested code blocks should not be used
++- [S1264](https://rules.sonarsource.com/typescript/RSPEC-1264/) (minor): A "while" loop should be used instead of a "for" loop
++- [S1301](https://rules.sonarsource.com/typescript/RSPEC-1301/) (minor): "if" statements should be preferred over "switch" when simpler
++- [S1313](https://rules.sonarsource.com/typescript/RSPEC-1313/) (minor): IP addresses should not be hardcoded
++- [S1444](https://rules.sonarsource.com/typescript/RSPEC-1444/) (minor): Public "static" fields should be read-only
++- [S1472](https://rules.sonarsource.com/typescript/RSPEC-1472/) (minor): Function call arguments should not start on new lines
++- [S1516](https://rules.sonarsource.com/typescript/RSPEC-1516/) (minor): Multiline string literals should not be used
++- [S1533](https://rules.sonarsource.com/typescript/RSPEC-1533/) (minor): Wrapper objects should not be used for primitive types
++- [S1874](https://rules.sonarsource.com/typescript/RSPEC-1874/) (minor): Deprecated APIs should not be used
++- [S1940](https://rules.sonarsource.com/typescript/RSPEC-1940/) (minor): Boolean checks should not be inverted
++- [S2094](https://rules.sonarsource.com/typescript/RSPEC-2094/) (minor): Classes should not be empty
++- [S2486](https://rules.sonarsource.com/typescript/RSPEC-2486/) (minor): Exceptions should not be ignored
++- [S2737](https://rules.sonarsource.com/typescript/RSPEC-2737/) (minor): "catch" clauses should do more than rethrow
++- [S2990](https://rules.sonarsource.com/typescript/RSPEC-2990/) (minor): The global "this" object should not be used
++- [S3626](https://rules.sonarsource.com/typescript/RSPEC-3626/) (minor): Jump statements should not be redundant
++- [S3863](https://rules.sonarsource.com/typescript/RSPEC-3863/) (minor): Imports from the same module should be merged
++- [S4138](https://rules.sonarsource.com/typescript/RSPEC-4138/) (minor): "for of" should be used with Iterables
++- [S4156](https://rules.sonarsource.com/typescript/RSPEC-4156/) (minor): "module" should not be used
++- [S4322](https://rules.sonarsource.com/typescript/RSPEC-4322/) (minor): Type predicates should be used
++- [S4323](https://rules.sonarsource.com/typescript/RSPEC-4323/) (minor): Type aliases should be used
++- [S6325](https://rules.sonarsource.com/typescript/RSPEC-6325/) (minor): Regular expression literals should be used when possible
++- [S6353](https://rules.sonarsource.com/typescript/RSPEC-6353/) (minor): Regular expression quantifiers and character classes should be used concisely
++- [S6509](https://rules.sonarsource.com/typescript/RSPEC-6509/) (minor): Extra boolean casts should be removed
++- [S6565](https://rules.sonarsource.com/typescript/RSPEC-6565/) (minor): Prefer the return type "this" in fluent interfaces
++- [S6568](https://rules.sonarsource.com/typescript/RSPEC-6568/) (minor): Non-null assertions should not be used misleadingly
++- [S6571](https://rules.sonarsource.com/typescript/RSPEC-6571/) (minor): Type constituents of unions and intersections should not be redundant
++- [S6582](https://rules.sonarsource.com/typescript/RSPEC-6582/) (minor): Optional chaining should be preferred
++- [S6594](https://rules.sonarsource.com/typescript/RSPEC-6594/) (minor): "RegExp.exec()" should be preferred over "String.match()"
++- [S6598](https://rules.sonarsource.com/typescript/RSPEC-6598/) (minor): Function types should be preferred
++- [S6606](https://rules.sonarsource.com/typescript/RSPEC-6606/) (minor): Nullish coalescing should be preferred
++- [S6635](https://rules.sonarsource.com/typescript/RSPEC-6635/) (minor): Constructors should not return values
++- [S6637](https://rules.sonarsource.com/typescript/RSPEC-6637/) (minor): Unnecessary calls to ".bind()" should not be used
++- [S6644](https://rules.sonarsource.com/typescript/RSPEC-6644/) (minor): Ternary operator should not be used instead of simpler alternatives
++- [S6647](https://rules.sonarsource.com/typescript/RSPEC-6647/) (minor): Unnecessary constructors should be removed
++- [S6650](https://rules.sonarsource.com/typescript/RSPEC-6650/) (minor): Renaming import, export, and destructuring assignments should not be to the same name
++- [S6654](https://rules.sonarsource.com/typescript/RSPEC-6654/) (minor): \_\_proto\_\_ property should not be used
++- [S7503](https://rules.sonarsource.com/typescript/RSPEC-7503/) (minor): Async functions should use async features
++- [S7718](https://rules.sonarsource.com/typescript/RSPEC-7718/) (minor): Error parameters in catch clauses should follow a consistent naming convention
++- [S7719](https://rules.sonarsource.com/typescript/RSPEC-7719/) (minor): Date objects should be cloned directly without calling "getTime()"
++- [S7720](https://rules.sonarsource.com/typescript/RSPEC-7720/) (minor): Ternary expressions in array spreads should use consistent types
++- [S7722](https://rules.sonarsource.com/typescript/RSPEC-7722/) (minor): Built-in error objects should have meaningful messages
++- [S7723](https://rules.sonarsource.com/typescript/RSPEC-7723/) (minor): Built-in constructors should be called consistently with or without "new"
++- [S7726](https://rules.sonarsource.com/typescript/RSPEC-7726/) (minor): Default exports should be named
++- [S7729](https://rules.sonarsource.com/typescript/RSPEC-7729/) (minor): Array method callbacks should not use the "thisArg" parameter
++- [S7732](https://rules.sonarsource.com/typescript/RSPEC-7732/) (minor): "instanceof" should not be used with built-in objects
++- [S7734](https://rules.sonarsource.com/typescript/RSPEC-7734/) (minor): Default imports and exports should use the dedicated syntax
++- [S7737](https://rules.sonarsource.com/typescript/RSPEC-7737/) (minor): Objects should not be used as default parameters
++- [S7741](https://rules.sonarsource.com/typescript/RSPEC-7741/) (minor): "typeof" should not be used to check for "undefined"
++- [S7742](https://rules.sonarsource.com/typescript/RSPEC-7742/) (minor): Polyfills should not be used when native support is available in target environments
++- [S7743](https://rules.sonarsource.com/typescript/RSPEC-7743/) (minor): Immediately invoked arrow functions with parenthesized expressions should be avoided
++- [S7744](https://rules.sonarsource.com/typescript/RSPEC-7744/) (minor): Unnecessary fallback objects should not be used when spreading in object literals
++- [S7745](https://rules.sonarsource.com/typescript/RSPEC-7745/) (minor): Array length checks should not be used before "some()" and "every()" calls
++- [S7747](https://rules.sonarsource.com/typescript/RSPEC-7747/) (minor): Spread syntax should not be used unnecessarily
++- [S7749](https://rules.sonarsource.com/typescript/RSPEC-7749/) (minor): Numeric literals should use consistent digit grouping with separators
++- [S7750](https://rules.sonarsource.com/typescript/RSPEC-7750/) (minor): Array methods ".find()" and ".findLast()" should be preferred over ".filter()" for single element retrieval
++- [S7751](https://rules.sonarsource.com/typescript/RSPEC-7751/) (minor): Array flattening should use the native "flat()" method
++- [S7752](https://rules.sonarsource.com/typescript/RSPEC-7752/) (minor): Array methods ".map().flat()" should be replaced with ".flatMap()"
++- [S7753](https://rules.sonarsource.com/typescript/RSPEC-7753/) (minor): "indexOf()" and "lastIndexOf()" should be used instead of "findIndex()" and "findLastIndex()" for simple equality searches
++- [S7754](https://rules.sonarsource.com/typescript/RSPEC-7754/) (minor): Use ".some()" instead of ".filter().length" checks or ".find()" for existence testing
++- [S7755](https://rules.sonarsource.com/typescript/RSPEC-7755/) (minor): Complex index access patterns should be replaced with ".at()" method
++- [S7756](https://rules.sonarsource.com/typescript/RSPEC-7756/) (minor): Modern Blob methods should be used instead of FileReader
++- [S7758](https://rules.sonarsource.com/typescript/RSPEC-7758/) (minor): Unicode-aware string methods should be used for proper character handling
++- [S7759](https://rules.sonarsource.com/typescript/RSPEC-7759/) (minor): Use "Date.now()" instead of creating Date objects to get current timestamp
++- [S7763](https://rules.sonarsource.com/typescript/RSPEC-7763/) (minor): Re-exports should use "export...from" syntax
++- [S7765](https://rules.sonarsource.com/typescript/RSPEC-7765/) (minor): Existence checks should use ".includes()" instead of ".indexOf()" or ".lastIndexOf()"
++- [S7766](https://rules.sonarsource.com/typescript/RSPEC-7766/) (minor): Ternary expressions should be replaced with "Math.min()" or "Math.max()" for simple comparisons
++- [S7769](https://rules.sonarsource.com/typescript/RSPEC-7769/) (minor): Modern Math APIs should be used instead of legacy mathematical expressions
++- [S7770](https://rules.sonarsource.com/typescript/RSPEC-7770/) (minor): Wrapper functions around built-in type conversion functions should be avoided
++- [S7771](https://rules.sonarsource.com/typescript/RSPEC-7771/) (minor): Negative indices should be used instead of length calculations
++- [S7772](https://rules.sonarsource.com/typescript/RSPEC-7772/) (minor): Node.js built-in modules should be imported using the "node:" protocol
++- [S7773](https://rules.sonarsource.com/typescript/RSPEC-7773/) (minor): Number static methods and properties should be preferred over global equivalents
++- [S7776](https://rules.sonarsource.com/typescript/RSPEC-7776/) (minor): Arrays used only for existence checks should be Sets
++- [S7777](https://rules.sonarsource.com/typescript/RSPEC-7777/) (minor): Set size should be accessed directly instead of converting to array first
++- [S7778](https://rules.sonarsource.com/typescript/RSPEC-7778/) (minor): Multiple consecutive calls to methods that accept multiple arguments should be combined
++- [S7780](https://rules.sonarsource.com/typescript/RSPEC-7780/) (minor): String literals with escaped backslashes should use `String.raw` template literals
++- [S7781](https://rules.sonarsource.com/typescript/RSPEC-7781/) (minor): Strings should use "replaceAll()" instead of "replace()" with global regex
++- [S7784](https://rules.sonarsource.com/typescript/RSPEC-7784/) (minor): "structuredClone()" should be used instead of other deep cloning methods
++- [S7786](https://rules.sonarsource.com/typescript/RSPEC-7786/) (minor): Generic "Error" should be "TypeError" when thrown after type checking
++- [S8927](https://rules.sonarsource.com/typescript/RSPEC-8927/) (minor): Default imports from modular utility libraries should not be used
++- [S9382](https://rules.sonarsource.com/typescript/RSPEC-9382/) (minor): Promises should not be awaited sequentially in a loop
++- [S1135](https://rules.sonarsource.com/typescript/RSPEC-1135/) (info): Track uses of "TODO" tags
+diff --git a/package.json b/package.json
+index 4780c3e..8d1dcb2 100644
+--- a/package.json
++++ b/package.json
+@@ -8,6 +8,7 @@
+     "pnpm": "10.33.0"
+   },
+   "scripts": {
++    "prepare": "git config core.hooksPath .githooks || true",
+     "pre-publish": "pnpm exec nx affected -t lint build test:unit --base=develop",
+     "db-update": "node scripts/db-update.mjs",
+     "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom",
+@@ -51,6 +52,7 @@
+     "test": "nx run-many -t test",
+     "test:coverage": "nx run-many -t test -- --coverage",
+     "coverage:normalize-lcov": "tsx scripts/normalize-lcov-paths.ts",
++    "sonar:rules-digest": "node scripts/sonar-rules-digest.mjs",
+     "sonar:local": "pnpm test:coverage && pnpm coverage:normalize-lcov && SONAR_TOKEN=$SONARQUBE_TOKEN sonar-scanner",
+     "test:api": "pnpm nx e2e api-e2e",
+     "test:ci": "pnpm test:api",
+diff --git a/scripts/sonar-rules-digest.mjs b/scripts/sonar-rules-digest.mjs
+new file mode 100644
+index 0000000..19f5421
+--- /dev/null
++++ b/scripts/sonar-rules-digest.mjs
+@@ -0,0 +1,304 @@
++// Writes docs/quality/sonar-rules.md, a digest of the SonarCloud rules this repository is analysed
++// with, so an agent or a reviewer can avoid a finding before the scan reports it.
++//
++// The digest is generated from docs/quality/sonar-rules.json, a committed copy of the TypeScript
++// quality profile's active rules, so generating it needs no network and no credentials.
++//
++//   node scripts/sonar-rules-digest.mjs            regenerate the digest from the committed list
++//   node scripts/sonar-rules-digest.mjs --check    exit 1 if the digest is out of date (CI)
++//   node scripts/sonar-rules-digest.mjs --refresh  re-fetch the list from SonarCloud, then regenerate
++//
++// --refresh reads sonar.organization and sonar.projectKey from sonar-project.properties and asks
++// SonarCloud which TypeScript quality profile the project uses. A public organization answers
++// anonymously; a private one needs SONAR_TOKEN in the environment (a user token with Browse on the
++// project). SONAR_HOST_URL overrides https://sonarcloud.io for a self-hosted SonarQube.
++
++import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
++import { dirname, join, resolve } from 'node:path'
++import { fileURLToPath } from 'node:url'
++
++const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
++export const RULES_FILE = 'docs/quality/sonar-rules.json'
++export const DIGEST_FILE = 'docs/quality/sonar-rules.md'
++const LANGUAGE = 'ts'
++
++// Rules for frameworks and platforms the template does not use. They stay in the JSON (it is the
++// profile as fetched) and are left out of the digest, which says how many it left out. A project
++// that adopts one of these removes its tag from `excludeTags` in the JSON and regenerates.
++export const DEFAULT_EXCLUDE_TAGS = [
++  'angular',
++  'aws',
++  'bun',
++  'chai',
++  'cypress',
++  'gcp',
++  'jasmine',
++  'karma',
++  'lodash',
++  'mocha',
++  'puppeteer',
++  'sinon',
++  'underscore.js',
++  'vue',
++]
++
++// A rule tagged for an unused framework is still kept when it is also tagged for one this codebase
++// does use: a test rule tagged `mocha` and `jest` applies to the Jest and Vitest specs here.
++export const KEEP_TAGS = [
++  'express.js',
++  'jest',
++  'jsx',
++  'node',
++  'nodejs',
++  'playwright',
++  'react',
++  'supertest',
++  'testing-library',
++  'vitest',
++]
++
++const SEVERITY_ORDER = ['BLOCKER', 'CRITICAL', 'MAJOR', 'MINOR', 'INFO']
++
++// Each rule is listed once, in the first section whose test it passes.
++export const SECTIONS = [
++  {
++    title: 'React, JSX and accessibility',
++    matches: rule => rule.tags.some(tag => ['react', 'jsx', 'accessibility'].includes(tag)),
++  },
++  {
++    title: 'Tests',
++    matches: rule =>
++      rule.tags.some(tag =>
++        ['tests', 'jest', 'vitest', 'playwright', 'testing-library'].includes(tag),
++      ),
++  },
++  { title: 'Bugs', matches: rule => rule.type === 'BUG' },
++  { title: 'Vulnerabilities', matches: rule => rule.type === 'VULNERABILITY' },
++  { title: 'Code smells', matches: () => true },
++]
++
++/** The keys of a Java-style .properties file, with `\` line continuations joined. */
++export function parseProperties(text) {
++  const properties = {}
++  const joined = text.replaceAll(/\\\r?\n[ \t]*/g, '')
++  for (const rawLine of joined.split(/\r?\n/)) {
++    const line = rawLine.trim()
++    if (line === '' || line.startsWith('#') || line.startsWith('!')) continue
++    const separator = line.search(/[=:]/)
++    if (separator === -1) continue
++    properties[line.slice(0, separator).trim()] = line.slice(separator + 1).trim()
++  }
++  return properties
++}
++
++/** A rule as SonarCloud's api/rules/search returns it, reduced to what the digest reads. */
++export function normalizeRule(rule) {
++  return {
++    key: rule.key,
++    name: rule.name,
++    type: rule.type,
++    severity: rule.severity,
++    tags: [...(rule.sysTags ?? []), ...(rule.tags ?? [])].filter(
++      (tag, index, all) => all.indexOf(tag) === index,
++    ),
++  }
++}
++
++function ruleNumber(key) {
++  const digits = /S(\d+)$/.exec(key)
++  return digits ? Number(digits[1]) : Number.MAX_SAFE_INTEGER
++}
++
++export function compareRules(a, b) {
++  const bySeverity = SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
++  return bySeverity || ruleNumber(a.key) - ruleNumber(b.key) || a.key.localeCompare(b.key)
++}
++
++/** Splits the rules into the digest's sections, leaving out rules only for excluded frameworks. */
++export function groupRules(rules, excludeTags = DEFAULT_EXCLUDE_TAGS) {
++  const excluded = new Set(excludeTags)
++  const isExcluded = rule =>
++    rule.tags.some(tag => excluded.has(tag)) && !rule.tags.some(tag => KEEP_TAGS.includes(tag))
++  const kept = rules.filter(rule => !isExcluded(rule))
++  const sections = SECTIONS.map(section => ({ title: section.title, rules: [] }))
++  for (const rule of kept) {
++    const index = SECTIONS.findIndex(section => section.matches(rule))
++    sections[index].rules.push(rule)
++  }
++  for (const section of sections) section.rules.sort(compareRules)
++  return {
++    sections: sections.filter(section => section.rules.length > 0),
++    skipped: rules.length - kept.length,
++  }
++}
++
++function escapeMarkdown(text) {
++  return text.replaceAll(/([\\*_[\]<>|])/g, String.raw`\$1`)
++}
++
++// Only the TypeScript analyzer's own rules have a page on rules.sonarsource.com under that language;
++// the others (architecture, for one) are listed by key alone.
++function ruleLine(rule) {
++  const separator = rule.key.indexOf(':')
++  const repository = rule.key.slice(0, separator)
++  const id = rule.key.slice(separator + 1)
++  const label =
++    repository === 'typescript'
++      ? `[${id}](https://rules.sonarsource.com/typescript/RSPEC-${id.slice(1)}/)`
++      : `${id} (${repository})`
++  return `- ${label} (${rule.severity.toLowerCase()}): ${escapeMarkdown(rule.name)}`
++}
++
++function withoutTrailingSlashes(url) {
++  let end = url.length
++  while (end > 0 && url[end - 1] === '/') end--
++  return url.slice(0, end)
++}
++
++/** The digest's Markdown, before Prettier. */
++export function renderDigest(list) {
++  const { sections, skipped } = groupRules(list.rules, list.excludeTags ?? DEFAULT_EXCLUDE_TAGS)
++  const listed = sections.reduce((total, section) => total + section.rules.length, 0)
++  const source = list.source ?? {}
++  const lines = [
++    '# SonarCloud rules digest',
++    '',
++    '<!-- Generated by scripts/sonar-rules-digest.mjs from docs/quality/sonar-rules.json. Do not edit by hand. -->',
++    '',
++    `The ${listed} active rules of the \`${source.profile ?? 'unknown'}\` TypeScript quality profile`,
++    `(fetched ${source.fetchedAt ?? 'unknown'}) that apply to this codebase, so you can avoid a`,
++    'finding before the scan reports it. Each links to the rule description, with compliant and',
++    'non-compliant examples.',
++    '',
++    `${skipped} more rules in the profile are for frameworks this codebase does not use (tags:`,
++    `${(list.excludeTags ?? DEFAULT_EXCLUDE_TAGS).join(', ')}) and are left out.`,
++    '',
++    'Refresh the list with `pnpm sonar:rules-digest --refresh` (a private organization needs',
++    '`SONAR_TOKEN`), or regenerate this file from the committed list with `pnpm sonar:rules-digest`.',
++    'CI fails when this file and `docs/quality/sonar-rules.json` disagree.',
++  ]
++  for (const section of sections) {
++    lines.push(
++      '',
++      `## ${section.title} (${section.rules.length})`,
++      '',
++      ...section.rules.map(ruleLine),
++    )
++  }
++  return lines.join('\n') + '\n'
++}
++
++// Formatted with the repository's Prettier and its config, so the files pass `prettier --check .`.
++async function formatForFile(text, filePath) {
++  const prettier = await import('prettier')
++  const options = (await prettier.resolveConfig(filePath)) ?? {}
++  return prettier.format(text, { ...options, filepath: filePath })
++}
++
++export async function buildDigest(list, digestPath) {
++  return formatForFile(renderDigest(list), digestPath)
++}
++
++async function getJson(fetchImpl, url, token) {
++  const headers = { Accept: 'application/json' }
++  if (token) headers.Authorization = `Bearer ${token}`
++  const response = await fetchImpl(url, { headers })
++  if (!response.ok) {
++    const hint = token ? '' : ' A private organization needs SONAR_TOKEN.'
++    throw new Error(`${url.split('?')[0]} answered ${response.status}.${hint}`)
++  }
++  return response.json()
++}
++
++/** Fetches the project's TypeScript quality profile and its active rules. */
++export async function fetchRules({ host, organization, projectKey, token, fetchImpl = fetch }) {
++  const base = withoutTrailingSlashes(host)
++  const profiles = await getJson(
++    fetchImpl,
++    `${base}/api/qualityprofiles/search?${new URLSearchParams({ organization, project: projectKey })}`,
++    token,
++  )
++  const profile = (profiles.profiles ?? []).find(candidate => candidate.language === LANGUAGE)
++  if (!profile) throw new Error(`No ${LANGUAGE} quality profile found for ${projectKey}.`)
++
++  const rules = []
++  const pageSize = 500
++  for (let page = 1; ; page++) {
++    const query = new URLSearchParams({
++      organization,
++      qprofile: profile.key,
++      activation: 'true',
++      ps: String(pageSize),
++      p: String(page),
++      f: 'name,severity,sysTags,tags',
++    })
++    const result = await getJson(fetchImpl, `${base}/api/rules/search?${query}`, token)
++    rules.push(...(result.rules ?? []).map(normalizeRule))
++    if ((result.rules ?? []).length < pageSize || rules.length >= (result.total ?? 0)) break
++  }
++  rules.sort((a, b) => a.key.localeCompare(b.key))
++  return { profile: profile.name, rules }
++}
++
++export async function main(
++  argv = process.argv.slice(2),
++  { root = workspaceRoot, fetchImpl = fetch, env = process.env, log = console.log } = {},
++) {
++  const unknown = argv.filter(arg => !['--check', '--refresh'].includes(arg))
++  if (unknown.length > 0 || (argv.includes('--check') && argv.includes('--refresh'))) {
++    console.error('Usage: node scripts/sonar-rules-digest.mjs [--check | --refresh]')
++    return 2
++  }
++  const rulesPath = join(root, RULES_FILE)
++  const digestPath = join(root, DIGEST_FILE)
++  let list = JSON.parse(readFileSync(rulesPath, 'utf8'))
++
++  if (argv.includes('--refresh')) {
++    const properties = parseProperties(readFileSync(join(root, 'sonar-project.properties'), 'utf8'))
++    const fetched = await fetchRules({
++      host: env.SONAR_HOST_URL || 'https://sonarcloud.io',
++      organization: properties['sonar.organization'],
++      projectKey: properties['sonar.projectKey'],
++      token: env.SONAR_TOKEN,
++      fetchImpl,
++    })
++    list = {
++      source: {
++        profile: fetched.profile,
++        language: LANGUAGE,
++        fetchedAt: new Date().toISOString().slice(0, 10),
++      },
++      excludeTags: list.excludeTags ?? DEFAULT_EXCLUDE_TAGS,
++      rules: fetched.rules,
++    }
++    writeFileSync(rulesPath, await formatForFile(JSON.stringify(list, null, 2), rulesPath))
++    log(`Fetched ${list.rules.length} active rules into ${RULES_FILE}.`)
++  }
++
++  const digest = await buildDigest(list, digestPath)
++  if (argv.includes('--check')) {
++    let current = ''
++    try {
++      current = readFileSync(digestPath, 'utf8')
++    } catch {
++      // A missing digest is out of date like any other.
++    }
++    if (current !== digest) {
++      console.error(
++        `${DIGEST_FILE} is out of date. Run \`pnpm sonar:rules-digest\` and commit the result.`,
++      )
++      return 1
++    }
++    log(`${DIGEST_FILE} is up to date.`)
++    return 0
++  }
++  writeFileSync(digestPath, digest)
++  log(`Wrote ${DIGEST_FILE}.`)
++  return 0
++}
++
++// Compared as real filesystem paths: a URL built from argv would misread `#` or `%` in the checkout
++// path, and Node resolves a symlinked script to its target.
++const isMain =
++  process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]))
++if (isMain) process.exitCode = await main()
+diff --git a/scripts/sonar-rules-digest.spec.mjs b/scripts/sonar-rules-digest.spec.mjs
+new file mode 100644
+index 0000000..fcf58ef
+--- /dev/null
++++ b/scripts/sonar-rules-digest.spec.mjs
+@@ -0,0 +1,289 @@
++import assert from 'node:assert/strict'
++import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, describe, it } from 'node:test'
++import {
++  DIGEST_FILE,
++  RULES_FILE,
++  compareRules,
++  fetchRules,
++  groupRules,
++  main,
++  normalizeRule,
++  parseProperties,
++  renderDigest,
++} from './sonar-rules-digest.mjs'
++
++const roots = []
++afterEach(() => {
++  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
++})
++
++function rule(key, overrides = {}) {
++  return { key, name: `Rule ${key}`, type: 'CODE_SMELL', severity: 'MAJOR', tags: [], ...overrides }
++}
++
++function workspace(list) {
++  const root = mkdtempSync(join(tmpdir(), 'sonar-rules-digest-'))
++  roots.push(root)
++  mkdirSync(join(root, 'docs', 'quality'), { recursive: true })
++  writeFileSync(join(root, RULES_FILE), JSON.stringify(list))
++  writeFileSync(
++    join(root, 'sonar-project.properties'),
++    'sonar.projectKey=example_app\nsonar.organization=example-org\n',
++  )
++  return root
++}
++
++function jsonResponse(body, status = 200) {
++  return { ok: status >= 200 && status < 300, status, json: async () => body }
++}
++
++const quiet = { log: () => {} }
++
++describe('parseProperties', () => {
++  it('reads keys, joins continued lines and skips comments', () => {
++    const properties = parseProperties(
++      '# comment\n! also a comment\nsonar.projectKey=example_app\nsonar.sources=\\\n  apps,\\\n  libs\nsonar.organization: example-org\n',
++    )
++    assert.deepEqual(properties, {
++      'sonar.projectKey': 'example_app',
++      'sonar.sources': 'apps,libs',
++      'sonar.organization': 'example-org',
++    })
++  })
++})
++
++describe('normalizeRule', () => {
++  it('keeps what the digest reads and merges system and custom tags once', () => {
++    assert.deepEqual(
++      normalizeRule({
++        key: 'typescript:S1',
++        name: 'One',
++        type: 'BUG',
++        severity: 'MINOR',
++        sysTags: ['react', 'tests'],
++        tags: ['react', 'team'],
++        impacts: [],
++      }),
++      {
++        key: 'typescript:S1',
++        name: 'One',
++        type: 'BUG',
++        severity: 'MINOR',
++        tags: ['react', 'tests', 'team'],
++      },
++    )
++  })
++})
++
++describe('groupRules', () => {
++  it('lists each rule once, in the first section it matches, and leaves out excluded tags', () => {
++    const { sections, skipped } = groupRules(
++      [
++        rule('typescript:S10', { type: 'BUG', tags: ['react'] }),
++        rule('typescript:S11', { type: 'BUG', tags: ['jest'] }),
++        rule('typescript:S12', { type: 'BUG' }),
++        rule('typescript:S13', { type: 'VULNERABILITY' }),
++        rule('typescript:S14'),
++        rule('typescript:S15', { tags: ['vue'] }),
++      ],
++      ['vue'],
++    )
++    assert.equal(skipped, 1)
++    assert.deepEqual(
++      sections.map(section => [section.title, section.rules.map(r => r.key)]),
++      [
++        ['React, JSX and accessibility', ['typescript:S10']],
++        ['Tests', ['typescript:S11']],
++        ['Bugs', ['typescript:S12']],
++        ['Vulnerabilities', ['typescript:S13']],
++        ['Code smells', ['typescript:S14']],
++      ],
++    )
++  })
++
++  it('keeps a rule tagged for an excluded framework when it is also tagged for a used one', () => {
++    const { sections, skipped } = groupRules(
++      [
++        rule('typescript:S6426', { tags: ['tests', 'mocha', 'jest', 'vitest'] }),
++        rule('typescript:S2', { tags: ['mocha'] }),
++      ],
++      ['mocha'],
++    )
++    assert.equal(skipped, 1)
++    assert.deepEqual(
++      sections.flatMap(section => section.rules.map(r => r.key)),
++      ['typescript:S6426'],
++    )
++  })
++
++  it('drops empty sections', () => {
++    const { sections } = groupRules([rule('typescript:S1')], [])
++    assert.deepEqual(
++      sections.map(section => section.title),
++      ['Code smells'],
++    )
++  })
++})
++
++describe('compareRules', () => {
++  it('orders by severity, then by rule number rather than by text', () => {
++    const sorted = [
++      rule('typescript:S100', { severity: 'MINOR' }),
++      rule('typescript:S20'),
++      rule('typescript:S3', { severity: 'BLOCKER' }),
++      rule('typescript:S100'),
++    ].sort(compareRules)
++    assert.deepEqual(
++      sorted.map(r => `${r.severity} ${r.key}`),
++      [
++        'BLOCKER typescript:S3',
++        'MAJOR typescript:S20',
++        'MAJOR typescript:S100',
++        'MINOR typescript:S100',
++      ],
++    )
++  })
++})
++
++describe('renderDigest', () => {
++  it('links TypeScript rules, names other repositories and escapes Markdown in rule names', () => {
++    const markdown = renderDigest({
++      source: { profile: 'Example way', fetchedAt: '2026-01-02' },
++      excludeTags: ['vue'],
++      rules: [
++        rule('typescript:S5257', { name: 'HTML "<table>" should not be used for *layout*' }),
++        rule('tssecurity:S2076', { type: 'VULNERABILITY', severity: 'BLOCKER' }),
++        rule('typescript:S1', { tags: ['vue'] }),
++      ],
++    })
++    assert.match(markdown, /The 2 active rules of the `Example way` TypeScript quality profile/)
++    assert.match(markdown, /\(fetched 2026-01-02\)/)
++    assert.match(markdown, /^1 more rules in the profile/m)
++    assert.match(
++      markdown,
++      /^- \[S5257\]\(https:\/\/rules\.sonarsource\.com\/typescript\/RSPEC-5257\/\) \(major\): HTML "\\<table\\>" should not be used for \\\*layout\\\*$/m,
++    )
++    assert.match(markdown, /^- S2076 \(tssecurity\) \(blocker\): Rule tssecurity:S2076$/m)
++    assert.match(markdown, /^## Vulnerabilities \(1\)$/m)
++    assert.doesNotMatch(markdown, /typescript:S1\b/)
++  })
++})
++
++describe('fetchRules', () => {
++  it('finds the TypeScript profile and pages through its active rules with the token', async () => {
++    const requests = []
++    const fetchImpl = async (url, options) => {
++      requests.push({ url, authorization: options.headers.Authorization })
++      if (url.includes('/api/qualityprofiles/search')) {
++        return jsonResponse({
++          profiles: [
++            { key: 'js-profile', name: 'JS way', language: 'js' },
++            { key: 'ts-profile', name: 'TS way', language: 'ts' },
++          ],
++        })
++      }
++      const page = Number(new URL(url).searchParams.get('p'))
++      const rules = Array.from({ length: page === 1 ? 500 : 2 }, (_, i) => ({
++        key: `typescript:S${page * 1000 + i}`,
++        name: 'n',
++        type: 'BUG',
++        severity: 'MAJOR',
++        sysTags: [],
++      }))
++      return jsonResponse({ total: 502, rules })
++    }
++    const result = await fetchRules({
++      host: 'https://sonar.example.test//',
++      organization: 'example-org',
++      projectKey: 'example_app',
++      token: 'token-value',
++      fetchImpl,
++    })
++    assert.equal(result.profile, 'TS way')
++    assert.equal(result.rules.length, 502)
++    assert.equal(requests.length, 3)
++    assert.ok(requests.every(request => request.authorization === 'Bearer token-value'))
++    assert.ok(requests[0].url.startsWith('https://sonar.example.test/api/qualityprofiles/search?'))
++    assert.equal(new URL(requests[1].url).searchParams.get('qprofile'), 'ts-profile')
++    assert.equal(new URL(requests[1].url).searchParams.get('activation'), 'true')
++  })
++
++  it('says a private organization needs SONAR_TOKEN when an anonymous request is refused', async () => {
++    await assert.rejects(
++      fetchRules({
++        host: 'https://sonar.example.test',
++        organization: 'example-org',
++        projectKey: 'example_app',
++        fetchImpl: async () => jsonResponse({}, 403),
++      }),
++      /answered 403\. A private organization needs SONAR_TOKEN\./,
++    )
++  })
++
++  it('fails when the project has no TypeScript profile', async () => {
++    await assert.rejects(
++      fetchRules({
++        host: 'https://sonar.example.test',
++        organization: 'example-org',
++        projectKey: 'example_app',
++        fetchImpl: async () =>
++          jsonResponse({ profiles: [{ key: 'k', name: 'JS', language: 'js' }] }),
++      }),
++      /No ts quality profile found for example_app\./,
++    )
++  })
++})
++
++describe('main', () => {
++  const list = {
++    source: { profile: 'Example way', fetchedAt: '2026-01-02' },
++    excludeTags: [],
++    rules: [rule('typescript:S1')],
++  }
++
++  it('writes the digest, then --check passes until the list changes', async () => {
++    const root = workspace(list)
++    assert.equal(await main([], { root, ...quiet }), 0)
++    assert.match(readFileSync(join(root, DIGEST_FILE), 'utf8'), /^# SonarCloud rules digest/)
++    assert.equal(await main(['--check'], { root, ...quiet }), 0)
++
++    writeFileSync(
++      join(root, RULES_FILE),
++      JSON.stringify({ ...list, rules: [...list.rules, rule('typescript:S2')] }),
++    )
++    assert.equal(await main(['--check'], { root, ...quiet }), 1)
++  })
++
++  it('--check fails when the digest is missing', async () => {
++    assert.equal(await main(['--check'], { root: workspace(list), ...quiet }), 1)
++  })
++
++  it('--refresh replaces the rules, keeps the excluded tags and regenerates', async () => {
++    const root = workspace({ ...list, excludeTags: ['vue'] })
++    const fetchImpl = async url =>
++      url.includes('qualityprofiles')
++        ? jsonResponse({ profiles: [{ key: 'ts-profile', name: 'Fetched way', language: 'ts' }] })
++        : jsonResponse({
++            total: 1,
++            rules: [{ key: 'typescript:S9', name: 'Nine', type: 'BUG', severity: 'MAJOR' }],
++          })
++    assert.equal(await main(['--refresh'], { root, fetchImpl, env: {}, ...quiet }), 0)
++    const refreshed = JSON.parse(readFileSync(join(root, RULES_FILE), 'utf8'))
++    assert.equal(refreshed.source.profile, 'Fetched way')
++    assert.deepEqual(refreshed.excludeTags, ['vue'])
++    assert.deepEqual(
++      refreshed.rules.map(r => r.key),
++      ['typescript:S9'],
++    )
++    assert.match(readFileSync(join(root, DIGEST_FILE), 'utf8'), /Nine/)
++  })
++
++  it('rejects unknown arguments and --check with --refresh', async () => {
++    const root = workspace(list)
++    assert.equal(await main(['--wat'], { root, ...quiet }), 2)
++    assert.equal(await main(['--check', '--refresh'], { root, ...quiet }), 2)
++  })
++})
