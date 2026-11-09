@@ -1,0 +1,194 @@
+diff --git a/.claude/hooks/session-start.sh b/.claude/hooks/session-start.sh
+new file mode 100755
+index 0000000..f742f4a
+--- /dev/null
++++ b/.claude/hooks/session-start.sh
+@@ -0,0 +1,67 @@
++#!/usr/bin/env sh
++# Warms a Claude Code CLOUD session: installs dependencies and generates the Prisma client before
++# the agent's first turn. Registered as a SessionStart hook in .claude/settings.json, which a cloud
++# session reads from the checkout, so every session gets it with no per-account environment setup.
++# A local session exits immediately: it already has node_modules.
++#
++# Why: a cloud session that starts cold installs on its own, or not at all, and the pre-commit hook
++# (.githooks/pre-commit: Prettier and the secret scan on staged files) is only wired when
++# `pnpm install` runs the `prepare` script. Installing here makes that hook, and a formatted
++# commit, the default.
++#
++# Skips when node_modules already matches the lockfile and the Prisma schema, so a resumed session
++# pays nothing.
++# `--frozen-lockfile` without `--ignore-scripts` on purpose: `prepare` must run. The one-line
++# summary on stdout is added to the session's context.
++set -eu
++
++# Runs one warm-up step, printing what it said only if it failed. pnpm writes some errors
++# (ERR_PNPM_UNSUPPORTED_ENGINE and friends) to STDOUT, so discarding stdout would also discard the
++# reason. An agent that knows the install failed can install by hand and format before committing.
++run_step() {
++  if output="$("$@" 2>&1)"; then
++    return 0
++  fi
++  echo "session-start: FAILED. \`$*\` did not complete, so node_modules, the Prisma client and"
++  echo "the .githooks/pre-commit hook may all be missing. Without the hook, run"
++  echo "\`pnpm exec prettier --write\` on the files you changed before committing, or CI's"
++  echo "\`prettier --check .\` will fail. Never commit with --no-verify. It said:"
++  printf '%s\n' "$output" | tail -n 20
++  # exit 0, not 1: a failing SessionStart hook is non-blocking anyway, and stdout from a hook that
++  # succeeds is the documented way to put text in the session's context.
++  exit 0
++}
++
++[ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
++cd "${CLAUDE_PROJECT_DIR:-.}"
++
++# The cloud image's Node is not ours to pin, and `.npmrc`'s engine-strict would refuse the install
++# over a patch-level difference from `engines.node`, leaving the session with no node_modules at
++# all. Here a patch difference is a warning, not a refusal. A different MAJOR still stops the
++# warm-up: the lockfile, Prisma's engines and native modules are built for one major.
++want_major="$(cut -d. -f1 .nvmrc | tr -d 'v[:space:]')"
++have="$(node -p process.versions.node 2>/dev/null || echo none)"
++if [ "${have%%.*}" != "$want_major" ]; then
++  echo "session-start: FAILED. This cloud image has Node $have and the repository needs Node"
++  echo "$want_major (.nvmrc: $(cat .nvmrc)). Nothing was installed: no node_modules, no Prisma client"
++  echo "and no .githooks/pre-commit hook. Say so in your report; do not install under a different"
++  echo "major. If you commit, run \`pnpm exec prettier --write\` on the files you changed first."
++  exit 0
++fi
++export npm_config_engine_strict=false
++
++# The marker fingerprints the lockfile AND the Prisma schema: a resumed checkout whose schema
++# changed with no dependency change still needs the client regenerated.
++marker=node_modules/.session-start-lockfile-hash
++want="$(git hash-object pnpm-lock.yaml libs/api/prisma/src/lib/schemas/schema.prisma | tr '\n' ' ')"
++if [ -f "$marker" ] && [ "$(cat "$marker")" = "$want" ] \
++  && [ -d libs/api/prisma/src/lib/prisma-generated ] \
++  && [ "$(git config core.hooksPath || true)" = ".githooks" ]; then
++  echo "session-start: dependencies, Prisma client and git hooks already current; nothing installed."
++  exit 0
++fi
++
++run_step pnpm install --frozen-lockfile
++run_step pnpm prisma:generate
++printf '%s\n' "$want" > "$marker"
++echo "session-start: installed dependencies (pnpm install --frozen-lockfile), generated the Prisma client, and wired .githooks/pre-commit (Prettier and secret scan on staged files). Never commit with --no-verify."
+diff --git a/.claude/settings.json b/.claude/settings.json
+index 887af87..89e38c6 100644
+--- a/.claude/settings.json
++++ b/.claude/settings.json
+@@ -9,5 +9,19 @@
+   },
+   "enabledPlugins": {
+     "nx@nx-claude-plugins": true
++  },
++  "hooks": {
++    "SessionStart": [
++      {
++        "matcher": "startup|resume",
++        "hooks": [
++          {
++            "type": "command",
++            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
++            "timeout": 600
++          }
++        ]
++      }
++    ]
+   }
+ }
+diff --git a/.githooks/pre-commit b/.githooks/pre-commit
+new file mode 100755
+index 0000000..805043c
+--- /dev/null
++++ b/.githooks/pre-commit
+@@ -0,0 +1,48 @@
++#!/usr/bin/env sh
++# Runs before every commit, on the staged files only:
++#
++# 1. Prettier formats them and they are re-staged, so CI's tree-wide formatting gate
++#    (`prettier --check .`) never fails for a file committed from here. That gate is the most
++#    common reason a run goes red, each a full CI round trip for a one-second fix.
++# 2. gitleaks scans what is staged for secrets, when it is installed. CI's gitleaks job is the
++#    enforced layer; this one only catches a secret before it is in history at all.
++#
++# Wired up by package.json's `prepare` script (`git config core.hooksPath .githooks || true`) on
++# `pnpm install`. CI installs with --ignore-scripts and never runs it; a build without `.git`
++# (Railway, Docker) skips it through the `|| true`. No dependency is involved on purpose: husky
++# and lint-staged add transitive packages that re-key the pnpm lockfile.
++#
++# Prettier gets the staged paths explicitly and still honours .prettierignore; --ignore-unknown
++# skips files it has no parser for. The formatted files are re-staged whole, so a partially staged
++# file has its unstaged hunks staged too: stage whole files, or commit the hunks you mean. Never
++# bypass this hook with --no-verify.
++set -e
++# -z: NUL-separated and never C-quoted, so a path with spaces or non-ASCII characters reaches
++# Prettier and `git add` as it is. Without it git quotes such paths ("docs/caf\303\251.md").
++staged_paths() {
++  git diff --cached --name-only --diff-filter=ACMR -z
++}
++[ -n "$(staged_paths | tr '\0' '\n')" ] || exit 0
++
++# A missing formatter must not wedge the commit. Called unconditionally, the hook would abort with
++# `xargs: node_modules/.bin/prettier: No such file or directory` in any checkout without
++# node_modules (a fresh worktree, a cloud session whose install failed), and the only way past a
++# failing hook is --no-verify, which this repository forbids. Say what is wrong and let the commit
++# through: the blocking gate is CI's `prettier --check .`, not this.
++if [ -x node_modules/.bin/prettier ]; then
++  staged_paths | xargs -0 node_modules/.bin/prettier --write --ignore-unknown --log-level warn --
++  staged_paths | xargs -0 git add --
++else
++  echo "pre-commit: NOT FORMATTED. node_modules/.bin/prettier is missing, so the staged files" >&2
++  echo "were left as they are. Run \`pnpm install\`, or \`pnpm exec prettier --write\` on the files" >&2
++  echo "you changed, before you push: CI's \`prettier --check .\` is blocking." >&2
++fi
++
++# The secret scan runs after formatting, on exactly what will be committed. gitleaks reads
++# .gitleaks.toml at the repository root. A finding blocks the commit: remove the secret from the
++# staged change (and rotate it if it was real). A false positive goes in .gitleaks.toml's allowlist.
++if command -v gitleaks >/dev/null 2>&1; then
++  gitleaks git --pre-commit --staged --redact --no-banner --verbose --log-level warn
++else
++  echo "pre-commit: gitleaks is not installed; secret scan skipped (CI runs it)." >&2
++fi
+diff --git a/AGENTS.md b/AGENTS.md
+index fb0ace6..3926f6c 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -135,7 +135,8 @@ a template clone in a 3 GB Linux container, uncached:
+   Windows `cmd` and the template has no cross-platform env helper; on a small host set it in the
+   shell (`export NX_ISOLATE_PLUGINS=false`, or `$env:NX_ISOLATE_PLUGINS='false'` in PowerShell).
+   Nx already turns plugin isolation off in the sandboxes it detects.
+-- CI keeps Nx's default parallelism (`.github/workflows/ci.yml`); hosted runners have the memory.
++- CI (`.github/workflows/ci.yml`) runs typecheck in its own job, three projects at a time with a
++  2 GB heap each, which fits GitHub's standard 7.9 GB runner.
+ 
+ ### Prisma Operations
+ 
+@@ -178,7 +179,7 @@ Unit and component tests use Jest and Vitest through Nx project targets. Place t
+ 
+ ## Commit & Pull Request Guidelines
+ 
+-Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
++Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. `pnpm install` wires `.githooks/pre-commit` (through the `prepare` script), which formats the staged files with Prettier and scans them with gitleaks when it is installed; never bypass it with `--no-verify`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
+ 
+ ## Downstream Upgrade Notes
+ 
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 43c994c..cd9c9c6 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -1 +1,3 @@
+ @AGENTS.md
++
++Commits: `.githooks/pre-commit` formats the staged files with Prettier. If the hook did not run, format the files you changed (never the whole tree) with `pnpm exec prettier --write <files>` before committing; never use `--no-verify`.
+diff --git a/package.json b/package.json
+index 4780c3e..8d1dcb2 100644
+--- a/package.json
++++ b/package.json
+@@ -8,6 +8,7 @@
+     "pnpm": "10.33.0"
+   },
+   "scripts": {
++    "prepare": "git config core.hooksPath .githooks || true",
+     "pre-publish": "pnpm exec nx affected -t lint build test:unit --base=develop",
+     "db-update": "node scripts/db-update.mjs",
+     "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom",
