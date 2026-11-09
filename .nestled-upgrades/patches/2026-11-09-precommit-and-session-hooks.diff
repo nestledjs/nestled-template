@@ -172,15 +172,6 @@ index fb0ace6..3926f6c 100644
  
  ## Downstream Upgrade Notes
  
-@@ -506,7 +507,7 @@ Do not commit secrets. Start from `.env.example` and keep local values in `.env`
- 
- ## SonarQube Quality Expectations
- 
--This repository is kept clean under SonarQube. When editing code, proactively avoid common Sonar findings instead of relying on a later cleanup pass:
-+This repository is kept clean under SonarQube. When editing code, proactively avoid common Sonar findings instead of relying on a later cleanup pass. [docs/quality/sonar-rules.md](docs/quality/sonar-rules.md) lists every active rule of the TypeScript quality profile that applies here, grouped (React and accessibility, tests, bugs, vulnerabilities, code smells) and linked to each rule's examples; read the section for what you are changing. It is generated from the committed `docs/quality/sonar-rules.json` by `pnpm sonar:rules-digest` (`--refresh` re-fetches the list from SonarCloud). The findings that come up most often here:
- 
- - Keep functions small and focused. If a function starts accumulating nested branches, loops, or mixed responsibilities, extract named helpers before cognitive complexity becomes high.
- - Avoid deeply nested control flow. Prefer early returns, guard helpers, and small validation functions.
 diff --git a/CLAUDE.md b/CLAUDE.md
 index 43c994c..cd9c9c6 100644
 --- a/CLAUDE.md
@@ -201,11 +192,3 @@ index 4780c3e..8d1dcb2 100644
      "pre-publish": "pnpm exec nx affected -t lint build test:unit --base=develop",
      "db-update": "node scripts/db-update.mjs",
      "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom",
-@@ -51,6 +52,7 @@
-     "test": "nx run-many -t test",
-     "test:coverage": "nx run-many -t test -- --coverage",
-     "coverage:normalize-lcov": "tsx scripts/normalize-lcov-paths.ts",
-+    "sonar:rules-digest": "node scripts/sonar-rules-digest.mjs",
-     "sonar:local": "pnpm test:coverage && pnpm coverage:normalize-lcov && SONAR_TOKEN=$SONARQUBE_TOKEN sonar-scanner",
-     "test:api": "pnpm nx e2e api-e2e",
-     "test:ci": "pnpm test:api",

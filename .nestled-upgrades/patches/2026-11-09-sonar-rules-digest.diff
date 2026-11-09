@@ -2,25 +2,6 @@ diff --git a/AGENTS.md b/AGENTS.md
 index fb0ace6..3926f6c 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -135,7 +135,8 @@ a template clone in a 3 GB Linux container, uncached:
-   Windows `cmd` and the template has no cross-platform env helper; on a small host set it in the
-   shell (`export NX_ISOLATE_PLUGINS=false`, or `$env:NX_ISOLATE_PLUGINS='false'` in PowerShell).
-   Nx already turns plugin isolation off in the sandboxes it detects.
--- CI keeps Nx's default parallelism (`.github/workflows/ci.yml`); hosted runners have the memory.
-+- CI (`.github/workflows/ci.yml`) runs typecheck in its own job, three projects at a time with a
-+  2 GB heap each, which fits GitHub's standard 7.9 GB runner.
- 
- ### Prisma Operations
- 
-@@ -178,7 +179,7 @@ Unit and component tests use Jest and Vitest through Nx project targets. Place t
- 
- ## Commit & Pull Request Guidelines
- 
--Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
-+Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. `pnpm install` wires `.githooks/pre-commit` (through the `prepare` script), which formats the staged files with Prettier and scans them with gitleaks when it is installed; never bypass it with `--no-verify`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
- 
- ## Downstream Upgrade Notes
- 
 @@ -506,7 +507,7 @@ Do not commit secrets. Start from `.env.example` and keep local values in `.env`
  
  ## SonarQube Quality Expectations
@@ -3918,14 +3899,6 @@ diff --git a/package.json b/package.json
 index 4780c3e..8d1dcb2 100644
 --- a/package.json
 +++ b/package.json
-@@ -8,6 +8,7 @@
-     "pnpm": "10.33.0"
-   },
-   "scripts": {
-+    "prepare": "git config core.hooksPath .githooks || true",
-     "pre-publish": "pnpm exec nx affected -t lint build test:unit --base=develop",
-     "db-update": "node scripts/db-update.mjs",
-     "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom",
 @@ -51,6 +52,7 @@
      "test": "nx run-many -t test",
      "test:coverage": "nx run-many -t test -- --coverage",
