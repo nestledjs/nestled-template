@@ -3,10 +3,12 @@ import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
+  classifyApiFailure,
   isRetryableConnectivityError,
   makeClient,
   subscriptionRetryDelayMs,
 } from './apollo'
+import { apolloLoader, ssrApiFailureCause } from './apollo-loader'
 
 function jwtWithIssuedAt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
@@ -471,5 +473,135 @@ describe('isRetryableConnectivityError', () => {
     ['undefined', undefined],
   ])('does not retry %s', (_label, error) => {
     expect(isRetryableConnectivityError(error)).toBe(false)
+  })
+})
+
+describe('classifyApiFailure', () => {
+  function serverError(status: number) {
+    return new ServerError('Response not successful', {
+      response: new Response(null, { status }),
+      bodyText: '',
+    })
+  }
+
+  it.each([
+    ['an HTTP 401', serverError(401), 'unauthenticated'],
+    [
+      'an UNAUTHENTICATED GraphQL error',
+      new CombinedGraphQLErrors({
+        errors: [{ message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } }],
+      }),
+      'unauthenticated',
+    ],
+    ['no response at all', new TypeError('Failed to fetch'), 'unavailable'],
+    ['a proxy 502', serverError(502), 'unavailable'],
+    ['a proxy 503', serverError(503), 'unavailable'],
+    ['a proxy 504', serverError(504), 'unavailable'],
+    ['an HTTP 403', serverError(403), 'other'],
+    ['an HTTP 500', serverError(500), 'other'],
+    [
+      'a FORBIDDEN GraphQL error',
+      new CombinedGraphQLErrors({ errors: [{ message: 'No', extensions: { code: 'FORBIDDEN' } }] }),
+      'other',
+    ],
+    ['an application TypeError', new TypeError('Cannot read properties of undefined'), 'other'],
+  ] as const)('classifies %s as %s', (_label, error, cause) => {
+    expect(classifyApiFailure(error)).toBe(cause)
+  })
+
+  it('tells onApiFailure what each failed operation failed with', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const query = gql`
+      query Me {
+        me {
+          id
+        }
+      }
+    `
+    const causes: string[] = []
+    const onApiFailure = (cause: string) => causes.push(cause)
+    const originalFetch = globalThis.fetch
+    try {
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql', onApiFailure })
+        .query({ query })
+        .catch(() => undefined)
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql', onApiFailure })
+        .query({ query })
+        .catch(() => undefined)
+    } finally {
+      globalThis.fetch = originalFetch
+      vi.restoreAllMocks()
+    }
+    expect(causes).toEqual(['unavailable', 'unauthenticated'])
+  })
+})
+
+describe('apolloLoader failure record', () => {
+  function loaderArgs() {
+    return {
+      request: new Request('https://app.example.com/members'),
+      params: {},
+      context: {},
+    } as never
+  }
+
+  it('attaches a record to plain loader data, and finds no cause while nothing failed', () => {
+    const data = apolloLoader()(() => ({ theme: 'dark' }))(loaderArgs())
+
+    expect(Object.keys(data)).toEqual(['theme'])
+    expect(JSON.stringify(data)).toBe('{"theme":"dark"}')
+    expect(ssrApiFailureCause({ root: data })).toBeUndefined()
+  })
+
+  it('passes a Response through untouched', () => {
+    const redirect = new Response(null, { status: 302 })
+    expect(apolloLoader()(() => redirect)(loaderArgs())).toBe(redirect)
+    expect(ssrApiFailureCause({ root: redirect })).toBeUndefined()
+  })
+
+  it('reports the cause the loader client recorded, the most decisive one winning', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const originalFetch = globalThis.fetch
+    const query = gql`
+      query Me {
+        me {
+          id
+        }
+      }
+    `
+    try {
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+      const unavailable = await apolloLoader()(async ({ preloadQuery }) => {
+        const ref = preloadQuery(query)
+        await new Promise(resolve => setTimeout(resolve, 20))
+        return { ref }
+      })(loaderArgs())
+      expect(ssrApiFailureCause({ root: unavailable })).toBe('unavailable')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      const rejected = await apolloLoader()(async ({ preloadQuery }) => {
+        const ref = preloadQuery(query)
+        await new Promise(resolve => setTimeout(resolve, 20))
+        return { ref }
+      })(loaderArgs())
+      expect(ssrApiFailureCause({ root: unavailable, child: rejected })).toBe('unauthenticated')
+    } finally {
+      globalThis.fetch = originalFetch
+      vi.restoreAllMocks()
+    }
   })
 })

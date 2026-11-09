@@ -15,6 +15,7 @@ import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
 import { App } from '../../app/app'
 import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
 import { CONFIRM_DELAYS_MS, retryDelayMs } from '../../app/api-availability'
+import { SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
 
 // The layout's chrome is not under test; only its "no user -> /force-logout" redirect is.
 vi.mock('@nestled-template/web-ui', () => ({
@@ -37,7 +38,7 @@ const ME = gql`
 `
 
 const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
-const SERVER_DOWN = 'Can’t reach the server'
+const SERVER_DOWN = SERVER_TROUBLE_TITLE
 const fetchMock = vi.fn()
 
 type Respond = () => Observable<ApolloLink.Result>

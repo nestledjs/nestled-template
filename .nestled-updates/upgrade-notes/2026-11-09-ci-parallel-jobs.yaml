@@ -1,0 +1,158 @@
+id: 2026-11-09-ci-parallel-jobs
+title: >-
+  CI runs as parallel jobs with per-process heaps, an aggregate CI check, an affected gate on the
+  API e2e job, a gitleaks job, and a configurable e2e readiness wait
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  .github/workflows/ci.yml is rewritten from one `main` job (plus the Windows job) into parallel
+  jobs, each on its own machine. Nothing it checked before is dropped; every step moves to one of
+  these jobs:
+
+  - `affected` (Affected): on a pull request, asks Nx whether `api-e2e` is affected
+    (`nx show projects --affected --json | jq -r '.[]'` and an exact-line membership check, not `--projects`, which
+    `nx affected` forwards to every task as an override). On a push it always says yes.
+  - `static` (Static checks): the nxCloudId guard, the public content guard tests,
+    `template:validate-upgrade-notes`, `nestled-doctor`, `prettier --check .`, the three
+    `verify:*` select checks, `node --test scripts/*.spec.mjs`, `typecheck:workspace`, and
+    `node scripts/sonar-rules-digest.mjs --check` (from 2026-11-09-sonar-rules-digest).
+  - `gitleaks` (Secret scan): downloads gitleaks 8.30.1 from its GitHub release, checks the
+    published SHA-256, and scans the pull request's commits (`base..head`) or the pushed range
+    (`before..sha`; the whole history when there is no usable `before`). It reads `.gitleaks.toml`
+    at the repository root, which extends the default rules and allowlists three placeholder
+    encryption keys in the template's two-factor auth specs. The gitleaks GitHub Action is not
+    used because it needs a paid licence on organisation repositories.
+  - `lint`: `nx affected -t lint --parallel=3`, 2 GB heap.
+  - `build-api` and `build`: the API's webpack build alone with a 6 GB heap (only when `api` is
+    affected), and `nx affected -t build --exclude=api --parallel=2` with 3 GB.
+  - `typecheck`: `nx run-many -t typecheck --parallel=3`, 2 GB heap, unscoped.
+  - `tests-api` and `tests-web`: `nx run-many -t test --parallel=2 -- --coverage` (3 GB), split by a workflow-level
+    `WEB_TEST_PROJECTS` list. `tests-web` runs that list with `--projects`; `tests-api` runs every
+    other project with `--exclude`, so a new project is tested without being listed. `tests-api`
+    has the Redis service; `tests-web` is the only job that installs Playwright Chromium (web-ui's
+    Storybook browser tests), with `~/.cache/ms-playwright` cached by Playwright version through
+    `actions/cache`. Each uploads its `coverage` directory as a `coverage-*` artifact.
+  - `api-e2e`: the API e2e run with the Postgres and Redis services, 6 GB heap,
+    `E2E_API_START_TIMEOUT_SECONDS: 300`. On a pull request it runs only when `affected` says so.
+  - `generated-artifacts`: runs `pnpm db-update` (with the compose images pulled from Google's
+    Docker Hub mirror and retagged) and fails if any tracked file changed. scripts/db-update.mjs
+    now drops `NX_CLOUD_ACCESS_TOKEN` and `NX_CLOUD_AUTH_TOKEN` from the environment of its API
+    build and sets `NX_NO_CLOUD=true`, instead of replacing them with the `db-update-disabled`
+    placeholder it gives every other credential: with the placeholder, Nx refused to run
+    ("Workspace is unable to be authorized"), in CI and on any machine with the token in `.env`.
+  - `sonar`: needs only the three test jobs, runs when none failed or was cancelled (a skipped
+    `api-e2e` is fine), downloads `coverage-*` with `merge-multiple: true`, normalizes the lcov
+    paths and scans with `SonarSource/sonarqube-scan-action` (the deprecated
+    `sonarcloud-github-action` is gone). Still skipped when there is no `SONAR_TOKEN`.
+  - `windows-process-cleanup`: unchanged.
+  - `ci-ok`, named `CI`: `if: always()`, needs every job above, and fails unless each one
+    succeeded. The only accepted skip is `api-e2e` on a pull request.
+
+  Shared setup is in two composite actions: `.github/actions/setup` (pnpm, Node 22.23.4 with the
+  pnpm cache, `pnpm install --frozen-lockfile --ignore-scripts`, `pnpm prisma:generate`) and
+  `.github/actions/nx-base` (nrwl/nx-set-shas with `main-branch-name: develop`). Every Linux job
+  uses `runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}`, and each sets its own
+  `NODE_OPTIONS=--max-old-space-size=...` instead of one job-wide value, sized so heap times
+  parallelism plus 1 GB stays under the 7.9 GB of GitHub's standard private-repository runner.
+  The concurrency block, the Nx Cloud token selection and the service images are unchanged.
+
+  No suite is sharded in the template: its longest test target (api-custom, about 1.5 minutes)
+  is about as long as the typecheck, and every test target is already cached in Nx with its
+  coverage directory as an output, so a cache hit restores the lcov the scan reads.
+
+  API e2e readiness: apps/api-e2e/src/support/global-setup.ts waited a fixed 120 seconds for the
+  API it started with `nx serve api`, which builds the API first. It now waits
+  `E2E_API_START_TIMEOUT_SECONDS` (default 300; an unusable value warns and uses the default),
+  and on a timeout prints the API's last 40 non-empty output lines. The helpers are in the new
+  apps/api-e2e/src/support/api-readiness.ts with a spec in the support suite
+  (vitest.support.config.mts and tsconfig.support.json list both). apps/api-e2e/README.md
+  documents the variable.
+
+why: >
+  One job ran every check in sequence (about ten minutes on the template, far longer on a larger
+  app), and one job-wide heap with three compilers at once can exhaust a 7.9 GB runner, which then
+  stops answering GitHub and fails the run much later. Parallel jobs make the wall clock the
+  slowest job, and an aggregate `CI` check gives branch protection one status to require. A cold
+  `nx serve api` in CI can take longer than a fixed readiness wait, which failed an e2e run that
+  would have passed.
+
+affectedPaths:
+  - .github/workflows/ci.yml
+  - .github/actions/setup/action.yml
+  - .github/actions/nx-base/action.yml
+  - .gitleaks.toml
+  - scripts/db-update.mjs
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/api-readiness.ts
+  - apps/api-e2e/src/support/api-readiness.spec.ts
+  - apps/api-e2e/vitest.support.config.mts
+  - apps/api-e2e/tsconfig.support.json
+  - apps/api-e2e/README.md
+
+skipIf:
+  - >-
+    The project's CI already runs as parallel jobs with per-process heaps, shared setup in
+    composite actions, an aggregate `if: always()` check, an affected gate on its never-cached
+    suites, a gitleaks job and Sonar fed by per-job coverage artifacts. Record `superseded`, and
+    still take the e2e readiness change if the project has apps/api-e2e.
+
+verification:
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+  - docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+  - >-
+    In the pull request: every job is green, including the aggregate `CI` check, and SonarCloud
+    reports coverage for the pull request.
+
+agentHints:
+  - >
+    Projects have customised CI. Do not copy the template's ci.yml over yours. Start from your
+    current workflow, list its jobs and steps, and map each one onto the new layout: an extra
+    check goes in `static` (or its own job if it needs a service or more than a few minutes),
+    extra secrets and env stay on the step that reads them, extra services go on the job that
+    needs them, and mobile, desktop, native or deploy jobs stay as their own jobs. Add every job
+    to `ci-ok`'s `needs`.
+  - >
+    Do not drop any check the project runs today. In the pull request description, list the old
+    jobs and steps and the new job each one moved to, so a reviewer can compare them line by line.
+  - >
+    Pin every Linux job to `runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}` (not
+    `ubuntu-latest`, and not a larger runner label). Keep `windows-latest` (or macOS) jobs that
+    need that platform.
+  - >
+    Heaps: keep heap times `--parallel` plus 1 GB under 7.9 GB. If a job runs out of memory, give
+    the heavy process its own job with a larger heap rather than raising the heap of a parallel
+    job. A larger app may need its own split of typecheck or tests; measure from `gh run view`
+    before adding jobs or shards.
+  - >
+    Shard a test suite only if it dominates the run. If you do, run it with Jest's `--shard=N/M`
+    and per-shard coverage directories, merge the shards' lcov in the sonar job before the scan
+    (sum hits per file, line and branch), and add the shard jobs to the affected gate and to
+    `ci-ok`'s accepted skips.
+  - >
+    The affected gate is only for suites Nx does not cache (the API e2e run, a sharded Jest
+    suite). Use a membership check on `nx show projects --affected`, never `--projects` on
+    `nx affected`. `ci-ok` accepts `skipped` only from those gated jobs, and only on a pull request.
+  - >
+    Update `WEB_TEST_PROJECTS` to the project's own browser-side projects (`nx show projects
+    --with-target test`). A project whose tests do not need a browser drops the Playwright steps.
+  - >
+    gitleaks: run `gitleaks git .` (all history) once locally before merging. A finding that is a
+    test placeholder goes in `.gitleaks.toml`'s allowlist with the narrowest path and value
+    regexes; a real credential is rotated first, then removed or allowlisted by fingerprint in
+    `.gitleaksignore`. Do not allowlist a real secret.
+  - >
+    `generated-artifacts`: drop the job if the project has no `pnpm db-update` that regenerates
+    committed files. If its first run fails on a stale artifact, regenerate and commit that in the
+    same pull request; that is the job working.
+  - >
+    The sonar job assumes the project's sonar-project.properties lists each project's lcov under
+    `coverage/...`, as before. If the project used `sonarcloud-github-action` with extra `args`,
+    move them to the scan action's `args` input.
+  - >
+    nx.json's `sharedGlobals` usually lists ci.yml, so the pull request misses the Nx cache
+    everywhere once; its first run is the slowest.

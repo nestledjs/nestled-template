@@ -1,0 +1,93 @@
+id: 2026-11-09-precommit-and-session-hooks
+title: >-
+  A dependency-free pre-commit hook (Prettier and gitleaks on staged files) and a Claude Code
+  cloud SessionStart hook that installs dependencies
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  1. New `.githooks/pre-commit` (executable, POSIX sh). On the staged files only
+  (`git diff --cached --name-only --diff-filter=ACMR -z`, NUL-separated so unusual paths are not quoted) it runs `node_modules/.bin/prettier --write
+  --ignore-unknown` and re-stages them with `git add`. When node_modules has no Prettier it prints
+  that the files were not formatted and lets the commit through (CI's `prettier --check .` is the
+  gate; a hook that fails there would push people to --no-verify). Then, if `gitleaks` is on the
+  PATH, it runs `gitleaks git --pre-commit --staged --redact` and a finding blocks the commit;
+  otherwise it prints one line saying the secret scan was skipped. CI's gitleaks job (note
+  2026-11-09-ci-parallel-jobs) is the enforced layer, and both read `.gitleaks.toml`.
+
+  2. Root package.json, by hand (package.json is not mirrored by promotion): add
+  `"prepare": "git config core.hooksPath .githooks || true"` to `scripts`. `pnpm install` runs it
+  and wires the hook. It no-ops where there is no `.git` (Railway and Docker builds) or no git at
+  all, through `|| true`, and CI installs with `--ignore-scripts`, so it never runs there. No
+  husky or lint-staged: their transitive dependencies re-key the pnpm lockfile.
+
+  3. New `.claude/hooks/session-start.sh` (executable) and a `hooks.SessionStart` entry in
+  `.claude/settings.json` (matcher `startup|resume`, command
+  `sh "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh"`, timeout 600). It does nothing unless
+  `CLAUDE_CODE_REMOTE=true` (a Claude Code cloud session). It skips when
+  `node_modules/.session-start-lockfile-hash` matches `git hash-object` of pnpm-lock.yaml and the
+  Prisma schema, the Prisma client exists and `core.hooksPath` is `.githooks`. Otherwise it runs `pnpm install
+  --frozen-lockfile` (with scripts, so `prepare` wires the hook; `npm_config_engine_strict=false`
+  so a patch-level Node difference in the cloud image does not refuse the install, while a
+  different major still stops it) and `pnpm prisma:generate`, then writes the marker. On any
+  failure it prints what failed and how to format by hand, and exits 0 so the message reaches
+  the session's context.
+
+  4. CLAUDE.md, by hand (CLAUDE.md is not mirrored by promotion), add near the top: "Commits:
+  `.githooks/pre-commit` formats the staged files with Prettier. If the hook did not run, format
+  the files you changed (never the whole tree) with `pnpm exec prettier --write <files>` before
+  committing; never use `--no-verify`." AGENTS.md's commit guidelines in the template say the
+  same; add a sentence to the project's own AGENTS.md if it has a commit section.
+
+why: >
+  The tree-wide formatting check is the most common reason a CI run fails, and each failure costs
+  a full CI round trip for a one-second fix. Formatting at commit time removes that class, a
+  staged-file secret scan stops a credential before it is in history, and a cloud agent session
+  that starts with dependencies installed gets the hook without anyone setting it up.
+
+affectedPaths:
+  - .githooks/pre-commit
+  - .claude/hooks/session-start.sh
+  - .claude/settings.json
+  - package.json
+  - CLAUDE.md
+  - AGENTS.md
+
+skipIf:
+  - >-
+    The project already has a pre-commit hook that formats staged files and a cloud session hook
+    that installs dependencies. Record `superseded` for those parts; still add the gitleaks step
+    and the CLAUDE.md line if they are missing.
+
+verification:
+  - pnpm install
+  - git config core.hooksPath
+  - >-
+    Stage an unformatted file and commit on a throwaway branch: the commit contains the formatted
+    file. Then discard the branch.
+  - CLAUDE_CODE_REMOTE=true CLAUDE_PROJECT_DIR="$PWD" sh .claude/hooks/session-start.sh
+  - pnpm exec prettier --check .
+
+agentHints:
+  - >
+    package.json and CLAUDE.md are not mirrored by template promotion: make the `prepare` script
+    and the CLAUDE.md line changes by hand. If the project already has a `prepare` script, chain
+    it (`<existing> && (git config core.hooksPath .githooks || true)`) rather than replacing it.
+  - >
+    If the project already uses husky or another hook manager, keep it and add the Prettier and
+    gitleaks steps to its pre-commit hook instead of switching `core.hooksPath`; two hook managers
+    fight over that setting. Do not add husky or lint-staged.
+  - >
+    Merge the SessionStart entry into the project's existing `.claude/settings.json`; keep its
+    plugins, MCP servers, permissions and sandbox settings. If the project's Prisma client is
+    generated somewhere other than `libs/api/prisma/src/lib/prisma-generated` (or its schema is not
+    `libs/api/prisma/src/lib/schemas/schema.prisma`), or it has another
+    codegen step an agent needs before its first build, change the script's check and steps to
+    match.
+  - >
+    Make sure both scripts keep their executable bit (`git ls-files -s` shows mode 100755).
+  - >
+    `pnpm install` with the new `prepare` changes the local git config of whoever runs it
+    (`core.hooksPath`); it changes nothing in the lockfile.

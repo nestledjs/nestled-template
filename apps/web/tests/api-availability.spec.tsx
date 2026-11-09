@@ -1,3 +1,4 @@
+import { StrictMode, Suspense, useEffect } from 'react'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import {
   createMemoryRouter,
@@ -15,6 +16,7 @@ import {
   CONFIRM_DELAYS_MS,
   RETURN_TRIGGER_DEBOUNCE_MS,
   probeApi,
+  probeConnectivity,
   refetchFailedQueries,
   reloadForRecovery,
   retryDelayMs,
@@ -33,19 +35,42 @@ import {
   ServerError,
 } from '@apollo/client'
 import { useGlobalCtx } from '@nestled-template/web'
-import { RecoveringApiUnavailable } from '../app/api-unavailable'
+import {
+  OFFLINE_MESSAGE,
+  OFFLINE_TITLE,
+  RecoveringApiUnavailable,
+  SERVER_TROUBLE_MESSAGE,
+  SERVER_TROUBLE_TITLE,
+} from '../app/api-unavailable'
 
 const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
-const SERVER_DOWN = 'Can’t reach the server'
-const OFFLINE = 'You’re offline'
+const SERVER_DOWN = SERVER_TROUBLE_TITLE
+const OFFLINE = OFFLINE_TITLE
 
 const fetchMock = vi.fn()
+
+function isApiProbe(url: unknown): boolean {
+  return String(url).endsWith('/api/uptime')
+}
+
+function apiProbeCalls() {
+  return fetchMock.mock.calls.filter(([url]) => isApiProbe(url))
+}
 
 function apiUp() {
   fetchMock.mockResolvedValue(new Response('12.3', { status: 200 }))
 }
 
+/** The API does not answer; the web app's own origin still does (our servers are in trouble). */
 function apiDown() {
+  fetchMock.mockImplementation(async (url: unknown) => {
+    if (isApiProbe(url)) throw new TypeError('Failed to fetch')
+    return new Response(null, { status: 200 })
+  })
+}
+
+/** Nothing answers: neither the API nor the web app's origin (the connection is gone). */
+function networkDown() {
   fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
 }
 
@@ -117,10 +142,8 @@ describe('API unavailable screen', () => {
 
     await advance(1)
     expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
-    expect(
-      screen.getByText('We can’t reach our servers right now. Retrying automatically…'),
-    ).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledTimes(CONFIRM_DELAYS_MS.length)
+    expect(screen.getByText(SERVER_TROUBLE_MESSAGE)).toBeInTheDocument()
+    expect(apiProbeCalls()).toHaveLength(CONFIRM_DELAYS_MS.length)
   })
 
   it('clears the screen by itself when the API answers again', async () => {
@@ -145,18 +168,18 @@ describe('API unavailable screen', () => {
     await renderApp()
     await reportOutage()
     await advance(CONFIRM_WINDOW_MS)
-    const callsBefore = fetchMock.mock.calls.length
+    const callsBefore = apiProbeCalls().length
 
     await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'))
     })
-    expect(fetchMock).toHaveBeenCalledTimes(callsBefore + 1)
+    expect(apiProbeCalls()).toHaveLength(callsBefore + 1)
 
     apiUp()
     await act(async () => {
       globalThis.dispatchEvent(new Event('online'))
     })
-    expect(fetchMock).toHaveBeenCalledTimes(callsBefore + 2)
+    expect(apiProbeCalls()).toHaveLength(callsBefore + 2)
     expect(screen.getByText('Protected page')).toBeInTheDocument()
   })
 
@@ -168,9 +191,7 @@ describe('API unavailable screen', () => {
     await advance(CONFIRM_WINDOW_MS)
 
     expect(screen.getByRole('heading', { name: OFFLINE })).toBeInTheDocument()
-    expect(
-      screen.getByText('We’ll reconnect automatically when your connection is back.'),
-    ).toBeInTheDocument()
+    expect(screen.getByText(OFFLINE_MESSAGE)).toBeInTheDocument()
   })
 
   it('switches to the offline copy when the offline event fires', async () => {
@@ -713,5 +734,387 @@ describe('root error boundary for a route error response', () => {
     expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('offline vs server trouble', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+  })
+
+  it('says our servers are in trouble when the web app answers but the API does not', async () => {
+    apiDown()
+    await renderApp()
+    await reportOutage()
+    await advance(CONFIRM_WINDOW_MS)
+
+    expect(screen.getByRole('heading', { name: SERVER_TROUBLE_TITLE })).toBeInTheDocument()
+    expect(screen.getByText(SERVER_TROUBLE_MESSAGE)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('says the user is offline when neither the web app nor the API answers', async () => {
+    networkDown()
+    await renderApp()
+    await reportOutage()
+    await advance(CONFIRM_WINDOW_MS)
+
+    expect(screen.getByRole('heading', { name: OFFLINE_TITLE })).toBeInTheDocument()
+    expect(screen.getByText(OFFLINE_MESSAGE)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('moves between the two as conditions change, on each retry and on online/offline', async () => {
+    networkDown()
+    await renderApp()
+    await reportOutage()
+    await advance(CONFIRM_WINDOW_MS)
+    expect(screen.getByRole('heading', { name: OFFLINE_TITLE })).toBeInTheDocument()
+
+    // The connection is back but the API is still down: the next retry says so.
+    apiDown()
+    await advance(retryDelayMs(0))
+    expect(screen.getByRole('heading', { name: SERVER_TROUBLE_TITLE })).toBeInTheDocument()
+
+    // The browser drops off the network: at once, without waiting for a retry.
+    await act(async () => {
+      globalThis.dispatchEvent(new Event('offline'))
+    })
+    expect(screen.getByRole('heading', { name: OFFLINE_TITLE })).toBeInTheDocument()
+
+    // And comes back, with the API still down.
+    await act(async () => {
+      globalThis.dispatchEvent(new Event('online'))
+    })
+    expect(screen.getByRole('heading', { name: SERVER_TROUBLE_TITLE })).toBeInTheDocument()
+
+    // The connection goes again between retries.
+    networkDown()
+    await advance(retryDelayMs(0))
+    expect(screen.getByRole('heading', { name: OFFLINE_TITLE })).toBeInTheDocument()
+  })
+
+  it('says server trouble for the server-rendered 503 (the page reached the browser)', () => {
+    networkDown()
+    render(<ErrorBoundary error={new ErrorResponseImpl(503, 'Service Unavailable', null)} />)
+
+    expect(screen.getByRole('heading', { name: SERVER_TROUBLE_TITLE })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('takes translated copy, falling back to English for any key it leaves out', async () => {
+    networkDown()
+    render(<RecoveringApiUnavailable copy={{ serverTitle: 'Problemas con el servidor' }} />)
+
+    expect(screen.getByRole('heading', { name: 'Problemas con el servidor' })).toBeInTheDocument()
+    expect(screen.getByText(SERVER_TROUBLE_MESSAGE)).toBeInTheDocument()
+  })
+})
+
+describe('probeConnectivity', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const API = 'https://api.example.com/api/uptime'
+  const WEB = 'https://app.example.com/favicon.ico'
+
+  it('is reachable when the API answers, without probing the web app', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await expect(probeConnectivity(API, WEB)).resolves.toEqual({ reachable: true })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([502, 503, 504])(
+    'says server for a proxy %i, which already proves the connection works',
+    async status => {
+      const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status }))
+      vi.stubGlobal('fetch', fetchSpy)
+
+      await expect(probeConnectivity(API, WEB)).resolves.toEqual({
+        reachable: false,
+        reason: 'server',
+      })
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('says server when the API does not answer but the web app does (even with a 404)', async () => {
+    const fetchSpy = vi.fn(async (url: unknown) => {
+      if (url === API) throw new TypeError('Failed to fetch')
+      return new Response(null, { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await expect(probeConnectivity(API, WEB)).resolves.toEqual({
+      reachable: false,
+      reason: 'server',
+    })
+    expect(fetchSpy).toHaveBeenCalledWith(
+      WEB,
+      expect.objectContaining({ method: 'HEAD', cache: 'no-store', credentials: 'omit' }),
+    )
+  })
+
+  it('says offline when neither answers', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+
+    await expect(probeConnectivity(API, WEB)).resolves.toEqual({
+      reachable: false,
+      reason: 'offline',
+    })
+  })
+
+  it('says offline without a request when the browser says it is offline', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+
+    await expect(probeConnectivity(API, WEB)).resolves.toEqual({
+      reachable: false,
+      reason: 'offline',
+    })
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('useApiAvailability reason ordering', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps offline when a probe started online finishes after the offline event', async () => {
+    let finishProbe: (result: { reachable: boolean; reason: 'server' }) => void = () => undefined
+    const probe = vi.fn(
+      () =>
+        new Promise<{ reachable: boolean; reason: 'server' }>(resolve => {
+          finishProbe = resolve
+        }),
+    )
+    let report: () => void = () => undefined
+    function Harness() {
+      const api = useApiAvailability({ probe })
+      report = api.reportConnectivityError
+      return <p>reason: {api.reason}</p>
+    }
+    render(<Harness />)
+
+    await act(async () => report())
+    await advance(0)
+    expect(probe).toHaveBeenCalledTimes(1)
+
+    // The connection drops while that probe is still in flight.
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    await act(async () => {
+      globalThis.dispatchEvent(new Event('offline'))
+    })
+    expect(screen.getByText('reason: offline')).toBeInTheDocument()
+
+    // The older probe then answers with a proxy's 503 ("server").
+    await act(async () => finishProbe({ reachable: false, reason: 'server' }))
+    expect(screen.getByText('reason: offline')).toBeInTheDocument()
+  })
+})
+
+describe('useApiAvailability after an effect replay', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // React StrictMode replays effects in development: cleanup (which cancels the pending timer),
+  // then setup again. A failure reported before the replay left the phase stuck at `confirming`.
+  it.each([
+    [true, 'available'],
+    [false, 'unavailable'],
+  ])(
+    're-arms the confirmation step, so the phase settles (API reachable: %s)',
+    async (reachable, settled) => {
+      const probe = vi.fn().mockResolvedValue(reachable)
+      function Harness() {
+        const { phase, reportConnectivityError } = useApiAvailability({ probe })
+        useEffect(() => {
+          reportConnectivityError()
+        }, [reportConnectivityError])
+        return <p>phase: {phase}</p>
+      }
+      render(
+        <StrictMode>
+          <Harness />
+        </StrictMode>,
+      )
+      expect(screen.getByText('phase: confirming')).toBeInTheDocument()
+
+      await advance(CONFIRM_WINDOW_MS)
+
+      expect(probe).toHaveBeenCalled()
+      expect(screen.getByText(`phase: ${settled}`)).toBeInTheDocument()
+    },
+  )
+})
+
+describe('Me retry backoff under cache-and-network', () => {
+  const ME = gql`
+    query Me {
+      me {
+        id
+      }
+    }
+  `
+
+  function CurrentUser() {
+    const { user } = useGlobalCtx()
+    return <p>{user ? `Signed in as ${user.id}` : 'Signed out'}</p>
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+  })
+
+  // Answers arrive a moment after the request, as over a real network, so a cached Me can render
+  // while the request is still in flight.
+  const NETWORK_MS = 10
+
+  // React renders a late network error when the act() window closes, so time moves in small steps
+  // for the app's own delays, not the test's, to decide when each retry runs.
+  async function advanceInSteps(ms: number, step = 25) {
+    for (let elapsed = 0; elapsed < ms; elapsed += step) await advance(Math.min(step, ms - elapsed))
+  }
+  const fails = () =>
+    new Observable<ApolloLink.Result>(o => {
+      const timer = setTimeout(() => o.error(new TypeError('Failed to fetch')), NETWORK_MS)
+      return () => clearTimeout(timer)
+    })
+  const signedIn = () =>
+    new Observable<ApolloLink.Result>(o => {
+      const timer = setTimeout(() => {
+        o.next({ data: { me: { __typename: 'User', id: 'user-1' } } })
+        o.complete()
+      }, NETWORK_MS)
+      return () => clearTimeout(timer)
+    })
+
+  // The production client's watch policy (libs/shared/apollo makeClient): a cached Me renders
+  // first, while the network request is still in flight. The loader does not wait for the query,
+  // as the root loader does not.
+  async function renderSignedIn(respond: (request: number) => Observable<ApolloLink.Result>) {
+    let requests = 0
+    const link = new ApolloLink(() => {
+      requests += 1
+      return respond(requests)
+    })
+    const client = new ApolloClient({
+      link,
+      cache: new InMemoryCache(),
+      defaultOptions: { watchQuery: { fetchPolicy: 'cache-and-network' } },
+    })
+    const preload = createQueryPreloader(client)
+    let loaderCalls = 0
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          loader: () => {
+            loaderCalls += 1
+            return { meQueryRef: preload(ME) }
+          },
+          element: (
+            <Suspense fallback={<p>Loading</p>}>
+              <App />
+            </Suspense>
+          ),
+          children: [{ index: true, element: <CurrentUser /> }],
+        },
+      ],
+      { initialEntries: ['/'] },
+    )
+    await act(async () => {
+      render(
+        <ApolloProvider client={client}>
+          <RouterProvider router={router} />
+        </ApolloProvider>,
+      )
+    })
+    await advance(NETWORK_MS)
+    return { router, loaderCalls: () => loaderCalls }
+  }
+
+  it('does not reset the backoff on a cached Me before the network answers', async () => {
+    // /api/uptime answers while /graphql keeps failing: each failure is a "blip".
+    apiUp()
+    const app = await renderSignedIn(request => (request === 1 ? signedIn() : fails()))
+    expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
+
+    // Me is fetched again (any revalidation); the cached user renders, then the network fails.
+    await act(async () => {
+      await app.router.revalidate()
+    })
+    await advanceInSteps(NETWORK_MS)
+    expect(app.loaderCalls()).toBe(2)
+
+    // The first retry runs at once and fails again on the network; the next one waits out the
+    // full backoff. The cached Me that renders on each retry must not reset it: when it did, the
+    // retries kept coming every few milliseconds.
+    await advanceInSteps(retryDelayMs(0) - 200)
+    expect(app.loaderCalls()).toBe(3)
+    await advanceInSteps(400)
+    expect(app.loaderCalls()).toBe(4)
+    await advanceInSteps(retryDelayMs(1) - 400)
+    expect(app.loaderCalls()).toBe(4)
+    await advanceInSteps(400)
+    expect(app.loaderCalls()).toBe(5)
+  })
+
+  it('cancels a queued retry once the network answers Me', async () => {
+    apiUp()
+    let healthy = false
+    const app = await renderSignedIn(() => (healthy ? signedIn() : fails()))
+    await advanceInSteps(retryDelayMs(0) / 2)
+    // The failure was retried at once, failed again, and the next retry is queued behind the
+    // backoff.
+    expect(app.loaderCalls()).toBe(2)
+
+    // A navigation brings a healthy Me before the queued retry fires.
+    healthy = true
+    await act(async () => {
+      await app.router.navigate('/?again=1')
+    })
+    await advance(NETWORK_MS)
+    expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
+    expect(app.loaderCalls()).toBe(3)
+
+    // The queued retry no longer revalidates every loader after the recovery.
+    await advance(retryDelayMs(3))
+    expect(app.loaderCalls()).toBe(3)
   })
 })

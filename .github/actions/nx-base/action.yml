@@ -1,0 +1,18 @@
+name: Resolve the Nx affected base
+description: >-
+  Sets NX_BASE and NX_HEAD for the `nx affected` jobs. The caller must check out with
+  fetch-depth: 0.
+
+  On a develop push, the base is the commit of the last successful CI run on develop, not the
+  previous push. A queued develop run is replaced when a newer push arrives (see the workflow's
+  concurrency group), and a run can fail or be cancelled by hand; basing on the previous push would
+  leave the projects such a push changed out of every completed affected run. Do not override
+  NX_BASE with `github.event.before`. A successful run is one whose aggregate `CI` job passed, so a
+  run with any red job never becomes a base.
+
+runs:
+  using: composite
+  steps:
+    - uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4
+      with:
+        main-branch-name: develop

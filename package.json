@@ -8,6 +8,7 @@
     "pnpm": "10.33.0"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "pre-publish": "pnpm exec nx affected -t lint build test:unit --base=develop",
     "db-update": "node scripts/db-update.mjs",
     "db-update:generate": "pnpm run nestled-doctor && pnpm prisma:generate && pnpm verify:prisma-client && nx g @nestledjs/generators:crud && nx g @nestledjs/generators:models && nx g @nestledjs/generators:sdk && nx g @nestledjs/generators:custom",
@@ -51,6 +52,7 @@
     "test": "nx run-many -t test",
     "test:coverage": "nx run-many -t test -- --coverage",
     "coverage:normalize-lcov": "tsx scripts/normalize-lcov-paths.ts",
+    "sonar:rules-digest": "node scripts/sonar-rules-digest.mjs",
     "sonar:local": "pnpm test:coverage && pnpm coverage:normalize-lcov && SONAR_TOKEN=$SONARQUBE_TOKEN sonar-scanner",
     "test:api": "pnpm nx e2e api-e2e",
     "test:ci": "pnpm test:api",

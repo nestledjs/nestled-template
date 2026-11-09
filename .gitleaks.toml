@@ -1,0 +1,18 @@
+# gitleaks configuration, read by the pre-commit hook (.githooks/pre-commit) and CI's gitleaks job.
+# It extends gitleaks' default rules; the allowlist below names only test fixtures that look like
+# secrets and are not. Add to it only a value that is provably not a credential (a placeholder in a
+# spec), never a real key: a leaked key is rotated, not allowlisted.
+title = "Nestled gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Placeholder encryption keys in the two-factor auth specs"
+condition = "AND"
+paths = ['''^libs/api/custom/src/lib/plugins/auth/[a-z.-]+\.spec\.ts$''']
+regexes = [
+  '''correct-encryption-key-32-bytes''',
+  '''this-is-a-very-long-encryption-key-that-exceeds-32-bytes''',
+  '''test-encryption-key-32-bytes-''',
+]

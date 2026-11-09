@@ -79,7 +79,21 @@ export type ClientOptions = {
   apiUrl?: string
   platform?: 'web' | 'native'
   environment?: 'development' | 'staging' | 'production'
+  /**
+   * Told what each failed operation failed with (`classifyApiFailure`). The server render uses it
+   * to recover the real cause of a failed preload, which the streamed query ref redacts.
+   */
+  onApiFailure?: (cause: ApiFailureCause) => void
 }
+
+/**
+ * Why an operation against the API failed:
+ * - `unauthenticated`: the API rejected the session (HTTP 401, or a GraphQL authentication error
+ *   such as `UNAUTHENTICATED`);
+ * - `unavailable`: no HTTP response, or a proxy's 502/503/504 (`isRetryableConnectivityError`);
+ * - `other`: the API answered with some other error (a 403, a 500, a resolver or validation error).
+ */
+export type ApiFailureCause = 'unauthenticated' | 'unavailable' | 'other'
 
 export const APOLLO_ACCESS_FORBIDDEN_EVENT = 'apollo-access-forbidden'
 
@@ -227,8 +241,24 @@ function errorFromUnknown(value: unknown): Error {
   }
 }
 
-function createErrorLink(): ApolloLink {
+/** Classifies an Apollo link error; see `ApiFailureCause`. */
+export function classifyApiFailure(error: unknown): ApiFailureCause {
+  if (CombinedGraphQLErrors.is(error)) {
+    return error.errors.some(({ message, extensions }) =>
+      isAuthenticationError(message ?? '', extensions),
+    )
+      ? 'unauthenticated'
+      : 'other'
+  }
+  if (error instanceof Error && networkErrorStatus(error) === 401) return 'unauthenticated'
+  if (isRetryableConnectivityError(error)) return 'unavailable'
+  return 'other'
+}
+
+function createErrorLink(onApiFailure?: (cause: ApiFailureCause) => void): ApolloLink {
   return new ErrorLink(({ error, operation }) => {
+    onApiFailure?.(classifyApiFailure(error))
+
     if (CombinedGraphQLErrors.is(error)) {
       for (const { message, path, extensions } of error.errors) {
         console.error(`[GraphQL error]: Message: ${message}, Path: ${path}`)
@@ -416,7 +446,12 @@ function createWebSocketLink(wsUri: string, token: string | null): GraphQLWsLink
   )
 }
 
-function createLinkChain(uri: string, token: string | null, isDev: boolean): ApolloLink {
+function createLinkChain(
+  uri: string,
+  token: string | null,
+  isDev: boolean,
+  onApiFailure?: (cause: ApiFailureCause) => void,
+): ApolloLink {
   const wsUri = uri.replace(/^http/, 'ws')
   const uploadLink = new UploadHttpLink({
     uri,
@@ -439,7 +474,7 @@ function createLinkChain(uri: string, token: string | null, isDev: boolean): Apo
       )
 
   const links = [
-    createErrorLink(),
+    createErrorLink(onApiFailure),
     ...(isDev ? [createLogLink()] : []),
     createAuthLink(token),
     splitLink,
@@ -466,7 +501,7 @@ export function makeClient(request?: Request, options?: ClientOptions) {
   const token = resolveAuthToken(request, options)
   const isDev = options?.environment === 'development'
 
-  const link = createLinkChain(uri, token, isDev)
+  const link = createLinkChain(uri, token, isDev, options?.onApiFailure)
 
   return new ApolloClient({
     link,

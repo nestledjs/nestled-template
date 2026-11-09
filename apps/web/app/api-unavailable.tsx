@@ -4,29 +4,58 @@ import {
   reloadForRecovery,
   useApiAvailability,
   type ApiAvailabilityOptions,
+  type UnavailableReason,
 } from './api-availability'
 
+// The screen's English copy. An app that translates the screen passes its own strings through the
+// `copy` prop (one key per string); anything it leaves out falls back to these.
 export const OFFLINE_TITLE = 'You’re offline'
 export const OFFLINE_MESSAGE = 'We’ll reconnect automatically when your connection is back.'
-export const SERVER_DOWN_TITLE = 'Can’t reach the server'
-export const SERVER_DOWN_MESSAGE = 'We can’t reach our servers right now. Retrying automatically…'
+export const SERVER_TROUBLE_TITLE = 'We’re having trouble reaching our servers'
+export const SERVER_TROUBLE_MESSAGE = 'Retrying automatically.'
 export const RETRY_LABEL = 'Try again'
 
+export interface ApiUnavailableCopy {
+  /** The browser has no connection. */
+  offlineTitle: string
+  offlineMessage: string
+  /** The connection works but our servers do not answer (or answer 502/503/504). */
+  serverTitle: string
+  serverMessage: string
+  retryLabel: string
+}
+
+export const API_UNAVAILABLE_COPY: Readonly<ApiUnavailableCopy> = {
+  offlineTitle: OFFLINE_TITLE,
+  offlineMessage: OFFLINE_MESSAGE,
+  serverTitle: SERVER_TROUBLE_TITLE,
+  serverMessage: SERVER_TROUBLE_MESSAGE,
+  retryLabel: RETRY_LABEL,
+}
+
 /**
- * The "API unavailable" screen. It says whether the browser is offline or the servers are, and its
- * button checks the API at once instead of reloading a page that may not load.
+ * The "API unavailable" screen. It says whether the browser is offline or our servers are in
+ * trouble (`reason`, from `useApiAvailability`), and its button checks the API at once instead of
+ * reloading a page that may not load.
  */
 export function ApiUnavailableScreen({
-  offline,
+  reason,
   onRetry,
-}: Readonly<{ offline: boolean; onRetry: () => void }>) {
+  copy,
+}: Readonly<{
+  reason: UnavailableReason
+  onRetry: () => void
+  copy?: Partial<ApiUnavailableCopy>
+}>) {
+  const text = { ...API_UNAVAILABLE_COPY, ...copy }
+  const offline = reason === 'offline'
   return (
     <ServiceUnavailable
-      title={offline ? OFFLINE_TITLE : SERVER_DOWN_TITLE}
-      message={offline ? OFFLINE_MESSAGE : SERVER_DOWN_MESSAGE}
+      title={offline ? text.offlineTitle : text.serverTitle}
+      message={offline ? text.offlineMessage : text.serverMessage}
       showRefreshButton={true}
       onRefresh={onRetry}
-      refreshLabel={RETRY_LABEL}
+      refreshLabel={text.retryLabel}
     />
   )
 }
@@ -38,16 +67,24 @@ export function ApiUnavailableScreen({
  */
 export function RecoveringApiUnavailable({
   probe,
+  initialReason,
+  copy,
   reload = reloadForRecovery,
-}: Readonly<Pick<ApiAvailabilityOptions, 'probe'> & { reload?: () => boolean }>) {
+}: Readonly<
+  Pick<ApiAvailabilityOptions, 'probe' | 'initialReason'> & {
+    copy?: Partial<ApiUnavailableCopy>
+    reload?: () => boolean
+  }
+>) {
   const [reloadHeldBack, setReloadHeldBack] = useState(false)
-  const { unavailable, offline, retryNow } = useApiAvailability({
+  const { unavailable, reason, retryNow } = useApiAvailability({
     initiallyUnavailable: true,
+    initialReason,
     probe,
     onRecover: () => {
       if (!reload()) setReloadHeldBack(true)
     },
   })
   const onRetry = unavailable || !reloadHeldBack ? retryNow : () => globalThis.location.reload()
-  return <ApiUnavailableScreen offline={offline} onRetry={onRetry} />
+  return <ApiUnavailableScreen reason={reason} onRetry={onRetry} copy={copy} />
 }

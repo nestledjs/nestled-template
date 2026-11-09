@@ -230,9 +230,13 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   }
 
   // A connectivity failure (no response from the API, or a proxy's 502/503/504 while it
-  // restarts) gets the screen that probes the API and reloads by itself once it answers.
+  // restarts) gets the screen that probes the API and reloads by itself once it answers. A route
+  // status means a server answered (the server render's 503 among them: the page reached the
+  // browser), so the connection works and the trouble is ours.
   if (isConnectivityFailure(error, routeStatus)) {
-    return <RecoveringApiUnavailable />
+    return (
+      <RecoveringApiUnavailable initialReason={routeStatus === undefined ? undefined : 'server'} />
+    )
   }
 
   // Any other route error response (a loader's 404, a 500 thrown as a Response) keeps its status.
