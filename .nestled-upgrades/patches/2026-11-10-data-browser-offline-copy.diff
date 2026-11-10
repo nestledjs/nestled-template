@@ -1,0 +1,22 @@
+diff --git a/apps/web/app/routes/admin/data/_layout.tsx b/apps/web/app/routes/admin/data/_layout.tsx
+index 6237392..dc2e322 100644
+--- a/apps/web/app/routes/admin/data/_layout.tsx
++++ b/apps/web/app/routes/admin/data/_layout.tsx
+@@ -2,11 +2,13 @@ import * as Sdk from '@nestled-template/shared/sdk'
+ import { DATABASE_MODELS } from '@nestled-template/shared/sdk'
+ import { AdminDataProvider, AdminDataLayout } from '@nestledjs/data-browser'
+ import { formTheme } from '@nestled-template/shared/styles'
+-import { probeApi } from '../../../api-availability'
++import { probeConnectivity } from '../../../api-availability'
+ 
+-// The admin error boundary checks the API with the app's own probe (GET /api/uptime) and
+-// revalidates the route once it answers, so "Can't reach the server" clears by itself.
+-const probeAdminApi = () => probeApi()
++// The admin error boundary checks the API with the app shell's own probe (GET /api/uptime, then a
++// HEAD on the web app's origin) and revalidates the route once it answers. The probe's `reason`
++// tells the panel whether to say "You're offline" or "We're having trouble reaching our servers",
++// by the same rule as the app shell's screen. An app with i18n also passes `unavailableCopy`.
++const probeAdminApi = () => probeConnectivity()
+ 
+ export default function DataLayoutRoute() {
+   return (

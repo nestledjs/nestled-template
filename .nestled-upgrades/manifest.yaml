@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-11-09
+generatedAt: 2026-11-10
 channels:
-  canary: 2026.11.3
+  canary: 2026.11.4
   stable: 2026.11.3
 releases:
   - id: 2026.08.0
@@ -1479,3 +1479,187 @@ releases:
           - node --test scripts/sonar-rules-digest.spec.mjs
           - pnpm exec prettier --check docs/quality scripts
         patch: patches/2026-11-09-sonar-rules-digest.diff
+  - id: 2026.11.4
+    date: 2026-11-10
+    title: "R5b: Nx 24, TypeScript 6, ESLint 10, R3 follow-ups"
+    templateCommit: 7c0f1c0
+    notes:
+      - id: 2026-11-10-data-browser-offline-copy
+        title: The admin data browser tells "you're offline" from "our servers are in trouble", like the app shell (@nestledjs/data-browser 1.0.27)
+        delivery: hybrid
+        intent: "Follow-up to 2026-11-09-error-recovery-r3, which gave the app shell's recovering screen separate offline and server-trouble messages. Apply that note first: this one uses its `probeConnectivity()` in apps/web/app/api-availability.ts. Two parts. 1. Package. Upgrade `@nestledjs/data-browser` to 1.0.27 in package.json and the lockfile. Do not copy files from libs/data-browser. The admin data routes' recovering panel (shown by `AdminDataErrorBoundary`, `AdminDataCreateErrorBoundary`, `AdminDataEditErrorBoundary` and `AdminRouteErrorBoundary` for a network error) used to say \"Can't reach the server\" whenever the browser was online. It now shows one of two messages, with the shell's wording and rule: - offline: \"You’re offline\" / \"We’ll reconnect automatically when your connection is back.\"; - server trouble: \"We’re having trouble reaching our servers\" / \"Retrying automatically.\" The reason is re-checked on every probe (backoff, \"Try Again\", the tab being shown again) and set at once by the browser's `offline` (offline) and `online` (server, until the probe it triggers says otherwise) events. Package API, all additive: - The `probe` option (on `AdminDataProvider` and on each boundary) may now resolve `{ reachable: boolean, reason?: 'offline' | 'server' }`, the shape `probeConnectivity()` returns (`AdminApiProbeResult`, `AdminUnavailableReason`). A probe that resolves a plain boolean keeps working: the panel then shows offline when `navigator.onLine` is false and server trouble otherwise. - Without any probe the panel uses the new `probeAdminConnectivity()`: offline when `navigator.onLine` is false or a HEAD on the web app's own `/favicon.ico` gets no answer; otherwise it revalidates the route. - Copy is overridable for i18n: new exports `ADMIN_SERVER_TROUBLE_TITLE`, `ADMIN_SERVER_TROUBLE_MESSAGE`, `ADMIN_RETRY_LABEL`, `ADMIN_BACK_LINK_LABEL` and `ADMIN_API_UNAVAILABLE_COPY` (alongside the existing `ADMIN_OFFLINE_TITLE` / `ADMIN_OFFLINE_MESSAGE`), type `AdminApiUnavailableCopy` (`offlineTitle`, `offlineMessage`, `serverTitle`, `serverMessage`, `retryLabel`, as in the shell's `ApiUnavailableCopy`, plus `backLinkLabel`). Pass `unavailableCopy` on `AdminDataProvider`, or `copy` on a boundary; keys left out fall back to the English, and a boundary's `copy` wins over the provider's. - `ADMIN_SERVER_DOWN_TITLE` and `ADMIN_SERVER_DOWN_MESSAGE` are still exported, unchanged, but deprecated and no longer shown. A test that looked for \"Can’t reach the server\" in the admin panel now looks for `ADMIN_SERVER_TROUBLE_TITLE`. - New helpers `normalizeAdminProbeResult()` and `adminWebOriginProbeUrl()`; `useAdminApiRecovery()` also returns `reason`. 2. App. In apps/web/app/routes/admin/data/_layout.tsx, pass the shell's reason-aware probe to `AdminDataProvider` instead of `probeApi`: import { probeConnectivity } from '../../../api-availability' const probeAdminApi = () => probeConnectivity() // <AdminDataProvider ... probe={probeAdminApi}> `probeApi` stays exported for anything else that uses it."
+        area: web
+        affectedPaths:
+          - apps/web/app/routes/admin/data/_layout.tsx
+        verification:
+          - pnpm install
+          - pnpm typecheck
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx build web --skip-nx-cache
+          - pnpm run nestled-doctor
+          - "Manual: serve the web app with the API stopped and open /admin/data/<model> signed in as an admin (or make its data request fail): the panel says \"We’re having trouble reaching our servers\". Take the browser offline (devtools, or Playwright `context.setOffline(true)`): it says \"You’re offline\", and changes back when the connection returns. Start the API: the panel clears by itself."
+        patch: patches/2026-11-10-data-browser-offline-copy.diff
+        packageReleases:
+          - name: "@nestledjs/data-browser"
+            sourcePath: libs/data-browser
+            targetVersion: 1.0.27
+            versionRange: ^1.0.27
+      - id: 2026-11-10-note-authoring-stays-upstream
+        title: "Projects cloned from the template stop asking for upgrade notes: no \"Downstream Upgrade\" PR section, no note scaffold"
+        delivery: code-patch
+        intent: "Upgrade notes are written only in the source template. A project cloned from the template never writes one: nothing reads a note committed in a downstream project. But the template shipped the source template's note-authoring tools, so every clone told its PR authors to write notes. Four parts. No package changes. 1. `.github/pull_request_template.md`: delete the whole `## Downstream Upgrade` section (the \"Propagate downstream\", \"Upgrade note\", \"Area\", \"Priority\", \"Verification\" and \"Reason\" lines). Keep `## Summary`, `## Verification` and `## Security Review` as they are. 2. Delete `scripts/create-upgrade-note.ts`, and the `template:create-upgrade-note` script from the root package.json. 3. Keep `scripts/validate-upgrade-notes.ts`, the `template:validate-upgrade-notes` script and its CI step, and the `.nestled-updates/` directory (doctor config, security baselines, and the notes already committed there). The validator checks only the notes that exist; it never asks for one. 4. In the project's agent instructions (AGENTS.md, CLAUDE.md or equivalent), remove any section that tells an author to create an upgrade note or fill in a \"Downstream Upgrade\" block, and say instead: \"This project is cloned from the Nestled template. Do not create upgrade notes here: they are written only in the source template.\""
+        area: docs
+        affectedPaths:
+          - .github/pull_request_template.md
+          - scripts/create-upgrade-note.ts
+          - package.json
+          - AGENTS.md
+        verification:
+          - git grep -n "Downstream Upgrade" -- .github (no match)
+          - test ! -e scripts/create-upgrade-note.ts
+          - "pnpm template:validate-upgrade-notes"
+          - pnpm run nestled-doctor
+        patch: patches/2026-11-10-note-authoring-stays-upstream.diff
+      - id: 2026-11-10-nx-24-ts-6-eslint-10
+        title: "Toolchain: Nx 24.0.5, TypeScript 6, Vite 8, ESLint 10 and eslint-plugin-react-hooks v7, with every new lint rule an error"
+        delivery: hybrid
+        intent: "Move the workspace to Nx 24.0.5, TypeScript 6.0.3, Vite 8 (Rolldown), ESLint 10 and eslint-plugin-react-hooks 7.1.1. Every rule that hooks v7 and ESLint 10 add is an error, and the violations are fixed without changing behaviour. React stays on 19.1.0 and React Router on 7.18.2; React Router 8 is a separate release. **Run the migration yourself. Do not copy the template's tooling files.** Projects sit on different 22.x versions and carry their own Nx plugins and targets, so the migrate has to see your workspace. package.json, the lockfile, nx.json and tsconfig.base.json are not mirrored by promotion either. 1. Migrate Nx. Run `pnpm exec nx migrate 24.0.5`, not `latest`, so every project lands on the same version. Check the package.json diff, then run `pnpm install --no-frozen-lockfile` and `pnpm exec nx migrate --run-migrations`. Nx 24 drives the run as a step-by-step loop that commits each migration. Follow its runbook (`.nx/migrate-runs/<id>/RUNBOOK.md`) and apply the AI prompts it writes under `tools/ai-migrations/`. Commit `migrations.json` and those prompts, as the template does. 2. TypeScript 6. Accept the `typescript` 6.0.3 package update. If the project is already past Nx 23.1, the migrate no longer offers it: set `\"typescript\": \"6.0.3\"` yourself, and add the @nx/js migrations `23-1-0-add-ignore-deprecations-for-ts6` and `23-1-0-set-tsconfig-root-dir-for-ts6` to `migrations.json` before running it. They add `\"ignoreDeprecations\": \"6.0\"` and pin the pre-TS 6 defaults in tsconfig.base.json (`strict: false`, `noUncheckedSideEffectImports: false`, `types: [\"*\"]`). Keep those pins: they hold the compiler to its TypeScript 5 behaviour. 3. Package versions the template ended on (root package.json): nx and every @nx/* package 24.0.5; typescript 6.0.3; typescript-eslint 8.72.2; vite 8.3.7; @vitejs/plugin-react 6.3.0; jest 30.3.0; ts-jest 29.4.9; rollup 4.68.2; webpack-cli 7.3.1; webpack 5.112.2 and webpack-dev-server 5.2.7 (now direct); storybook and @storybook/* 10.6.7; @chromatic-com/storybook 5.6.0; eslint ^10.14.0; @eslint/js ^10.0.1; eslint-plugin-react-hooks 7.1.1; eslint-plugin-react 7.37.5. The Nestled packages that moved to the same toolchain (see packageReleases): **@nestledjs/generators 4.0.0**, which requires Nx 24 and is a major for that reason only (generator options and output are unchanged); @nestledjs/doctor 0.7.0, whose `typescript` dependency now accepts 6; @nestledjs/forms, forms-core and forms-native 0.9.2; @nestledjs/shared-components 1.0.20 and @nestledjs/access-control 0.0.4, whose only change is the template's lint fixes. Move generators and Nx together: generators 4 on Nx 22 or 23, or generators 3.x on Nx 24, leaves the workspace with two Nx versions. Update the packages a project already declares, at exact pins where it pins today; do not add ones it does not use. 4. Breakage the migrate does not fix, and what the template did: - Tests silently skipped. Since Nx 23, `@nx/vite/plugin` no longer creates a `test` target. If nx.json registers `@nx/vitest` with `testTargetName: \"vite:test\"`, every project without an explicit `test` drops out of `nx run-many -t test`, and the command still exits 0. Set `\"testTargetName\": \"test\"` and `\"testMode\": \"run\"` on that plugin entry. Then compare `nx show projects --with-target test` with the list from before the upgrade. - The removed @nx/jest, @nx/vitest, @nx/vite and @nx/eslint executors. The migrations convert these to inferred targets. Keep each target's dependsOn, configurations and coverage directories. If the migrate adds a second, include-scoped `@nx/vitest` entry with `testMode: \"watch\"`, fold it into the existing entry: the removed executor ran once. - The React Router app's build. A React Router app gets no build, serve or preview target from `@nx/vite/plugin`, so `web:build`, `web:serve` and `web:preview` become explicit `nx:run-commands` targets in apps/web/project.json. **build runs `react-router build`.** Under Vite 8, `vite build` (which the removed `@nx/vite:build` executor called) builds the SSR environment from the client inputs, and emits no `build/server/index.js`. The build passes and the app cannot start. Check for build/server/index.js after building. - `nxViteTsPaths` and `nxCopyAssetsPlugin` are inert stubs in Nx 24. The codemod sets `resolve.tsconfigPaths: true`. Remove the remaining `nxCopyAssetsPlugin` calls. A project whose vite build ships copied files (a published library's README or LICENSE) needs a small replacement plugin (see libs/access-control/vite.config.mts). - Replace `__dirname` with `import.meta.dirname` in vite and vitest configs. - Under TypeScript 6, spec tsconfigs that typecheck vite or vitest configs need `\"module\": \"esnext\"` and `\"moduleResolution\": \"bundler\"`. Vite 8 publishes exports-only types. A vitest config checked by a CommonJS tsconfig fails on `import.meta.dirname`: move it to an ESM tsconfig. - Jest now runs from each project's root, not the workspace root, because the inferred `@nx/jest/plugin` target sets `cwd` to the project. A path or glob key in `coverageThreshold` is resolved against that directory. A key written from the workspace root (`'libs/api/custom/src/...'`) fails `--coverage` runs with \"Coverage data for ... was not found\". Make it project-relative (`'./src/...'`). - The root `vitest.workspace.ts` becomes a root `vitest.config.ts` with `test.projects`. `.nx/migrate-runs` is added to .gitignore. - A Vite plugin typed against Rollup's `OutputBundle` gets a Rolldown bundle. Type only the fields it reads. 5. ESLint 10. Move eslint, @eslint/js, eslint-plugin-react-hooks and eslint-plugin-react to the versions above. eslint-plugin-react's `react.version: 'detect'` calls `context.getFilename()`, which ESLint 10 removed, so every React lint config crashes. The root eslint.config.mjs exports `reactVersionSettings`, which names the installed React version. Spread it after `...nx.configs['flat/react']` in every React lint config, and keep that spread. 6. Lint rules: all new rules are errors. That covers the 14 rules eslint-plugin-react-hooks v7 adds to `recommended` (static-components, use-memo, preserve-manual-memoization, incompatible-library, immutability, globals, refs, set-state-in-effect, error-boundaries, purity, set-state-in-render, unsupported-syntax, config, gating) and ESLint 10's new recommended `no-useless-assignment` and `preserve-caught-error`. `exhaustive-deps` stays a warning. Do not turn rules off or down to warnings. **Fixes must not change behaviour.** When the only fix you can find would change what the code does, keep the code and add an `// eslint-disable-next-line <rule> -- <reason>` with a one-line reason. List every such disable in the outcome. The common fixes the template used: - `set-state-in-effect` - State that follows a prop or route value (a reset when `location.key`, `src` or a URL changes): use React's \"adjust state when a prop changes\" pattern. Keep the previous value in state and set both while rendering: `if (prev !== value) { setPrev(value); setX(...) }`. - A value computable from props or state (an error for a missing token): derive it while rendering and drop the effect. - A client-only flag that is false on the server and true in the browser: use `useSyncExternalStore(() => () => undefined, () => true, () => false)`. - An effect that starts a request and sets state when it settles: set that state in promise callbacks (`.then`, `.catch`, `.finally`), not after `await` in the effect's own async function. Wrap the call as `new Promise(resolve => resolve(call()))` so a synchronous throw still reaches the catch. - Reading browser-only state after hydration (navigator.onLine, localStorage, a DOM element another component renders): keep the effect, with a disable and that reason. Reading it while rendering makes the hydrated HTML differ from the server's. - `refs`: `ref.current = value` during render (the \"latest value\" ref). Write it in a `useLayoutEffect` (no dependency array, or the value's dependencies). That runs before any effect, timer or event handler that reads the ref. Lazy-initialise a ref from impure input with `const [initial] = useState(() => compute())` and `useRef(initial)`. - `immutability`: assigning `globalThis.location.href = url` in a component or handler. Call `globalThis.location.assign(url)`, which does the same thing. Test mocks of `location` need an `assign` that sets `href`. - `preserve-manual-memoization`: a `useCallback` or `useMemo` whose dependency list names `obj?.id` while the body reads `obj.id`. Hoist `const id = obj?.id` and use `id` in both. - `purity`: `Date.now()` or `Math.random()` while rendering, often as a `useRef(...)` argument that runs on every render. Move it into a lazy `useState(() => ...)` initialiser. - `preserve-caught-error`: pass the caught error on, as in `throw new Error(message, { cause: error })`. `ErrorOptions` needs `\"es2022.error\"` in tsconfig.base.json's `lib`; the template's lib is now `[\"es2021\", \"es2022.error\", \"dom\"]`. - `no-useless-assignment`: drop an initial value every path overwrites (`let decoded: T | null = null` before a try that assigns it or throws). **An app the owner has excluded** (a mobile app in the workspace, for example) keeps its existing lint config for that project, untouched, and the outcome records which project was excluded and why."
+        area: infra
+        affectedPaths:
+          - package.json
+          - pnpm-lock.yaml
+          - nx.json
+          - migrations.json
+          - tsconfig.base.json
+          - .gitignore
+          - vitest.config.ts
+          - vitest.workspace.ts
+          - eslint.config.mjs
+          - apps/web/eslint.config.mjs
+          - apps/web/project.json
+          - apps/web/vite.config.ts
+          - apps/web/tsconfig.json
+          - apps/web/app/api-availability.ts
+          - apps/web/app/app.tsx
+          - apps/web/app/root.tsx
+          - apps/web/app/routes/_public/reset-password.tsx
+          - apps/web/app/routes/_public/verify-email.tsx
+          - apps/web/app/routes/accept-invitation.tsx
+          - apps/web/app/routes/pricing.tsx
+          - apps/web/app/routes/settings/ai.tsx
+          - apps/web/tests/routes/pricing.spec.tsx
+          - apps/api/tsconfig.json
+          - apps/api-e2e/tsconfig.json
+          - apps/api-e2e/tsconfig.spec.json
+          - apps/api-e2e/tsconfig.support.json
+          - apps/api-e2e/vitest.config.mts
+          - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+          - libs/api/custom/src/lib/plugins/auth/twofa.helper.ts
+          - libs/api/integrations/src/lib/email/providers/smtp.provider.ts
+          - libs/api/integrations/src/lib/email/template-manager-simple.ts
+          - libs/api/custom/project.json
+          - libs/api/custom/jest.config.ts
+          - libs/shared/apollo/src/lib/apollo.ts
+          - libs/shared/apollo/vite.config.ts
+          - libs/shared/apollo/tsconfig.spec.json
+          - libs/shared/sdk/vite.config.ts
+          - libs/shared/sdk/tsconfig.spec.json
+          - libs/shared/utils/eslint.config.mjs
+          - libs/shared/utils/project.json
+          - libs/shared/utils/vitest.config.mts
+          - libs/web-ui/eslint.config.mjs
+          - libs/web-ui/vite.config.ts
+          - libs/web-ui/src/lib/components/avatar/avatar-upload.tsx
+          - libs/web-ui/src/lib/web-ui-avatar.tsx
+          - libs/web-ui/src/lib/web-ui-header.tsx
+          - libs/web/eslint.config.mjs
+          - libs/web/project.json
+          - libs/web/vitest.config.mts
+          - libs/web/tsconfig.spec.json
+          - libs/web/src/lib/components/turnstile-widget.tsx
+          - libs/web/src/lib/components/upgrade-modal.tsx
+          - libs/web/src/lib/contexts/auth.context.tsx
+          - libs/web/src/lib/hooks/useInfiniteApolloList.ts
+        verification:
+          - pnpm exec nx report (nx and every @nx/* package on 24.0.5, typescript 6.0.3)
+          - pnpm exec nx show projects --with-target test (the same list as before the upgrade, or longer)
+          - pnpm typecheck
+          - pnpm exec nx run-many -t lint --skip-nx-cache
+          - pnpm exec nx run-many -t test --skip-nx-cache
+          - pnpm exec nx run-many -t build --skip-nx-cache
+          - test -f apps/web/build/server/index.js (the server bundle exists after the web build)
+          - pnpm run nestled-doctor
+          - pnpm exec prettier --check .
+        patch: patches/2026-11-10-nx-24-ts-6-eslint-10.diff
+        packageReleases:
+          - name: "@nestledjs/generators"
+            targetVersion: 4.0.0
+            versionRange: 4.0.0
+          - name: "@nestledjs/doctor"
+            targetVersion: 0.7.0
+            versionRange: 0.7.0
+          - name: "@nestledjs/forms"
+            targetVersion: 0.9.2
+            versionRange: ^0.9.2
+          - name: "@nestledjs/forms-core"
+            targetVersion: 0.9.2
+            versionRange: ^0.9.2
+          - name: "@nestledjs/forms-native"
+            targetVersion: 0.9.2
+            versionRange: ^0.9.2
+          - name: "@nestledjs/shared-components"
+            sourcePath: libs/shared-components
+            targetVersion: 1.0.20
+            versionRange: ^1.0.20
+          - name: "@nestledjs/access-control"
+            sourcePath: libs/access-control
+            targetVersion: 0.0.4
+            versionRange: ^0.0.4
+      - id: 2026-11-10-r3-followups-tooling
+        title: "R3 tooling follow-ups: the pre-commit hook never commits unstaged hunks, Postgres readiness over TCP, the API e2e gate sees root files, untracked generator output, full-history gitleaks on develop, Sonar digest and session-hook fixes"
+        delivery: code-patch
+        intent: "Follow-up to 2026-11-09-precommit-and-session-hooks, 2026-11-09-ci-parallel-jobs and 2026-11-09-sonar-rules-digest (apply those first; this note changes the files they added). Nine parts. No package changes. 1. `.githooks/pre-commit` re-staged whole files. Before formatting, it now lists the staged paths that also have unstaged changes (`staged_paths | xargs -0 git diff --name-only --`). If there are any, it prints them, says how to proceed (stage the whole file, or `git stash push --keep-index`, commit, `git stash pop`) and exits 1, before Prettier touches anything: re-staging such a file would commit its unstaged hunks. Re-staging is now `git add -f --`, because every path is already in the index and an ignore rule (a force-added `.claude/settings.json` under an ignored `.claude/`) made a plain `git add` fail the commit. New `scripts/pre-commit-hook.spec.mjs` runs the hook in a throwaway repository with a Prettier stand-in and covers the normal case, a partially staged file and a force-added ignored file. 2. `scripts/db-update.mjs` `waitForPostgres` asked `pg_isready` over the Unix socket. On a fresh data directory the postgres image's temporary init server answers there and then shuts down, so `createdb` raced it (\"the database system is shutting down\") and the generated-artifacts job failed now and then. It now passes `-h 127.0.0.1`. The same flag is added to `scripts/test-db.sh` `wait_for_db` and to both Postgres healthchecks in `.dev/docker-compose.yml`. New `scripts/postgres-readiness.spec.mjs` fails on any socket-only `pg_isready` in those three files. 3. CI `affected` job (`.github/workflows/ci.yml`): Nx maps a changed file to the project that owns it, so a PR touching only root files the e2e run reads (prisma.config.ts, package.json, the lockfile, .env.example, tsconfig.base.json, scripts/, .github/actions/) left api-e2e unaffected and skipped the suite. A changed-path fallback now runs it whenever `git diff --name-only \"$NX_BASE...$NX_HEAD\"` lists a file outside `apps/` and `libs/`, except docs (`docs/**`, `**/*.md`), `.nestled-updates/**`, `.claude/**`, `.githooks/**`, `.cursor/**`, `.vscode/**` and `LICENSE`. 4. nx.json, by hand (nx.json is not mirrored by promotion): add `\"{workspaceRoot}/.github/actions/**/*\"` to `namedInputs.sharedGlobals`, next to `\"{workspaceRoot}/.github/workflows/ci.yml\"`, so a change to a composite action no longer replays cached results. 5. The generated-artifacts drift check counted only tracked files (`git diff --quiet`), so a generator that adds a new file passed. It now fails when `git status --porcelain --untracked-files=all` prints anything, and prints that list. 6. gitleaks on a develop push scanned only `github.event.before..github.sha`. A newer push replaces a queued develop run, so the replaced run's commits were never scanned. A develop push now scans the whole history (seconds); a pull request still scans `base..head`. 7. `scripts/sonar-rules-digest.mjs` `groupRules` dropped a rule carrying an excluded tag even when another of its tags had been turned back on (S6302 is tagged `aws` and `gcp`; a project that removes `aws` from `excludeTags` still lost it to `gcp`). A default-excluded tag missing from the project's `excludeTags` now keeps the rule, like a KEEP_TAGS tag. New test in `scripts/sonar-rules-digest.spec.mjs`. The template's digest output does not change. 8. `scripts/sonar-rules-digest.spec.mjs` stubbed `log` as `() => {}`, which ESLint `no-empty-function` rejects; it is now `() => undefined`. 9. `.claude/hooks/session-start.sh` could exit non-zero under `set -e`: when git was missing, when `git hash-object` was given a missing file, or when `CLAUDE_PROJECT_DIR` did not exist. Each case is now handled explicitly with a one-line message (without git or with an input missing there is no fingerprint, so the warm-up always runs), and an EXIT trap turns any other failure into a message and exit 0. New `scripts/session-start-hook.spec.mjs` covers the missing git, missing schema and missing directory cases and the skip-when-current path."
+        area: infra
+        affectedPaths:
+          - .githooks/pre-commit
+          - .claude/hooks/session-start.sh
+          - .github/workflows/ci.yml
+          - .dev/docker-compose.yml
+          - nx.json
+          - scripts/db-update.mjs
+          - scripts/test-db.sh
+          - scripts/sonar-rules-digest.mjs
+          - scripts/sonar-rules-digest.spec.mjs
+          - scripts/pre-commit-hook.spec.mjs
+          - scripts/postgres-readiness.spec.mjs
+          - scripts/session-start-hook.spec.mjs
+        verification:
+          - node --test scripts/*.spec.mjs
+          - node scripts/sonar-rules-digest.mjs --check
+          - pnpm exec prettier --check .
+          - pnpm run nestled-doctor
+          - actionlint .github/workflows/ci.yml (where actionlint is installed)
+          - "Stage one hunk of a changed file with `git add -p` and try to commit on a throwaway branch: the hook refuses and names the file, and the index still holds only that hunk. Then discard the branch."
+          - On the PR, CI's "Generated artifacts are up to date" job passes (no untracked generator output) and the gitleaks job passes.
+        patch: patches/2026-11-10-r3-followups-tooling.diff
+      - id: 2026-11-10-r3-followups-web
+        title: "R3 web follow-ups: a recorded API failure no longer re-labels an unrelated render error, RequireAuth's redirect cannot loop, frozen loader data is safe, three Sonar findings"
+        delivery: code-patch
+        intent: "Follow-up to 2026-11-09-error-recovery-r3 (apply that first; this note changes the code it added). Four parts, in the web app and the shared libs. No package changes. 1. apps/web/app/entry.server.tsx `shellErrorOutcome(error, cause)` applied the recorded cause before looking at the error. `ssrApiFailureCause()` aggregates every loader's Apollo failures in the request, so the cause could belong to a preload whose failure a Suspense boundary contained. An ordinary render bug in the shell then became the 503 recovering screen (`unavailable` recorded) or a sign-out (`unauthenticated` recorded). The recorded cause now applies only when the shell error is itself an API failure: Apollo's redacted stream error (no recorded cause still means `unavailable`), or an error `classifyApiFailure` does not call `other` (then the recorded cause, else the error's own). Any other shell error is `error` and goes to `reject(error)`, whatever was recorded. `classifyApiFailure` is imported from `@nestled-template/shared/apollo`. apps/web/tests/entry-server-shell-error.spec.tsx: new end-to-end cases where the Me preload fails as a 503 or a 401 and the root component throws a plain render error (expected: 500, no Set-Cookie, no Location); the `shellErrorOutcome` table now expects `error` for a plain error with a recorded cause, and covers non-redacted API errors. 2. libs/web/src/lib/components/require-auth.tsx redirected with `<Navigate to={redirectTo} state={{ from: location }} replace />`. `<Navigate>` re-runs `navigate()` when its props change, and the `state` object is new on every render; in framework mode each navigation passes through the loading state, so every re-render aborted the pending redirect and started another (thousands of aborted `.data` requests a second in a production build). The `state` prop and the `useLocation` call are removed; nothing read `location.state.from`. The component stays exported, since a project may use it. New libs/web/src/lib/components/require-auth.spec.tsx asserts that a signed-out render starts exactly one navigation while the login route's loader is pending. 3. libs/shared/apollo/src/lib/apollo-loader.ts `attachRecord` defined a symbol property on the loader's returned object, which throws for frozen or non-extensible data (`return Object.freeze({...})`). The record now lives in a WeakMap keyed by the returned data (kept on `globalThis` under `Symbol.for('nestled.ssrApiFailureRecords')`, so a second copy of the module finds it), and `ssrApiFailureCause` reads it from there. The data is never modified. New test in libs/shared/apollo/src/lib/apollo.spec.ts for frozen and non-extensible data; the cause test now returns frozen data. 4. SonarCloud findings in the R3 code: apps/web/app/api-availability.ts drops the redundant `type Phase = ApiAvailabilityPhase` alias (S6564; use `ApiAvailabilityPhase` directly) and the never-read initial value of `result` in `runProbe` (S1854; `let result: ConnectivityProbeResult`). apps/web/app/entry.server.tsx marks the intentional `reject(new Response(null, { status: 503 }))` with `// NOSONAR` and a comment saying why (S6671: React Router needs the 503 `Response`; an Error would be a 500)."
+        area: web
+        affectedPaths:
+          - apps/web/app/entry.server.tsx
+          - apps/web/app/api-availability.ts
+          - apps/web/tests/entry-server-shell-error.spec.tsx
+          - libs/web/src/lib/components/require-auth.tsx
+          - libs/web/src/lib/components/require-auth.spec.tsx
+          - libs/shared/apollo/src/lib/apollo-loader.ts
+          - libs/shared/apollo/src/lib/apollo.spec.ts
+        verification:
+          - pnpm typecheck
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx test web-components --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - pnpm exec nx build web --skip-nx-cache
+          - pnpm run nestled-doctor
+        patch: patches/2026-11-10-r3-followups-web.diff
