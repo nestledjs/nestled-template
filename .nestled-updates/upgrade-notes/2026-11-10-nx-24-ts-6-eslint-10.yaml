@@ -272,4 +272,10 @@ agentHints:
     them. A project with a long-running worker confirms it is idle before merging, and says in its
     outcome which services the merge restarts.
   - >
+    When a `set-state-in-effect` fix replaces state set at the start of an effect (an
+    `isProcessing` or `loading` flag) with a value derived during render, check what the old code
+    reset on each run. A derived "failed" flag that never resets is a regression: key it to the
+    input it failed for (for example `failedToken === token`) so a new input starts fresh. The
+    template's accept-invitation route had exactly this after its first fix.
+  - >
     Do not move React Router to 8 here, even if a tool offers it. It belongs to the next release.

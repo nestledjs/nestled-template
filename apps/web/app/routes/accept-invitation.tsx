@@ -120,43 +120,54 @@ export default function AcceptInvitation() {
 
   // A signed-in user's invitation is accepted automatically (the effect below). The accepting
   // screen shows from the first render that can start it until it fails, derived here rather than
-  // set from the effect.
-  const [autoAcceptFailed, setAutoAcceptFailed] = useState(false)
-  const autoAccepting = Boolean(user && token && invitationDetails) && !autoAcceptFailed
+  // set from the effect. The failure is recorded per token, so moving to another invitation link
+  // in the same tab shows that invitation's own accepting state.
+  const [failedToken, setFailedToken] = useState<string | null>(null)
+  const autoAccepting = Boolean(user && token && invitationDetails) && failedToken !== token
 
   // Settles in promise callbacks, which always run after the effect that starts it returns, so no
   // state is set synchronously inside that effect. A synchronous throw from the mutation still
-  // lands in the catch: the Promise constructor turns it into a rejection.
-  const acceptInvitationAsync = useCallback(() => {
-    if (!token) return Promise.resolve()
+  // lands in the catch: the Promise constructor turns it into a rejection. An attempt that a newer
+  // one has superseded (the effect re-ran, for example for another invitation link) settles without
+  // touching state or navigating, so a late result can't overwrite the current invitation's.
+  const acceptInvitationAsync = useCallback(
+    (isCurrent: () => boolean) => {
+      if (!token) return Promise.resolve()
 
-    return new Promise(resolve => {
-      resolve(
-        acceptInvitation({
-          variables: {
-            input: { token },
-          },
-        }),
-      )
-    })
-      .then(() => {
-        // Redirect to members area
-        setTimeout(() => {
-          navigate('/members', { replace: true })
-        }, 1500)
-      })
-      .catch(error => {
-        setFormError(
-          getInvitationErrorMessage(error, 'Failed to accept invitation. Please try again.'),
+      return new Promise(resolve => {
+        resolve(
+          acceptInvitation({
+            variables: {
+              input: { token },
+            },
+          }),
         )
-        setAutoAcceptFailed(true)
       })
-  }, [acceptInvitation, navigate, token])
+        .then(() => {
+          if (!isCurrent()) return
+          // Redirect to members area
+          setTimeout(() => {
+            navigate('/members', { replace: true })
+          }, 1500)
+        })
+        .catch(error => {
+          if (!isCurrent()) return
+          setFormError(
+            getInvitationErrorMessage(error, 'Failed to accept invitation. Please try again.'),
+          )
+          setFailedToken(token)
+        })
+    },
+    [acceptInvitation, navigate, token],
+  )
 
   // If user is already logged in, accept the invitation automatically
   useEffect(() => {
-    if (user && token && invitationDetails) {
-      acceptInvitationAsync()
+    if (!(user && token && invitationDetails)) return
+    let current = true
+    void acceptInvitationAsync(() => current)
+    return () => {
+      current = false
     }
   }, [acceptInvitationAsync, invitationDetails, token, user])
 
