@@ -1,0 +1,407 @@
+diff --git a/apps/web/app/api-availability.ts b/apps/web/app/api-availability.ts
+index 7e3c09f..1fddf8a 100644
+--- a/apps/web/app/api-availability.ts
++++ b/apps/web/app/api-availability.ts
+@@ -1,4 +1,4 @@
+-import { useCallback, useContext, useEffect, useRef, useState } from 'react'
++import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+ import type { ApolloClient } from '@apollo/client'
+ import { getApolloContext } from '@apollo/client/react'
+ import { isRetryableConnectivityError } from '@nestled-template/shared/apollo'
+@@ -149,7 +149,6 @@ export function browserIsOffline(): boolean {
+ }
+ 
+ export type ApiAvailabilityPhase = 'available' | 'confirming' | 'unavailable'
+-type Phase = ApiAvailabilityPhase
+ 
+ export interface ApiAvailabilityOptions {
+   /** Called once each time the API answers again after the screen was up. */
+@@ -193,21 +192,25 @@ export interface ApiAvailability {
+ }
+ 
+ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAvailability {
+-  const [phase, setPhase] = useState<Phase>(
++  const [phase, setPhase] = useState<ApiAvailabilityPhase>(
+     options.initiallyUnavailable ? 'unavailable' : 'available',
+   )
+   const [reason, setReason] = useState<UnavailableReason>(options.initialReason ?? 'server')
+ 
+-  const phaseRef = useRef<Phase>(phase)
++  const phaseRef = useRef<ApiAvailabilityPhase>(phase)
+   const confirmAttemptRef = useRef(0)
+   const retryAttemptRef = useRef(0)
+   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+   const probingRef = useRef(false)
+   const mountedRef = useRef(true)
+   const optionsRef = useRef(options)
+-  optionsRef.current = options
++  // Refs are written after commit, not during render. A layout effect runs before any effect,
++  // timer or event handler that reads them, so they always see this render's values.
++  useLayoutEffect(() => {
++    optionsRef.current = options
++  })
+ 
+-  const changePhase = useCallback((next: Phase) => {
++  const changePhase = useCallback((next: ApiAvailabilityPhase) => {
+     phaseRef.current = next
+     setPhase(next)
+   }, [])
+@@ -241,7 +244,7 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+   const runProbe = useCallback(async () => {
+     if (probingRef.current || phaseRef.current === 'available') return
+     probingRef.current = true
+-    let result: ConnectivityProbeResult = { reachable: false }
++    let result: ConnectivityProbeResult
+     try {
+       const outcome = await (optionsRef.current.probe ?? probeConnectivity)()
+       result = typeof outcome === 'boolean' ? { reachable: outcome } : outcome
+@@ -275,9 +278,11 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+     if (phaseRef.current === 'unavailable') scheduleRetry()
+   }, [clearTimer, schedule, scheduleRetry, changePhase])
+ 
+-  runProbeRef.current = () => {
+-    void runProbe()
+-  }
++  useLayoutEffect(() => {
++    runProbeRef.current = () => {
++      void runProbe()
++    }
++  }, [runProbe])
+ 
+   const reportConnectivityError = useCallback(() => {
+     if (phaseRef.current !== 'available') return
+@@ -304,6 +309,9 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
+ 
+   useEffect(() => {
+     mountedRef.current = true
++    // navigator.onLine is browser-only. Read during render, it would make the hydrated HTML differ
++    // from the server's, so it is read once after mount and kept current by the listeners below.
++    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs browser-only state after hydration
+     if (browserIsOffline()) setReason('offline')
+     // Re-arm whatever the phase was waiting on. The cleanup below cancels the pending timer, so
+     // without this an effect replay (React StrictMode in development, or any re-run) while a report
+diff --git a/apps/web/app/entry.server.tsx b/apps/web/app/entry.server.tsx
+index c2ed65e..6dc3be3 100644
+--- a/apps/web/app/entry.server.tsx
++++ b/apps/web/app/entry.server.tsx
+@@ -13,6 +13,7 @@ import { isbot } from 'isbot'
+ import type { RenderToPipeableStreamOptions } from 'react-dom/server'
+ import { renderToPipeableStream } from 'react-dom/server'
+ import {
++  classifyApiFailure,
+   makeClient,
+   ssrApiFailureCause,
+   type ApiFailureCause,
+@@ -36,6 +37,13 @@ function isRedactedApolloStreamError(error: unknown): boolean {
+  * failed, recorded by its Apollo client (`ssrApiFailureCause`), since the error that reaches the
+  * render is redacted and cannot tell a rejected session from an unreachable API.
+  *
++ * The recorded cause covers EVERY loader's queries in the request, so it may belong to a preload
++ * whose failure a Suspense boundary contained and that never reached the shell. It is therefore
++ * applied only when the shell error is itself an API failure: Apollo's redacted stream error, or
++ * an error `classifyApiFailure` recognises. Any other shell error (an ordinary render bug) is
++ * `error`, whatever was recorded: serving it as the recovering screen would hide it, and treating
++ * it as a 401 would sign the user out.
++ *
+  * - `force-logout`: the API really rejected the session (401 or UNAUTHENTICATED). Clear the
+  *   cookie and redirect, as before.
+  * - `unavailable`: the API was unreachable or answered 502/503/504, or a redacted Apollo error
+@@ -48,9 +56,16 @@ export function shellErrorOutcome(
+   error: unknown,
+   cause: ApiFailureCause | undefined,
+ ): 'force-logout' | 'unavailable' | 'error' {
+-  if (cause === 'unauthenticated') return 'force-logout'
+-  if (cause === 'unavailable') return 'unavailable'
+-  if (cause === undefined && isRedactedApolloStreamError(error)) return 'unavailable'
++  let effectiveCause: ApiFailureCause
++  if (isRedactedApolloStreamError(error)) {
++    effectiveCause = cause ?? 'unavailable'
++  } else {
++    const ownCause = classifyApiFailure(error)
++    if (ownCause === 'other') return 'error'
++    effectiveCause = cause ?? ownCause
++  }
++  if (effectiveCause === 'unauthenticated') return 'force-logout'
++  if (effectiveCause === 'unavailable') return 'unavailable'
+   return 'error'
+ }
+ 
+@@ -129,7 +144,9 @@ export default function handleRequest(
+             // screen and reloads once the API answers. A real 401 comes back on the client and
+             // goes through the normal 401 handling there.
+             console.error('[SSR] API unavailable during the shell render — serving 503')
+-            reject(new Response(null, { status: 503, statusText: 'Service Unavailable' }))
++            // A `Response`, not an Error, on purpose (Sonar S6671): React Router turns a rejected
++            // `Response` into that status and renders the ErrorBoundary for it; an Error is a 500.
++            reject(new Response(null, { status: 503, statusText: 'Service Unavailable' })) // NOSONAR
+           } else {
+             reject(error)
+           }
+diff --git a/apps/web/tests/entry-server-shell-error.spec.tsx b/apps/web/tests/entry-server-shell-error.spec.tsx
+index 66f59d4..24473e9 100644
+--- a/apps/web/tests/entry-server-shell-error.spec.tsx
++++ b/apps/web/tests/entry-server-shell-error.spec.tsx
+@@ -211,6 +211,25 @@ describe('server render when the Me preload fails', () => {
+     expect(clearsTheCookie(response)).toBe(false)
+     expect(await response.text()).not.toContain(SERVER_TROUBLE_TITLE)
+   })
++
++  it.each([
++    ['unavailable (a proxy answers 503)', () => graphqlAnswers(503)],
++    ['unauthenticated (401)', () => graphqlAnswers(401, { message: 'Unauthorized' })],
++  ])(
++    'serves 500 for a plain render error even when a preload failed as %s',
++    async (_label, preloadFails) => {
++      // The Me preload fails and its Apollo client records the cause, but the shell fails for an
++      // unrelated reason. The recorded cause must not turn a render bug into the recovering
++      // screen, or into a sign-out.
++      preloadFails()
++      const response = await reloadSignedIn('/members/dashboard', build(new Error('A render bug')))
++
++      expect(response.status).toBe(500)
++      expect(clearsTheCookie(response)).toBe(false)
++      expect(response.headers.get('Location')).toBeNull()
++      expect(await response.text()).not.toContain(SERVER_TROUBLE_TITLE)
++    },
++  )
+ })
+ 
+ describe('shellErrorOutcome', () => {
+@@ -218,12 +237,27 @@ describe('shellErrorOutcome', () => {
+ 
+   it.each([
+     ['unauthenticated', redacted, 'force-logout'],
+-    ['unauthenticated', new Error('anything'), 'force-logout'],
+     ['unavailable', redacted, 'unavailable'],
+-    ['unavailable', new Error('anything'), 'unavailable'],
+     [undefined, redacted, 'unavailable'],
+     [undefined, new Error('A render bug'), 'error'],
+     ['other', redacted, 'error'],
++    // A recorded cause never applies to a shell error that is not an API failure.
++    ['unauthenticated', new Error('A render bug'), 'error'],
++    ['unavailable', new Error('A render bug'), 'error'],
++    ['unavailable', new TypeError("Cannot read properties of undefined (reading 'id')"), 'error'],
++    // A shell error that is itself an API failure: the recorded cause, else its own.
++    ['unauthenticated', new TypeError('fetch failed'), 'force-logout'],
++    [undefined, new TypeError('fetch failed'), 'unavailable'],
++    [
++      undefined,
++      Object.assign(new Error('Response not successful'), { statusCode: 503 }),
++      'unavailable',
++    ],
++    [
++      undefined,
++      Object.assign(new Error('Response not successful'), { statusCode: 401 }),
++      'force-logout',
++    ],
+   ] as const)('cause %s with %s -> %s', (cause, error, outcome) => {
+     expect(shellErrorOutcome(error, cause)).toBe(outcome)
+   })
+diff --git a/libs/shared/apollo/src/lib/apollo-loader.ts b/libs/shared/apollo/src/lib/apollo-loader.ts
+index 9089b53..ba61191 100644
+--- a/libs/shared/apollo/src/lib/apollo-loader.ts
++++ b/libs/shared/apollo/src/lib/apollo-loader.ts
+@@ -8,13 +8,20 @@ import { makeClient, type ApiFailureCause } from './apollo'
+  * concerns."), so by the time the failure reaches `onShellError` in entry.server.tsx a rejected
+  * session and an unreachable API look the same. The loader's own Apollo client still sees the real
+  * error, so each `apolloLoader` call records it here, and attaches the record to the data the
+- * loader returns, where entry.server.tsx finds it again (`ssrApiFailureCause`).
++ * loader returns (in a side table keyed by that data), where entry.server.tsx finds it again
++ * (`ssrApiFailureCause`).
+  */
+ interface SsrApiFailureRecord {
+   cause?: ApiFailureCause
+ }
+ 
+-const SSR_API_FAILURE = Symbol.for('nestled.ssrApiFailure')
++// Loader data -> its request's record. A side table rather than a property on the data, so frozen
++// or non-extensible loader data (`Object.freeze({...})`, a frozen constant) is never mutated, which
++// would throw in strict mode. Registered on globalThis under a `Symbol.for` key so a second copy of
++// this module (a separate server chunk) still finds the records the first one attached.
++const RECORDS_KEY = Symbol.for('nestled.ssrApiFailureRecords')
++const globalRecords = globalThis as { [RECORDS_KEY]?: WeakMap<object, SsrApiFailureRecord> }
++const recordsByData = (globalRecords[RECORDS_KEY] ??= new WeakMap<object, SsrApiFailureRecord>())
+ 
+ // The most decisive cause wins: one rejected session means the session is rejected, whatever else
+ // failed alongside it; an unreachable API outranks an ordinary answered error.
+@@ -46,12 +53,10 @@ function recordFor(request: Request): SsrApiFailureRecord {
+ }
+ 
+ function attachRecord<T>(data: T, record: SsrApiFailureRecord): T {
+-  // Plain loader data only: a redirect or other Response passes through untouched. Not enumerable,
+-  // and a symbol, so it is never serialized to the browser or seen by code that reads the data.
++  // Plain loader data only: a redirect or other Response passes through untouched. The data itself
++  // is never changed, so nothing is serialized to the browser or seen by code that reads it.
+   if (data !== null && typeof data === 'object' && !(data instanceof Response)) {
+-    if (!Object.prototype.hasOwnProperty.call(data, SSR_API_FAILURE)) {
+-      Object.defineProperty(data, SSR_API_FAILURE, { value: record, enumerable: false })
+-    }
++    if (!recordsByData.has(data)) recordsByData.set(data, record)
+   }
+   return data
+ }
+@@ -83,8 +88,7 @@ export function ssrApiFailureCause(
+   let cause: ApiFailureCause | undefined
+   for (const data of Object.values(loaderData ?? {})) {
+     if (data !== null && typeof data === 'object') {
+-      const record = (data as { [SSR_API_FAILURE]?: SsrApiFailureRecord })[SSR_API_FAILURE]
+-      cause = strongest(cause, record?.cause)
++      cause = strongest(cause, recordsByData.get(data)?.cause)
+     }
+   }
+   return cause
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index 1abd107..ae7e7de 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -561,6 +561,17 @@ describe('apolloLoader failure record', () => {
+     expect(ssrApiFailureCause({ root: data })).toBeUndefined()
+   })
+ 
++  it('accepts frozen and non-extensible loader data without mutating it', () => {
++    const frozen = Object.freeze({ theme: 'dark' })
++    const sealed = Object.preventExtensions({ theme: 'light' })
++
++    expect(apolloLoader()(() => frozen)(loaderArgs())).toBe(frozen)
++    expect(apolloLoader()(() => sealed)(loaderArgs())).toBe(sealed)
++    expect(Object.getOwnPropertySymbols(frozen)).toEqual([])
++    expect(Object.getOwnPropertySymbols(sealed)).toEqual([])
++    expect(ssrApiFailureCause({ root: frozen, child: sealed })).toBeUndefined()
++  })
++
+   it('passes a Response through untouched', () => {
+     const redirect = new Response(null, { status: 302 })
+     expect(apolloLoader()(() => redirect)(loaderArgs())).toBe(redirect)
+@@ -593,10 +604,11 @@ describe('apolloLoader failure record', () => {
+           headers: { 'content-type': 'application/json' },
+         }),
+       )
++      // Frozen loader data still carries its record.
+       const rejected = await apolloLoader()(async ({ preloadQuery }) => {
+         const ref = preloadQuery(query)
+         await new Promise(resolve => setTimeout(resolve, 20))
+-        return { ref }
++        return Object.freeze({ ref })
+       })(loaderArgs())
+       expect(ssrApiFailureCause({ root: unavailable, child: rejected })).toBe('unauthenticated')
+     } finally {
+diff --git a/libs/web/src/lib/components/require-auth.spec.tsx b/libs/web/src/lib/components/require-auth.spec.tsx
+new file mode 100644
+index 0000000..d24772f
+--- /dev/null
++++ b/libs/web/src/lib/components/require-auth.spec.tsx
+@@ -0,0 +1,81 @@
++import { act, render, screen } from '@testing-library/react'
++import { createMemoryRouter, RouterProvider } from 'react-router'
++import { describe, expect, it } from 'vitest'
++import { RequireAuth } from './require-auth'
++
++describe('RequireAuth', () => {
++  it('navigates to the login page exactly once when signed out', async () => {
++    let releaseLogin: () => void = () => undefined
++    const loginLoaderGate = new Promise<null>(resolve => {
++      releaseLogin = () => resolve(null)
++    })
++
++    const router = createMemoryRouter(
++      [
++        {
++          path: '/protected',
++          loader: () => null,
++          element: (
++            <RequireAuth>
++              <span>Secret</span>
++            </RequireAuth>
++          ),
++        },
++        // A pending loader keeps the redirect in the loading state, which is where
++        // a fresh `state` object on every render used to restart the navigation.
++        { path: '/login', loader: () => loginLoaderGate, element: <span>Login page</span> },
++      ],
++      { initialEntries: ['/protected'] },
++    )
++
++    const startedNavigations: string[] = []
++    router.subscribe(state => {
++      if (state.navigation.state === 'loading' && state.navigation.location) {
++        const key = state.navigation.location.key
++        if (!startedNavigations.includes(key)) startedNavigations.push(key)
++        // A looping redirect never settles: stop the router so the test fails instead of hanging.
++        if (startedNavigations.length > 3) router.dispose()
++      }
++    })
++
++    render(<RouterProvider router={router} />)
++
++    // Let several render/effect cycles run while the login loader is pending.
++    for (let i = 0; i < 10; i++) {
++      await act(async () => {
++        await Promise.resolve()
++      })
++    }
++
++    await act(async () => {
++      releaseLogin()
++      await loginLoaderGate
++    })
++
++    expect(startedNavigations).toHaveLength(1)
++    expect(await screen.findByText('Login page')).toBeTruthy()
++    expect(router.state.location.pathname).toBe('/login')
++    expect(screen.queryByText('Secret')).toBeNull()
++  })
++
++  it('renders its children when the loader provides a user', async () => {
++    const router = createMemoryRouter(
++      [
++        {
++          path: '/protected',
++          loader: () => ({ user: { id: 'user-1' } }),
++          element: (
++            <RequireAuth>
++              <span>Secret</span>
++            </RequireAuth>
++          ),
++        },
++      ],
++      { initialEntries: ['/protected'] },
++    )
++
++    render(<RouterProvider router={router} />)
++
++    expect(await screen.findByText('Secret')).toBeTruthy()
++  })
++})
+diff --git a/libs/web/src/lib/components/require-auth.tsx b/libs/web/src/lib/components/require-auth.tsx
+index dd0c961..b530017 100644
+--- a/libs/web/src/lib/components/require-auth.tsx
++++ b/libs/web/src/lib/components/require-auth.tsx
+@@ -1,5 +1,5 @@
+ import React, { ReactNode } from 'react'
+-import { Navigate, useLocation, useLoaderData } from 'react-router'
++import { Navigate, useLoaderData } from 'react-router'
+ 
+ interface RequireAuthProps {
+   readonly children: ReactNode
+@@ -12,15 +12,18 @@ type RequireAuthLoaderData = {
+ }
+ 
+ export function RequireAuth({ children, redirectTo = '/login' }: RequireAuthProps) {
+-  const location = useLocation()
+   const loaderData = useLoaderData() as RequireAuthLoaderData | null
+ 
+   // Check if we have user data from the loader (meQueryRef or similar)
+   const isAuthenticated = !!loaderData?.meQueryRef || !!loaderData?.user
+ 
+   if (!isAuthenticated) {
+-    // Redirect to login, but save the location they were trying to access
+-    return <Navigate to={redirectTo} state={{ from: location }} replace />
++    // No `state` prop on purpose. <Navigate> re-runs navigate() whenever its props change, and a
++    // `state={{ from: location }}` object is new on every render. In framework mode each
++    // navigation passes through the loading state, so every re-render aborted the pending redirect
++    // and started another: thousands of aborted `.data` requests a second. Nothing reads
++    // `location.state.from`; pass the return path in the URL (`?redirectTo=`) if you need one.
++    return <Navigate to={redirectTo} replace />
+   }
+ 
+   return <>{children}</>

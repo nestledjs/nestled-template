@@ -1,0 +1,710 @@
+diff --git a/.claude/hooks/session-start.sh b/.claude/hooks/session-start.sh
+index f742f4a..8cd7581 100755
+--- a/.claude/hooks/session-start.sh
++++ b/.claude/hooks/session-start.sh
+@@ -33,7 +33,25 @@ run_step() {
+ }
+ 
+ [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
+-cd "${CLAUDE_PROJECT_DIR:-.}"
++
++# Whatever goes wrong below, the session must not start in a failed state: say so and exit 0.
++# Every expected failure is handled explicitly; this catches the unexpected ones under `set -e`.
++on_exit() {
++  status=$?
++  if [ "$status" -ne 0 ]; then
++    echo "session-start: FAILED unexpectedly (exit $status), so node_modules, the Prisma client and"
++    echo "the .githooks/pre-commit hook may be missing. Run \`pnpm install\` by hand, and"
++    echo "\`pnpm exec prettier --write\` on the files you change before committing."
++    exit 0
++  fi
++}
++trap on_exit EXIT
++
++if ! cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null; then
++  echo "session-start: FAILED. The project directory ${CLAUDE_PROJECT_DIR:-.} does not exist, so"
++  echo "nothing was installed. Run \`pnpm install\` in the checkout by hand."
++  exit 0
++fi
+ 
+ # The cloud image's Node is not ours to pin, and `.npmrc`'s engine-strict would refuse the install
+ # over a patch-level difference from `engines.node`, leaving the session with no node_modules at
+@@ -51,10 +69,26 @@ fi
+ export npm_config_engine_strict=false
+ 
+ # The marker fingerprints the lockfile AND the Prisma schema: a resumed checkout whose schema
+-# changed with no dependency change still needs the client regenerated.
++# changed with no dependency change still needs the client regenerated. Without git, or with
++# either file missing, there is no fingerprint: the warm-up always runs, and says why.
+ marker=node_modules/.session-start-lockfile-hash
+-want="$(git hash-object pnpm-lock.yaml libs/api/prisma/src/lib/schemas/schema.prisma | tr '\n' ' ')"
+-if [ -f "$marker" ] && [ "$(cat "$marker")" = "$want" ] \
++want=""
++if ! command -v git >/dev/null 2>&1; then
++  echo "session-start: git is not installed, so the install cannot be skipped when current, and"
++  echo "the .githooks/pre-commit hook cannot be wired. Installing anyway."
++else
++  missing=""
++  for input in pnpm-lock.yaml libs/api/prisma/src/lib/schemas/schema.prisma; do
++    [ -f "$input" ] || missing="$missing $input"
++  done
++  if [ -n "$missing" ]; then
++    echo "session-start: missing$missing, so there is no fingerprint and the install runs every"
++    echo "session until it exists."
++  else
++    want="$(git hash-object pnpm-lock.yaml libs/api/prisma/src/lib/schemas/schema.prisma | tr '\n' ' ')"
++  fi
++fi
++if [ -n "$want" ] && [ -f "$marker" ] && [ "$(cat "$marker")" = "$want" ] \
+   && [ -d libs/api/prisma/src/lib/prisma-generated ] \
+   && [ "$(git config core.hooksPath || true)" = ".githooks" ]; then
+   echo "session-start: dependencies, Prisma client and git hooks already current; nothing installed."
+@@ -63,5 +97,5 @@ fi
+ 
+ run_step pnpm install --frozen-lockfile
+ run_step pnpm prisma:generate
+-printf '%s\n' "$want" > "$marker"
++if [ -n "$want" ]; then printf '%s\n' "$want" > "$marker"; fi
+ echo "session-start: installed dependencies (pnpm install --frozen-lockfile), generated the Prisma client, and wired .githooks/pre-commit (Prettier and secret scan on staged files). Never commit with --no-verify."
+diff --git a/.dev/docker-compose.yml b/.dev/docker-compose.yml
+index e98bb26..caa8909 100644
+--- a/.dev/docker-compose.yml
++++ b/.dev/docker-compose.yml
+@@ -23,7 +23,7 @@ services:
+     volumes:
+       - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres:/var/lib/postgresql/data
+     healthcheck:
+-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
++      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']
+       interval: 10s
+       timeout: 5s
+       retries: 5
+@@ -41,7 +41,7 @@ services:
+     volumes:
+       - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres-test:/var/lib/postgresql/data
+     healthcheck:
+-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
++      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']
+       interval: 10s
+       timeout: 5s
+       retries: 5
+diff --git a/.githooks/pre-commit b/.githooks/pre-commit
+index 805043c..7852fac 100755
+--- a/.githooks/pre-commit
++++ b/.githooks/pre-commit
+@@ -13,9 +13,9 @@
+ # and lint-staged add transitive packages that re-key the pnpm lockfile.
+ #
+ # Prettier gets the staged paths explicitly and still honours .prettierignore; --ignore-unknown
+-# skips files it has no parser for. The formatted files are re-staged whole, so a partially staged
+-# file has its unstaged hunks staged too: stage whole files, or commit the hunks you mean. Never
+-# bypass this hook with --no-verify.
++# skips files it has no parser for. The formatted files are re-staged whole, so a PARTIALLY staged
++# file (`git add -p`, unstaged edits on top of staged ones) is refused rather than formatted:
++# re-staging it would commit the unstaged hunks too. Never bypass this hook with --no-verify.
+ set -e
+ # -z: NUL-separated and never C-quoted, so a path with spaces or non-ASCII characters reaches
+ # Prettier and `git add` as it is. Without it git quotes such paths ("docs/caf\303\251.md").
+@@ -30,8 +30,22 @@ staged_paths() {
+ # failing hook is --no-verify, which this repository forbids. Say what is wrong and let the commit
+ # through: the blocking gate is CI's `prettier --check .`, not this.
+ if [ -x node_modules/.bin/prettier ]; then
++  # A staged path that also has unstaged changes. Formatting the work-tree file and re-staging it
++  # would silently add those unstaged hunks to the commit, so stop and say which paths.
++  partially_staged="$(staged_paths | xargs -0 git diff --name-only --)"
++  if [ -n "$partially_staged" ]; then
++    echo "pre-commit: REFUSED. These staged files also have unstaged changes:" >&2
++    printf '%s\n' "$partially_staged" | sed 's/^/  /' >&2
++    echo "The hook formats and re-stages whole files, which would commit the unstaged hunks too." >&2
++    echo "Stage the whole file (\`git add <path>\`), or set the unstaged hunks aside with" >&2
++    echo "\`git stash push --keep-index\`, commit, then \`git stash pop\`." >&2
++    exit 1
++  fi
+   staged_paths | xargs -0 node_modules/.bin/prettier --write --ignore-unknown --log-level warn --
+-  staged_paths | xargs -0 git add --
++  # -f: every path is already in the index, so an ignore rule must not abort the commit. Without
++  # it `git add` refuses a force-added path that matches .gitignore (`.claude/settings.json` under
++  # an ignored `.claude/`) and the hook fails.
++  staged_paths | xargs -0 git add -f --
+ else
+   echo "pre-commit: NOT FORMATTED. node_modules/.bin/prettier is missing, so the staged files" >&2
+   echo "were left as they are. Run \`pnpm install\`, or \`pnpm exec prettier --write\` on the files" >&2
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index cb57368..b32629e 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -44,8 +44,8 @@ permissions:
+ #
+ # Every Linux job starts from .github/actions/setup (pnpm, Node, install, Prisma client). Nx Cloud's
+ # remote cache is shared across the jobs and across runs, so a task whose inputs are unchanged
+-# replays in seconds wherever it is scheduled. This file is in nx.json's sharedGlobals, so a change
+-# to it misses the cache everywhere once.
++# replays in seconds wherever it is scheduled. This file and .github/actions/** are in nx.json's
++# sharedGlobals, so a change to either misses the cache everywhere once.
+ env:
+   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+   NX_DAEMON: false
+@@ -62,8 +62,8 @@ env:
+ jobs:
+   # Which never-cached suite this change reaches. The API e2e run is uncached by design (every
+   # green result comes from a run that just happened), so it is the one job where "run everything"
+-  # costs real minutes on a change that cannot touch it. On a pull request it runs only when Nx says
+-  # api-e2e is affected; on a develop push it always runs, so every develop run stays a complete
++  # costs real minutes on a change that cannot touch it. On a pull request it runs when Nx says
++  # api-e2e is affected or a file outside every project changed; on a develop push it always runs, so every develop run stays a complete
+   # baseline. Every other job runs the whole workspace (or `nx affected`) and lets the remote cache
+   # skip what is unchanged.
+   affected:
+@@ -90,8 +90,22 @@ jobs:
+           fi
+           projects="$(pnpm exec nx show projects --affected --json | jq -r '.[]')"
+           echo "Affected projects:"; echo "$projects"
++          # Nx maps a change to the project that owns the file. A root file the e2e run reads
++          # (prisma.config.ts, package.json, the lockfile, .env.example, tsconfig.base.json,
++          # scripts/, .github/actions/) belongs to no project, so it can leave api-e2e unaffected.
++          # Any change outside apps/ and libs/ therefore runs the suite, except the paths listed
++          # here, which nothing at runtime reads.
++          root_changes="$(git diff --name-only "$NX_BASE...$NX_HEAD" -- . \
++            ':(glob,exclude)apps/**' ':(glob,exclude)libs/**' ':(glob,exclude)docs/**' \
++            ':(glob,exclude)**/*.md' ':(glob,exclude).nestled-updates/**' \
++            ':(glob,exclude).claude/**' ':(glob,exclude).githooks/**' \
++            ':(glob,exclude).cursor/**' ':(glob,exclude).vscode/**' ':(glob,exclude)LICENSE')"
+           if printf '%s\n' "$projects" | grep -qx api-e2e; then
+             echo "api_e2e=true" >> "$GITHUB_OUTPUT"
++          elif [ -n "$root_changes" ]; then
++            echo "api_e2e=true" >> "$GITHUB_OUTPUT"
++            echo "api-e2e is not affected, but these files outside any project changed:"
++            printf '%s\n' "$root_changes" | sed 's/^/  /'
+           else
+             echo "api_e2e=false" >> "$GITHUB_OUTPUT"
+             echo "api-e2e is not affected: the API e2e job is skipped."
+@@ -155,8 +169,10 @@ jobs:
+         run: node scripts/sonar-rules-digest.mjs --check
+ 
+   # The enforced secret scan. The pre-commit hook runs gitleaks too, but only where it is installed
+-  # and only for commits made with the hook, so this is the layer that cannot be skipped. It scans
+-  # the commits this run adds: the pull request's commits, or the pushed range on develop. The
++  # and only for commits made with the hook, so this is the layer that cannot be skipped. On a pull
++  # request it scans the pull request's commits. On a develop push it scans the WHOLE history: a
++  # newer push replaces a queued run (see the concurrency group), so scanning only the pushed range
++  # would leave the replaced run's commits unscanned for good. The whole history takes seconds. The
+   # binary is downloaded from the gitleaks release and checked against its published SHA-256; the
+   # gitleaks GitHub Action needs a paid licence for organisation repositories.
+   gitleaks:
+@@ -177,20 +193,15 @@ jobs:
+             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
+           echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+-      - name: Scan the new commits for secrets
++      - name: Scan for secrets
+         env:
+           PR_BASE: ${{ github.event.pull_request.base.sha }}
+-          PUSH_BEFORE: ${{ github.event.before }}
+         run: |
+           set -euo pipefail
+           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+             range="$PR_BASE..$GITHUB_SHA"
+-          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ] \
+-            && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+-            range="$PUSH_BEFORE..$GITHUB_SHA"
+           else
+             range=""
+-            echo "No usable previous commit: scanning the whole history."
+           fi
+           echo "Scanning: ${range:-all commits}"
+           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose ${range:+--log-opts="$range"} .
+@@ -396,7 +407,8 @@ jobs:
+   # Generator output must match the schema it is generated from. Every other gate reads the
+   # COMMITTED artifacts, so a schema change that lands without a full `pnpm db-update` makes the
+   # stale output the truth they verify against, and the drift is invisible. This runs db-update
+-  # (schema refresh, Prisma client, CRUD, models, SDK) and fails on any change to a tracked file.
++  # (schema refresh, Prisma client, CRUD, models, SDK) and fails on any change to a tracked file,
++  # or any new file that is not ignored.
+   generated-artifacts:
+     name: Generated artifacts are up to date
+     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+@@ -424,8 +436,11 @@ jobs:
+       - name: Generated artifacts are up to date
+         run: |
+           pnpm db-update
+-          if ! git diff --quiet; then
++          # Untracked files count too: a generator that adds a new file changes no tracked one.
++          drift="$(git status --porcelain --untracked-files=all)"
++          if [ -n "$drift" ]; then
+             echo "::error::Generated artifacts are stale. Run 'pnpm db-update' and commit the result."
++            printf '%s\n' "$drift"
+             git diff --stat
+             exit 1
+           fi
+diff --git a/nx.json b/nx.json
+index 00e1f91..5aaa4e5 100644
+--- a/nx.json
++++ b/nx.json
+@@ -15,7 +15,10 @@
+       "!{projectRoot}/.storybook/**/*",
+       "!{projectRoot}/tsconfig.storybook.json"
+     ],
+-    "sharedGlobals": ["{workspaceRoot}/.github/workflows/ci.yml"]
++    "sharedGlobals": [
++      "{workspaceRoot}/.github/workflows/ci.yml",
++      "{workspaceRoot}/.github/actions/**/*"
++    ]
+   },
+   "plugins": [
+     {
+diff --git a/scripts/db-update.mjs b/scripts/db-update.mjs
+index 015b54e..498f3b7 100644
+--- a/scripts/db-update.mjs
++++ b/scripts/db-update.mjs
+@@ -293,6 +293,11 @@ function publishedPort(container, containerPort) {
+   return output
+ }
+ 
++// Over TCP (-h 127.0.0.1), never the Unix socket. On a fresh data directory the postgres image's
++// entrypoint starts a TEMPORARY server for /docker-entrypoint-initdb.d with listen_addresses=''
++// (socket only), then stops it and starts the lasting one. A socket probe answers for the
++// temporary server, and `createdb` then races its shutdown ("the database system is shutting
++// down"). Only the lasting server listens on TCP. scripts/postgres-readiness.spec.mjs pins this.
+ async function waitForPostgres(container) {
+   const deadline = Date.now() + 60_000
+   while (Date.now() < deadline) {
+@@ -300,6 +305,8 @@ async function waitForPostgres(container) {
+       'exec',
+       container,
+       'pg_isready',
++      '-h',
++      '127.0.0.1',
+       '-U',
+       'prisma',
+       '-d',
+diff --git a/scripts/postgres-readiness.spec.mjs b/scripts/postgres-readiness.spec.mjs
+new file mode 100644
+index 0000000..0783d87
+--- /dev/null
++++ b/scripts/postgres-readiness.spec.mjs
+@@ -0,0 +1,80 @@
++import assert from 'node:assert/strict'
++import { readFileSync } from 'node:fs'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++
++/**
++ * Every `pg_isready` probe the workspace waits on asks over TCP, not the Unix socket.
++ *
++ * On a fresh data directory (every CI run, every first local start) the postgres image's
++ * entrypoint runs `initdb`, starts a TEMPORARY server to execute `/docker-entrypoint-initdb.d`,
++ * stops it, and only then starts the server that stays. The temporary server gets
++ * `-c listen_addresses=''`: it answers on the socket and nowhere else. A socket probe therefore
++ * succeeds for a server about to shut down, and whatever runs next races it:
++ *
++ *   createdb: error: connection to server on socket "…/.s.PGSQL.5432" failed:
++ *             FATAL:  the database system is shutting down
++ *
++ * That turned the generated-artifacts job red intermittently. A source-shape check rather than a
++ * behavioural one: the probes talk to a Docker daemon, and `db-update.mjs` runs on import.
++ */
++const PROBED_FILES = ['scripts/db-update.mjs', 'scripts/test-db.sh', '.dev/docker-compose.yml']
++
++/** Each `pg_isready` in `source`, with the text that follows it, up to the next one. */
++function readinessProbes(source) {
++  const probes = []
++  const pattern = /pg_isready/g
++  let match = pattern.exec(source)
++  while (match !== null) {
++    const next = source.indexOf('pg_isready', match.index + 1)
++    const end = next === -1 ? source.length : next
++    probes.push(source.slice(match.index, Math.min(end, match.index + 300)))
++    match = pattern.exec(source)
++  }
++  return probes
++}
++
++function asksOverTcp(probe) {
++  return /-h['",\s]+127\.0\.0\.1/.test(probe)
++}
++
++describe('Postgres readiness probes', () => {
++  for (const file of PROBED_FILES) {
++    it(`${file} waits on the lasting server over TCP, not the init socket`, () => {
++      const probes = readinessProbes(readFileSync(join(root, file), 'utf8'))
++
++      assert.ok(probes.length > 0, `${file} has no pg_isready probe to check`)
++      for (const probe of probes) {
++        assert.ok(
++          asksOverTcp(probe),
++          `${file}: a pg_isready probe does not pass -h 127.0.0.1, so it asks over the Unix ` +
++            `socket and can answer for the temporary initdb server:\n${probe.slice(0, 80)}`,
++        )
++      }
++    })
++  }
++
++  it('fails a socket-only probe', () => {
++    const probes = readinessProbes('docker exec "$C" pg_isready -U postgres > /dev/null')
++
++    assert.equal(probes.length, 1)
++    assert.equal(asksOverTcp(probes[0]), false)
++  })
++
++  it('reads each probe separately rather than letting one cover the next', () => {
++    const probes = readinessProbes(
++      'pg_isready -h 127.0.0.1 -U a\n' + 'x'.repeat(400) + '\npg_isready -U b\n',
++    )
++
++    assert.equal(probes.length, 2)
++    assert.equal(asksOverTcp(probes[0]), true)
++    assert.equal(asksOverTcp(probes[1]), false)
++  })
++
++  it('accepts the argv form db-update.mjs uses', () => {
++    assert.equal(asksOverTcp("'pg_isready',\n      '-h',\n      '127.0.0.1',"), true)
++  })
++})
+diff --git a/scripts/pre-commit-hook.spec.mjs b/scripts/pre-commit-hook.spec.mjs
+new file mode 100644
+index 0000000..e985ba3
+--- /dev/null
++++ b/scripts/pre-commit-hook.spec.mjs
+@@ -0,0 +1,121 @@
++import assert from 'node:assert/strict'
++import { spawnSync } from 'node:child_process'
++import {
++  chmodSync,
++  copyFileSync,
++  mkdirSync,
++  mkdtempSync,
++  readFileSync,
++  rmSync,
++  writeFileSync,
++} from 'node:fs'
++import { tmpdir } from 'node:os'
++import { dirname, join } from 'node:path'
++import { afterEach, beforeEach, describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++// .githooks/pre-commit run against a throwaway repository. Prettier is replaced by a stand-in that
++// rewrites UNFORMATTED to formatted in the files it is given, so the test sees exactly which files
++// the hook formatted and what it re-staged, without depending on node_modules. gitleaks is kept off
++// PATH, so its step is skipped.
++
++const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
++const hookSource = join(workspaceRoot, '.githooks', 'pre-commit')
++
++const FAKE_PRETTIER = `#!/usr/bin/env node
++const { readFileSync, writeFileSync } = require('node:fs')
++const files = process.argv.slice(process.argv.indexOf('--') + 1)
++for (const file of files) writeFileSync(file, readFileSync(file, 'utf8').replaceAll('UNFORMATTED', 'formatted'))
++`
++
++let repo
++
++function git(...args) {
++  const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8' })
++  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`)
++  return result.stdout
++}
++
++function runHook() {
++  // PATH keeps only git's and node's directories, so a locally installed gitleaks is not found.
++  const gitPath = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim()
++  const path = [dirname(process.execPath), dirname(gitPath), '/usr/bin', '/bin'].join(':')
++  return spawnSync('sh', [join(repo, '.githooks', 'pre-commit')], {
++    cwd: repo,
++    encoding: 'utf8',
++    env: { PATH: path, HOME: repo, GIT_CONFIG_NOSYSTEM: '1' },
++  })
++}
++
++function indexCopy(path) {
++  return git('show', `:${path}`)
++}
++
++describe('.githooks/pre-commit', () => {
++  beforeEach(() => {
++    repo = mkdtempSync(join(tmpdir(), 'pre-commit-hook-'))
++    git('init', '-q')
++    git('config', 'user.email', 'test@example.com')
++    git('config', 'user.name', 'Test')
++    git('config', 'commit.gpgsign', 'false')
++    mkdirSync(join(repo, '.githooks'))
++    copyFileSync(hookSource, join(repo, '.githooks', 'pre-commit'))
++    mkdirSync(join(repo, 'node_modules', '.bin'), { recursive: true })
++    writeFileSync(join(repo, 'node_modules', '.bin', 'prettier'), FAKE_PRETTIER)
++    chmodSync(join(repo, 'node_modules', '.bin', 'prettier'), 0o755)
++    writeFileSync(join(repo, '.gitignore'), 'node_modules/\n.claude/\n')
++    writeFileSync(join(repo, 'app.ts'), 'one\n')
++    git('add', '.gitignore', 'app.ts')
++    git('commit', '-q', '--no-verify', '-m', 'initial')
++  })
++
++  afterEach(() => {
++    rmSync(repo, { recursive: true, force: true })
++  })
++
++  it('formats a fully staged file and re-stages it', () => {
++    writeFileSync(join(repo, 'app.ts'), 'one\nUNFORMATTED\n')
++    git('add', 'app.ts')
++
++    const result = runHook()
++
++    assert.equal(result.status, 0, result.stderr)
++    assert.equal(indexCopy('app.ts'), 'one\nformatted\n')
++    assert.equal(readFileSync(join(repo, 'app.ts'), 'utf8'), 'one\nformatted\n')
++  })
++
++  it('refuses a partially staged file and leaves the index and work tree alone', () => {
++    writeFileSync(join(repo, 'app.ts'), 'one\nUNFORMATTED staged\n')
++    git('add', 'app.ts')
++    writeFileSync(join(repo, 'app.ts'), 'one\nUNFORMATTED staged\nnot staged\n')
++
++    const result = runHook()
++
++    assert.notEqual(result.status, 0)
++    assert.match(result.stderr, /REFUSED/)
++    assert.match(result.stderr, /^ {2}app\.ts$/m)
++    // Nothing was formatted, and above all the unstaged line did not reach the index.
++    assert.equal(indexCopy('app.ts'), 'one\nUNFORMATTED staged\n')
++    assert.equal(
++      readFileSync(join(repo, 'app.ts'), 'utf8'),
++      'one\nUNFORMATTED staged\nnot staged\n',
++    )
++  })
++
++  it('re-stages a force-added file that matches .gitignore', () => {
++    mkdirSync(join(repo, '.claude'))
++    writeFileSync(join(repo, '.claude', 'settings.json'), '{"UNFORMATTED": true}\n')
++    git('add', '-f', '.claude/settings.json')
++
++    const result = runHook()
++
++    assert.equal(result.status, 0, result.stderr)
++    assert.equal(indexCopy('.claude/settings.json'), '{"formatted": true}\n')
++  })
++
++  it('does nothing when nothing is staged', () => {
++    const result = runHook()
++
++    assert.equal(result.status, 0, result.stderr)
++  })
++})
+diff --git a/scripts/session-start-hook.spec.mjs b/scripts/session-start-hook.spec.mjs
+new file mode 100644
+index 0000000..a7c69aa
+--- /dev/null
++++ b/scripts/session-start-hook.spec.mjs
+@@ -0,0 +1,127 @@
++import assert from 'node:assert/strict'
++import { spawnSync } from 'node:child_process'
++import {
++  chmodSync,
++  mkdirSync,
++  mkdtempSync,
++  readFileSync,
++  rmSync,
++  symlinkSync,
++  writeFileSync,
++} from 'node:fs'
++import { tmpdir } from 'node:os'
++import { dirname, join } from 'node:path'
++import { afterEach, beforeEach, describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++// .claude/hooks/session-start.sh as a cloud session runs it, in a throwaway checkout. PATH is a
++// directory of symlinks to the few tools the hook uses, so a test decides whether git exists.
++// `pnpm` is a stand-in that records its arguments, so nothing is installed.
++
++const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
++const hook = join(workspaceRoot, '.claude', 'hooks', 'session-start.sh')
++const SCHEMA = 'libs/api/prisma/src/lib/schemas/schema.prisma'
++
++let checkout
++let bin
++
++function which(tool) {
++  return spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim()
++}
++
++function provideTools(withGit) {
++  bin = join(checkout, '.bin')
++  mkdirSync(bin)
++  const tools = ['sh', 'cut', 'tr', 'cat', 'tail', 'node']
++  if (withGit) tools.push('git')
++  for (const tool of tools)
++    symlinkSync(tool === 'node' ? process.execPath : which(tool), join(bin, tool))
++  writeFileSync(
++    join(bin, 'pnpm'),
++    `#!/bin/sh\necho "$*" >> "${join(checkout, 'pnpm-calls.log')}"\n`,
++  )
++  chmodSync(join(bin, 'pnpm'), 0o755)
++}
++
++function runHook(projectDir = checkout) {
++  return spawnSync(join(bin, 'sh'), [hook], {
++    cwd: checkout,
++    encoding: 'utf8',
++    env: {
++      PATH: bin,
++      HOME: checkout,
++      CLAUDE_CODE_REMOTE: 'true',
++      CLAUDE_PROJECT_DIR: projectDir,
++      GIT_CONFIG_NOSYSTEM: '1',
++    },
++  })
++}
++
++function pnpmCalls() {
++  try {
++    return readFileSync(join(checkout, 'pnpm-calls.log'), 'utf8').trim().split('\n')
++  } catch {
++    return []
++  }
++}
++
++describe('.claude/hooks/session-start.sh', () => {
++  beforeEach(() => {
++    checkout = mkdtempSync(join(tmpdir(), 'session-start-hook-'))
++    writeFileSync(join(checkout, '.nvmrc'), `${process.versions.node}\n`)
++    writeFileSync(join(checkout, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n')
++    mkdirSync(join(checkout, dirname(SCHEMA)), { recursive: true })
++    writeFileSync(join(checkout, SCHEMA), 'generator client {}\n')
++  })
++
++  afterEach(() => {
++    rmSync(checkout, { recursive: true, force: true })
++  })
++
++  it('installs and exits 0 when git is missing, saying so', () => {
++    provideTools(false)
++
++    const result = runHook()
++
++    assert.equal(result.status, 0, result.stderr)
++    assert.match(result.stdout, /git is not installed/)
++    assert.deepEqual(pnpmCalls(), ['install --frozen-lockfile', 'prisma:generate'])
++  })
++
++  it('installs and exits 0 when the Prisma schema is missing, saying so', () => {
++    provideTools(true)
++    spawnSync(join(bin, 'git'), ['init', '-q'], { cwd: checkout })
++    rmSync(join(checkout, SCHEMA))
++
++    const result = runHook()
++
++    assert.equal(result.status, 0, result.stderr)
++    assert.match(result.stdout, new RegExp(`missing ${SCHEMA.replaceAll('.', '\\.')}`))
++    assert.deepEqual(pnpmCalls(), ['install --frozen-lockfile', 'prisma:generate'])
++  })
++
++  it('exits 0 with a message when the project directory does not exist', () => {
++    provideTools(true)
++
++    const result = runHook(join(checkout, 'no-such-dir'))
++
++    assert.equal(result.status, 0, result.stderr)
++    assert.match(result.stdout, /does not exist/)
++    assert.deepEqual(pnpmCalls(), [])
++  })
++
++  it('fingerprints the inputs and skips the next session once current', () => {
++    provideTools(true)
++    spawnSync(join(bin, 'git'), ['init', '-q'], { cwd: checkout })
++    spawnSync(join(bin, 'git'), ['config', 'core.hooksPath', '.githooks'], { cwd: checkout })
++    mkdirSync(join(checkout, 'node_modules'))
++    mkdirSync(join(checkout, 'libs/api/prisma/src/lib/prisma-generated'), { recursive: true })
++
++    assert.equal(runHook().status, 0)
++    const second = runHook()
++
++    assert.equal(second.status, 0, second.stderr)
++    assert.match(second.stdout, /already current/)
++    assert.deepEqual(pnpmCalls(), ['install --frozen-lockfile', 'prisma:generate'])
++  })
++})
+diff --git a/scripts/sonar-rules-digest.mjs b/scripts/sonar-rules-digest.mjs
+index 19f5421..70c84fe 100644
+--- a/scripts/sonar-rules-digest.mjs
++++ b/scripts/sonar-rules-digest.mjs
+@@ -114,11 +114,18 @@ export function compareRules(a, b) {
+   return bySeverity || ruleNumber(a.key) - ruleNumber(b.key) || a.key.localeCompare(b.key)
+ }
+ 
+-/** Splits the rules into the digest's sections, leaving out rules only for excluded frameworks. */
++/**
++ * Splits the rules into the digest's sections, leaving out rules only for excluded frameworks.
++ *
++ * A default-excluded tag the project took out of `excludeTags` is re-enabled, and keeps a rule
++ * just as a KEEP_TAGS tag does: a rule tagged `aws` and `gcp` stays when the project turned `aws`
++ * back on, even though `gcp` is still excluded.
++ */
+ export function groupRules(rules, excludeTags = DEFAULT_EXCLUDE_TAGS) {
+   const excluded = new Set(excludeTags)
++  const keep = new Set([...KEEP_TAGS, ...DEFAULT_EXCLUDE_TAGS.filter(tag => !excluded.has(tag))])
+   const isExcluded = rule =>
+-    rule.tags.some(tag => excluded.has(tag)) && !rule.tags.some(tag => KEEP_TAGS.includes(tag))
++    rule.tags.some(tag => excluded.has(tag)) && !rule.tags.some(tag => keep.has(tag))
+   const kept = rules.filter(rule => !isExcluded(rule))
+   const sections = SECTIONS.map(section => ({ title: section.title, rules: [] }))
+   for (const rule of kept) {
+diff --git a/scripts/sonar-rules-digest.spec.mjs b/scripts/sonar-rules-digest.spec.mjs
+index fcf58ef..662b57d 100644
+--- a/scripts/sonar-rules-digest.spec.mjs
++++ b/scripts/sonar-rules-digest.spec.mjs
+@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ import { afterEach, describe, it } from 'node:test'
+ import {
++  DEFAULT_EXCLUDE_TAGS,
+   DIGEST_FILE,
+   RULES_FILE,
+   compareRules,
+@@ -40,7 +41,8 @@ function jsonResponse(body, status = 200) {
+   return { ok: status >= 200 && status < 300, status, json: async () => body }
+ }
+ 
+-const quiet = { log: () => {} }
++// Discards output without an empty function body, which ESLint's no-empty-function rejects.
++const quiet = { log: () => undefined }
+ 
+ describe('parseProperties', () => {
+   it('reads keys, joins continued lines and skips comments', () => {
+@@ -119,6 +121,23 @@ describe('groupRules', () => {
+     )
+   })
+ 
++  it('keeps a rule when any of its tags was re-enabled, though another is still excluded', () => {
++    // The project turned `aws` back on (took it out of excludeTags) but still excludes `gcp`.
++    const excludeTags = DEFAULT_EXCLUDE_TAGS.filter(tag => tag !== 'aws')
++    const { sections, skipped } = groupRules(
++      [
++        rule('typescript:S6302', { tags: ['aws', 'gcp'] }),
++        rule('typescript:S6303', { tags: ['gcp'] }),
++      ],
++      excludeTags,
++    )
++    assert.equal(skipped, 1)
++    assert.deepEqual(
++      sections.flatMap(section => section.rules.map(r => r.key)),
++      ['typescript:S6302'],
++    )
++  })
++
+   it('drops empty sections', () => {
+     const { sections } = groupRules([rule('typescript:S1')], [])
+     assert.deepEqual(
+diff --git a/scripts/test-db.sh b/scripts/test-db.sh
+index e0c04a4..406eb9e 100755
+--- a/scripts/test-db.sh
++++ b/scripts/test-db.sh
+@@ -156,7 +156,8 @@ clear_test_data() {
+ wait_for_db() {
+   echo "⏳ Waiting for test database to be ready..."
+   local timeout=30
+-  while ! docker exec "$TEST_DB_CONTAINER" pg_isready -U postgres > /dev/null 2>&1; do
++  # Over TCP: the image's temporary init server answers on the socket only, then shuts down.
++  while ! docker exec "$TEST_DB_CONTAINER" pg_isready -h 127.0.0.1 -U postgres > /dev/null 2>&1; do
+     sleep 1
+     timeout=$((timeout - 1))
+     if [[ $timeout -eq 0 ]]; then
