@@ -55,9 +55,11 @@ export default function AiSettingsPage() {
   const orgTokens = tokens.filter(token => token.organizationId === activeOrganization?.id)
   const activeTokens = orgTokens.filter(token => !token.revoked)
 
+  const activeOrganizationId = activeOrganization?.id
+
   const handleGenerate = useCallback(
     async (name: string) => {
-      if (!activeOrganization?.id) {
+      if (!activeOrganizationId) {
         setError('Select an organization before generating an MCP token')
         return
       }
@@ -65,7 +67,7 @@ export default function AiSettingsPage() {
       setError(null)
       try {
         const result = await generateApiToken({
-          variables: { input: { name, organizationId: activeOrganization.id } },
+          variables: { input: { name, organizationId: activeOrganizationId } },
           refetchQueries: [{ query: ListApiTokens }],
         })
 
@@ -77,7 +79,7 @@ export default function AiSettingsPage() {
         setError((err as Error)?.message ?? 'Failed to generate token')
       }
     },
-    [activeOrganization?.id, generateApiToken],
+    [activeOrganizationId, generateApiToken],
   )
 
   const handleRevoke = useCallback(

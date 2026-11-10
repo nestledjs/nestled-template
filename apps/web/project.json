@@ -6,7 +6,17 @@
   "tags": [],
   "targets": {
     "lint": {
-      "executor": "@nx/eslint:lint"
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/.eslintrc.json",
+        "{workspaceRoot}/.eslintignore",
+        "{workspaceRoot}/eslint.config.mjs",
+        "{workspaceRoot}/tools/eslint-rules/**/*",
+        {
+          "externalDependencies": ["eslint"]
+        }
+      ]
     },
     "typegen": {
       "executor": "nx:run-commands",
@@ -56,60 +66,67 @@
       }
     },
     "build": {
-      "executor": "@nx/vite:build",
+      "executor": "nx:run-commands",
       "dependsOn": ["typegen"],
-      "outputs": ["{options.outputPath}"],
+      "cache": true,
+      "inputs": ["production", "^production"],
+      "outputs": ["{projectRoot}/build"],
       "defaultConfiguration": "production",
       "options": {
-        "outputPath": "dist/apps/web"
+        "command": "react-router build",
+        "cwd": "apps/web"
       },
       "configurations": {
         "development": {
-          "mode": "development"
+          "args": "--mode development"
         },
         "production": {
-          "mode": "production"
+          "args": "--mode production"
         }
       }
     },
     "serve": {
-      "executor": "@nx/vite:dev-server",
+      "executor": "nx:run-commands",
+      "continuous": true,
       "defaultConfiguration": "development",
       "options": {
-        "buildTarget": "web:build"
+        "command": "vite",
+        "cwd": "apps/web"
       },
       "configurations": {
         "development": {
-          "buildTarget": "web:build:development",
-          "hmr": true
+          "args": "--mode development"
         },
         "production": {
-          "buildTarget": "web:build:production",
-          "hmr": false
+          "args": "--mode production"
         }
       }
     },
     "preview": {
+      "executor": "nx:run-commands",
+      "continuous": true,
       "dependsOn": ["build"],
-      "executor": "@nx/vite:preview-server",
       "defaultConfiguration": "development",
       "options": {
-        "buildTarget": "web:build"
+        "command": "vite preview",
+        "cwd": "apps/web"
       },
       "configurations": {
         "development": {
-          "buildTarget": "web:build:development"
+          "args": "--mode development"
         },
         "production": {
-          "buildTarget": "web:build:production"
+          "args": "--mode production"
         }
       }
     },
     "test": {
-      "executor": "@nx/vitest:test",
-      "outputs": ["{options.reportsDirectory}"],
+      "outputs": [
+        "{projectRoot}/{options.coverage.reportsDirectory}",
+        "{workspaceRoot}/coverage/apps/web"
+      ],
       "options": {
-        "reportsDirectory": "{projectRoot}/../../coverage/apps/web"
+        "coverage.reportsDirectory": "../../coverage/apps/web"
       }
     },
     "serve-static": {
@@ -118,6 +135,9 @@
       "options": {
         "buildTarget": "web:build",
         "spa": true
+      },
+      "readyWhen": {
+        "signal": true
       }
     }
   }

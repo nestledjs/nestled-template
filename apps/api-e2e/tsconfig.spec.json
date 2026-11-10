@@ -5,7 +5,7 @@
     "module": "commonjs",
     "types": ["node"]
   },
-  "include": ["vitest.config.mts", "vitest.support.config.mts", "src/**/*.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": [
     "node_modules",
     "src/support/api-process.native.spec.ts",

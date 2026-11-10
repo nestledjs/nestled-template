@@ -13,9 +13,9 @@
 # and lint-staged add transitive packages that re-key the pnpm lockfile.
 #
 # Prettier gets the staged paths explicitly and still honours .prettierignore; --ignore-unknown
-# skips files it has no parser for. The formatted files are re-staged whole, so a partially staged
-# file has its unstaged hunks staged too: stage whole files, or commit the hunks you mean. Never
-# bypass this hook with --no-verify.
+# skips files it has no parser for. The formatted files are re-staged whole, so a PARTIALLY staged
+# file (`git add -p`, unstaged edits on top of staged ones) is refused rather than formatted:
+# re-staging it would commit the unstaged hunks too. Never bypass this hook with --no-verify.
 set -e
 # -z: NUL-separated and never C-quoted, so a path with spaces or non-ASCII characters reaches
 # Prettier and `git add` as it is. Without it git quotes such paths ("docs/caf\303\251.md").
@@ -30,8 +30,22 @@ staged_paths() {
 # failing hook is --no-verify, which this repository forbids. Say what is wrong and let the commit
 # through: the blocking gate is CI's `prettier --check .`, not this.
 if [ -x node_modules/.bin/prettier ]; then
+  # A staged path that also has unstaged changes. Formatting the work-tree file and re-staging it
+  # would silently add those unstaged hunks to the commit, so stop and say which paths.
+  partially_staged="$(staged_paths | xargs -0 git diff --name-only --)"
+  if [ -n "$partially_staged" ]; then
+    echo "pre-commit: REFUSED. These staged files also have unstaged changes:" >&2
+    printf '%s\n' "$partially_staged" | sed 's/^/  /' >&2
+    echo "The hook formats and re-stages whole files, which would commit the unstaged hunks too." >&2
+    echo "Stage the whole file (\`git add <path>\`), or set the unstaged hunks aside with" >&2
+    echo "\`git stash push --keep-index\`, commit, then \`git stash pop\`." >&2
+    exit 1
+  fi
   staged_paths | xargs -0 node_modules/.bin/prettier --write --ignore-unknown --log-level warn --
-  staged_paths | xargs -0 git add --
+  # -f: every path is already in the index, so an ignore rule must not abort the commit. Without
+  # it `git add` refuses a force-added path that matches .gitignore (`.claude/settings.json` under
+  # an ignored `.claude/`) and the hook fails.
+  staged_paths | xargs -0 git add -f --
 else
   echo "pre-commit: NOT FORMATTED. node_modules/.bin/prettier is missing, so the staged files" >&2
   echo "were left as they are. Run \`pnpm install\`, or \`pnpm exec prettier --write\` on the files" >&2

@@ -25,6 +25,12 @@ type EmulatedAuthUser = AuthUser & {
   originalUser?: AuthUser | null
 }
 
+// The user as an emulation session, when it carries the emulation flags.
+function emulationOf(user: AuthUser | null): EmulatedAuthUser | null {
+  const emulatedUser = user as EmulatedAuthUser | null
+  return emulatedUser?.isEmulating && emulatedUser.originalUserId ? emulatedUser : null
+}
+
 export interface AuthContextType {
   // User state
   user: AuthUser | null
@@ -57,8 +63,22 @@ interface AuthProviderProps {
 
 export function AuthProvider({ children, initialUser = null }: AuthProviderProps) {
   const [user, setUser] = useState<AuthUser | null>(initialUser)
-  const [isEmulating, setIsEmulating] = useState(false)
-  const [originalUser, setOriginalUser] = useState<AuthUser | null>(null)
+  const [isEmulating, setIsEmulating] = useState(() => emulationOf(initialUser) !== null)
+  const [originalUser, setOriginalUser] = useState<AuthUser | null>(
+    () => emulationOf(initialUser)?.originalUser || null,
+  )
+
+  // Check for emulation state in JWT (if backend supports it) whenever the user changes. Done while
+  // rendering ("adjust state when a prop changes") rather than in an effect.
+  const [emulationCheckedFor, setEmulationCheckedFor] = useState(user)
+  if (emulationCheckedFor !== user) {
+    setEmulationCheckedFor(user)
+    const emulatedUser = emulationOf(user)
+    if (emulatedUser) {
+      setIsEmulating(true)
+      setOriginalUser(emulatedUser.originalUser || null)
+    }
+  }
 
   // Fetch user's organizations with member details including roles and permissions
   const {
@@ -125,18 +145,6 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   const refreshOrganizations = async () => {
     await refetchOrgs()
   }
-
-  // Check for emulation state in JWT (if backend supports it)
-  useEffect(() => {
-    if (user) {
-      // Check if user object has emulation flags
-      const emulatedUser = user as EmulatedAuthUser
-      if (emulatedUser.isEmulating && emulatedUser.originalUserId) {
-        setIsEmulating(true)
-        setOriginalUser(emulatedUser.originalUser || null)
-      }
-    }
-  }, [user])
 
   // Sync activeOrganizationId to localStorage for Apollo client X-Organization-ID header
   useEffect(() => {

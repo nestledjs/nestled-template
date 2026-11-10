@@ -561,6 +561,17 @@ describe('apolloLoader failure record', () => {
     expect(ssrApiFailureCause({ root: data })).toBeUndefined()
   })
 
+  it('accepts frozen and non-extensible loader data without mutating it', () => {
+    const frozen = Object.freeze({ theme: 'dark' })
+    const sealed = Object.preventExtensions({ theme: 'light' })
+
+    expect(apolloLoader()(() => frozen)(loaderArgs())).toBe(frozen)
+    expect(apolloLoader()(() => sealed)(loaderArgs())).toBe(sealed)
+    expect(Object.getOwnPropertySymbols(frozen)).toEqual([])
+    expect(Object.getOwnPropertySymbols(sealed)).toEqual([])
+    expect(ssrApiFailureCause({ root: frozen, child: sealed })).toBeUndefined()
+  })
+
   it('passes a Response through untouched', () => {
     const redirect = new Response(null, { status: 302 })
     expect(apolloLoader()(() => redirect)(loaderArgs())).toBe(redirect)
@@ -593,10 +604,11 @@ describe('apolloLoader failure record', () => {
           headers: { 'content-type': 'application/json' },
         }),
       )
+      // Frozen loader data still carries its record.
       const rejected = await apolloLoader()(async ({ preloadQuery }) => {
         const ref = preloadQuery(query)
         await new Promise(resolve => setTimeout(resolve, 20))
-        return { ref }
+        return Object.freeze({ ref })
       })(loaderArgs())
       expect(ssrApiFailureCause({ root: unavailable, child: rejected })).toBe('unauthenticated')
     } finally {

@@ -10,7 +10,7 @@
     "importHelpers": true,
     "target": "es2015",
     "module": "esnext",
-    "lib": ["es2021", "dom"],
+    "lib": ["es2021", "es2022.error", "dom"],
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
@@ -36,7 +36,11 @@
       "@nestled-template/web": ["libs/web/src/index.ts"],
       "@nestled-template/web-ui": ["libs/web-ui/src/index.ts"]
     },
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "strict": false,
+    "noUncheckedSideEffectImports": false,
+    "types": ["*"],
+    "ignoreDeprecations": "6.0"
   },
   "exclude": [
     "node_modules",

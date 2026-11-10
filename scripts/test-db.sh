@@ -156,7 +156,8 @@ clear_test_data() {
 wait_for_db() {
   echo "⏳ Waiting for test database to be ready..."
   local timeout=30
-  while ! docker exec "$TEST_DB_CONTAINER" pg_isready -U postgres > /dev/null 2>&1; do
+  # Over TCP: the image's temporary init server answers on the socket only, then shuts down.
+  while ! docker exec "$TEST_DB_CONTAINER" pg_isready -h 127.0.0.1 -U postgres > /dev/null 2>&1; do
     sleep 1
     timeout=$((timeout - 1))
     if [[ $timeout -eq 0 ]]; then

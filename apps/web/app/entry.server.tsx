@@ -13,6 +13,7 @@ import { isbot } from 'isbot'
 import type { RenderToPipeableStreamOptions } from 'react-dom/server'
 import { renderToPipeableStream } from 'react-dom/server'
 import {
+  classifyApiFailure,
   makeClient,
   ssrApiFailureCause,
   type ApiFailureCause,
@@ -36,6 +37,13 @@ function isRedactedApolloStreamError(error: unknown): boolean {
  * failed, recorded by its Apollo client (`ssrApiFailureCause`), since the error that reaches the
  * render is redacted and cannot tell a rejected session from an unreachable API.
  *
+ * The recorded cause covers EVERY loader's queries in the request, so it may belong to a preload
+ * whose failure a Suspense boundary contained and that never reached the shell. It is therefore
+ * applied only when the shell error is itself an API failure: Apollo's redacted stream error, or
+ * an error `classifyApiFailure` recognises. Any other shell error (an ordinary render bug) is
+ * `error`, whatever was recorded: serving it as the recovering screen would hide it, and treating
+ * it as a 401 would sign the user out.
+ *
  * - `force-logout`: the API really rejected the session (401 or UNAUTHENTICATED). Clear the
  *   cookie and redirect, as before.
  * - `unavailable`: the API was unreachable or answered 502/503/504, or a redacted Apollo error
@@ -48,9 +56,16 @@ export function shellErrorOutcome(
   error: unknown,
   cause: ApiFailureCause | undefined,
 ): 'force-logout' | 'unavailable' | 'error' {
-  if (cause === 'unauthenticated') return 'force-logout'
-  if (cause === 'unavailable') return 'unavailable'
-  if (cause === undefined && isRedactedApolloStreamError(error)) return 'unavailable'
+  let effectiveCause: ApiFailureCause
+  if (isRedactedApolloStreamError(error)) {
+    effectiveCause = cause ?? 'unavailable'
+  } else {
+    const ownCause = classifyApiFailure(error)
+    if (ownCause === 'other') return 'error'
+    effectiveCause = cause ?? ownCause
+  }
+  if (effectiveCause === 'unauthenticated') return 'force-logout'
+  if (effectiveCause === 'unavailable') return 'unavailable'
   return 'error'
 }
 
@@ -129,7 +144,9 @@ export default function handleRequest(
             // screen and reloads once the API answers. A real 401 comes back on the client and
             // goes through the normal 401 handling there.
             console.error('[SSR] API unavailable during the shell render — serving 503')
-            reject(new Response(null, { status: 503, statusText: 'Service Unavailable' }))
+            // A `Response`, not an Error, on purpose (Sonar S6671): React Router turns a rejected
+            // `Response` into that status and renders the ErrorBoundary for it; an Error is a 500.
+            reject(new Response(null, { status: 503, statusText: 'Service Unavailable' })) // NOSONAR
           } else {
             reject(error)
           }

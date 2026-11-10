@@ -181,84 +181,16 @@ Unit and component tests use Jest and Vitest through Nx project targets. Place t
 
 Recent history uses short imperative subjects, often Conventional Commit prefixes such as `feat:` and `chore:`. Keep commits scoped and descriptive, e.g. `feat: add billing webhook validation`. `pnpm install` wires `.githooks/pre-commit` (through the `prepare` script), which formats the staged files with Prettier and scans them with gitleaks when it is installed; never bypass it with `--no-verify`. Before opening a PR, run relevant lint, test, typecheck, and build commands. PRs should include a concise summary, linked issue or task when available, screenshots for UI changes, and notes for migrations, environment variables, or deployment steps.
 
-## Downstream Upgrade Notes
+## Upgrade Notes
 
-Every meaningful template or published library change must explicitly decide whether it should propagate to downstream Nestled projects.
+Upgrade notes are written only in the source template, `nestled-dev-template`, and reach this
+repository through promotion. **Do not create upgrade notes here, or in any project cloned from
+this template:** nothing reads a note committed downstream. A project cloned from this template
+receives template changes through the upgrade feed (`npx @nestledjs/upgrades`).
 
-Upgrade-note creation is a source-template responsibility for this repository and the public
-template repository (`github.com/nestledjs/nestled-dev-template` and
-`github.com/nestledjs/nestled-template`). Downstream projects may keep the
-`.nestled-updates/upgrade-notes` directory so the updater can read inbound notes, but local
-downstream application changes should not be forced to create new template upgrade notes. Doctor
-enforces this gate only when it identifies one of those source repositories, or when
-`NESTLED_TEMPLATE_SOURCE=true` is set.
-
-### When a Change Should Propagate
-
-Create one upgrade note:
-
-```bash
-pnpm template:create-upgrade-note --id YYYY-MM-DD-short-description
-```
-
-Then edit `.nestled-updates/upgrade-notes/<upgrade-id>.yaml`.
-
-The note should describe the downstream behavior or invariant, not just the files to copy. Downstream projects may have diverged, so agents need the concept, expected behavior, propagation method, affected path or package hints, skip conditions, and verification path.
-
-Required fields for propagating notes:
-
-- `id` - must match the filename without `.yaml`
-- `title`
-- `priority` - `critical`, `high`, `normal`, `low`, or `ignore`
-- `area` - `auth`, `billing`, `admin`, `ui`, `api`, `web`, `database`, `infra`, or `docs`
-- `type` - `security`, `correctness`, `feature`, `infra`, `deps`, `design`, `docs`, or `cleanup`
-- `delivery` - `code-patch`, `package-release`, or `hybrid`
-- `intent`
-- `why`
-
-For `delivery: code-patch`, include `affectedPaths`; downstream projects should adapt local source files.
-
-For `delivery: package-release`, include `packageReleases`; downstream projects should update package versions for `@nestledjs/data-browser` or `@nestledjs/shared-components` instead of copying package source into the template.
-
-For `delivery: hybrid`, include both `affectedPaths` and `packageReleases`.
-
-Recommended fields: `skipIf`, `verification`, `agentHints`.
-
-Good `intent` example:
-
-```yaml
-intent: >
-  Reject expired sessions inside API resolver auth checks before any protected data is loaded.
-```
-
-Weak `intent` example:
-
-```yaml
-intent: >
-  Copy the new auth middleware file.
-```
-
-Before finishing, run:
-
-```bash
-pnpm template:validate-upgrade-notes
-```
-
-### When a Change Should Not Propagate
-
-Either omit an upgrade note and explain why in the PR/final response, or add a note with `priority: ignore`.
-
-For PR descriptions, include the `Downstream Upgrade` block and mention the upgrade note path when one exists:
-
-```markdown
-## Downstream Upgrade
-
-- Propagate downstream: yes
-- Upgrade note: `.nestled-updates/upgrade-notes/<upgrade-id>.yaml`
-- Area: auth
-- Priority: high
-- Verification: `pnpm lint`, `pnpm test`
-```
+`.nestled-updates/upgrade-notes` holds the notes promoted from the source template. CI runs
+`pnpm template:validate-upgrade-notes` against them. Keep the rest of `.nestled-updates` (doctor
+config and security baselines): doctor and CI read it.
 
 ## @crudAuth System for Declarative Security
 

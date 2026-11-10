@@ -24,10 +24,17 @@ export function useInfiniteApolloList(options: UseInfiniteApolloListOptions) {
     setIsLoading(false)
   }, [])
 
-  useEffect(() => {
-    reset()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
+  // A change in `deps` starts pagination over. Compared the way React compares effect
+  // dependencies, and reset while rendering rather than from an effect.
+  const [resetDeps, setResetDeps] = useState(deps)
+  if (
+    resetDeps.length !== deps.length ||
+    deps.some((dep, index) => !Object.is(dep, resetDeps[index]))
+  ) {
+    setResetDeps(deps)
+    setAllLoaded(false)
+    setIsLoading(false)
+  }
 
   useEffect(() => {
     if (disabled) return

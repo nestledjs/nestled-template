@@ -1,4 +1,5 @@
 import nx from '@nx/eslint-plugin'
+import { createRequire } from 'node:module'
 
 export default [
   ...nx.configs['flat/base'],
@@ -78,3 +79,11 @@ export default [
     },
   },
 ]
+
+// eslint-plugin-react (through `nx.configs['flat/react']`) sets `react.version: 'detect'`, and its
+// detection calls `context.getFilename()`, which ESLint 10 removed: every React lint crashes with
+// "contextOrFilename.getFilename is not a function". Naming the installed version skips detection.
+// Spread this after `nx.configs['flat/react']`. Remove it once eslint-plugin-react supports ESLint 10.
+export const reactVersionSettings = {
+  settings: { react: { version: createRequire(import.meta.url)('react/package.json').version } },
+}

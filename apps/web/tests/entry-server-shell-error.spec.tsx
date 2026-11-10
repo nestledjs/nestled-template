@@ -211,6 +211,25 @@ describe('server render when the Me preload fails', () => {
     expect(clearsTheCookie(response)).toBe(false)
     expect(await response.text()).not.toContain(SERVER_TROUBLE_TITLE)
   })
+
+  it.each([
+    ['unavailable (a proxy answers 503)', () => graphqlAnswers(503)],
+    ['unauthenticated (401)', () => graphqlAnswers(401, { message: 'Unauthorized' })],
+  ])(
+    'serves 500 for a plain render error even when a preload failed as %s',
+    async (_label, preloadFails) => {
+      // The Me preload fails and its Apollo client records the cause, but the shell fails for an
+      // unrelated reason. The recorded cause must not turn a render bug into the recovering
+      // screen, or into a sign-out.
+      preloadFails()
+      const response = await reloadSignedIn('/members/dashboard', build(new Error('A render bug')))
+
+      expect(response.status).toBe(500)
+      expect(clearsTheCookie(response)).toBe(false)
+      expect(response.headers.get('Location')).toBeNull()
+      expect(await response.text()).not.toContain(SERVER_TROUBLE_TITLE)
+    },
+  )
 })
 
 describe('shellErrorOutcome', () => {
@@ -218,12 +237,27 @@ describe('shellErrorOutcome', () => {
 
   it.each([
     ['unauthenticated', redacted, 'force-logout'],
-    ['unauthenticated', new Error('anything'), 'force-logout'],
     ['unavailable', redacted, 'unavailable'],
-    ['unavailable', new Error('anything'), 'unavailable'],
     [undefined, redacted, 'unavailable'],
     [undefined, new Error('A render bug'), 'error'],
     ['other', redacted, 'error'],
+    // A recorded cause never applies to a shell error that is not an API failure.
+    ['unauthenticated', new Error('A render bug'), 'error'],
+    ['unavailable', new Error('A render bug'), 'error'],
+    ['unavailable', new TypeError("Cannot read properties of undefined (reading 'id')"), 'error'],
+    // A shell error that is itself an API failure: the recorded cause, else its own.
+    ['unauthenticated', new TypeError('fetch failed'), 'force-logout'],
+    [undefined, new TypeError('fetch failed'), 'unavailable'],
+    [
+      undefined,
+      Object.assign(new Error('Response not successful'), { statusCode: 503 }),
+      'unavailable',
+    ],
+    [
+      undefined,
+      Object.assign(new Error('Response not successful'), { statusCode: 401 }),
+      'force-logout',
+    ],
   ] as const)('cause %s with %s -> %s', (cause, error, outcome) => {
     expect(shellErrorOutcome(error, cause)).toBe(outcome)
   })

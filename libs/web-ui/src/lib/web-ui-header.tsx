@@ -165,15 +165,20 @@ function DesktopAccountMenu({
 
 export function WebUiHeader(props: Readonly<WebUiHeaderProps>) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark')
-  const [themeLoaded, setThemeLoaded] = useState(false)
+  const [{ theme, themeLoaded }, setThemeState] = useState<{
+    theme: 'light' | 'dark'
+    themeLoaded: boolean
+  }>({ theme: 'dark', themeLoaded: false })
 
   useEffect(() => {
     const saved = globalThis.localStorage?.getItem('theme') as 'light' | 'dark' | null
-    if (saved === 'light' || saved === 'dark') {
-      setTheme(saved)
-    }
-    setThemeLoaded(true)
+    // localStorage is browser-only. Read during render, it would make the hydrated HTML differ from
+    // the server's, so the saved theme is read once after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs browser-only state after hydration
+    setThemeState(current => ({
+      theme: saved === 'light' || saved === 'dark' ? saved : current.theme,
+      themeLoaded: true,
+    }))
   }, [])
 
   useEffect(() => {
@@ -201,7 +206,8 @@ export function WebUiHeader(props: Readonly<WebUiHeaderProps>) {
       ]
   const accountInitials = getInitials(props.userName, props.userEmail)
 
-  const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'))
+  const toggleTheme = () =>
+    setThemeState(current => ({ ...current, theme: current.theme === 'dark' ? 'light' : 'dark' }))
 
   const accountMenuLinks = getAccountLinks(props.canViewBilling, props.isSuperAdmin)
 

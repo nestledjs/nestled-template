@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import {
+  DEFAULT_EXCLUDE_TAGS,
   DIGEST_FILE,
   RULES_FILE,
   compareRules,
@@ -40,7 +41,8 @@ function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body }
 }
 
-const quiet = { log: () => {} }
+// Discards output without an empty function body, which ESLint's no-empty-function rejects.
+const quiet = { log: () => undefined }
 
 describe('parseProperties', () => {
   it('reads keys, joins continued lines and skips comments', () => {
@@ -116,6 +118,23 @@ describe('groupRules', () => {
     assert.deepEqual(
       sections.flatMap(section => section.rules.map(r => r.key)),
       ['typescript:S6426'],
+    )
+  })
+
+  it('keeps a rule when any of its tags was re-enabled, though another is still excluded', () => {
+    // The project turned `aws` back on (took it out of excludeTags) but still excludes `gcp`.
+    const excludeTags = DEFAULT_EXCLUDE_TAGS.filter(tag => tag !== 'aws')
+    const { sections, skipped } = groupRules(
+      [
+        rule('typescript:S6302', { tags: ['aws', 'gcp'] }),
+        rule('typescript:S6303', { tags: ['gcp'] }),
+      ],
+      excludeTags,
+    )
+    assert.equal(skipped, 1)
+    assert.deepEqual(
+      sections.flatMap(section => section.rules.map(r => r.key)),
+      ['typescript:S6302'],
     )
   })
 

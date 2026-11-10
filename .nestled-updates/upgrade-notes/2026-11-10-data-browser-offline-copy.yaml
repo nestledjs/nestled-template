@@ -1,0 +1,108 @@
+id: 2026-11-10-data-browser-offline-copy
+title: >-
+  The admin data browser tells "you're offline" from "our servers are in trouble", like the app
+  shell (@nestledjs/data-browser 1.0.27)
+priority: normal
+area: web
+type: correctness
+delivery: hybrid
+
+intent: >
+  Follow-up to 2026-11-09-error-recovery-r3, which gave the app shell's recovering screen separate
+  offline and server-trouble messages. Apply that note first: this one uses its
+  `probeConnectivity()` in apps/web/app/api-availability.ts. Two parts.
+
+  1. Package. Upgrade `@nestledjs/data-browser` to 1.0.27 in package.json and the lockfile. Do not
+  copy files from libs/data-browser. The admin data routes' recovering panel (shown by
+  `AdminDataErrorBoundary`, `AdminDataCreateErrorBoundary`, `AdminDataEditErrorBoundary` and
+  `AdminRouteErrorBoundary` for a network error) used to say "Can't reach the server" whenever the
+  browser was online. It now shows one of two messages, with the shell's wording and rule:
+  - offline: "You’re offline" / "We’ll reconnect automatically when your connection is back.";
+  - server trouble: "We’re having trouble reaching our servers" / "Retrying automatically."
+  The reason is re-checked on every probe (backoff, "Try Again", the tab being shown again) and set
+  at once by the browser's `offline` (offline) and `online` (server, until the probe it triggers
+  says otherwise) events. Package API, all additive:
+  - The `probe` option (on `AdminDataProvider` and on each boundary) may now resolve
+    `{ reachable: boolean, reason?: 'offline' | 'server' }`, the shape `probeConnectivity()`
+    returns (`AdminApiProbeResult`, `AdminUnavailableReason`). A probe that resolves a plain boolean
+    keeps working: the panel then shows offline when `navigator.onLine` is false and server
+    trouble otherwise.
+  - Without any probe the panel uses the new `probeAdminConnectivity()`: offline when
+    `navigator.onLine` is false or a HEAD on the web app's own `/favicon.ico` gets no answer;
+    otherwise it revalidates the route.
+  - Copy is overridable for i18n: new exports `ADMIN_SERVER_TROUBLE_TITLE`,
+    `ADMIN_SERVER_TROUBLE_MESSAGE`, `ADMIN_RETRY_LABEL`, `ADMIN_BACK_LINK_LABEL` and
+    `ADMIN_API_UNAVAILABLE_COPY` (alongside the existing `ADMIN_OFFLINE_TITLE` /
+    `ADMIN_OFFLINE_MESSAGE`), type `AdminApiUnavailableCopy` (`offlineTitle`, `offlineMessage`,
+    `serverTitle`, `serverMessage`, `retryLabel`, as in the shell's `ApiUnavailableCopy`, plus
+    `backLinkLabel`). Pass `unavailableCopy` on `AdminDataProvider`, or `copy` on a boundary; keys
+    left out fall back to the English, and a boundary's `copy` wins over the provider's.
+  - `ADMIN_SERVER_DOWN_TITLE` and `ADMIN_SERVER_DOWN_MESSAGE` are still exported, unchanged, but
+    deprecated and no longer shown. A test that looked for "Can’t reach the server" in the admin
+    panel now looks for `ADMIN_SERVER_TROUBLE_TITLE`.
+  - New helpers `normalizeAdminProbeResult()` and `adminWebOriginProbeUrl()`;
+    `useAdminApiRecovery()` also returns `reason`.
+
+  2. App. In apps/web/app/routes/admin/data/_layout.tsx, pass the shell's reason-aware probe to
+  `AdminDataProvider` instead of `probeApi`:
+
+      import { probeConnectivity } from '../../../api-availability'
+      const probeAdminApi = () => probeConnectivity()
+      // <AdminDataProvider ... probe={probeAdminApi}>
+
+  `probeApi` stays exported for anything else that uses it.
+
+why: >
+  After 2026-11-09-error-recovery-r3 the app shell told offline users and users hit by a server
+  outage apart, but the admin data routes, which have their own recovering panel in the published
+  data-browser package, still said "Can't reach the server" in both cases, and the layout's probe
+  returned only a boolean, so the package could not know the reason.
+
+affectedPaths:
+  - apps/web/app/routes/admin/data/_layout.tsx
+
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.27
+    versionRange: ^1.0.27
+
+skipIf:
+  - The project has no admin data routes (no `@nestledjs/data-browser` dependency).
+
+verification:
+  - pnpm install
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+  - >
+    Manual: serve the web app with the API stopped and open /admin/data/<model> signed in as an
+    admin (or make its data request fail): the panel says "We’re having trouble reaching our
+    servers". Take the browser offline (devtools, or Playwright `context.setOffline(true)`): it
+    says "You’re offline", and changes back when the connection returns. Start the API: the panel
+    clears by itself.
+
+agentHints:
+  - >
+    Update package.json and the lockfile to the published version; do not copy files from
+    libs/data-browser.
+  - >
+    A project with i18n adds translation keys for the admin panel's two strings that changed (the
+    server-trouble title and message; reuse the shell's keys from 2026-11-09-error-recovery-r3 if
+    it has them) and, if it translates the rest, the offline title and message, "Try Again" and
+    "Return to Data Browser". It passes them through `AdminDataProvider`'s `unavailableCopy` (or a
+    boundary's `copy`), falls back to the English for any missing locale, and lists the locales
+    still untranslated in its report. A project without i18n takes the English as it is.
+  - >
+    A project that customised its admin data layout, or wraps the data-browser boundaries in its
+    own route ErrorBoundary, wires the reason-aware probe into its own version: pass
+    `probe={() => probeConnectivity()}` (or its own equivalent resolving `{ reachable, reason }`)
+    to `AdminDataProvider`, and keep passing `probe` / `copy` through its wrapper. A project that
+    adapted `probeConnectivity` under another name uses that.
+  - >
+    A project that has not applied 2026-11-09-error-recovery-r3 (no `probeConnectivity`) applies it
+    first. If it must keep a boolean probe for now, the bump alone still works: the panel shows
+    server trouble, or offline when `navigator.onLine` is false.
+  - >
+    A project without the admin data routes marks this note not-applicable.

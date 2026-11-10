@@ -44,8 +44,8 @@ permissions:
 #
 # Every Linux job starts from .github/actions/setup (pnpm, Node, install, Prisma client). Nx Cloud's
 # remote cache is shared across the jobs and across runs, so a task whose inputs are unchanged
-# replays in seconds wherever it is scheduled. This file is in nx.json's sharedGlobals, so a change
-# to it misses the cache everywhere once.
+# replays in seconds wherever it is scheduled. This file and .github/actions/** are in nx.json's
+# sharedGlobals, so a change to either misses the cache everywhere once.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NX_DAEMON: false
@@ -62,8 +62,8 @@ env:
 jobs:
   # Which never-cached suite this change reaches. The API e2e run is uncached by design (every
   # green result comes from a run that just happened), so it is the one job where "run everything"
-  # costs real minutes on a change that cannot touch it. On a pull request it runs only when Nx says
-  # api-e2e is affected; on a develop push it always runs, so every develop run stays a complete
+  # costs real minutes on a change that cannot touch it. On a pull request it runs when Nx says
+  # api-e2e is affected or a file outside every project changed; on a develop push it always runs, so every develop run stays a complete
   # baseline. Every other job runs the whole workspace (or `nx affected`) and lets the remote cache
   # skip what is unchanged.
   affected:
@@ -90,8 +90,22 @@ jobs:
           fi
           projects="$(pnpm exec nx show projects --affected --json | jq -r '.[]')"
           echo "Affected projects:"; echo "$projects"
+          # Nx maps a change to the project that owns the file. A root file the e2e run reads
+          # (prisma.config.ts, package.json, the lockfile, .env.example, tsconfig.base.json,
+          # scripts/, .github/actions/) belongs to no project, so it can leave api-e2e unaffected.
+          # Any change outside apps/ and libs/ therefore runs the suite, except the paths listed
+          # here, which nothing at runtime reads.
+          root_changes="$(git diff --name-only "$NX_BASE...$NX_HEAD" -- . \
+            ':(glob,exclude)apps/**' ':(glob,exclude)libs/**' ':(glob,exclude)docs/**' \
+            ':(glob,exclude)**/*.md' ':(glob,exclude).nestled-updates/**' \
+            ':(glob,exclude).claude/**' ':(glob,exclude).githooks/**' \
+            ':(glob,exclude).cursor/**' ':(glob,exclude).vscode/**' ':(glob,exclude)LICENSE')"
           if printf '%s\n' "$projects" | grep -qx api-e2e; then
             echo "api_e2e=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$root_changes" ]; then
+            echo "api_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "api-e2e is not affected, but these files outside any project changed:"
+            printf '%s\n' "$root_changes" | sed 's/^/  /'
           else
             echo "api_e2e=false" >> "$GITHUB_OUTPUT"
             echo "api-e2e is not affected: the API e2e job is skipped."
@@ -155,8 +169,10 @@ jobs:
         run: node scripts/sonar-rules-digest.mjs --check
 
   # The enforced secret scan. The pre-commit hook runs gitleaks too, but only where it is installed
-  # and only for commits made with the hook, so this is the layer that cannot be skipped. It scans
-  # the commits this run adds: the pull request's commits, or the pushed range on develop. The
+  # and only for commits made with the hook, so this is the layer that cannot be skipped. On a pull
+  # request it scans the pull request's commits. On a develop push it scans the WHOLE history: a
+  # newer push replaces a queued run (see the concurrency group), so scanning only the pushed range
+  # would leave the replaced run's commits unscanned for good. The whole history takes seconds. The
   # binary is downloaded from the gitleaks release and checked against its published SHA-256; the
   # gitleaks GitHub Action needs a paid licence for organisation repositories.
   gitleaks:
@@ -177,20 +193,15 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
           echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
-      - name: Scan the new commits for secrets
+      - name: Scan for secrets
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             range="$PR_BASE..$GITHUB_SHA"
-          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ] \
-            && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
-            range="$PUSH_BEFORE..$GITHUB_SHA"
           else
             range=""
-            echo "No usable previous commit: scanning the whole history."
           fi
           echo "Scanning: ${range:-all commits}"
           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose ${range:+--log-opts="$range"} .
@@ -396,7 +407,8 @@ jobs:
   # Generator output must match the schema it is generated from. Every other gate reads the
   # COMMITTED artifacts, so a schema change that lands without a full `pnpm db-update` makes the
   # stale output the truth they verify against, and the drift is invisible. This runs db-update
-  # (schema refresh, Prisma client, CRUD, models, SDK) and fails on any change to a tracked file.
+  # (schema refresh, Prisma client, CRUD, models, SDK) and fails on any change to a tracked file,
+  # or any new file that is not ignored.
   generated-artifacts:
     name: Generated artifacts are up to date
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
@@ -424,8 +436,11 @@ jobs:
       - name: Generated artifacts are up to date
         run: |
           pnpm db-update
-          if ! git diff --quiet; then
+          # Untracked files count too: a generator that adds a new file changes no tracked one.
+          drift="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$drift" ]; then
             echo "::error::Generated artifacts are stale. Run 'pnpm db-update' and commit the result."
+            printf '%s\n' "$drift"
             git diff --stat
             exit 1
           fi

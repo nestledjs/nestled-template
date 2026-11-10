@@ -15,7 +15,10 @@
       "!{projectRoot}/.storybook/**/*",
       "!{projectRoot}/tsconfig.storybook.json"
     ],
-    "sharedGlobals": ["{workspaceRoot}/.github/workflows/ci.yml"]
+    "sharedGlobals": [
+      "{workspaceRoot}/.github/workflows/ci.yml",
+      "{workspaceRoot}/.github/actions/**/*"
+    ]
   },
   "plugins": [
     {
@@ -29,14 +32,21 @@
       }
     },
     {
+      "plugin": "@nx/js/typescript",
+      "options": {
+        "typecheck": {
+          "targetName": "typecheck"
+        }
+      }
+    },
+    {
       "plugin": "@nx/react/router-plugin",
       "options": {
         "buildTargetName": "react-router:build",
         "devTargetName": "dev",
         "startTargetName": "start",
         "watchDepsTargetName": "watch-deps",
-        "buildDepsTargetName": "build-deps",
-        "typecheckTargetName": "typecheck"
+        "buildDepsTargetName": "build-deps"
       }
     },
     {
@@ -79,54 +89,56 @@
     {
       "plugin": "@nx/vitest",
       "options": {
-        "testTargetName": "vite:test"
+        "testTargetName": "test",
+        "testMode": "run"
       }
     },
-    "./tools/nx-plugins/typecheck.js"
+    "./tools/nx-plugins/typecheck.js",
+    {
+      "plugin": "@nx/jest/plugin",
+      "options": {
+        "targetName": "test"
+      },
+      "include": [
+        "libs/api/config/**/*",
+        "libs/api/core/data-access/**/*",
+        "libs/api/core/feature/**/*",
+        "libs/api/core/models/**/*",
+        "libs/api/custom/**/*",
+        "libs/api/generated-crud/data-access/**/*",
+        "libs/api/generated-crud/feature/**/*",
+        "libs/api/integrations/**/*",
+        "libs/api/prisma/**/*",
+        "libs/api/utils/**/*"
+      ]
+    }
   ],
   "targetDefaults": {
-    "@nx/eslint:lint": {
-      "cache": true,
-      "inputs": [
-        "default",
-        "^default",
-        "{workspaceRoot}/.eslintrc.json",
-        "{workspaceRoot}/.eslintignore",
-        "{workspaceRoot}/eslint.config.mjs",
-        "{workspaceRoot}/tools/eslint-rules/**/*"
-      ]
-    },
-    "@nx/jest:jest": {
-      "cache": true,
-      "inputs": ["default", "^production", "{workspaceRoot}/jest.preset.js"],
-      "options": {
-        "passWithNoTests": true
-      },
-      "configurations": {
-        "ci": {
-          "ci": true,
-          "codeCoverage": true
-        }
-      }
-    },
     "build": {
       "cache": true,
       "dependsOn": ["^build"]
-    },
-    "@nx/vite:build": {
-      "cache": true,
-      "dependsOn": ["^build"],
-      "inputs": ["production", "^production"]
     },
     "@nx/js:tsc": {
       "cache": true,
       "dependsOn": ["^build"],
       "inputs": ["production", "^production"]
     },
-    "@nx/vitest:test": {
-      "cache": true,
-      "inputs": ["default", "^production"]
-    }
+    "test": [
+      {
+        "filter": {
+          "plugin": "@nx/jest/plugin"
+        },
+        "configurations": {
+          "ci": {
+            "ci": true,
+            "coverage": true
+          }
+        },
+        "options": {
+          "passWithNoTests": true
+        }
+      }
+    ]
   },
   "generators": {
     "@nx/react": {
@@ -146,5 +158,8 @@
       }
     }
   },
-  "analytics": true
+  "analytics": true,
+  "affected": {
+    "legacy": true
+  }
 }

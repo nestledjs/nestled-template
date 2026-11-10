@@ -1,6 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // Vite 8 and @vitejs/plugin-react 6 publish exports-only types, which `moduleResolution: node`
+    // (inherited from tsconfig.base.json) cannot resolve.
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "outDir": "../../dist/out-tsc",
     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
   },

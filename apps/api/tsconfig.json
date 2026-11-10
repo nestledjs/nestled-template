@@ -35,7 +35,8 @@
     }
   ],
   "compilerOptions": {
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "ignoreDeprecations": "6.0"
     // Do not enable strict or strictNullChecks in this emit config. The API webpack build uses this
     // file through ts-loader, and strictNullChecks changes emitDecoratorMetadata for nullable
     // GraphQL fields such as `token?: string | null` from String to Object. Nest GraphQL then

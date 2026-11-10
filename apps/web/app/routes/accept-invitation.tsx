@@ -118,27 +118,39 @@ export default function AcceptInvitation() {
 
   const invitationDetails = inviteData?.getInvitationDetails
 
-  const acceptInvitationAsync = useCallback(async () => {
-    if (!token) return
+  // A signed-in user's invitation is accepted automatically (the effect below). The accepting
+  // screen shows from the first render that can start it until it fails, derived here rather than
+  // set from the effect.
+  const [autoAcceptFailed, setAutoAcceptFailed] = useState(false)
+  const autoAccepting = Boolean(user && token && invitationDetails) && !autoAcceptFailed
 
-    try {
-      setIsProcessing(true)
-      await acceptInvitation({
-        variables: {
-          input: { token },
-        },
-      })
+  // Settles in promise callbacks, which always run after the effect that starts it returns, so no
+  // state is set synchronously inside that effect. A synchronous throw from the mutation still
+  // lands in the catch: the Promise constructor turns it into a rejection.
+  const acceptInvitationAsync = useCallback(() => {
+    if (!token) return Promise.resolve()
 
-      // Redirect to members area
-      setTimeout(() => {
-        navigate('/members', { replace: true })
-      }, 1500)
-    } catch (error) {
-      setFormError(
-        getInvitationErrorMessage(error, 'Failed to accept invitation. Please try again.'),
+    return new Promise(resolve => {
+      resolve(
+        acceptInvitation({
+          variables: {
+            input: { token },
+          },
+        }),
       )
-      setIsProcessing(false)
-    }
+    })
+      .then(() => {
+        // Redirect to members area
+        setTimeout(() => {
+          navigate('/members', { replace: true })
+        }, 1500)
+      })
+      .catch(error => {
+        setFormError(
+          getInvitationErrorMessage(error, 'Failed to accept invitation. Please try again.'),
+        )
+        setAutoAcceptFailed(true)
+      })
   }, [acceptInvitation, navigate, token])
 
   // If user is already logged in, accept the invitation automatically
@@ -234,7 +246,7 @@ export default function AcceptInvitation() {
   }
 
   // If user is logged in and processing, show accepting state
-  if (user && isProcessing) {
+  if (user && (isProcessing || autoAccepting)) {
     return <InvitationAcceptingState organizationName={invitationDetails.organizationName} />
   }
 

@@ -1,0 +1,67 @@
+id: 2026-11-10-note-authoring-stays-upstream
+title: >-
+  Projects cloned from the template stop asking for upgrade notes: no "Downstream Upgrade" PR
+  section, no note scaffold
+priority: normal
+area: docs
+type: infra
+delivery: code-patch
+
+intent: >
+  Upgrade notes are written only in the source template. A project cloned from the template never
+  writes one: nothing reads a note committed in a downstream project. But the template shipped the
+  source template's note-authoring tools, so every clone told its PR authors to write notes. Four
+  parts. No package changes.
+
+  1. `.github/pull_request_template.md`: delete the whole `## Downstream Upgrade` section (the
+  "Propagate downstream", "Upgrade note", "Area", "Priority", "Verification" and "Reason" lines).
+  Keep `## Summary`, `## Verification` and `## Security Review` as they are.
+
+  2. Delete `scripts/create-upgrade-note.ts`, and the `template:create-upgrade-note` script from
+  the root package.json.
+
+  3. Keep `scripts/validate-upgrade-notes.ts`, the `template:validate-upgrade-notes` script and its
+  CI step, and the `.nestled-updates/` directory (doctor config, security baselines, and the notes
+  already committed there). The validator checks only the notes that exist; it never asks for one.
+
+  4. In the project's agent instructions (AGENTS.md, CLAUDE.md or equivalent), remove any section
+  that tells an author to create an upgrade note or fill in a "Downstream Upgrade" block, and say
+  instead: "This project is cloned from the Nestled template. Do not create upgrade notes here:
+  they are written only in the source template."
+
+why: >
+  The source template's PR template asks every author whether a change propagates downstream and
+  where its upgrade note is, and promotion copied it, with the note scaffold, into the template that
+  projects are cloned from. In downstream projects that section kept steering PRs: agents wrote
+  upgrade notes for local application changes, which no one reads, and which the CI validator then
+  holds to the note format. Promotion now leaves both files in the source template.
+
+affectedPaths:
+  - .github/pull_request_template.md
+  - scripts/create-upgrade-note.ts
+  - package.json
+  - AGENTS.md
+
+skipIf:
+  - >-
+    The project's PR template has no "Downstream Upgrade" section, it has no
+    `scripts/create-upgrade-note.ts`, and its agent instructions do not ask for upgrade notes.
+
+verification:
+  - git grep -n "Downstream Upgrade" -- .github (no match)
+  - test ! -e scripts/create-upgrade-note.ts
+  - pnpm template:validate-upgrade-notes
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    A project that already removed the PR section marks that part superseded and does the rest.
+  - >
+    Do not delete upgrade notes the project has already committed under
+    `.nestled-updates/upgrade-notes/`. Leave them, and stop adding new ones.
+  - >
+    A project whose agent instructions already say not to create downstream upgrade notes keeps
+    that wording, and removes only the instructions that contradict it.
+  - >
+    If something else in the project calls `template:create-upgrade-note` (a doc, a script or a
+    hook), remove that reference too, and list it in the outcome.

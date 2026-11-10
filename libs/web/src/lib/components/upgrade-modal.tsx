@@ -50,7 +50,7 @@ export function UpgradeModal({ isOpen, onClose, feature, reason }: UpgradeModalP
 
       if (data?.createCheckoutSession) {
         // Redirect to Stripe Checkout
-        globalThis.location.href = data.createCheckoutSession
+        globalThis.location.assign(data.createCheckoutSession)
       }
     } catch (error) {
       console.error('Failed to create checkout session:', error)
