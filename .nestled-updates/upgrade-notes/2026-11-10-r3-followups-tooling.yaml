@@ -1,0 +1,137 @@
+id: 2026-11-10-r3-followups-tooling
+title: >-
+  R3 tooling follow-ups: the pre-commit hook never commits unstaged hunks, Postgres readiness over
+  TCP, the API e2e gate sees root files, untracked generator output, full-history gitleaks on
+  develop, Sonar digest and session-hook fixes
+priority: normal
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-09-precommit-and-session-hooks, 2026-11-09-ci-parallel-jobs and
+  2026-11-09-sonar-rules-digest (apply those first; this note changes the files they added). Nine
+  parts. No package changes.
+
+  1. `.githooks/pre-commit` re-staged whole files. Before formatting, it now lists the staged paths
+  that also have unstaged changes (`staged_paths | xargs -0 git diff --name-only --`). If there
+  are any, it prints them, says how to proceed (stage the whole file, or
+  `git stash push --keep-index`, commit, `git stash pop`) and exits 1, before Prettier touches
+  anything: re-staging such a file would commit its unstaged hunks. Re-staging is now
+  `git add -f --`, because every path is already in the index and an ignore rule (a force-added
+  `.claude/settings.json` under an ignored `.claude/`) made a plain `git add` fail the commit. New
+  `scripts/pre-commit-hook.spec.mjs` runs the hook in a throwaway repository with a Prettier
+  stand-in and covers the normal case, a partially staged file and a force-added ignored file.
+
+  2. `scripts/db-update.mjs` `waitForPostgres` asked `pg_isready` over the Unix socket. On a fresh
+  data directory the postgres image's temporary init server answers there and then shuts down, so
+  `createdb` raced it ("the database system is shutting down") and the generated-artifacts job
+  failed now and then. It now passes `-h 127.0.0.1`. The same flag is added to
+  `scripts/test-db.sh` `wait_for_db` and to both Postgres healthchecks in
+  `.dev/docker-compose.yml`. New `scripts/postgres-readiness.spec.mjs` fails on any socket-only
+  `pg_isready` in those three files.
+
+  3. CI `affected` job (`.github/workflows/ci.yml`): Nx maps a changed file to the project that
+  owns it, so a PR touching only root files the e2e run reads (prisma.config.ts, package.json,
+  the lockfile, .env.example, tsconfig.base.json, scripts/, .github/actions/) left api-e2e
+  unaffected and skipped the suite. A changed-path fallback now runs it whenever
+  `git diff --name-only "$NX_BASE...$NX_HEAD"` lists a file outside `apps/` and `libs/`, except
+  docs (`docs/**`, `**/*.md`), `.nestled-updates/**`, `.claude/**`, `.githooks/**`, `.cursor/**`,
+  `.vscode/**` and `LICENSE`.
+
+  4. nx.json, by hand (nx.json is not mirrored by promotion): add
+  `"{workspaceRoot}/.github/actions/**/*"` to `namedInputs.sharedGlobals`, next to
+  `"{workspaceRoot}/.github/workflows/ci.yml"`, so a change to a composite action no longer
+  replays cached results.
+
+  5. The generated-artifacts drift check counted only tracked files (`git diff --quiet`), so a
+  generator that adds a new file passed. It now fails when
+  `git status --porcelain --untracked-files=all` prints anything, and prints that list.
+
+  6. gitleaks on a develop push scanned only `github.event.before..github.sha`. A newer push
+  replaces a queued develop run, so the replaced run's commits were never scanned. A develop push
+  now scans the whole history (seconds); a pull request still scans `base..head`.
+
+  7. `scripts/sonar-rules-digest.mjs` `groupRules` dropped a rule carrying an excluded tag even
+  when another of its tags had been turned back on (S6302 is tagged `aws` and `gcp`; a project
+  that removes `aws` from `excludeTags` still lost it to `gcp`). A default-excluded tag missing
+  from the project's `excludeTags` now keeps the rule, like a KEEP_TAGS tag. New test in
+  `scripts/sonar-rules-digest.spec.mjs`. The template's digest output does not change.
+
+  8. `scripts/sonar-rules-digest.spec.mjs` stubbed `log` as `() => {}`, which ESLint
+  `no-empty-function` rejects; it is now `() => undefined`.
+
+  9. `.claude/hooks/session-start.sh` could exit non-zero under `set -e`: when git was missing,
+  when `git hash-object` was given a missing file, or when `CLAUDE_PROJECT_DIR` did not exist. Each
+  case is now handled explicitly with a one-line message (without git or with an input missing
+  there is no fingerprint, so the warm-up always runs), and an EXIT trap turns any other failure
+  into a message and exit 0. New `scripts/session-start-hook.spec.mjs` covers the missing git,
+  missing schema and missing directory cases and the skip-when-current path.
+
+why: >
+  Adopting release 2026.11.3 found these in the template's own tooling: a commit that silently
+  absorbed another commit's hunks, a pre-commit hook that aborted commits of force-added files, an
+  intermittently red generated-artifacts job, an e2e suite skipped for changes it reads, cache
+  replays after composite-action changes, drift checks blind to new files, unscanned develop
+  commits, a digest that dropped re-enabled rules, a lint failure in a spec, and a cloud session
+  hook that could start the session in a failed state.
+
+affectedPaths:
+  - .githooks/pre-commit
+  - .claude/hooks/session-start.sh
+  - .github/workflows/ci.yml
+  - .dev/docker-compose.yml
+  - nx.json
+  - scripts/db-update.mjs
+  - scripts/test-db.sh
+  - scripts/sonar-rules-digest.mjs
+  - scripts/sonar-rules-digest.spec.mjs
+  - scripts/pre-commit-hook.spec.mjs
+  - scripts/postgres-readiness.spec.mjs
+  - scripts/session-start-hook.spec.mjs
+
+skipIf:
+  - >-
+    The project does not carry the files from 2026-11-09-precommit-and-session-hooks,
+    2026-11-09-ci-parallel-jobs and 2026-11-09-sonar-rules-digest. Apply those first, then this.
+
+verification:
+  - node --test scripts/*.spec.mjs
+  - node scripts/sonar-rules-digest.mjs --check
+  - pnpm exec prettier --check .
+  - pnpm run nestled-doctor
+  - actionlint .github/workflows/ci.yml (where actionlint is installed)
+  - >
+    Stage one hunk of a changed file with `git add -p` and try to commit on a throwaway branch: the
+    hook refuses and names the file, and the index still holds only that hunk. Then discard the
+    branch.
+  - >
+    On the PR, CI's "Generated artifacts are up to date" job passes (no untracked generator output)
+    and the gitleaks job passes.
+
+agentHints:
+  - >
+    A project that already fixed a part locally (several fixed part 2, the TCP readiness probe)
+    marks that part superseded, and keeps its own fix when it is equivalent (a `-h 127.0.0.1`
+    probe, or a retried `createdb`). Keep an existing `scripts/postgres-readiness.spec.mjs` if it
+    checks the same thing; add `.dev/docker-compose.yml` to its file list if the compose
+    healthchecks still probe the socket.
+  - >
+    nx.json is not mirrored by template promotion: make the part 4 change by hand. Add
+    `"{workspaceRoot}/.github/actions/**/*"` to `namedInputs.sharedGlobals` and keep every entry
+    the project already has there.
+  - >
+    Part 3's exclusion list is the set of paths nothing at runtime reads. A project with other such
+    root folders (design files, its own agent folders) may add them to the list; never exclude a
+    folder the API, Prisma or the e2e run reads.
+  - >
+    If the drift check (part 5) goes red on its first run, the job's output lists the untracked
+    files. Commit them if a generator really produces them, or add them to `.gitignore` if they are
+    run artifacts. Do not drop the untracked check.
+  - >
+    If a develop push's full-history gitleaks scan (part 6) reports an old finding, rotate the
+    credential if it was real and add the finding's fingerprint to `.gitleaks.toml`'s allowlist;
+    do not go back to scanning only the pushed range.
+  - >
+    A project whose Prisma schema or lockfile lives elsewhere keeps its own paths in
+    session-start.sh's fingerprint list, as the earlier note's hint says.

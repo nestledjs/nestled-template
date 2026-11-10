@@ -76,3 +76,5 @@ yalc.lock
 
 # Agent run output (operational logs; keep out of this public repo)
 agents/*/output/
+
+.nx/migrate-runs

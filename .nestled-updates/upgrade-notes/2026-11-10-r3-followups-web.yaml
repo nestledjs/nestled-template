@@ -1,0 +1,97 @@
+id: 2026-11-10-r3-followups-web
+title: >-
+  R3 web follow-ups: a recorded API failure no longer re-labels an unrelated render error,
+  RequireAuth's redirect cannot loop, frozen loader data is safe, three Sonar findings
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-09-error-recovery-r3 (apply that first; this note changes the code it
+  added). Four parts, in the web app and the shared libs. No package changes.
+
+  1. apps/web/app/entry.server.tsx `shellErrorOutcome(error, cause)` applied the recorded cause
+  before looking at the error. `ssrApiFailureCause()` aggregates every loader's Apollo failures in
+  the request, so the cause could belong to a preload whose failure a Suspense boundary contained.
+  An ordinary render bug in the shell then became the 503 recovering screen (`unavailable`
+  recorded) or a sign-out (`unauthenticated` recorded). The recorded cause now applies only when
+  the shell error is itself an API failure: Apollo's redacted stream error (no recorded cause
+  still means `unavailable`), or an error `classifyApiFailure` does not call `other` (then the
+  recorded cause, else the error's own). Any other shell error is `error` and goes to
+  `reject(error)`, whatever was recorded. `classifyApiFailure` is imported from
+  `@nestled-template/shared/apollo`. apps/web/tests/entry-server-shell-error.spec.tsx: new
+  end-to-end cases where the Me preload fails as a 503 or a 401 and the root component throws a
+  plain render error (expected: 500, no Set-Cookie, no Location); the `shellErrorOutcome` table
+  now expects `error` for a plain error with a recorded cause, and covers non-redacted API errors.
+
+  2. libs/web/src/lib/components/require-auth.tsx redirected with
+  `<Navigate to={redirectTo} state={{ from: location }} replace />`. `<Navigate>` re-runs
+  `navigate()` when its props change, and the `state` object is new on every render; in framework
+  mode each navigation passes through the loading state, so every re-render aborted the pending
+  redirect and started another (thousands of aborted `.data` requests a second in a production
+  build). The `state` prop and the `useLocation` call are removed; nothing read
+  `location.state.from`. The component stays exported, since a project may use it. New
+  libs/web/src/lib/components/require-auth.spec.tsx asserts that a signed-out render starts
+  exactly one navigation while the login route's loader is pending.
+
+  3. libs/shared/apollo/src/lib/apollo-loader.ts `attachRecord` defined a symbol property on the
+  loader's returned object, which throws for frozen or non-extensible data
+  (`return Object.freeze({...})`). The record now lives in a WeakMap keyed by the returned data
+  (kept on `globalThis` under `Symbol.for('nestled.ssrApiFailureRecords')`, so a second copy of
+  the module finds it), and `ssrApiFailureCause` reads it from there. The data is never modified.
+  New test in libs/shared/apollo/src/lib/apollo.spec.ts for frozen and non-extensible data; the
+  cause test now returns frozen data.
+
+  4. SonarCloud findings in the R3 code: apps/web/app/api-availability.ts drops the redundant
+  `type Phase = ApiAvailabilityPhase` alias (S6564; use `ApiAvailabilityPhase` directly) and the
+  never-read initial value of `result` in `runProbe` (S1854; `let result: ConnectivityProbeResult`).
+  apps/web/app/entry.server.tsx marks the intentional `reject(new Response(null, { status: 503 }))`
+  with `// NOSONAR` and a comment saying why (S6671: React Router needs the 503 `Response`; an
+  Error would be a 500).
+
+why: >
+  Adopting release 2026.11.3 found these in the template's own code: a render bug during a
+  partial outage was hidden behind the recovering screen or signed the user out, a latent redirect
+  loop in a library component a project could start using, a crash for loaders that return frozen
+  data, and three Sonar findings in the new code.
+
+affectedPaths:
+  - apps/web/app/entry.server.tsx
+  - apps/web/app/api-availability.ts
+  - apps/web/tests/entry-server-shell-error.spec.tsx
+  - libs/web/src/lib/components/require-auth.tsx
+  - libs/web/src/lib/components/require-auth.spec.tsx
+  - libs/shared/apollo/src/lib/apollo-loader.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test web-components --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    A project whose entry.server.tsx differs keeps its own structure, but ends with the same rule:
+    the recorded cause applies only when the shell error is itself an API failure (the redacted
+    Apollo stream error, or one `classifyApiFailure` does not call `other`). Any other shell error
+    goes to `reject(error)` and the 500 path, with no cookie change, whatever was recorded. Add the
+    mixed test (a preload fails as unavailable or 401, the shell fails with a plain render error,
+    expect 500 and no cookie change) against the project's own handler.
+  - >
+    A project that uses its own RequireAuth-style redirect with `state={{ from: location }}` (in a
+    signed-in layout, a route guard or a copy of this component) drops the `state`. If it reads
+    `location.state.from` after login, pass the return path in the URL instead (for example a
+    `?returnTo=` search parameter) and read it from there.
+  - >
+    A project with its own loader helper instead of `apolloLoader` that attaches the failure record
+    to the loader data applies part 3 to it: keep the record in a side table, never on the data.
+  - >
+    The existing `shellErrorOutcome` table rows that expected `force-logout` or `unavailable` for a
+    plain `new Error('anything')` encoded this bug; change them to expect `error`, do not keep them.

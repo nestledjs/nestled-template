@@ -18,14 +18,15 @@ export default function VerifyEmailPage() {
   const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail)
   const [verifyEmailChangeMutation] = useMutation<VerifyEmailChangeMutation>(VerifyEmailChange)
 
+  // A link without a token fails at once: derived while rendering, with no request to wait for.
+  const missingToken = !params.get('token')
+  const shownStatus = missingToken ? 'error' : status
+  const shownMessage = missingToken ? 'Missing verification token.' : message
+
   useEffect(() => {
     const token = params.get('token') || ''
     const verificationType = params.get('type') as VerificationType | null
-    if (!token) {
-      setStatus('error')
-      setMessage('Missing verification token.')
-      return
-    }
+    if (!token) return
 
     const verifyInitialEmail = () =>
       verifyEmailMutation({ variables: { input: { token } } }).then(({ data }) => {
@@ -76,24 +77,24 @@ export default function VerifyEmailPage() {
   return (
     <AuthLayout
       title="Email Verification"
-      subtitle={status === 'idle' ? 'Verifying your email address...' : undefined}
+      subtitle={shownStatus === 'idle' ? 'Verifying your email address...' : undefined}
     >
       <div className="text-center">
-        {status === 'success' && (
+        {shownStatus === 'success' && (
           <div className="mb-6 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 p-4 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-            <p>{message}</p>
+            <p>{shownMessage}</p>
           </div>
         )}
 
-        {status === 'error' && (
+        {shownStatus === 'error' && (
           <div className="mb-6 rounded-lg bg-rose-50 dark:bg-rose-500/10 p-4 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20">
-            <p>{message}</p>
+            <p>{shownMessage}</p>
           </div>
         )}
 
-        {status === 'idle' && (
+        {shownStatus === 'idle' && (
           <div className="mb-6 rounded-lg bg-sky-50 dark:bg-sky-500/10 p-4 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20">
-            <p>{message}</p>
+            <p>{shownMessage}</p>
           </div>
         )}
 

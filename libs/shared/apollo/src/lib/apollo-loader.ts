@@ -8,13 +8,20 @@ import { makeClient, type ApiFailureCause } from './apollo'
  * concerns."), so by the time the failure reaches `onShellError` in entry.server.tsx a rejected
  * session and an unreachable API look the same. The loader's own Apollo client still sees the real
  * error, so each `apolloLoader` call records it here, and attaches the record to the data the
- * loader returns, where entry.server.tsx finds it again (`ssrApiFailureCause`).
+ * loader returns (in a side table keyed by that data), where entry.server.tsx finds it again
+ * (`ssrApiFailureCause`).
  */
 interface SsrApiFailureRecord {
   cause?: ApiFailureCause
 }
 
-const SSR_API_FAILURE = Symbol.for('nestled.ssrApiFailure')
+// Loader data -> its request's record. A side table rather than a property on the data, so frozen
+// or non-extensible loader data (`Object.freeze({...})`, a frozen constant) is never mutated, which
+// would throw in strict mode. Registered on globalThis under a `Symbol.for` key so a second copy of
+// this module (a separate server chunk) still finds the records the first one attached.
+const RECORDS_KEY = Symbol.for('nestled.ssrApiFailureRecords')
+const globalRecords = globalThis as { [RECORDS_KEY]?: WeakMap<object, SsrApiFailureRecord> }
+const recordsByData = (globalRecords[RECORDS_KEY] ??= new WeakMap<object, SsrApiFailureRecord>())
 
 // The most decisive cause wins: one rejected session means the session is rejected, whatever else
 // failed alongside it; an unreachable API outranks an ordinary answered error.
@@ -46,12 +53,10 @@ function recordFor(request: Request): SsrApiFailureRecord {
 }
 
 function attachRecord<T>(data: T, record: SsrApiFailureRecord): T {
-  // Plain loader data only: a redirect or other Response passes through untouched. Not enumerable,
-  // and a symbol, so it is never serialized to the browser or seen by code that reads the data.
+  // Plain loader data only: a redirect or other Response passes through untouched. The data itself
+  // is never changed, so nothing is serialized to the browser or seen by code that reads it.
   if (data !== null && typeof data === 'object' && !(data instanceof Response)) {
-    if (!Object.prototype.hasOwnProperty.call(data, SSR_API_FAILURE)) {
-      Object.defineProperty(data, SSR_API_FAILURE, { value: record, enumerable: false })
-    }
+    if (!recordsByData.has(data)) recordsByData.set(data, record)
   }
   return data
 }
@@ -83,8 +88,7 @@ export function ssrApiFailureCause(
   let cause: ApiFailureCause | undefined
   for (const data of Object.values(loaderData ?? {})) {
     if (data !== null && typeof data === 'object') {
-      const record = (data as { [SSR_API_FAILURE]?: SsrApiFailureRecord })[SSR_API_FAILURE]
-      cause = strongest(cause, record?.cause)
+      cause = strongest(cause, recordsByData.get(data)?.cause)
     }
   }
   return cause

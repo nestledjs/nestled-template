@@ -94,7 +94,7 @@ export class SimpleTemplateManager implements TemplateManager {
       return { subject, html, text }
     } catch (error) {
       this.logger.error(`Failed to render template ${templateId}:`, (error as Error).message)
-      throw new Error(`Template rendering failed: ${(error as Error).message}`)
+      throw new Error(`Template rendering failed: ${(error as Error).message}`, { cause: error })
     }
   }
 

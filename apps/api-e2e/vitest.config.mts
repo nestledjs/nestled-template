@@ -4,22 +4,33 @@ import { resolve } from 'node:path'
 export default defineConfig({
   resolve: {
     alias: {
-      '@nestled-template/api/prisma': resolve(__dirname, '../../libs/api/prisma/src/index.ts'),
+      '@nestled-template/api/prisma': resolve(
+        import.meta.dirname,
+        '../../libs/api/prisma/src/index.ts',
+      ),
       '@nestled-template/api/core/data-access': resolve(
-        __dirname,
+        import.meta.dirname,
         '../../libs/api/core/data-access/src/index.ts',
       ),
-      '@nestled-template/api/utils': resolve(__dirname, '../../libs/api/utils/src/index.ts'),
-      '@nestled-template/api/custom': resolve(__dirname, '../../libs/api/custom/src/index.ts'),
+      '@nestled-template/api/utils': resolve(
+        import.meta.dirname,
+        '../../libs/api/utils/src/index.ts',
+      ),
+      '@nestled-template/api/custom': resolve(
+        import.meta.dirname,
+        '../../libs/api/custom/src/index.ts',
+      ),
     },
   },
   test: {
     name: 'api-e2e',
-    root: resolve(__dirname),
+    root: resolve(import.meta.dirname),
     environment: 'node',
-    globalSetup: resolve(__dirname, './src/support/global-setup.ts'),
-    setupFiles: [resolve(__dirname, './src/support/test-setup.ts')],
-    include: [resolve(__dirname, './src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}')],
+    globalSetup: resolve(import.meta.dirname, './src/support/global-setup.ts'),
+    setupFiles: [resolve(import.meta.dirname, './src/support/test-setup.ts')],
+    include: [
+      resolve(import.meta.dirname, './src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'),
+    ],
     // The test-support dependency runs these without starting databases or an API.
     exclude: [
       '**/support/api-process.spec.ts',
@@ -31,7 +42,7 @@ export default defineConfig({
     ],
     // Name every test and its result. Under Nx and in CI the output is not a TTY, and the default
     // reporter then prints only the summary, so a log could not show which tests ran.
-    reporters: ['verbose'],
+    reporters: ['tree'],
     // A run that matches no test file is a failure, not a pass.
     passWithNoTests: false,
     testTimeout: 30000,

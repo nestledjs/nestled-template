@@ -1,13 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin'
-import { nxCopyAssetsPlugin } from '@nx/vite/plugins/nx-copy-assets.plugin'
 
 export default defineConfig({
-  root: __dirname,
+  root: import.meta.dirname,
   cacheDir: '../../node_modules/.vite/libs/web-ui',
 
-  plugins: [react(), nxViteTsPaths(), nxCopyAssetsPlugin(['*.md'])],
+  plugins: [react()],
 
   define: {
     'import.meta.vitest': 'undefined',
@@ -41,9 +39,10 @@ export default defineConfig({
     include: [],
   },
   resolve: {
+    tsconfigPaths: true,
     dedupe: ['react'],
     alias: {
-      // Optional custom aliases (Nx paths are already handled by nxViteTsPaths)
+      // Optional custom aliases (Nx paths are resolved by resolve.tsconfigPaths)
     },
   },
 

@@ -5,6 +5,9 @@
     // Vitest runs specs (and the apollo.ts they import) as ES modules, where `import.meta` is
     // valid. tsconfig.json here pins `module: commonjs`, so restore esnext as tsconfig.lib.json does.
     "module": "esnext",
+    // Vite 8 and @vitejs/plugin-react 6 publish exports-only types, which `moduleResolution: node`
+    // (inherited from tsconfig.base.json) cannot resolve.
+    "moduleResolution": "bundler",
     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
   },
   "include": [

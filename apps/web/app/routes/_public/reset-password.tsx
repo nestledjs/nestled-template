@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
@@ -21,15 +21,16 @@ export default function ResetPasswordPage() {
   const [resetPasswordMutation, { loading }] = useMutation<ResetPasswordMutation>(ResetPassword)
   const token = params.get('token') || ''
 
-  // Validate token exists
-  useEffect(() => {
-    if (!token) {
-      setFormMessage({
-        type: 'error',
-        text: 'Invalid or missing reset token. Please request a new password reset.',
-      })
-    }
-  }, [token])
+  // A link without a token can't reset anything: say so until the form reports something else.
+  // Derived while rendering rather than set from an effect.
+  const shownMessage =
+    formMessage ??
+    (token
+      ? null
+      : {
+          type: 'error' as const,
+          text: 'Invalid or missing reset token. Please request a new password reset.',
+        })
 
   async function handleReset(input: Omit<ResetPasswordInput, 'token'>) {
     if (!token) {
@@ -80,11 +81,11 @@ export default function ResetPasswordPage() {
             Back to Login
           </Link>
         </p>
-        {formMessage && (
+        {shownMessage && (
           <div
-            className={`text-center rounded-lg p-3 text-sm border ${formMessage.type === 'success' ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' : 'text-rose-300 bg-rose-500/10 border-rose-500/20'}`}
+            className={`text-center rounded-lg p-3 text-sm border ${shownMessage.type === 'success' ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' : 'text-rose-300 bg-rose-500/10 border-rose-500/20'}`}
           >
-            {formMessage.text}
+            {shownMessage.text}
           </div>
         )}
         <Form theme={formTheme} id="reset-password-form" fields={fields} submit={handleReset} />

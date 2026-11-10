@@ -221,7 +221,7 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
     const currentPath = `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`
     const returnUrl =
       currentPath && currentPath !== '/' ? `?return_url=${encodeURIComponent(currentPath)}` : ''
-    globalThis.location.href = `/force-logout${returnUrl}`
+    globalThis.location.assign(`/force-logout${returnUrl}`)
     return null
   }
 

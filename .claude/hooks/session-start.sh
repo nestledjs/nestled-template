@@ -33,7 +33,25 @@ run_step() {
 }
 
 [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
-cd "${CLAUDE_PROJECT_DIR:-.}"
+
+# Whatever goes wrong below, the session must not start in a failed state: say so and exit 0.
+# Every expected failure is handled explicitly; this catches the unexpected ones under `set -e`.
+on_exit() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "session-start: FAILED unexpectedly (exit $status), so node_modules, the Prisma client and"
+    echo "the .githooks/pre-commit hook may be missing. Run \`pnpm install\` by hand, and"
+    echo "\`pnpm exec prettier --write\` on the files you change before committing."
+    exit 0
+  fi
+}
+trap on_exit EXIT
+
+if ! cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null; then
+  echo "session-start: FAILED. The project directory ${CLAUDE_PROJECT_DIR:-.} does not exist, so"
+  echo "nothing was installed. Run \`pnpm install\` in the checkout by hand."
+  exit 0
+fi
 
 # The cloud image's Node is not ours to pin, and `.npmrc`'s engine-strict would refuse the install
 # over a patch-level difference from `engines.node`, leaving the session with no node_modules at
@@ -51,10 +69,26 @@ fi
 export npm_config_engine_strict=false
 
 # The marker fingerprints the lockfile AND the Prisma schema: a resumed checkout whose schema
-# changed with no dependency change still needs the client regenerated.
+# changed with no dependency change still needs the client regenerated. Without git, or with
+# either file missing, there is no fingerprint: the warm-up always runs, and says why.
 marker=node_modules/.session-start-lockfile-hash
-want="$(git hash-object pnpm-lock.yaml libs/api/prisma/src/lib/schemas/schema.prisma | tr '\n' ' ')"
-if [ -f "$marker" ] && [ "$(cat "$marker")" = "$want" ] \
+want=""
+if ! command -v git >/dev/null 2>&1; then
+  echo "session-start: git is not installed, so the install cannot be skipped when current, and"
+  echo "the .githooks/pre-commit hook cannot be wired. Installing anyway."
+else
+  missing=""
+  for input in pnpm-lock.yaml libs/api/prisma/src/lib/schemas/schema.prisma; do
+    [ -f "$input" ] || missing="$missing $input"
+  done
+  if [ -n "$missing" ]; then
+    echo "session-start: missing$missing, so there is no fingerprint and the install runs every"
+    echo "session until it exists."
+  else
+    want="$(git hash-object pnpm-lock.yaml libs/api/prisma/src/lib/schemas/schema.prisma | tr '\n' ' ')"
+  fi
+fi
+if [ -n "$want" ] && [ -f "$marker" ] && [ "$(cat "$marker")" = "$want" ] \
   && [ -d libs/api/prisma/src/lib/prisma-generated ] \
   && [ "$(git config core.hooksPath || true)" = ".githooks" ]; then
   echo "session-start: dependencies, Prisma client and git hooks already current; nothing installed."
@@ -63,5 +97,5 @@ fi
 
 run_step pnpm install --frozen-lockfile
 run_step pnpm prisma:generate
-printf '%s\n' "$want" > "$marker"
+if [ -n "$want" ]; then printf '%s\n' "$want" > "$marker"; fi
 echo "session-start: installed dependencies (pnpm install --frozen-lockfile), generated the Prisma client, and wired .githooks/pre-commit (Prettier and secret scan on staged files). Never commit with --no-verify."

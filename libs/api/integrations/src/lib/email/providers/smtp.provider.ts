@@ -62,7 +62,7 @@ export class SmtpEmailProvider implements EmailProvider {
       }
     } catch (error) {
       this.logger.error('SMTP send failed:', (error as Error).message)
-      throw new Error(`Email send failed: ${(error as Error).message}`)
+      throw new Error(`Email send failed: ${(error as Error).message}`, { cause: error })
     }
   }
 
@@ -94,7 +94,9 @@ export class SmtpEmailProvider implements EmailProvider {
         `Template send failed for ${template.templateId}:`,
         (error as Error).message,
       )
-      throw new Error(`Template email send failed: ${(error as Error).message}`)
+      throw new Error(`Template email send failed: ${(error as Error).message}`, {
+        cause: error,
+      })
     }
   }
 

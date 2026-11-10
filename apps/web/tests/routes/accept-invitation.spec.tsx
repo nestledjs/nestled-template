@@ -2,6 +2,7 @@ import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createTestRouter } from '../helpers/createTestRouter'
+import { Link } from 'react-router'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AcceptInvitation, {
   buildRegisterWithInvitationInput,
@@ -312,6 +313,89 @@ describe('AcceptInvitation Component', () => {
       await waitFor(() => {
         expect(screen.getByText('Already a member')).toBeInTheDocument()
       })
+    })
+
+    it('shows the accepting state for a new invitation link after an earlier one failed', async () => {
+      vi.mocked(useGlobalCtx).mockReturnValue({
+        user: { id: 'user-123', firstName: 'Test', lastName: 'User' } as any,
+        organizations: [],
+        activeOrganization: null,
+        activeOrganizationMember: null,
+      })
+      // The first invitation fails; the second stays in flight, so the accepting screen must show.
+      mockAcceptInvitation
+        .mockRejectedValueOnce(new Error('Already a member'))
+        .mockReturnValueOnce(new Promise(() => undefined))
+
+      const ReactRouterStub = createTestRouter([
+        {
+          path: '/accept-invitation',
+          Component: () => (
+            <>
+              <Link to="/accept-invitation?token=second-token">Next invitation</Link>
+              <AcceptInvitation />
+            </>
+          ),
+        },
+      ])
+      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Already a member')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('Welcome!')).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByText('Next invitation'))
+
+      await waitFor(() => {
+        expect(mockAcceptInvitation).toHaveBeenLastCalledWith({
+          variables: { input: { token: 'second-token' } },
+        })
+      })
+      expect(screen.getByText('Welcome!')).toBeInTheDocument()
+    })
+
+    it('ignores a superseded invitation that fails after the current one', async () => {
+      vi.mocked(useGlobalCtx).mockReturnValue({
+        user: { id: 'user-123', firstName: 'Test', lastName: 'User' } as any,
+        organizations: [],
+        activeOrganization: null,
+        activeOrganizationMember: null,
+      })
+      let rejectFirst: (error: Error) => void = () => undefined
+      let rejectSecond: (error: Error) => void = () => undefined
+      mockAcceptInvitation
+        .mockReturnValueOnce(new Promise((_, reject) => (rejectFirst = reject)))
+        .mockReturnValueOnce(new Promise((_, reject) => (rejectSecond = reject)))
+
+      const ReactRouterStub = createTestRouter([
+        {
+          path: '/accept-invitation',
+          Component: () => (
+            <>
+              <Link to="/accept-invitation?token=second-token">Next invitation</Link>
+              <AcceptInvitation />
+            </>
+          ),
+        },
+      ])
+      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
+
+      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
+      await userEvent.click(screen.getByText('Next invitation'))
+      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(2))
+
+      // The second invitation fails first, then the superseded first one fails late.
+      rejectSecond(new Error('Second invitation expired'))
+      await waitFor(() => {
+        expect(screen.getByText('Second invitation expired')).toBeInTheDocument()
+      })
+      rejectFirst(new Error('First invitation failed'))
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(screen.getByText('Second invitation expired')).toBeInTheDocument()
+      expect(screen.queryByText('First invitation failed')).not.toBeInTheDocument()
+      expect(screen.queryByText('Welcome!')).not.toBeInTheDocument()
     })
   })
 

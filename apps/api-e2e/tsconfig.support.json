@@ -6,9 +6,12 @@
     "moduleResolution": "bundler",
     "types": ["node"],
     "allowJs": true,
-    "checkJs": true
+    "checkJs": true,
+    "ignoreDeprecations": "6.0"
   },
   "include": [
+    "vitest.config.mts",
+    "vitest.support.config.mts",
     "src/support/api-process.ts",
     "src/support/api-process.spec.ts",
     "src/support/api-process.native.spec.ts",

@@ -23,10 +23,14 @@ export function WebUiAvatar({
   src = '',
 }) {
   const [loaded, setLoaded] = useState(false)
+  // A new image starts unloaded: reset while rendering when `src` changes, not from the effect.
+  const [loadingSrc, setLoadingSrc] = useState(src)
+  if (loadingSrc !== src) {
+    setLoadingSrc(src)
+    setLoaded(false)
+  }
 
   useEffect(() => {
-    setLoaded(false)
-
     if (src) {
       const img = new Image()
       img.src = src

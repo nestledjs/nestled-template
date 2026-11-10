@@ -3,7 +3,15 @@ import { GlobalContextProvider } from '@nestled-template/web'
 import { NetworkStatus } from '@apollo/client'
 import { useReadQuery, type QueryRef } from '@apollo/client/react'
 import type { MeQuery } from '@nestled-template/shared/sdk'
-import { Component, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import {
+  Component,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils'
 import { ViteCacheError } from '@nestledjs/shared-components'
 import {
@@ -85,13 +93,26 @@ export function App() {
   const revalidator = useRevalidator()
   const [viteCacheError, setViteCacheError] = useState(false)
   const [accessForbidden, setAccessForbidden] = useState(false)
+  // Keyed on the whole navigation, not the pathname. A route that changes only its query string
+  // -- switching the active organization, say -- is a new request that may well be permitted, and
+  // keying on pathname alone leaves the access-denied screen up over it with no way to clear it.
+  // location.key changes on every navigation, including same-path ones. Cleared while rendering
+  // the new location (React's "adjust state when a prop changes"), so it is never shown over it.
+  const [accessForbiddenKey, setAccessForbiddenKey] = useState(location.key)
+  if (accessForbiddenKey !== location.key) {
+    setAccessForbiddenKey(location.key)
+    setAccessForbidden(false)
+  }
 
   // The root loader says "unavailable" when the server could not reach the API. Once the browser
   // can, revalidate rather than reload: the loader runs again without a full page load, and if the
   // server still cannot reach the API the effect below puts the screen back and the probe carries
   // on at a widening interval, so a server-only failure cannot turn into a reload loop.
   const loaderUnavailableRef = useRef(loaderServiceUnavailable)
-  loaderUnavailableRef.current = loaderServiceUnavailable
+  // Written after commit, before any effect or handler reads it.
+  useLayoutEffect(() => {
+    loaderUnavailableRef.current = loaderServiceUnavailable
+  }, [loaderServiceUnavailable])
   // Queries that failed during an outage, or during a blip too short to show the screen, refetch
   // once the API answers, the browser comes back online or the tab is shown again.
   const refetchFailedQueries = useRefetchFailedQueries()
@@ -237,14 +258,6 @@ export function App() {
       globalThis.removeEventListener('unhandledrejection', handleUnhandledRejection)
     }
   }, [reportConnectivityError])
-
-  // Keyed on the whole navigation, not the pathname. A route that changes only its query string
-  // -- switching the active organization, say -- is a new request that may well be permitted, and
-  // keying on pathname alone leaves the access-denied screen up over it with no way to clear it.
-  // location.key changes on every navigation, including same-path ones.
-  useEffect(() => {
-    setAccessForbidden(false)
-  }, [location.key])
 
   // Show Vite cache error UI if detected
   if (viteCacheError) {

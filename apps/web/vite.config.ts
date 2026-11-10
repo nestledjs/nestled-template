@@ -2,15 +2,14 @@
 import mdx from '@mdx-js/rollup'
 import { defineConfig } from 'vite'
 import { reactRouter } from '@react-router/dev/vite'
-import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin'
-import { nxCopyAssetsPlugin } from '@nx/vite/plugins/nx-copy-assets.plugin'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 import remarkFrontmatter from 'remark-frontmatter'
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter'
+import { nxReadySignal } from '@nx/vite/plugins/nx-ready-signal.plugin'
 
-export default defineConfig(() => ({
-  root: __dirname,
+export default defineConfig(({ mode }) => ({
+  root: import.meta.dirname,
   cacheDir: '../../node_modules/.vite/apps/web',
   assetsInclude: ['**/*.node'],
   define: {
@@ -21,9 +20,10 @@ export default defineConfig(() => ({
     'process.env.VITE_COOKIE_NAME': JSON.stringify(process.env.VITE_COOKIE_NAME || '__session'),
   },
   resolve: {
+    tsconfigPaths: true,
     alias: {
       // Ensure React Router generated types are properly resolved
-      '~': path.resolve(__dirname, './app'),
+      '~': path.resolve(import.meta.dirname, './app'),
     },
   },
   // Dev/preview ports come from the repo-root `.env` so several nestled apps can run side by side
@@ -34,8 +34,14 @@ export default defineConfig(() => ({
   server: {
     port: Number(process.env.WEB_PORT) || 4200,
     host: process.env.VITE_HOST || 'localhost',
+    // `nx serve web --configuration=production` serves without HMR, as the removed
+    // @nx/vite:dev-server production configuration did (hmr: false); every other mode keeps it.
+    hmr: mode !== 'production',
     fs: {
-      allow: [path.resolve(__dirname, '../../libs'), path.resolve(__dirname, './.react-router')],
+      allow: [
+        path.resolve(import.meta.dirname, '../../libs'),
+        path.resolve(import.meta.dirname, './.react-router'),
+      ],
     },
   },
   preview: {
@@ -48,9 +54,8 @@ export default defineConfig(() => ({
       remarkPlugins: [remarkFrontmatter, [remarkMdxFrontmatter, { name: 'attributes' }]],
     }),
     !process.env.VITEST && reactRouter(),
-    nxViteTsPaths(),
-    nxCopyAssetsPlugin(['*.md']),
     tailwindcss(),
+    nxReadySignal(),
   ],
   optimizeDeps: {
     include: ['@apollo/client', '@apollo/client/react'],
@@ -73,7 +78,7 @@ export default defineConfig(() => ({
     commonjsOptions: {
       transformMixedEsModules: true,
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: id => {
         // Exclude problematic Node.js build tools and Nx generators from bundling
         if (id.includes('@nx/nest') || id.includes('@nx/js') || id.includes('@swc-node/register')) {

@@ -17,7 +17,7 @@ published package dependencies, and applies the adopter-facing documentation.
 - `libs/shared/*` - shared SDK, Apollo setup, styles, and utilities.
 - `libs/data-browser` - source for `@nestledjs/data-browser`.
 - `libs/shared-components` - source for `@nestledjs/shared-components`.
-- `.nestled-updates` - upgrade-note and downstream propagation tooling.
+- `.nestled-updates` - doctor config, security baselines, and the upgrade notes promoted from the source template.
 - `docs/dev` - maintainer documentation for this development repo.
 - `docs/template` - source documentation intended for the clonable template.
 - `docs/blueprints` - planned implementation recipes for agents and contributors.
@@ -60,9 +60,9 @@ pnpm prisma migrate deploy
 
 ## Release Notes
 
-Before the first public template release, upgrade notes are intentionally empty.
-After the first release, meaningful template and published-package changes should
-record downstream propagation intent under `.nestled-updates/upgrade-notes`.
+Template changes reach cloned projects through the upgrade feed (`npx @nestledjs/upgrades`).
+Upgrade notes are written only in the source template; do not create them in this repository or
+in a project cloned from it.
 
 ## Reporting Issues
 

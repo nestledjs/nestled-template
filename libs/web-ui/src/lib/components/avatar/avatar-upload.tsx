@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useState, useRef } from 'react'
 import { CameraIcon, TrashIcon } from '@heroicons/react/24/outline'
 
 interface AvatarUploadProps {
@@ -45,11 +45,12 @@ export function AvatarUpload({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (currentImageUrl) {
-      setPreviewUrl(null)
-    }
-  }, [currentImageUrl])
+  // A new saved image replaces the local preview: reset while rendering when it changes.
+  const [savedImageUrl, setSavedImageUrl] = useState(currentImageUrl)
+  if (savedImageUrl !== currentImageUrl) {
+    setSavedImageUrl(currentImageUrl)
+    if (currentImageUrl) setPreviewUrl(null)
+  }
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]

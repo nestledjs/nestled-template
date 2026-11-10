@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
 const SCRIPT_ID = 'cf-turnstile-script'
@@ -71,7 +71,10 @@ export function TurnstileWidget({ onToken, theme = 'auto' }: Readonly<TurnstileW
   // including it would re-render the widget on every keystroke and reset the challenge. The ref
   // keeps the latest callback reachable without re-running the effect.
   const onTokenRef = useRef(onToken)
-  onTokenRef.current = onToken
+  // Written after commit, not during render; the widget only calls it later.
+  useLayoutEffect(() => {
+    onTokenRef.current = onToken
+  })
 
   useEffect(() => {
     if (!siteKey) return

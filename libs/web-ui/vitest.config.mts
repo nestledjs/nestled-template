@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url'
 
 // Handle __dirname in ESM
 const dirname =
-  typeof __dirname === 'undefined' ? path.dirname(fileURLToPath(import.meta.url)) : __dirname
+  typeof import.meta.dirname === 'undefined'
+    ? path.dirname(fileURLToPath(import.meta.url))
+    : import.meta.dirname
 
 export default defineConfig(async () => {
   const baseConfig = await viteConfig

@@ -293,6 +293,11 @@ function publishedPort(container, containerPort) {
   return output
 }
 
+// Over TCP (-h 127.0.0.1), never the Unix socket. On a fresh data directory the postgres image's
+// entrypoint starts a TEMPORARY server for /docker-entrypoint-initdb.d with listen_addresses=''
+// (socket only), then stops it and starts the lasting one. A socket probe answers for the
+// temporary server, and `createdb` then races its shutdown ("the database system is shutting
+// down"). Only the lasting server listens on TCP. scripts/postgres-readiness.spec.mjs pins this.
 async function waitForPostgres(container) {
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
@@ -300,6 +305,8 @@ async function waitForPostgres(container) {
       'exec',
       container,
       'pg_isready',
+      '-h',
+      '127.0.0.1',
       '-U',
       'prisma',
       '-d',

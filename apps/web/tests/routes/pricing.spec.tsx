@@ -96,7 +96,12 @@ describe('Pricing Page', () => {
 
     // Mock window.location
     delete (window as any).location
-    ;(window as any).location = { href: '' }
+    ;(window as any).location = {
+      href: '',
+      assign(url: string) {
+        this.href = url
+      },
+    }
   })
 
   const renderPricingPage = () => {

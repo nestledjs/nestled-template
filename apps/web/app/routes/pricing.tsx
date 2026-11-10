@@ -33,7 +33,7 @@ export default function PricingPage() {
   const handleSubscribe = async (stripePriceId: string) => {
     if (!user) {
       // Redirect to login with return URL
-      globalThis.location.href = `/login?returnTo=/pricing`
+      globalThis.location.assign(`/login?returnTo=/pricing`)
       return
     }
 
@@ -43,7 +43,7 @@ export default function PricingPage() {
       })
 
       if (data?.createCheckoutSession) {
-        globalThis.location.href = data.createCheckoutSession
+        globalThis.location.assign(data.createCheckoutSession)
       }
     } catch (error) {
       console.error('Failed to create checkout session:', error)

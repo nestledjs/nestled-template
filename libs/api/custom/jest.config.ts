@@ -64,8 +64,11 @@ export default {
      * Strict where the risk concentrates. These tools are agent-reachable data access, and the
      * audit that produced this threshold found four real tenancy defects in them, so a new path
      * arriving untested here is not an oversight — it is an unreviewed authorization boundary.
+     *
+     * Jest resolves a path key against the working directory. Nx 24 runs jest from this project's
+     * root (the inferred @nx/jest/plugin target), so the key is relative to this directory.
      */
-    'libs/api/custom/src/lib/plugins/mcp/tools/*.ts': {
+    './src/lib/plugins/mcp/tools/*.ts': {
       statements: 100,
       branches: 80,
       functions: 100,

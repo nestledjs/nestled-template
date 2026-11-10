@@ -4,14 +4,11 @@
   "sourceRoot": "libs/web/src",
   "projectType": "library",
   "tags": [],
-  "// targets": "to see all targets run: nx show project web-components --web",
   "targets": {
     "test": {
-      "executor": "@nx/vitest:test",
-      "outputs": ["{workspaceRoot}/coverage/libs/web"],
       "options": {
-        "configFile": "libs/web/vitest.config.mts",
-        "reportsDirectory": "libs/web/../../coverage/libs/web"
+        "config": "./vitest.config.mts",
+        "coverage.reportsDirectory": "../../coverage/libs/web"
       }
     }
   }

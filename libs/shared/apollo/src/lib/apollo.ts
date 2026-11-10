@@ -14,6 +14,7 @@ if (globalThis !== undefined && globalThis.crypto === undefined) {
     )
     throw new Error(
       'Cryptographically secure random number generation is not available in this environment. Please use a newer Node.js version or ensure crypto APIs are available.',
+      { cause: e },
     )
   }
 

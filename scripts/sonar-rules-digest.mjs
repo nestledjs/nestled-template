@@ -114,11 +114,18 @@ export function compareRules(a, b) {
   return bySeverity || ruleNumber(a.key) - ruleNumber(b.key) || a.key.localeCompare(b.key)
 }
 
-/** Splits the rules into the digest's sections, leaving out rules only for excluded frameworks. */
+/**
+ * Splits the rules into the digest's sections, leaving out rules only for excluded frameworks.
+ *
+ * A default-excluded tag the project took out of `excludeTags` is re-enabled, and keeps a rule
+ * just as a KEEP_TAGS tag does: a rule tagged `aws` and `gcp` stays when the project turned `aws`
+ * back on, even though `gcp` is still excluded.
+ */
 export function groupRules(rules, excludeTags = DEFAULT_EXCLUDE_TAGS) {
   const excluded = new Set(excludeTags)
+  const keep = new Set([...KEEP_TAGS, ...DEFAULT_EXCLUDE_TAGS.filter(tag => !excluded.has(tag))])
   const isExcluded = rule =>
-    rule.tags.some(tag => excluded.has(tag)) && !rule.tags.some(tag => KEEP_TAGS.includes(tag))
+    rule.tags.some(tag => excluded.has(tag)) && !rule.tags.some(tag => keep.has(tag))
   const kept = rules.filter(rule => !isExcluded(rule))
   const sections = SECTIONS.map(section => ({ title: section.title, rules: [] }))
   for (const rule of kept) {

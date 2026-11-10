@@ -1999,7 +1999,7 @@ export class AuthService {
       userId?: string
       remember?: boolean
       authGeneration?: number
-    } | null = null
+    } | null
     try {
       decoded = this.jwtService.verify(tempToken)
     } catch {
