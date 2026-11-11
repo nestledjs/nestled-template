@@ -23,11 +23,17 @@ const RECORDS_KEY = Symbol.for('nestled.ssrApiFailureRecords')
 const globalRecords = globalThis as { [RECORDS_KEY]?: WeakMap<object, SsrApiFailureRecord> }
 const recordsByData = (globalRecords[RECORDS_KEY] ??= new WeakMap<object, SsrApiFailureRecord>())
 
-// The most decisive cause wins: one rejected session means the session is rejected, whatever else
-// failed alongside it; an unreachable API outranks an ordinary answered error.
-const CAUSE_RANK: Record<ApiFailureCause, number> = { other: 1, unavailable: 2, unauthenticated: 3 }
+// Outage evidence outranks a rejected session, which outranks an ordinary answered error. A 401
+// alongside an unreachable API is not proof the session is bad (the API may have failed to look it
+// up), so the request is treated as an outage and the session kept; only a 401 with no outage
+// evidence anywhere in the request is a rejected session.
+const CAUSE_RANK: Record<ApiFailureCause, number> = { other: 1, unauthenticated: 2, unavailable: 3 }
 
-function strongest(
+/**
+ * Combines two API failure causes from the same request: `unavailable` wins over
+ * `unauthenticated`, which wins over `other`; undefined (nothing seen) loses to any cause.
+ */
+export function mergeApiFailureCauses(
   a: ApiFailureCause | undefined,
   b: ApiFailureCause | undefined,
 ): ApiFailureCause | undefined {
@@ -37,7 +43,7 @@ function strongest(
 }
 
 function recordFailure(record: SsrApiFailureRecord, cause: ApiFailureCause) {
-  record.cause = strongest(record.cause, cause)
+  record.cause = mergeApiFailureCauses(record.cause, cause)
 }
 
 // Keyed by the request the loader receives (React Router hands each loader its own copy).
@@ -80,7 +86,8 @@ export const apolloLoader: typeof handler = () => loader => args => {
 /**
  * The real cause of a failed preload during this server render, from the loader data in the
  * router context (`routerContext.staticHandlerContext.loaderData`), or undefined when no loader's
- * Apollo client saw a failure. When several failed, the most decisive cause wins.
+ * Apollo client saw a failure. When several failed, they combine as `mergeApiFailureCauses` does:
+ * any outage makes the request `unavailable`, even alongside a 401.
  */
 export function ssrApiFailureCause(
   loaderData: Record<string, unknown> | null | undefined,
@@ -88,7 +95,7 @@ export function ssrApiFailureCause(
   let cause: ApiFailureCause | undefined
   for (const data of Object.values(loaderData ?? {})) {
     if (data !== null && typeof data === 'object') {
-      cause = strongest(cause, recordsByData.get(data)?.cause)
+      cause = mergeApiFailureCauses(cause, recordsByData.get(data)?.cause)
     }
   }
   return cause

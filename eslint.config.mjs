@@ -87,3 +87,25 @@ export default [
 export const reactVersionSettings = {
   settings: { react: { version: createRequire(import.meta.url)('react/package.json').version } },
 }
+
+// eslint-plugin-react-hooks v7's `recommended` set (through `nx.configs['flat/react']`) leaves
+// `incompatible-library` and `unsupported-syntax` at warn. Every react-hooks v7 rule is an error in
+// this workspace (`exhaustive-deps` stays a warning), so this raises those two. Spread it after
+// `reactVersionSettings` in every React lint config. The files match the ones the plugin is
+// registered for in `flat/react`.
+export const reactHooksRuleLevels = {
+  files: [
+    '**/*.ts',
+    '**/*.cts',
+    '**/*.mts',
+    '**/*.tsx',
+    '**/*.js',
+    '**/*.cjs',
+    '**/*.mjs',
+    '**/*.jsx',
+  ],
+  rules: {
+    'react-hooks/incompatible-library': 'error',
+    'react-hooks/unsupported-syntax': 'error',
+  },
+}

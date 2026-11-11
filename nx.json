@@ -138,7 +138,33 @@
           "passWithNoTests": true
         }
       }
-    ]
+    ],
+    "lint": {
+      "cache": true,
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/.eslintrc.json",
+        "{workspaceRoot}/.eslintignore",
+        "{workspaceRoot}/eslint.config.mjs",
+        "{workspaceRoot}/tools/eslint-rules/**/*",
+        {
+          "externalDependencies": [
+            "eslint",
+            "@eslint/js",
+            "@nx/eslint-plugin",
+            "typescript-eslint",
+            "eslint-plugin-react",
+            "eslint-plugin-react-hooks",
+            "eslint-plugin-jsx-a11y",
+            "eslint-plugin-import",
+            "eslint-plugin-storybook",
+            "eslint-config-prettier",
+            "jsonc-eslint-parser"
+          ]
+        }
+      ]
+    }
   },
   "generators": {
     "@nx/react": {

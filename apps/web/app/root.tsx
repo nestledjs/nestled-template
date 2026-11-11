@@ -1,6 +1,6 @@
 import { ApolloHydrationHelper } from '@apollo/client-integration-react-router'
 import '@nestled-template/shared/styles'
-import { apolloLoader } from '@nestled-template/shared/apollo'
+import { apolloLoader, isApiOutageSignalled } from '@nestled-template/shared/apollo'
 import { Me, type MeQuery } from '@nestled-template/shared/sdk'
 import {
   getCookie,
@@ -23,7 +23,7 @@ import {
   useLoaderData,
 } from 'react-router'
 import { GTMNoScript, GTMScript } from './gtm'
-import App from './app'
+import App, { isAppCodeError } from './app'
 import { AccessDenied } from './access-denied'
 import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
 
@@ -201,21 +201,43 @@ type ErrorWithGraphQLErrors = Error & {
   graphQLErrors?: GraphQLErrorLike[]
 }
 
-export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
-  // Auth errors should send the user through logout to clear their session
-  const normalizedError = error instanceof Error ? error : new Error('An unexpected error occurred')
+/**
+ * Whether the error says the API rejected the session. An error the Me boundary passed on as the
+ * app's own (a render or effect bug) never does, whatever its message says: only the API can
+ * reject the session.
+ */
+function isUnauthorizedError(
+  error: unknown,
+  normalizedError: Error,
+  routeStatus: number | undefined,
+): boolean {
+  if (isAppCodeError(error)) return false
   const graphQLError = normalizedError as ErrorWithGraphQLErrors
-  const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
-  const isUnauthorized =
+  return (
     routeStatus === 401 ||
     normalizedError.message.includes('Unauthorized') ||
     normalizedError.message.includes('Session has been invalidated') ||
-    graphQLError.graphQLErrors?.some(
+    !!graphQLError.graphQLErrors?.some(
       e =>
         (e.message || '').includes('Unauthorized') ||
         (e.message || '').includes('Session has been invalidated') ||
         e.extensions?.code === 'UNAUTHENTICATED',
     )
+  )
+}
+
+export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
+  // Auth errors should send the user through logout to clear their session
+  const normalizedError = error instanceof Error ? error : new Error('An unexpected error occurred')
+  const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
+  const isUnauthorized = isUnauthorizedError(error, normalizedError, routeStatus)
+
+  // Log out only on an unambiguous 401. While the app has outage evidence, a 401 is not proof the
+  // session is bad: keep it and show the recovering screen, which reloads once the API answers;
+  // the server render then decides again with a clean answer.
+  if (isUnauthorized && isApiOutageSignalled()) {
+    return <RecoveringApiUnavailable initialReason="server" />
+  }
 
   if (isUnauthorized && globalThis.window !== undefined) {
     const currentPath = `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`

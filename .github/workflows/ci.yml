@@ -170,11 +170,16 @@ jobs:
 
   # The enforced secret scan. The pre-commit hook runs gitleaks too, but only where it is installed
   # and only for commits made with the hook, so this is the layer that cannot be skipped. On a pull
-  # request it scans the pull request's commits. On a develop push it scans the WHOLE history: a
-  # newer push replaces a queued run (see the concurrency group), so scanning only the pushed range
-  # would leave the replaced run's commits unscanned for good. The whole history takes seconds. The
-  # binary is downloaded from the gitleaks release and checked against its published SHA-256; the
-  # gitleaks GitHub Action needs a paid licence for organisation repositories.
+  # request it scans ONLY the pull request's commits. On a develop push it scans the WHOLE history:
+  # a newer push replaces a queued run (see the concurrency group), so scanning only the pushed
+  # range would leave the replaced run's commits unscanned for good. The whole history takes
+  # seconds. A green pull request therefore says nothing about older history: before the first
+  # merge after enabling this full-history scan, run `gitleaks git .` from a full clone (not a
+  # shallow one) and resolve every finding, or the develop push goes red on commits the pull
+  # request never scanned. A history finding that cannot be rewritten is ignored by fingerprint in
+  # .gitleaksignore (see .gitleaks.toml). The binary is downloaded from the gitleaks release and
+  # checked against its published SHA-256; the gitleaks GitHub Action needs a paid licence for
+  # organisation repositories.
   gitleaks:
     name: Secret scan (gitleaks)
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}

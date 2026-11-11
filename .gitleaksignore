@@ -1,0 +1,8 @@
+# gitleaks findings to ignore, by fingerprint: one `<commit>:<file>:<rule-id>:<line>` per line, as
+# gitleaks prints it with each finding. gitleaks reads this file from the repository root, in CI's
+# gitleaks job, the pre-commit hook and a local `gitleaks git .`.
+#
+# Only for a finding in history that cannot be rewritten: a key committed in the past and since
+# rotated, or a placeholder in an old commit. Say why above each entry. A value that is provably
+# not a credential, wherever it appears, belongs in .gitleaks.toml's allowlist instead, and a live
+# secret is rotated, never listed here. The template has no history findings, so this lists none.

@@ -1,3 +1,9 @@
+// An ES module config (.mts), not vite.config.ts: libs/web-ui has no package.json of its own, so
+// a .ts config here is CommonJS to Node, and Nx's project-graph build `require()`s it. Its
+// @vitejs/plugin-react import is ESM-only, so that require raced the `import()` another config
+// made of the same module and failed at random in CI ("not yet fully loaded"). A .mts file is
+// always loaded as ESM. Keep any config that loads an ESM-only plugin from a CommonJS context as
+// .mts.
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 

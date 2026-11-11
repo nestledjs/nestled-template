@@ -1,0 +1,103 @@
+id: 2026-11-11-data-browser-typed-filters
+title: >-
+  The admin data browser's list filters send the typed filter input the API now requires
+  (@nestledjs/data-browser 1.0.28)
+priority: high
+area: admin
+type: correctness
+delivery: hybrid
+
+intent: >
+  Generated list queries used to take `filters` as an untyped JSON object that reached Prisma's
+  `where` verbatim. The filter hardening (see the comment in
+  libs/api/core/data-access/src/lib/dto/core-paging.input.ts) replaced it with a typed
+  `<Model>FilterInput` per model: `StringFilterInput { equals, contains, in, not, startsWith,
+  endsWith }`, `BooleanFilterInput { equals, in, not }`, enum filter inputs, Int/Float/DateTime
+  range inputs, and relation filters that take the related model's fields (or `is` / `isNot`).
+  The data browser kept sending bare values (`{ isActive: true }`, `{ user: { id } }`,
+  `{ status: 'ACTIVE' }`), so GraphQL rejected the variables and any filtered list, including a
+  `?userId=…` link from another admin page, never loaded. Two parts.
+
+  1. Package. Upgrade `@nestledjs/data-browser` to the version below in package.json and the
+  lockfile. Do not copy files from libs/data-browser. The list page now converts its filter state
+  in one place, the new exported `toFilterInput(model, filters, databaseModels)`, before building
+  the list query's and the export's variables:
+  - text → `{ contains }`; boolean (or `'true'` / `'false'` from the URL) → `{ equals }`;
+    enum → `{ equals }`; a number from the URL → `{ equals }` as a number;
+  - a relation picked in the filter panel, or a foreign-key URL parameter, → the scalar foreign
+    key `{ <fk>: { equals: id } }`; a relation with no single scalar foreign key on the model →
+    `{ <relation>: { id: { equals: id } } }`;
+  - a related enum (`relation.enumField`) → `{ <relation>: { <enumField>: { equals } } }`;
+  - date and number ranges (`{ gte, lte }`), `AND` / `OR` / `NOT`, and keys that are not fields of
+    the model pass through; empty UI values are dropped (explicit operands such as `{ equals: null }`
+    or `{ is: null }` are kept); Json and scalar-list columns, which have no
+    filter input, are dropped.
+  It is idempotent: a value already in operator shape (an object whose keys are all operators,
+  such as `{ equals }`, `{ contains }`, `{ gte }`, `{ is }`) passes through unchanged. The filter
+  controls and the URL handling keep their behaviour.
+
+  2. App. Only for a project that embeds or forks the data browser's list page, or has its own
+  admin list page that builds `filters` for a generated `List<Model>Input`: send the same operator
+  shape, preferably by calling `toFilterInput` from the package. A project that already converts
+  filters on the client keeps its conversion or removes it; with the package's conversion being
+  idempotent, either is safe.
+
+why: >
+  Since the API's list inputs became typed, every data browser list with an active filter failed
+  GraphQL validation, so filtering, filtered exports and foreign-key links between admin pages were
+  all broken. The client-side mapping lived nowhere, so each project that noticed worked around it
+  on its own.
+
+affectedPaths:
+  - apps/web/app/routes/admin/data/**
+  - apps/web/tests/routes/admin-data-filters-schema.spec.ts
+
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.28
+    versionRange: ^1.0.28
+
+skipIf:
+  - The project has no admin data routes (no `@nestledjs/data-browser` dependency).
+
+verification:
+  - pnpm install
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+  - >
+    Manual: signed in as an admin, open /admin/data/<model>, open Filters and pick a boolean, an
+    enum and a relation: the list reloads with the filter applied and no GraphQL error. Open a
+    foreign-key link such as /admin/data/organization-members?userId=<an existing user id>: the
+    list loads filtered to that user. Export with a filter active: the CSV holds only the filtered
+    rows.
+
+agentHints:
+  - >
+    Update package.json and the lockfile to the published version; do not copy files from
+    libs/data-browser.
+  - >
+    Optional, recommended: copy apps/web/tests/routes/admin-data-filters-schema.spec.ts from the
+    template. It sends what every filter control produces for every model through GraphQL variable
+    coercion against the project's committed api-schema.graphql, so it covers the project's own
+    models. It imports `DATABASE_MODELS` and the SDK from the project's shared sdk library and
+    `toFilterInput` / `getAdminDocuments` from the data browser; adjust the import paths and the
+    schema path to the project's layout.
+  - >
+    A project that already converts filters on the client (a wrapper around the list page, a patched
+    copy of it, or a custom Apollo link) can keep it or remove it: the package's conversion leaves
+    operator-shaped values alone, so the two compose. Record the code part `superseded` when the
+    only local change was such a workaround, whether or not it is removed.
+  - >
+    A project with a hand-written admin list page, or any other caller, that builds `filters` for a
+    generated `List<Model>Input` itself applies the same operator shape, ideally by importing
+    `toFilterInput` from `@nestledjs/data-browser`. A project with neither records the code part
+    `not-applicable` and takes the package bump alone.
+  - >
+    A project whose fork of the list page cannot take the package's page must apply the conversion
+    at the point where it builds `variables.input.filters`, which the export also reuses; changing
+    the filter controls themselves is not needed.
+  - >
+    A project without the admin data routes marks this note not-applicable.

@@ -4,11 +4,14 @@ import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   classifyApiFailure,
+  isApiOutageSignalled,
   isRetryableConnectivityError,
   makeClient,
+  signalApiOutage,
   subscriptionRetryDelayMs,
+  takeDeferredAuthFailure,
 } from './apollo'
-import { apolloLoader, ssrApiFailureCause } from './apollo-loader'
+import { apolloLoader, mergeApiFailureCauses, ssrApiFailureCause } from './apollo-loader'
 
 function jwtWithIssuedAt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
@@ -361,6 +364,58 @@ describe('makeClient', () => {
     )
   })
 
+  it('keeps the session on a 401 while an outage is signalled, and logs out once it clears', async () => {
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const testWindow = { location: { pathname: '/members', search: '', hash: '', href: '' } }
+    vi.stubGlobal('window', testWindow)
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ errors: [{ message: 'Unauthorized' }] }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    const query = gql`
+      query PrivateData {
+        privateData
+      }
+    `
+    const first = {}
+    const second = {}
+    try {
+      signalApiOutage(first, true)
+      signalApiOutage(second, true)
+      expect(isApiOutageSignalled()).toBe(true)
+      expect(takeDeferredAuthFailure()).toBe(false)
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+      expect(testWindow.location.href).toBe('')
+      expect(consoleLog).toHaveBeenCalledWith(
+        '[Apollo] Authentication error during an API outage, keeping the session for now',
+      )
+      // Recorded once, for the app to refetch the query after the outage, then cleared.
+      expect(takeDeferredAuthFailure()).toBe(true)
+      expect(takeDeferredAuthFailure()).toBe(false)
+
+      // One source clearing does not clear another's evidence.
+      signalApiOutage(first, false)
+      expect(isApiOutageSignalled()).toBe(true)
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+      expect(testWindow.location.href).toBe('')
+      expect(takeDeferredAuthFailure()).toBe(true)
+
+      signalApiOutage(second, false)
+      expect(isApiOutageSignalled()).toBe(false)
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
+      expect(takeDeferredAuthFailure()).toBe(false)
+    } finally {
+      takeDeferredAuthFailure()
+      signalApiOutage(first, false)
+      signalApiOutage(second, false)
+    }
+  })
+
   it('signals a friendly access-denied state for forbidden queries', async () => {
     const forbiddenHandler = vi.fn()
     globalThis.addEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, forbiddenHandler)
@@ -578,7 +633,7 @@ describe('apolloLoader failure record', () => {
     expect(ssrApiFailureCause({ root: redirect })).toBeUndefined()
   })
 
-  it('reports the cause the loader client recorded, the most decisive one winning', async () => {
+  it('reports the cause the loader client recorded, an outage outranking a 401', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const originalFetch = globalThis.fetch
@@ -610,10 +665,73 @@ describe('apolloLoader failure record', () => {
         await new Promise(resolve => setTimeout(resolve, 20))
         return Object.freeze({ ref })
       })(loaderArgs())
-      expect(ssrApiFailureCause({ root: unavailable, child: rejected })).toBe('unauthenticated')
+      expect(ssrApiFailureCause({ root: rejected })).toBe('unauthenticated')
+      // A 401 in one loader and an outage in another: the request is an outage, not a sign-out.
+      expect(ssrApiFailureCause({ root: unavailable, child: rejected })).toBe('unavailable')
+      expect(ssrApiFailureCause({ root: rejected, child: unavailable })).toBe('unavailable')
     } finally {
       globalThis.fetch = originalFetch
       vi.restoreAllMocks()
     }
+  })
+
+  it('records a 401 and an outage in the same loader as an outage, in either order', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const originalFetch = globalThis.fetch
+    const me = gql`
+      query Me {
+        me {
+          id
+        }
+      }
+    `
+    const settings = gql`
+      query Settings {
+        settings {
+          id
+        }
+      }
+    `
+    const unauthorized = () =>
+      new Response(JSON.stringify({ message: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      })
+    const operationName = (init?: RequestInit) =>
+      (JSON.parse(String(init?.body ?? '{}')) as { operationName?: string }).operationName
+    try {
+      for (const unreachable of ['Me', 'Settings']) {
+        globalThis.fetch = vi.fn(async (_input: unknown, init?: RequestInit) => {
+          if (operationName(init) === unreachable) throw new TypeError('Failed to fetch')
+          return unauthorized()
+        }) as typeof fetch
+        const data = await apolloLoader()(async ({ preloadQuery }) => {
+          const meRef = preloadQuery(me)
+          const settingsRef = preloadQuery(settings)
+          await new Promise(resolve => setTimeout(resolve, 20))
+          return { meRef, settingsRef }
+        })(loaderArgs())
+        expect(ssrApiFailureCause({ root: data })).toBe('unavailable')
+      }
+    } finally {
+      globalThis.fetch = originalFetch
+      vi.restoreAllMocks()
+    }
+  })
+})
+
+describe('mergeApiFailureCauses', () => {
+  it.each([
+    [undefined, undefined, undefined],
+    [undefined, 'other', 'other'],
+    ['unauthenticated', undefined, 'unauthenticated'],
+    ['other', 'unauthenticated', 'unauthenticated'],
+    ['unauthenticated', 'other', 'unauthenticated'],
+    ['unauthenticated', 'unavailable', 'unavailable'],
+    ['unavailable', 'unauthenticated', 'unavailable'],
+    ['other', 'unavailable', 'unavailable'],
+  ] as const)('%s + %s -> %s', (a, b, merged) => {
+    expect(mergeApiFailureCauses(a, b)).toBe(merged)
   })
 })
