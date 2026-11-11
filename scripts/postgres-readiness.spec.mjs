@@ -23,8 +23,21 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
  */
 const PROBED_FILES = ['scripts/db-update.mjs', 'scripts/test-db.sh', '.dev/docker-compose.yml']
 
-/** Each `pg_isready` in `source`, with the text that follows it, up to the next one. */
-function readinessProbes(source) {
+/**
+ * `source` with its comments blanked, so a comment that only mentions `pg_isready` (explaining a
+ * probe, as this file's header does) is not read as one. Shell and YAML comments start at a `#`
+ * that opens the line or follows whitespace; JavaScript has `//` (not a URL's `://`) and `/* *\/`.
+ */
+function withoutComments(source, file) {
+  if (file.endsWith('.mjs') || file.endsWith('.js') || file.endsWith('.ts')) {
+    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+  }
+  return source.replace(/(^|\s)#.*$/gm, '$1')
+}
+
+/** Each `pg_isready` in the code of `file`, with the text that follows it, up to the next one. */
+function readinessProbes(rawSource, file = '') {
+  const source = withoutComments(rawSource, file)
   const probes = []
   const pattern = /pg_isready/g
   let match = pattern.exec(source)
@@ -44,7 +57,7 @@ function asksOverTcp(probe) {
 describe('Postgres readiness probes', () => {
   for (const file of PROBED_FILES) {
     it(`${file} waits on the lasting server over TCP, not the init socket`, () => {
-      const probes = readinessProbes(readFileSync(join(root, file), 'utf8'))
+      const probes = readinessProbes(readFileSync(join(root, file), 'utf8'), file)
 
       assert.ok(probes.length > 0, `${file} has no pg_isready probe to check`)
       for (const probe of probes) {
@@ -72,6 +85,39 @@ describe('Postgres readiness probes', () => {
     assert.equal(probes.length, 2)
     assert.equal(asksOverTcp(probes[0]), true)
     assert.equal(asksOverTcp(probes[1]), false)
+  })
+
+  it('does not read a comment that mentions pg_isready as a probe', () => {
+    const shell = readinessProbes(
+      '# Wait until pg_isready answers for the lasting server.\n' +
+        'until docker exec "$C" pg_isready -h 127.0.0.1 -U postgres; do sleep 1; done # pg_isready\n',
+      'scripts/test-db.sh',
+    )
+    const yaml = readinessProbes(
+      '    # pg_isready over TCP: the init server listens on the socket only\n' +
+        "    test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']\n",
+      '.dev/docker-compose.yml',
+    )
+    const js = readinessProbes(
+      '// pg_isready alone would ask over the socket.\n' +
+        '/* so is every other pg_isready here */\n' +
+        "spawnSync('docker', ['exec', c, 'pg_isready', '-h', '127.0.0.1'])\n",
+      'scripts/db-update.mjs',
+    )
+
+    for (const probes of [shell, yaml, js]) {
+      assert.equal(probes.length, 1)
+      assert.equal(asksOverTcp(probes[0]), true)
+    }
+  })
+
+  it('keeps a probe whose line holds a URL', () => {
+    const probes = readinessProbes(
+      "const url = 'http://localhost'; run('pg_isready', '-h', '127.0.0.1')\n",
+      'scripts/db-update.mjs',
+    )
+
+    assert.equal(probes.length, 1)
   })
 
   it('accepts the argv form db-update.mjs uses', () => {

@@ -6,6 +6,11 @@ This library was generated with [Nx](https://nx.dev).
 
 Run `nx test web-ui` to execute the unit tests via [Vitest](https://vitest.dev/).
 
+The Vite config is `vite.config.mts`, not `vite.config.ts`. This library has no `package.json`, so
+Node treats a `.ts` config here as CommonJS, and Nx's project-graph build `require()`s it. The
+ESM-only `@vitejs/plugin-react` then fails at random in CI ("not yet fully loaded"). An `.mts` file
+always loads as ESM. `vitest.config.mts` imports it as `./vite.config.mts`.
+
 ## UI Migration Best Practices (Storybook 9, Vitest, React Router 7)
 
 - Always update `@nestled-template` imports to `@nestled-template`, and maintain a mapping table for known package moves.

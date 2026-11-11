@@ -1,0 +1,193 @@
+id: 2026-11-11-logout-only-on-unambiguous-401
+title: >-
+  Log out only on an unambiguous 401: outage evidence anywhere in a request (or, in the browser,
+  while an outage is being shown), or a Me query that fails with any answered error but a 401,
+  keeps the session instead of signing the user out
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-09-error-recovery-r3 and 2026-11-10-r3-followups-web (apply both first;
+  this note changes the code they added). The rule: log out only when the API has definitely
+  rejected the session, that is at least one 401 or UNAUTHENTICATED answer and no outage evidence
+  (unreachable, 502/503/504, or a redacted stream error with nothing recorded). With mixed
+  evidence keep the session: the self-recovering 503 screen retries, and if the session really has
+  expired the first load after recovery gets a clean 401 and logs out then. No package changes.
+
+  1. Server render. libs/shared/apollo/src/lib/apollo-loader.ts ranked recorded causes
+  `other < unavailable < unauthenticated`, so one 401 in any preload outranked an outage in
+  another. The rank is now `other < unauthenticated < unavailable`, exposed as the new exported
+  `mergeApiFailureCauses(a, b)`, which the per-request record and `ssrApiFailureCause` both use.
+  apps/web/app/entry.server.tsx `shellErrorOutcome(error, cause)` let the recorded cause replace
+  the shell error's own (`effectiveCause = cause ?? ownCause`), so an `unavailable` shell error
+  still logged out when another preload recorded a 401, and a 401 shell error gave 503 or 500
+  depending on what was recorded. It now combines them: `mergeApiFailureCauses(ownCause, cause)`,
+  with the redacted Apollo stream error contributing no own cause, and a result of undefined
+  (redacted, nothing recorded) still meaning `unavailable`. A shell error that is not an API
+  failure (`classifyApiFailure` says `other`) is still `error` (a plain 500, no cookie change)
+  whatever was recorded, as 2026-11-10-r3-followups-web made it. Outcomes, shell error x
+  recorded cause (none / unauthenticated / unavailable / other):
+  401 -> force-logout / force-logout / unavailable / force-logout;
+  unreachable or 502/503/504 -> unavailable in every column;
+  plain render error -> error in every column;
+  redacted stream error -> unavailable / force-logout / unavailable / error.
+
+  2. Browser. The error link logged out on any 401, and the Me error boundary rendered a 401 as
+  signed out (which the signed-in layout turns into /force-logout), even while the app was
+  confirming an outage or showing the recovering screen.
+  - libs/shared/apollo/src/lib/apollo.ts: new `signalApiOutage(source, active)` and
+    `isApiOutageSignalled()` (a set of sources, so several mounted checks do not clear each
+    other). The error link's 401 handling does nothing while any outage is signalled, and records
+    that it let one pass; new `takeDeferredAuthFailure()` returns and clears that record.
+  - apps/web/app/api-availability.ts `refetchFailedQueries(client, { includeAuthFailures })` also
+    refetches queries holding a 401 / UNAUTHENTICATED error when asked; `useRefetchFailedQueries`
+    returns `(options?) => void` and keeps the request across a backoff deferral. App's
+    `onRecover` and `onBlipCleared` pass `includeAuthFailures: takeDeferredAuthFailure()`, so a
+    query whose 401 was let pass during the outage gets a fresh answer: data, or a 401 with no
+    outage that logs out as usual. Return-to-tab refetches still never replay a 401.
+  - apps/web/app/api-availability.ts `useApiAvailability` signals an outage, keyed by the hook
+    instance, whenever its phase is `confirming` or `unavailable`, and clears it on `available`
+    and on unmount.
+  - apps/web/app/app.tsx: `MeQueryErrorBoundary` and `handleMeQueryError` use a new
+    `meFailureAwaitsRecovery(error)`: a connectivity failure, or a 401 while an outage is
+    signalled, shows the recovering fallback and retries Me once the API answers (the boundary's
+    state field `connectivityFailure` is renamed `awaitsRecovery`, and `onError` receives it as a
+    second argument). The decision sticks to the Me query ref (a module WeakSet): once the outage
+    clears, App mounts the boundary again with the same failed ref until the retry brings a new
+    one, and judging that old 401 afresh, with no outage signalled any more, would sign the user
+    out without a new answer. The boundary now resets on a new ref in
+    `getDerivedStateFromProps` instead of `componentDidUpdate`, which rendered the old failure
+    against the new ref for one frame. A 401 with no outage signalled renders as signed out, as
+    before.
+  - apps/web/app/root.tsx `ErrorBoundary`: an unauthorized error while an outage is signalled
+    renders `<RecoveringApiUnavailable initialReason="server" />` instead of going to
+    /force-logout; it reloads once the API answers and the server render decides again.
+
+  3. Browser, with no outage. A Me query that failed with an answered error other than a 401 (a
+  500, an unparsable response, or a GraphQL error that is not UNAUTHENTICATED) still rendered as
+  signed out, and on a signed-in route the layout turned that into /force-logout. Nothing about
+  such an answer says the session is bad. apps/web/app/app.tsx gains
+  `isAnsweredApiFailure(error)`: a `CombinedGraphQLErrors`, `ServerError` or `ServerParseError`
+  that `classifyApiFailure` calls `other`. `meFailureAwaitsRecovery` now also returns true for it,
+  so the Me boundary shows the recovering fallback and keeps the session. `handleMeQueryError`
+  retries Me at once for it (`retryMeQuery`, read through a ref so the callback keeps its
+  identity) instead of reporting a connectivity error: the API answered, so there is no outage to
+  confirm, and no outage is signalled meanwhile. A Me that keeps failing is retried on the
+  existing backoff (`retryDelayMs`), and the first Me the network answers resets it. Logout stays
+  only for a 401 / UNAUTHENTICATED with no outage signalled. An error thrown by the app's own code
+  (not an API answer) is part 4's.
+  Affected paths: apps/web/app/app.tsx, apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (the "an answered error other than a 401"
+  cases: a Me 500 keeps the session and signs back in when Me succeeds, with no connectivity
+  probe; a Me that keeps failing shows the recovering screen and retries with backoff; a
+  non-UNAUTHENTICATED GraphQL error keeps the session; an UNAUTHENTICATED GraphQL error with no
+  outage still logs out), `pnpm exec nx run web:typecheck`.
+
+  4. Browser: an error from the app's own code. `MeQueryErrorBoundary` sits above every route that
+  has no error boundary of its own, so it also caught an `Error` thrown by a route's render or
+  effect, and rendered it as signed out (`user: null`). On a signed-in route the layout turned that
+  into /force-logout, which cleared the session cookie: a render bug logged the user out. Only a
+  Me/session failure may render as signed out. apps/web/app/app.tsx gains
+  `isMeSessionFailure(error)`, judged by the error itself: a `CombinedGraphQLErrors`,
+  `ServerError` or `ServerParseError` (an answer from the API), or `isRetryableConnectivityError`
+  (a request that never got one). `getDerivedStateFromError` stores anything else as `appError`,
+  and `render()` re-throws it, so it reaches the next error boundary up (the root `ErrorBoundary`'s
+  error screen, or a route-level one) with the user still signed in: no /force-logout, no cookie
+  change, no cache reset, and no Me retry or connectivity probe (`componentDidCatch` ignores it,
+  so `onError` is not called). A new Me query ref still resets the boundary. Every Me/session
+  failure is handled as in parts 2 and 3: connectivity, answered non-401 and outage-401 failures
+  show the recovering screen, and a 401 / UNAUTHENTICATED with no outage renders as signed out
+  and logs out.
+  The boundary also records the error (a module WeakSet read by the new exported
+  `isAppCodeError(error)`), and apps/web/app/root.tsx `ErrorBoundary` never treats such an error
+  as unauthorized: its message checks ("Unauthorized", "Session has been invalidated") are for
+  API failures, and an app error that happens to say either must not reach /force-logout.
+  Affected paths: apps/web/app/app.tsx, apps/web/app/root.tsx,
+  apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (the "an error thrown by the app's own
+  code" cases: a signed-in child route that throws a plain `Error` during render, or in an effect,
+  shows the root error screen, never renders as signed out and never reaches /force-logout or
+  `location.assign`, including when its message says "Unauthorized" or "Session has been
+  invalidated"), `pnpm exec nx run web:typecheck`.
+
+  Tests: apps/web/tests/entry-server-shell-error.spec.tsx replaces the `shellErrorOutcome` table
+  with the full 4 x 4 table above. libs/shared/apollo/src/lib/apollo.spec.ts: the loader-record
+  test now expects `unavailable` for a 401 and an outage in two loaders; new tests for a 401 and
+  an outage in the same loader (either order), for `mergeApiFailureCauses`, and for the error
+  link keeping the session while an outage is signalled. apps/web/tests/api-availability.spec.tsx:
+  new tests for the hook's outage signal, for a Me 401 during an outage (kept, then signed back
+  in; kept when the outage is confirmed and the retry's loader is still running as the screen
+  comes down; or logged out by a clean 401 after recovery), for refetching deferred 401s, and for
+  the root ErrorBoundary.
+
+why: >
+  Owner decision: log people out only when we absolutely have to. A 401 alongside an outage is
+  not proof the session is bad (the API may have failed to look it up, or a request may have
+  reached an instance that was not ready), and being wrong that way signs out a user whose session
+  was fine. Being wrong the other way only delays a logout until the API recovers. The same holds
+  for a Me query the API answered with a 500 or a non-authentication GraphQL error: it says
+  nothing about the session, yet it signed the user out (part 3, found in the R5b fleet rollout),
+  and for an error thrown by the app's own code, which is a bug to show, not a session to end
+  (part 4).
+
+affectedPaths:
+  - libs/shared/apollo/src/lib/apollo-loader.ts
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/app/entry.server.tsx
+  - apps/web/app/api-availability.ts
+  - apps/web/app/app.tsx
+  - apps/web/app/root.tsx
+  - apps/web/tests/entry-server-shell-error.spec.tsx
+  - apps/web/tests/api-availability.spec.tsx
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    A project whose entry.server.tsx or loader helper differs keeps its own structure, but ends
+    with the same rule: combine the shell error's own cause with every recorded cause, any
+    `unavailable` means 503 and keep the cookie, `unauthenticated` with no `unavailable` means
+    force-logout, a shell error that is not an API failure is a plain 500 with no cookie change.
+    Port the 4 x 4 `shellErrorOutcome` table to the project's own handler.
+  - >
+    A project that already maps `unauthenticated` to something other than a logout (a local
+    deviation, for example a re-authentication screen) keeps that mapping, applies the outage
+    ranking around it, and records the logout parts of this note as `superseded`.
+  - >
+    A project that already adopted 2026-11-10-r3-followups-web applies this on top of it: keep the
+    early `return 'error'` for a shell error `classifyApiFailure` calls `other`; only the line that
+    picks the effective cause changes.
+  - >
+    Existing tests that expected `unauthenticated` to outrank `unavailable` (a recorded 401 and an
+    outage giving `unauthenticated`, or `force-logout` for an outage shell error with a recorded
+    401) encoded the old rule; change them to expect `unavailable`, do not keep them.
+  - >
+    A project that uses `useApiAvailability` in more than the template's places needs nothing
+    more: each instance signals its own outage. Code of the project's own that logs out on a 401
+    in the browser (its own error link, a signed-in guard that reads a 401 directly) checks
+    `isApiOutageSignalled()` first and keeps the session while it is true.
+  - >
+    Part 3: a project whose signed-in guard or Me handling differs applies the same rule there:
+    any Me failure the API answered with, other than a 401 or UNAUTHENTICATED, keeps the session,
+    shows an error or recovering state, and retries Me with backoff. Check the project's own
+    signed-in layout: it must not read a failed Me as "no user". A project that already keeps the
+    session on such failures marks part 3 `superseded`.
+  - >
+    Part 4: a project whose Me boundary or root error handling differs keeps its structure but ends
+    with the same rule: only a Me/session auth failure renders as signed out. Classify by the error
+    itself (an API answer or a connectivity failure is a Me/session failure; anything else is not),
+    not by where it was caught, and pass any other error on to the app's error screen (re-throw it
+    from the boundary, or render the root error screen) with the session, the cookie and the Apollo
+    cache untouched. A project whose Me boundary wraps only the Me read, so a route's error never
+    reaches it, marks part 4 `superseded`.

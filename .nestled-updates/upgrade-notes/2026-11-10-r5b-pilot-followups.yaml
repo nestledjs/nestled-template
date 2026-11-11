@@ -1,0 +1,132 @@
+id: 2026-11-10-r5b-pilot-followups
+title: >-
+  R5b follow-ups: an invitation is accepted once however often its effect re-runs, the last two
+  react-hooks rules become errors, and lint caches hash the lint plugins
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-10-nx-24-ts-6-eslint-10 (apply that first; this note changes code and
+  config it added). Three parts. No package changes.
+
+  1. apps/web/app/routes/accept-invitation.tsx auto-accepts a signed-in user's invitation from an
+  effect. When that effect re-ran for the same invitation (React StrictMode replays effects in
+  development, and a new `user` or `invitationDetails` object re-runs it in any build), every run
+  sent its own acceptance. The token is single-use, so the second request was rejected as already
+  used and showed an error to a user who had just joined, and the first request's redirect was
+  dropped because its run had been superseded. Each token's acceptance is now kept for the
+  route's lifetime in `acceptancesRef = useRef(new Map<string, Promise<unknown>>())`. Inside
+  `acceptInvitationAsync(isCurrent)` a request starts only when the map has no entry for the
+  token (so moving to another invitation link and back while the first is pending does not send
+  a second acceptance either), as
+  `Promise.resolve().then(() => acceptInvitation(...))` (a synchronous throw still becomes a
+  rejection, and no state is set synchronously in the effect; this replaces the
+  `new Promise(resolve => resolve(call()))` wrapper). Every run chains its own `isCurrent`-guarded
+  `.then`/`.catch` onto the stored promise, so the run that is current when it settles redirects to
+  `/members` or shows the error. A failed attempt stays stored, so a re-run shows its error rather
+  than retrying in a loop. The per-token `failedToken` derivation and the `isCurrent` guard are
+  unchanged. apps/web/tests/routes/accept-invitation.spec.tsx: new cases for a StrictMode render
+  and for a re-render with a new `user` object (each sends exactly one acceptance and redirects to
+  `/members`), for moving to another invitation link and back while the first acceptance is
+  pending (still one request for it, and its success redirects), and for a failed acceptance that a
+  re-render does not retry.
+
+  2. eslint-plugin-react-hooks v7's `recommended` set leaves `incompatible-library` and
+  `unsupported-syntax` at warn, and `nx.configs['flat/react']` passes that set through, so both were
+  still warnings although every react-hooks v7 rule is meant to be an error. The root
+  eslint.config.mjs exports `reactHooksRuleLevels`, which sets both to `error` for the files
+  `flat/react` registers the plugin on. Every React lint config spreads it right after
+  `reactVersionSettings`: apps/web, libs/web, libs/web-ui, libs/shared/utils,
+  libs/shared-components, libs/access-control and libs/data-browser. `exhaustive-deps` stays a
+  warning. The template had no violations of either rule.
+
+  3. Every lint target's Nx cache hashed only `eslint` as an external dependency, so bumping a lint
+  plugin (eslint-plugin-react-hooks, typescript-eslint, eslint-plugin-react, ...) replayed cached
+  lint results computed with the old plugin. nx.json gains a `targetDefaults.lint` entry with the
+  inferred inputs plus the lint plugins as external dependencies:
+
+    "lint": {
+      "cache": true,
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/.eslintrc.json",
+        "{workspaceRoot}/.eslintignore",
+        "{workspaceRoot}/eslint.config.mjs",
+        "{workspaceRoot}/tools/eslint-rules/**/*",
+        {
+          "externalDependencies": [
+            "eslint",
+            "@eslint/js",
+            "@nx/eslint-plugin",
+            "typescript-eslint",
+            "eslint-plugin-react",
+            "eslint-plugin-react-hooks",
+            "eslint-plugin-jsx-a11y",
+            "eslint-plugin-import",
+            "eslint-plugin-storybook",
+            "eslint-config-prettier",
+            "jsonc-eslint-parser"
+          ]
+        }
+      ]
+    }
+
+  apps/web/project.json's own `lint` target, a copy of the old inferred inputs that would override
+  the default, is removed.
+
+why: >
+  A downstream pilot of the Nx 24 release found that a signed-in user opening an invitation link
+  could join and still see "invitation already used" instead of being redirected, that two react-hooks rules
+  stayed at warn against the decision that all of them are errors, and that lint caches survived
+  lint plugin bumps.
+
+affectedPaths:
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/tests/routes/accept-invitation.spec.tsx
+  - eslint.config.mjs
+  - apps/web/eslint.config.mjs
+  - libs/web/eslint.config.mjs
+  - libs/web-ui/eslint.config.mjs
+  - libs/shared/utils/eslint.config.mjs
+  - nx.json
+  - apps/web/project.json
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm exec nx run-many -t lint --skip-nx-cache
+  - pnpm exec nx show project web --json
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    A project whose accept-invitation route already keeps the acceptance per token (one request per
+    token, observed by every effect run) marks part 1 `superseded`.
+  - >
+    A project with its own invitation flow (a different route, or a hook that accepts on mount)
+    applies the same rule there: one acceptance request per token, stored outside the effect for
+    the component's lifetime (a map keyed by token, not only the latest token), and every effect
+    run observes that stored request with its own `isCurrent` guard. Add a StrictMode test that
+    expects exactly one acceptance and the redirect.
+  - >
+    Part 3 is made by hand: nx.json is not mirrored by promotion. Add the `targetDefaults.lint`
+    block above, listing the lint plugins the project actually has in package.json (drop any it
+    does not install; an unknown external dependency fails the task hash). If a project.json
+    declares its own `lint` inputs, extend its externalDependencies the same way or remove the
+    override. Check with `nx show project <name> --json` that the lint target's inputs list the
+    plugins.
+  - >
+    Part 2 can surface errors that used to be warnings. Fix them without changing behaviour; a
+    disable needs a one-line reason after `--`, as in the Nx 24 note. A project-owned React lint
+    config outside the template's list also spreads `reactHooksRuleLevels`.
+  - >
+    libs/shared-components, libs/access-control and libs/data-browser reach projects as published
+    packages; a project that consumes them does not have their lint configs and skips those three
+    files.

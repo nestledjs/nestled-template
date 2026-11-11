@@ -233,32 +233,80 @@ describe('server render when the Me preload fails', () => {
 })
 
 describe('shellErrorOutcome', () => {
-  const redacted = new Error('Error from event stream. Redacted for security concerns.')
+  // Log out only on an unambiguous 401: at least one `unauthenticated` and no outage evidence
+  // anywhere. Any outage (the shell error's own or a recorded one) keeps the session (503). A
+  // shell error that is not an API failure is a plain 500, whatever was recorded.
+  const shellErrors = {
+    unauthenticated: Object.assign(new Error('Response not successful'), { statusCode: 401 }),
+    unavailable: new TypeError('fetch failed'),
+    other: new Error('A render bug'),
+    redacted: new Error('Error from event stream. Redacted for security concerns.'),
+  } as const
+  type ShellError = keyof typeof shellErrors
+  type Recorded = 'unauthenticated' | 'unavailable' | 'other' | undefined
+  type Outcome = ReturnType<typeof shellErrorOutcome>
+
+  const outcomes: Record<ShellError, [Recorded, Outcome][]> = {
+    unauthenticated: [
+      [undefined, 'force-logout'],
+      ['unauthenticated', 'force-logout'],
+      ['unavailable', 'unavailable'],
+      ['other', 'force-logout'],
+    ],
+    unavailable: [
+      [undefined, 'unavailable'],
+      ['unauthenticated', 'unavailable'],
+      ['unavailable', 'unavailable'],
+      ['other', 'unavailable'],
+    ],
+    other: [
+      [undefined, 'error'],
+      ['unauthenticated', 'error'],
+      ['unavailable', 'error'],
+      ['other', 'error'],
+    ],
+    redacted: [
+      [undefined, 'unavailable'],
+      ['unauthenticated', 'force-logout'],
+      ['unavailable', 'unavailable'],
+      ['other', 'error'],
+    ],
+  }
+
+  it.each(
+    Object.entries(outcomes).flatMap(([shell, rows]) =>
+      rows.map(([recorded, outcome]) => [shell as ShellError, recorded, outcome] as const),
+    ),
+  )('shell error %s, recorded %s -> %s', (shell, recorded, outcome) => {
+    expect(shellErrorOutcome(shellErrors[shell], recorded)).toBe(outcome)
+  })
+
+  it('covers every shell error x recorded cause combination', () => {
+    for (const rows of Object.values(outcomes)) {
+      expect(rows.map(([recorded]) => recorded)).toEqual([
+        undefined,
+        'unauthenticated',
+        'unavailable',
+        'other',
+      ])
+    }
+  })
 
   it.each([
-    ['unauthenticated', redacted, 'force-logout'],
-    ['unavailable', redacted, 'unavailable'],
-    [undefined, redacted, 'unavailable'],
-    [undefined, new Error('A render bug'), 'error'],
-    ['other', redacted, 'error'],
-    // A recorded cause never applies to a shell error that is not an API failure.
-    ['unauthenticated', new Error('A render bug'), 'error'],
-    ['unavailable', new Error('A render bug'), 'error'],
+    // A plain TypeError from application code is not an API failure.
     ['unavailable', new TypeError("Cannot read properties of undefined (reading 'id')"), 'error'],
-    // A shell error that is itself an API failure: the recorded cause, else its own.
-    ['unauthenticated', new TypeError('fetch failed'), 'force-logout'],
-    [undefined, new TypeError('fetch failed'), 'unavailable'],
+    // A proxy's 503 is outage evidence of its own, and outranks a recorded 401.
     [
-      undefined,
+      'unauthenticated',
       Object.assign(new Error('Response not successful'), { statusCode: 503 }),
       'unavailable',
     ],
     [
       undefined,
-      Object.assign(new Error('Response not successful'), { statusCode: 401 }),
-      'force-logout',
+      Object.assign(new Error('Response not successful'), { statusCode: 503 }),
+      'unavailable',
     ],
-  ] as const)('cause %s with %s -> %s', (cause, error, outcome) => {
+  ] as const)('recorded %s with %s -> %s', (cause, error, outcome) => {
     expect(shellErrorOutcome(error, cause)).toBe(outcome)
   })
 })

@@ -2,6 +2,12 @@
 # It extends gitleaks' default rules; the allowlist below names only test fixtures that look like
 # secrets and are not. Add to it only a value that is provably not a credential (a placeholder in a
 # spec), never a real key: a leaked key is rotated, not allowlisted.
+#
+# A finding in history that cannot be rewritten (a key committed long ago and since rotated, or a
+# placeholder in an old commit) is ignored by its fingerprint, one per line, in .gitleaksignore at
+# the repository root. gitleaks 8.30 has no fingerprint allowlist in this file. gitleaks prints the
+# fingerprint with each finding (`<commit>:<file>:<rule>:<line>`); add only findings you have
+# checked and, for a real key, rotated.
 title = "Nestled gitleaks configuration"
 
 [extend]

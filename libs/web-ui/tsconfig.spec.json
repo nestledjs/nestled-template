@@ -5,7 +5,11 @@
     // vitest.config.mts imports @storybook/addon-vitest, whose types are reachable only through
     // package `exports`. Vite/Vitest resolve modules as a bundler does, so check them that way.
     "moduleResolution": "bundler",
-    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
+    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"],
+    // vitest.config.mts imports './vite.config.mts' by its full name: an ES module config is
+    // resolved with its extension.
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   },
   "include": [
     "vite.config.ts",

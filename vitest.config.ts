@@ -5,7 +5,7 @@ export default defineConfig({
     projects: [
       'apps/api-e2e/vitest.config.mts',
       'apps/web/vite.config.ts',
-      'libs/web-ui/vite.config.ts',
+      'libs/web-ui/vite.config.mts',
       'libs/shared/apollo/vite.config.ts',
       'libs/shared/sdk/vite.config.ts',
       '!vitest.config.ts',

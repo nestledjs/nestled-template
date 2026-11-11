@@ -15,6 +15,7 @@ import { renderToPipeableStream } from 'react-dom/server'
 import {
   classifyApiFailure,
   makeClient,
+  mergeApiFailureCauses,
   ssrApiFailureCause,
   type ApiFailureCause,
 } from '@nestled-template/shared/apollo'
@@ -37,18 +38,23 @@ function isRedactedApolloStreamError(error: unknown): boolean {
  * failed, recorded by its Apollo client (`ssrApiFailureCause`), since the error that reaches the
  * render is redacted and cannot tell a rejected session from an unreachable API.
  *
+ * The rule: log out only on an unambiguous 401. Any outage evidence in the request (the shell
+ * error's own, or any recorded) keeps the session and serves the recovering 503; a 401 logs out
+ * only when nothing in the request points to an outage.
+ *
  * The recorded cause covers EVERY loader's queries in the request, so it may belong to a preload
  * whose failure a Suspense boundary contained and that never reached the shell. It is therefore
  * applied only when the shell error is itself an API failure: Apollo's redacted stream error, or
  * an error `classifyApiFailure` recognises. Any other shell error (an ordinary render bug) is
  * `error`, whatever was recorded: serving it as the recovering screen would hide it, and treating
- * it as a 401 would sign the user out.
+ * it as a 401 would sign the user out. For an API failure, the shell error's own cause and the
+ * recorded one are combined (`mergeApiFailureCauses`), neither replacing the other.
  *
- * - `force-logout`: the API really rejected the session (401 or UNAUTHENTICATED). Clear the
- *   cookie and redirect, as before.
- * - `unavailable`: the API was unreachable or answered 502/503/504, or a redacted Apollo error
- *   has no recorded cause. Keep the cookie and serve the 503 recovering screen: an unknown error
- *   must never destroy a session.
+ * - `force-logout`: the API rejected the session (401 or UNAUTHENTICATED) and nothing in the
+ *   request says the API was unreachable. Clear the cookie and redirect.
+ * - `unavailable`: any outage evidence (unreachable, 502/503/504), even alongside a 401, or a
+ *   redacted Apollo error with no recorded cause. Keep the cookie and serve the 503 recovering
+ *   screen: if the session really has expired, the first load after recovery gets a clean 401.
  * - `error`: anything else (an ordinary render error, or an API that answered with some other
  *   error) is left to React Router's error handling, as before.
  */
@@ -56,16 +62,16 @@ export function shellErrorOutcome(
   error: unknown,
   cause: ApiFailureCause | undefined,
 ): 'force-logout' | 'unavailable' | 'error' {
-  let effectiveCause: ApiFailureCause
-  if (isRedactedApolloStreamError(error)) {
-    effectiveCause = cause ?? 'unavailable'
-  } else {
-    const ownCause = classifyApiFailure(error)
+  // Apollo's redacted stream error says nothing about the cause by itself.
+  let ownCause: ApiFailureCause | undefined
+  if (!isRedactedApolloStreamError(error)) {
+    ownCause = classifyApiFailure(error)
     if (ownCause === 'other') return 'error'
-    effectiveCause = cause ?? ownCause
   }
-  if (effectiveCause === 'unauthenticated') return 'force-logout'
+  // Nothing known at all (a redacted error, nothing recorded): fail safe, keep the session.
+  const effectiveCause = mergeApiFailureCauses(ownCause, cause) ?? 'unavailable'
   if (effectiveCause === 'unavailable') return 'unavailable'
+  if (effectiveCause === 'unauthenticated') return 'force-logout'
   return 'error'
 }
 
@@ -135,11 +141,13 @@ export default function handleRequest(
             ssrApiFailureCause(routerContext.staticHandlerContext?.loaderData),
           )
           if (outcome === 'force-logout') {
-            // The API rejected the session: clear the stale cookie instead of serving 500.
+            // The API rejected the session, with no sign of an outage: clear the stale cookie
+            // instead of serving 500.
             console.error('[SSR] The API rejected the session — redirecting to force-logout')
             resolve(forceLogoutResponse(request))
           } else if (outcome === 'unavailable') {
-            // The API could not be reached, or the cause is unknown. Keep the session: React
+            // The API could not be reached (even if a 401 came back too), or the cause is unknown.
+            // Keep the session: React
             // Router renders the root ErrorBoundary for this 503, which shows the self-recovering
             // screen and reloads once the API answers. A real 401 comes back on the client and
             // goes through the normal 401 handling there.

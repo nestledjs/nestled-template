@@ -1,0 +1,158 @@
+id: 2026-11-11-r5b-wave-followups
+title: >-
+  R5b fleet follow-ups: web-ui's Vite config loads as ESM, the invitation redirect timer honours
+  isCurrent, serve:production has no HMR, two specs fixed or added, api lcov paths normalized,
+  gitleaks history findings documented
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-10-nx-24-ts-6-eslint-10 and 2026-11-10-r5b-pilot-followups (apply both
+  first). Seven parts, each independent. No package changes, and no change to package.json,
+  nx.json or tsconfig.base.json.
+
+  1. libs/web-ui/vite.config.ts is renamed libs/web-ui/vite.config.mts. libs/web-ui has no
+  package.json, so Node treated the .ts config as CommonJS, and Nx's project-graph build
+  `require()`d it, and with it the ESM-only @vitejs/plugin-react 6, while another config
+  `import()`ed the same module. In CI that failed at random with "not yet fully loaded"; it does not
+  reproduce locally. A .mts file always loads as ESM. The config gains a header comment saying so.
+  Everything that names it follows: libs/web-ui/vitest.config.mts imports `./vite.config.mts`
+  (its full name), libs/web-ui/tsconfig.spec.json adds `"allowImportingTsExtensions": true` and
+  `"noEmit": true` for that import, the root vitest.config.ts project list names
+  `libs/web-ui/vite.config.mts`, sonar-project.properties adds `**/vite.config.mts` beside each
+  `**/vite.config.ts` (exclusions, cpd exclusions, coverage exclusions), and SONARCLOUD_SETUP.md
+  and libs/web-ui/README.md say the same. The tsconfig includes already listed both names. The
+  template's other vite.config.ts files are safe: data-browser, shared-components and apps/web sit
+  under a `"type": "module"` package.json, and shared/apollo and shared/sdk load no ESM-only
+  plugin. New scripts/vite-config-module-format.spec.mjs fails for any tracked vite.config or
+  vitest.config (.ts or .js) whose nearest package.json is not `"type": "module"` and that imports
+  @vitejs/plugin-react, ignoring comments.
+
+  2. apps/web/app/routes/accept-invitation.tsx checked `isCurrent()` before scheduling the 1.5 s
+  redirect to /members, but not when the timer fired. An accepted invitation the user had moved
+  away from during the delay (another invitation link, or another route) still redirected over
+  the new page, and an effect re-run after the acceptance succeeded scheduled a second timer, so
+  the route navigated twice. `acceptInvitationAsync(isCurrent, onRedirectScheduled)` now hands the
+  timer to the effect, the timer callback returns early unless `isCurrent()`, and the effect's
+  cleanup calls `clearTimeout` on it. New cases in apps/web/tests/routes/accept-invitation.spec.tsx:
+  invitation A is accepted, the user follows a link to B (pending) within the delay, and 1.8 s
+  later the page has not gone to /members; and an effect re-run after acceptance gives exactly one
+  navigation to /members (one location key).
+
+  3. `nx serve web --configuration=production` must serve without HMR, as the @nx/vite:dev-server
+  production configuration (`hmr: false`) did before the Nx 24 executor conversion. With a plain
+  `vite --mode production` that has to come from apps/web/vite.config.ts:
+  `server: { hmr: mode !== 'production', ... }` with the config exported as
+  `defineConfig(({ mode }) => ({ ... }))`. The template already had this; new
+  apps/web/tests/vite-config-serve.spec.ts (`// @vitest-environment node`) reads the serve
+  target's `--mode` from apps/web/project.json, evaluates the config for it, and expects
+  `server.hmr` false for production and true for development.
+
+  4. scripts/postgres-readiness.spec.mjs took every `pg_isready` in a probed file as a probe, so a
+  comment that merely mentioned it failed the check as a socket probe. `readinessProbes(source,
+  file)` now blanks comments first (`#` comments in shell and YAML, `//` and `/* */` in
+  JavaScript, keeping a URL's `://`). New cases: such a comment in each kind of file is not a
+  probe, and a line with a URL keeps its probe.
+
+  5. libs/web/src/lib/hooks/useInfiniteApolloList.ts had no spec, and its lines counted as
+  uncovered new code in Sonar. New libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx drives it
+  through a fake IntersectionObserver: pagination (fetch from the current count, one page at a
+  time, a short page marks the list loaded and stops), disabled and no-loader cases, reset on a
+  change in `deps` (by value or length) but not on equal deps, `reset()`, and disconnect on
+  unmount. Coverage of the hook is 100%.
+
+  6. Under Nx 24, Jest runs from each project's root, so the api libraries' lcov reports say
+  `SF:src/lib/x.ts`, and scripts/normalize-lcov-paths.ts listed only the Vitest reports, so the api
+  paths reached SonarCloud project-relative and every api library file showed as uncovered. The
+  script now finds every `coverage/<project root>/lcov.info` (skipping `lcov-report/`) and rewrites
+  its SF: lines against that project root: paths under src/, app/, tests/ or test/ get the
+  prefix, absolute paths lose the repo root, a `../../libs/...` path is resolved, and repo-relative
+  paths are kept. Its functions (`normalizeSourceFile`, `normalizeLcov`, `findLcovReports`,
+  `normalizeLcovReports`) are exported and the rewrite runs only when the file is executed, so new
+  scripts/normalize-lcov-paths.spec.mjs imports and tests it, including a fixture coverage tree
+  with two api reports. `pnpm coverage:normalize-lcov` (`tsx scripts/normalize-lcov-paths.ts`) and
+  CI's sonar job are unchanged.
+
+  7. gitleaks. .gitleaks.toml's header now says that a history finding which cannot be rewritten
+  is ignored by fingerprint in .gitleaksignore (gitleaks 8.30 has no fingerprint allowlist in the
+  TOML), and the template ships an empty, commented .gitleaksignore. The gitleaks job's comment in
+  .github/workflows/ci.yml now says that a pull request scans only its own commits while a
+  develop push scans the whole history, so before the first merge after enabling full-history
+  scanning, run `gitleaks git .` from a full clone.
+
+why: >
+  The R5b fleet rollout found these in the template: a CI failure at random in the project graph
+  of four downstreams (part 1), a stray redirect from accept-invitation (issue #93), production
+  serve with HMR in a downstream that took the executor conversion without its follow-up, a
+  readiness spec that failed on a comment, two Sonar new-code coverage gates failed by the
+  untested hook and by api coverage Sonar could not match, and a develop push gone red on
+  history findings the pull request never scanned.
+
+affectedPaths:
+  - libs/web-ui/vite.config.mts
+  - libs/web-ui/vitest.config.mts
+  - libs/web-ui/tsconfig.spec.json
+  - libs/web-ui/README.md
+  - vitest.config.ts
+  - sonar-project.properties
+  - SONARCLOUD_SETUP.md
+  - scripts/vite-config-module-format.spec.mjs
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/tests/routes/accept-invitation.spec.tsx
+  - apps/web/vite.config.ts
+  - apps/web/tests/vite-config-serve.spec.ts
+  - scripts/postgres-readiness.spec.mjs
+  - libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx
+  - scripts/normalize-lcov-paths.ts
+  - scripts/normalize-lcov-paths.spec.mjs
+  - .gitleaks.toml
+  - .gitleaksignore
+  - .github/workflows/ci.yml
+
+verification:
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx test web-ui --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test web-components --skip-nx-cache
+  - node --test scripts/*.spec.mjs
+  - pnpm exec nx show project web-ui --json
+  - pnpm exec nx run-many -t test --coverage --skip-nx-cache && pnpm coverage:normalize-lcov && grep -h '^SF:' coverage/libs/api/*/lcov.info | head
+  - pnpm run nestled-doctor
+  - gitleaks git .
+
+agentHints:
+  - >
+    Part 1: a project that already renamed libs/web-ui's config to .mts (or gave libs/web-ui a
+    `"type": "module"` package.json) marks part 1 `superseded`, but still adds the spec. Run the
+    spec once: it lists any other config of the project's own that loads @vitejs/plugin-react as
+    CommonJS; rename each to .mts and update what names it (vitest configs that import it, the
+    root vitest.config project list, tsconfig includes, Sonar exclusions). Check with
+    `nx show project <name> --json` that the targets are unchanged by the rename.
+  - >
+    Part 2: a project whose accept-invitation timer already re-checks `isCurrent()` (or that
+    clears it on cleanup) marks part 2 `superseded`. A project with its own invitation flow applies
+    the same rule to its delayed redirect.
+  - >
+    Part 3: a project whose vite.config already sets `hmr: false` for production marks the config
+    change `superseded` and adds only the spec. A project whose serve target passes its mode
+    differently (no `--mode` in project.json) adapts the spec's `serveMode` to read it.
+  - >
+    Part 4 applies only where scripts/postgres-readiness.spec.mjs exists. Keep the project's own
+    PROBED_FILES list.
+  - >
+    Part 5: a project that already has a spec for the hook marks part 5 `superseded`; one that
+    removed the hook marks it `not-applicable`.
+  - >
+    Part 6: a project whose lcov script differs keeps its own and applies the same rewrite: every
+    report under coverage/, each SF: path made repo-relative against its project root. Check after
+    `pnpm coverage:normalize-lcov` that the api reports' SF: lines start with `libs/api/`, and on
+    the pull request's Sonar analysis that api library files show coverage. Projects whose coverage
+    directory does not mirror the project root list those reports explicitly.
+  - >
+    Part 7: the .gitleaksignore part matters only for a project with history findings. Run
+    `gitleaks git .` from a full clone before the first merge after enabling full-history scanning;
+    a real secret is rotated first, then (if the history cannot be rewritten) its fingerprint goes
+    in .gitleaksignore with a comment saying why. A project with no findings still takes the
+    comment changes, and may skip the empty file.
