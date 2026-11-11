@@ -1,0 +1,469 @@
+diff --git a/apps/web/app/routes/accept-invitation.tsx b/apps/web/app/routes/accept-invitation.tsx
+index acde4db..7bfd248 100644
+--- a/apps/web/app/routes/accept-invitation.tsx
++++ b/apps/web/app/routes/accept-invitation.tsx
+@@ -1,4 +1,4 @@
+-import React, { useCallback, useEffect, useState } from 'react'
++import React, { useCallback, useEffect, useRef, useState } from 'react'
+ import { useNavigate, useSearchParams } from 'react-router'
+ import {
+   CheckCircleIcon,
+@@ -125,30 +125,52 @@ export default function AcceptInvitation() {
+   const [failedToken, setFailedToken] = useState<string | null>(null)
+   const autoAccepting = Boolean(user && token && invitationDetails) && failedToken !== token
+ 
++  // An invitation token is single-use, so it is accepted once per token however often the effect
++  // below re-runs for it (React StrictMode replays effects, and a new `user` or `invitationDetails`
++  // object re-runs it too). Each token's request is stored for the route's lifetime, and every run
++  // for that token observes that one request, including a run after moving to another invitation
++  // link and back while it is still pending. A failed attempt stays stored, so a re-run shows its
++  // error rather than retrying in a loop.
++  const acceptancesRef = useRef(new Map<string, Promise<unknown>>())
++
+   // Settles in promise callbacks, which always run after the effect that starts it returns, so no
+   // state is set synchronously inside that effect. A synchronous throw from the mutation still
+-  // lands in the catch: the Promise constructor turns it into a rejection. An attempt that a newer
+-  // one has superseded (the effect re-ran, for example for another invitation link) settles without
+-  // touching state or navigating, so a late result can't overwrite the current invitation's.
++  // lands in the catch: starting it inside `.then` turns it into a rejection. A run that a newer
++  // one has superseded (the effect re-ran, for the same invitation or for another invitation link)
++  // settles without touching state or navigating, so a late result can't overwrite the current
++  // run's, and the current run still sees the shared request through to its redirect. The
++  // redirect is delayed, so its timer checks `isCurrent()` again when it fires and is cleared when
++  // the run is superseded: a run that has moved on (to another invitation link, away from the
++  // route, or to an effect re-run after acceptance) never navigates, and only one run redirects.
+   const acceptInvitationAsync = useCallback(
+-    (isCurrent: () => boolean) => {
++    (
++      isCurrent: () => boolean,
++      onRedirectScheduled: (timer: ReturnType<typeof setTimeout>) => void,
++    ) => {
+       if (!token) return Promise.resolve()
+ 
+-      return new Promise(resolve => {
+-        resolve(
++      let acceptance = acceptancesRef.current.get(token)
++      if (!acceptance) {
++        acceptance = Promise.resolve().then(() =>
+           acceptInvitation({
+             variables: {
+               input: { token },
+             },
+           }),
+         )
+-      })
++        acceptancesRef.current.set(token, acceptance)
++      }
++
++      return acceptance
+         .then(() => {
+           if (!isCurrent()) return
+           // Redirect to members area
+-          setTimeout(() => {
+-            navigate('/members', { replace: true })
+-          }, 1500)
++          onRedirectScheduled(
++            setTimeout(() => {
++              if (!isCurrent()) return
++              navigate('/members', { replace: true })
++            }, 1500),
++          )
+         })
+         .catch(error => {
+           if (!isCurrent()) return
+@@ -165,9 +187,16 @@ export default function AcceptInvitation() {
+   useEffect(() => {
+     if (!(user && token && invitationDetails)) return
+     let current = true
+-    void acceptInvitationAsync(() => current)
++    let redirectTimer: ReturnType<typeof setTimeout> | undefined
++    void acceptInvitationAsync(
++      () => current,
++      timer => {
++        redirectTimer = timer
++      },
++    )
+     return () => {
+       current = false
++      clearTimeout(redirectTimer)
+     }
+   }, [acceptInvitationAsync, invitationDetails, token, user])
+ 
+diff --git a/apps/web/eslint.config.mjs b/apps/web/eslint.config.mjs
+index 74020ec..d0ec6f0 100644
+--- a/apps/web/eslint.config.mjs
++++ b/apps/web/eslint.config.mjs
+@@ -1,10 +1,11 @@
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactVersionSettings } from '../../eslint.config.mjs'
++import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
++  reactHooksRuleLevels,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+diff --git a/apps/web/project.json b/apps/web/project.json
+index 1d35880..765261e 100644
+--- a/apps/web/project.json
++++ b/apps/web/project.json
+@@ -5,19 +5,6 @@
+   "projectType": "application",
+   "tags": [],
+   "targets": {
+-    "lint": {
+-      "inputs": [
+-        "default",
+-        "^default",
+-        "{workspaceRoot}/.eslintrc.json",
+-        "{workspaceRoot}/.eslintignore",
+-        "{workspaceRoot}/eslint.config.mjs",
+-        "{workspaceRoot}/tools/eslint-rules/**/*",
+-        {
+-          "externalDependencies": ["eslint"]
+-        }
+-      ]
+-    },
+     "typegen": {
+       "executor": "nx:run-commands",
+       "options": {
+diff --git a/apps/web/tests/routes/accept-invitation.spec.tsx b/apps/web/tests/routes/accept-invitation.spec.tsx
+index 98f3af3..1bca339 100644
+--- a/apps/web/tests/routes/accept-invitation.spec.tsx
++++ b/apps/web/tests/routes/accept-invitation.spec.tsx
+@@ -2,7 +2,7 @@ import React from 'react'
+ import { render, screen, waitFor } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+ import { createTestRouter } from '../helpers/createTestRouter'
+-import { Link } from 'react-router'
++import { Link, useLocation } from 'react-router'
+ import { describe, it, expect, vi, beforeEach } from 'vitest'
+ import AcceptInvitation, {
+   buildRegisterWithInvitationInput,
+@@ -399,6 +399,201 @@ describe('AcceptInvitation Component', () => {
+     })
+   })
+ 
++  describe('One acceptance per invitation token', () => {
++    const loggedInUser = () => ({
++      user: { id: 'user-123', firstName: 'Test', lastName: 'User' } as any,
++      organizations: [],
++      activeOrganization: null,
++      activeOrganizationMember: null,
++    })
++
++    // Renders the route beside a button that re-renders it, and a /members route to redirect to.
++    function RerenderableAcceptInvitation() {
++      const [, setRenders] = React.useState(0)
++      return (
++        <>
++          <button type="button" onClick={() => setRenders(count => count + 1)}>
++            Re-render
++          </button>
++          <AcceptInvitation />
++        </>
++      )
++    }
++
++    const renderWithMembersRoute = (strict: boolean) => {
++      const ReactRouterStub = createTestRouter([
++        { path: '/accept-invitation', Component: RerenderableAcceptInvitation },
++        { path: '/members', Component: () => <p>Members area</p> },
++      ])
++      const router = <ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />
++      return render(strict ? <React.StrictMode>{router}</React.StrictMode> : router)
++    }
++
++    it('sends one acceptance under StrictMode and still redirects to /members', async () => {
++      vi.mocked(useGlobalCtx).mockReturnValue(loggedInUser())
++      mockAcceptInvitation.mockResolvedValue({
++        data: { acceptOrganizationInvitation: { success: true } },
++      })
++
++      renderWithMembersRoute(true)
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++
++    it('sends one acceptance when a re-render brings a new user object, then redirects', async () => {
++      // A fresh user object on every render, as a context that rebuilds its value gives.
++      vi.mocked(useGlobalCtx).mockImplementation(loggedInUser)
++      let resolveAcceptance: (value: unknown) => void = () => undefined
++      mockAcceptInvitation.mockReturnValue(
++        new Promise(resolve => {
++          resolveAcceptance = resolve
++        }),
++      )
++
++      renderWithMembersRoute(false)
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++
++      // The effect re-runs for the same invitation while its acceptance is in flight.
++      await userEvent.click(screen.getByText('Re-render'))
++      resolveAcceptance({ data: { acceptOrganizationInvitation: { success: true } } })
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++
++    it('keeps observing a pending acceptance after moving to another invitation and back', async () => {
++      vi.mocked(useGlobalCtx).mockReturnValue(loggedInUser())
++      let resolveFirst: (value: unknown) => void = () => undefined
++      mockAcceptInvitation
++        .mockReturnValueOnce(
++          new Promise(resolve => {
++            resolveFirst = resolve
++          }),
++        )
++        .mockReturnValueOnce(new Promise(() => undefined))
++        .mockRejectedValue(new Error('Invitation already used'))
++
++      const ReactRouterStub = createTestRouter([
++        {
++          path: '/accept-invitation',
++          Component: () => (
++            <>
++              <Link to="/accept-invitation?token=second-token">Second invitation</Link>
++              <Link to="/accept-invitation?token=test-token">First invitation</Link>
++              <AcceptInvitation />
++            </>
++          ),
++        },
++        { path: '/members', Component: () => <p>Members area</p> },
++      ])
++      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
++
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++      await userEvent.click(screen.getByText('Second invitation'))
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(2))
++      await userEvent.click(screen.getByText('First invitation'))
++
++      // The first invitation's original request is still the one observed; it succeeds.
++      resolveFirst({ data: { acceptOrganizationInvitation: { success: true } } })
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(2)
++      expect(screen.queryByText('Invitation already used')).not.toBeInTheDocument()
++    })
++
++    it('does not redirect for an accepted invitation the user has moved away from', async () => {
++      vi.mocked(useGlobalCtx).mockReturnValue(loggedInUser())
++      // The first invitation is accepted at once; the second stays in flight.
++      mockAcceptInvitation
++        .mockResolvedValueOnce({ data: { acceptOrganizationInvitation: { success: true } } })
++        .mockReturnValueOnce(new Promise(() => undefined))
++
++      const ReactRouterStub = createTestRouter([
++        {
++          path: '/accept-invitation',
++          Component: () => (
++            <>
++              <Link to="/accept-invitation?token=second-token">Second invitation</Link>
++              <AcceptInvitation />
++            </>
++          ),
++        },
++        { path: '/members', Component: () => <p>Members area</p> },
++      ])
++      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
++
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++      // Let the first acceptance resolve and schedule its redirect, then follow the second link
++      // within the redirect delay.
++      await new Promise(resolve => setTimeout(resolve, 50))
++      await userEvent.click(screen.getByText('Second invitation'))
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(2))
++
++      await new Promise(resolve => setTimeout(resolve, 1800))
++
++      expect(screen.queryByText('Members area')).not.toBeInTheDocument()
++      expect(screen.getByText('Welcome!')).toBeInTheDocument()
++    })
++
++    it('redirects once when the effect re-runs after the acceptance succeeded', async () => {
++      // A fresh user object on every render, so a re-render re-runs the acceptance effect.
++      vi.mocked(useGlobalCtx).mockImplementation(loggedInUser)
++      mockAcceptInvitation.mockResolvedValue({
++        data: { acceptOrganizationInvitation: { success: true } },
++      })
++      // Every navigation to /members gives a new location key; one key means one redirect.
++      const membersLocationKeys = new Set<string>()
++      function MembersArea() {
++        const { key } = useLocation()
++        React.useEffect(() => {
++          membersLocationKeys.add(key)
++        }, [key])
++        return <p>Members area</p>
++      }
++
++      const ReactRouterStub = createTestRouter([
++        { path: '/accept-invitation', Component: RerenderableAcceptInvitation },
++        { path: '/members', Component: MembersArea },
++      ])
++      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
++
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++      // The acceptance has resolved and its redirect is scheduled when the effect re-runs.
++      await new Promise(resolve => setTimeout(resolve, 50))
++      await userEvent.click(screen.getByText('Re-render'))
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      // Long enough for a second, superseded redirect timer to have fired.
++      await new Promise(resolve => setTimeout(resolve, 1700))
++
++      expect(membersLocationKeys.size).toBe(1)
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++
++    it('shows a failed acceptance once instead of retrying it on a re-render', async () => {
++      vi.mocked(useGlobalCtx).mockImplementation(loggedInUser)
++      mockAcceptInvitation.mockRejectedValue(new Error('Invitation expired'))
++
++      renderWithMembersRoute(false)
++      await waitFor(() => expect(screen.getByText('Invitation expired')).toBeInTheDocument())
++
++      await userEvent.click(screen.getByText('Re-render'))
++      await new Promise(resolve => setTimeout(resolve, 0))
++
++      expect(screen.getByText('Invitation expired')).toBeInTheDocument()
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++  })
++
+   describe('Signup Flow', () => {
+     it('builds invitation registration input from the invitation email', () => {
+       expect(
+diff --git a/eslint.config.mjs b/eslint.config.mjs
+index 9c290ad..c53431f 100644
+--- a/eslint.config.mjs
++++ b/eslint.config.mjs
+@@ -87,3 +87,25 @@ export default [
+ export const reactVersionSettings = {
+   settings: { react: { version: createRequire(import.meta.url)('react/package.json').version } },
+ }
++
++// eslint-plugin-react-hooks v7's `recommended` set (through `nx.configs['flat/react']`) leaves
++// `incompatible-library` and `unsupported-syntax` at warn. Every react-hooks v7 rule is an error in
++// this workspace (`exhaustive-deps` stays a warning), so this raises those two. Spread it after
++// `reactVersionSettings` in every React lint config. The files match the ones the plugin is
++// registered for in `flat/react`.
++export const reactHooksRuleLevels = {
++  files: [
++    '**/*.ts',
++    '**/*.cts',
++    '**/*.mts',
++    '**/*.tsx',
++    '**/*.js',
++    '**/*.cjs',
++    '**/*.mjs',
++    '**/*.jsx',
++  ],
++  rules: {
++    'react-hooks/incompatible-library': 'error',
++    'react-hooks/unsupported-syntax': 'error',
++  },
++}
+diff --git a/libs/shared/utils/eslint.config.mjs b/libs/shared/utils/eslint.config.mjs
+index d34e594..1fee45c 100644
+--- a/libs/shared/utils/eslint.config.mjs
++++ b/libs/shared/utils/eslint.config.mjs
+@@ -1,10 +1,11 @@
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactVersionSettings } from '../../../eslint.config.mjs'
++import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
++  reactHooksRuleLevels,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+diff --git a/libs/web-ui/eslint.config.mjs b/libs/web-ui/eslint.config.mjs
+index 2c6a0f7..05b17f2 100644
+--- a/libs/web-ui/eslint.config.mjs
++++ b/libs/web-ui/eslint.config.mjs
+@@ -3,12 +3,13 @@ import storybook from 'eslint-plugin-storybook'
+ 
+ import { fileURLToPath } from 'node:url'
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactVersionSettings } from '../../eslint.config.mjs'
++import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
++  reactHooksRuleLevels,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+diff --git a/libs/web/eslint.config.mjs b/libs/web/eslint.config.mjs
+index 0171636..18e484a 100644
+--- a/libs/web/eslint.config.mjs
++++ b/libs/web/eslint.config.mjs
+@@ -1,10 +1,11 @@
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactVersionSettings } from '../../eslint.config.mjs'
++import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
++  reactHooksRuleLevels,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+diff --git a/nx.json b/nx.json
+index 5aaa4e5..8f22698 100644
+--- a/nx.json
++++ b/nx.json
+@@ -138,7 +138,33 @@
+           "passWithNoTests": true
+         }
+       }
+-    ]
++    ],
++    "lint": {
++      "cache": true,
++      "inputs": [
++        "default",
++        "^default",
++        "{workspaceRoot}/.eslintrc.json",
++        "{workspaceRoot}/.eslintignore",
++        "{workspaceRoot}/eslint.config.mjs",
++        "{workspaceRoot}/tools/eslint-rules/**/*",
++        {
++          "externalDependencies": [
++            "eslint",
++            "@eslint/js",
++            "@nx/eslint-plugin",
++            "typescript-eslint",
++            "eslint-plugin-react",
++            "eslint-plugin-react-hooks",
++            "eslint-plugin-jsx-a11y",
++            "eslint-plugin-import",
++            "eslint-plugin-storybook",
++            "eslint-config-prettier",
++            "jsonc-eslint-parser"
++          ]
++        }
++      ]
++    }
+   },
+   "generators": {
+     "@nx/react": {

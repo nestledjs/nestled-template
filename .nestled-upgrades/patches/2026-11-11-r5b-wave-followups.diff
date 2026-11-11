@@ -1,0 +1,1157 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index b32629e..7dfc827 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -170,11 +170,16 @@ jobs:
+ 
+   # The enforced secret scan. The pre-commit hook runs gitleaks too, but only where it is installed
+   # and only for commits made with the hook, so this is the layer that cannot be skipped. On a pull
+-  # request it scans the pull request's commits. On a develop push it scans the WHOLE history: a
+-  # newer push replaces a queued run (see the concurrency group), so scanning only the pushed range
+-  # would leave the replaced run's commits unscanned for good. The whole history takes seconds. The
+-  # binary is downloaded from the gitleaks release and checked against its published SHA-256; the
+-  # gitleaks GitHub Action needs a paid licence for organisation repositories.
++  # request it scans ONLY the pull request's commits. On a develop push it scans the WHOLE history:
++  # a newer push replaces a queued run (see the concurrency group), so scanning only the pushed
++  # range would leave the replaced run's commits unscanned for good. The whole history takes
++  # seconds. A green pull request therefore says nothing about older history: before the first
++  # merge after enabling this full-history scan, run `gitleaks git .` from a full clone (not a
++  # shallow one) and resolve every finding, or the develop push goes red on commits the pull
++  # request never scanned. A history finding that cannot be rewritten is ignored by fingerprint in
++  # .gitleaksignore (see .gitleaks.toml). The binary is downloaded from the gitleaks release and
++  # checked against its published SHA-256; the gitleaks GitHub Action needs a paid licence for
++  # organisation repositories.
+   gitleaks:
+     name: Secret scan (gitleaks)
+     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+diff --git a/.gitleaks.toml b/.gitleaks.toml
+index 3a0c0d3..c624e49 100644
+--- a/.gitleaks.toml
++++ b/.gitleaks.toml
+@@ -2,6 +2,12 @@
+ # It extends gitleaks' default rules; the allowlist below names only test fixtures that look like
+ # secrets and are not. Add to it only a value that is provably not a credential (a placeholder in a
+ # spec), never a real key: a leaked key is rotated, not allowlisted.
++#
++# A finding in history that cannot be rewritten (a key committed long ago and since rotated, or a
++# placeholder in an old commit) is ignored by its fingerprint, one per line, in .gitleaksignore at
++# the repository root. gitleaks 8.30 has no fingerprint allowlist in this file. gitleaks prints the
++# fingerprint with each finding (`<commit>:<file>:<rule>:<line>`); add only findings you have
++# checked and, for a real key, rotated.
+ title = "Nestled gitleaks configuration"
+ 
+ [extend]
+diff --git a/.gitleaksignore b/.gitleaksignore
+new file mode 100644
+index 0000000..f58988f
+--- /dev/null
++++ b/.gitleaksignore
+@@ -0,0 +1,8 @@
++# gitleaks findings to ignore, by fingerprint: one `<commit>:<file>:<rule-id>:<line>` per line, as
++# gitleaks prints it with each finding. gitleaks reads this file from the repository root, in CI's
++# gitleaks job, the pre-commit hook and a local `gitleaks git .`.
++#
++# Only for a finding in history that cannot be rewritten: a key committed in the past and since
++# rotated, or a placeholder in an old commit. Say why above each entry. A value that is provably
++# not a credential, wherever it appears, belongs in .gitleaks.toml's allowlist instead, and a live
++# secret is rotated, never listed here. The template has no history findings, so this lists none.
+diff --git a/apps/web/app/routes/accept-invitation.tsx b/apps/web/app/routes/accept-invitation.tsx
+index acde4db..7bfd248 100644
+--- a/apps/web/app/routes/accept-invitation.tsx
++++ b/apps/web/app/routes/accept-invitation.tsx
+@@ -1,4 +1,4 @@
+-import React, { useCallback, useEffect, useState } from 'react'
++import React, { useCallback, useEffect, useRef, useState } from 'react'
+ import { useNavigate, useSearchParams } from 'react-router'
+ import {
+   CheckCircleIcon,
+@@ -125,30 +125,52 @@ export default function AcceptInvitation() {
+   const [failedToken, setFailedToken] = useState<string | null>(null)
+   const autoAccepting = Boolean(user && token && invitationDetails) && failedToken !== token
+ 
++  // An invitation token is single-use, so it is accepted once per token however often the effect
++  // below re-runs for it (React StrictMode replays effects, and a new `user` or `invitationDetails`
++  // object re-runs it too). Each token's request is stored for the route's lifetime, and every run
++  // for that token observes that one request, including a run after moving to another invitation
++  // link and back while it is still pending. A failed attempt stays stored, so a re-run shows its
++  // error rather than retrying in a loop.
++  const acceptancesRef = useRef(new Map<string, Promise<unknown>>())
++
+   // Settles in promise callbacks, which always run after the effect that starts it returns, so no
+   // state is set synchronously inside that effect. A synchronous throw from the mutation still
+-  // lands in the catch: the Promise constructor turns it into a rejection. An attempt that a newer
+-  // one has superseded (the effect re-ran, for example for another invitation link) settles without
+-  // touching state or navigating, so a late result can't overwrite the current invitation's.
++  // lands in the catch: starting it inside `.then` turns it into a rejection. A run that a newer
++  // one has superseded (the effect re-ran, for the same invitation or for another invitation link)
++  // settles without touching state or navigating, so a late result can't overwrite the current
++  // run's, and the current run still sees the shared request through to its redirect. The
++  // redirect is delayed, so its timer checks `isCurrent()` again when it fires and is cleared when
++  // the run is superseded: a run that has moved on (to another invitation link, away from the
++  // route, or to an effect re-run after acceptance) never navigates, and only one run redirects.
+   const acceptInvitationAsync = useCallback(
+-    (isCurrent: () => boolean) => {
++    (
++      isCurrent: () => boolean,
++      onRedirectScheduled: (timer: ReturnType<typeof setTimeout>) => void,
++    ) => {
+       if (!token) return Promise.resolve()
+ 
+-      return new Promise(resolve => {
+-        resolve(
++      let acceptance = acceptancesRef.current.get(token)
++      if (!acceptance) {
++        acceptance = Promise.resolve().then(() =>
+           acceptInvitation({
+             variables: {
+               input: { token },
+             },
+           }),
+         )
+-      })
++        acceptancesRef.current.set(token, acceptance)
++      }
++
++      return acceptance
+         .then(() => {
+           if (!isCurrent()) return
+           // Redirect to members area
+-          setTimeout(() => {
+-            navigate('/members', { replace: true })
+-          }, 1500)
++          onRedirectScheduled(
++            setTimeout(() => {
++              if (!isCurrent()) return
++              navigate('/members', { replace: true })
++            }, 1500),
++          )
+         })
+         .catch(error => {
+           if (!isCurrent()) return
+@@ -165,9 +187,16 @@ export default function AcceptInvitation() {
+   useEffect(() => {
+     if (!(user && token && invitationDetails)) return
+     let current = true
+-    void acceptInvitationAsync(() => current)
++    let redirectTimer: ReturnType<typeof setTimeout> | undefined
++    void acceptInvitationAsync(
++      () => current,
++      timer => {
++        redirectTimer = timer
++      },
++    )
+     return () => {
+       current = false
++      clearTimeout(redirectTimer)
+     }
+   }, [acceptInvitationAsync, invitationDetails, token, user])
+ 
+diff --git a/apps/web/tests/routes/accept-invitation.spec.tsx b/apps/web/tests/routes/accept-invitation.spec.tsx
+index 98f3af3..1bca339 100644
+--- a/apps/web/tests/routes/accept-invitation.spec.tsx
++++ b/apps/web/tests/routes/accept-invitation.spec.tsx
+@@ -2,7 +2,7 @@ import React from 'react'
+ import { render, screen, waitFor } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+ import { createTestRouter } from '../helpers/createTestRouter'
+-import { Link } from 'react-router'
++import { Link, useLocation } from 'react-router'
+ import { describe, it, expect, vi, beforeEach } from 'vitest'
+ import AcceptInvitation, {
+   buildRegisterWithInvitationInput,
+@@ -399,6 +399,201 @@ describe('AcceptInvitation Component', () => {
+     })
+   })
+ 
++  describe('One acceptance per invitation token', () => {
++    const loggedInUser = () => ({
++      user: { id: 'user-123', firstName: 'Test', lastName: 'User' } as any,
++      organizations: [],
++      activeOrganization: null,
++      activeOrganizationMember: null,
++    })
++
++    // Renders the route beside a button that re-renders it, and a /members route to redirect to.
++    function RerenderableAcceptInvitation() {
++      const [, setRenders] = React.useState(0)
++      return (
++        <>
++          <button type="button" onClick={() => setRenders(count => count + 1)}>
++            Re-render
++          </button>
++          <AcceptInvitation />
++        </>
++      )
++    }
++
++    const renderWithMembersRoute = (strict: boolean) => {
++      const ReactRouterStub = createTestRouter([
++        { path: '/accept-invitation', Component: RerenderableAcceptInvitation },
++        { path: '/members', Component: () => <p>Members area</p> },
++      ])
++      const router = <ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />
++      return render(strict ? <React.StrictMode>{router}</React.StrictMode> : router)
++    }
++
++    it('sends one acceptance under StrictMode and still redirects to /members', async () => {
++      vi.mocked(useGlobalCtx).mockReturnValue(loggedInUser())
++      mockAcceptInvitation.mockResolvedValue({
++        data: { acceptOrganizationInvitation: { success: true } },
++      })
++
++      renderWithMembersRoute(true)
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++
++    it('sends one acceptance when a re-render brings a new user object, then redirects', async () => {
++      // A fresh user object on every render, as a context that rebuilds its value gives.
++      vi.mocked(useGlobalCtx).mockImplementation(loggedInUser)
++      let resolveAcceptance: (value: unknown) => void = () => undefined
++      mockAcceptInvitation.mockReturnValue(
++        new Promise(resolve => {
++          resolveAcceptance = resolve
++        }),
++      )
++
++      renderWithMembersRoute(false)
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++
++      // The effect re-runs for the same invitation while its acceptance is in flight.
++      await userEvent.click(screen.getByText('Re-render'))
++      resolveAcceptance({ data: { acceptOrganizationInvitation: { success: true } } })
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++
++    it('keeps observing a pending acceptance after moving to another invitation and back', async () => {
++      vi.mocked(useGlobalCtx).mockReturnValue(loggedInUser())
++      let resolveFirst: (value: unknown) => void = () => undefined
++      mockAcceptInvitation
++        .mockReturnValueOnce(
++          new Promise(resolve => {
++            resolveFirst = resolve
++          }),
++        )
++        .mockReturnValueOnce(new Promise(() => undefined))
++        .mockRejectedValue(new Error('Invitation already used'))
++
++      const ReactRouterStub = createTestRouter([
++        {
++          path: '/accept-invitation',
++          Component: () => (
++            <>
++              <Link to="/accept-invitation?token=second-token">Second invitation</Link>
++              <Link to="/accept-invitation?token=test-token">First invitation</Link>
++              <AcceptInvitation />
++            </>
++          ),
++        },
++        { path: '/members', Component: () => <p>Members area</p> },
++      ])
++      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
++
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++      await userEvent.click(screen.getByText('Second invitation'))
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(2))
++      await userEvent.click(screen.getByText('First invitation'))
++
++      // The first invitation's original request is still the one observed; it succeeds.
++      resolveFirst({ data: { acceptOrganizationInvitation: { success: true } } })
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(2)
++      expect(screen.queryByText('Invitation already used')).not.toBeInTheDocument()
++    })
++
++    it('does not redirect for an accepted invitation the user has moved away from', async () => {
++      vi.mocked(useGlobalCtx).mockReturnValue(loggedInUser())
++      // The first invitation is accepted at once; the second stays in flight.
++      mockAcceptInvitation
++        .mockResolvedValueOnce({ data: { acceptOrganizationInvitation: { success: true } } })
++        .mockReturnValueOnce(new Promise(() => undefined))
++
++      const ReactRouterStub = createTestRouter([
++        {
++          path: '/accept-invitation',
++          Component: () => (
++            <>
++              <Link to="/accept-invitation?token=second-token">Second invitation</Link>
++              <AcceptInvitation />
++            </>
++          ),
++        },
++        { path: '/members', Component: () => <p>Members area</p> },
++      ])
++      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
++
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++      // Let the first acceptance resolve and schedule its redirect, then follow the second link
++      // within the redirect delay.
++      await new Promise(resolve => setTimeout(resolve, 50))
++      await userEvent.click(screen.getByText('Second invitation'))
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(2))
++
++      await new Promise(resolve => setTimeout(resolve, 1800))
++
++      expect(screen.queryByText('Members area')).not.toBeInTheDocument()
++      expect(screen.getByText('Welcome!')).toBeInTheDocument()
++    })
++
++    it('redirects once when the effect re-runs after the acceptance succeeded', async () => {
++      // A fresh user object on every render, so a re-render re-runs the acceptance effect.
++      vi.mocked(useGlobalCtx).mockImplementation(loggedInUser)
++      mockAcceptInvitation.mockResolvedValue({
++        data: { acceptOrganizationInvitation: { success: true } },
++      })
++      // Every navigation to /members gives a new location key; one key means one redirect.
++      const membersLocationKeys = new Set<string>()
++      function MembersArea() {
++        const { key } = useLocation()
++        React.useEffect(() => {
++          membersLocationKeys.add(key)
++        }, [key])
++        return <p>Members area</p>
++      }
++
++      const ReactRouterStub = createTestRouter([
++        { path: '/accept-invitation', Component: RerenderableAcceptInvitation },
++        { path: '/members', Component: MembersArea },
++      ])
++      render(<ReactRouterStub initialEntries={['/accept-invitation?token=test-token']} />)
++
++      await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledTimes(1))
++      // The acceptance has resolved and its redirect is scheduled when the effect re-runs.
++      await new Promise(resolve => setTimeout(resolve, 50))
++      await userEvent.click(screen.getByText('Re-render'))
++
++      await waitFor(() => expect(screen.getByText('Members area')).toBeInTheDocument(), {
++        timeout: 3000,
++      })
++      // Long enough for a second, superseded redirect timer to have fired.
++      await new Promise(resolve => setTimeout(resolve, 1700))
++
++      expect(membersLocationKeys.size).toBe(1)
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++
++    it('shows a failed acceptance once instead of retrying it on a re-render', async () => {
++      vi.mocked(useGlobalCtx).mockImplementation(loggedInUser)
++      mockAcceptInvitation.mockRejectedValue(new Error('Invitation expired'))
++
++      renderWithMembersRoute(false)
++      await waitFor(() => expect(screen.getByText('Invitation expired')).toBeInTheDocument())
++
++      await userEvent.click(screen.getByText('Re-render'))
++      await new Promise(resolve => setTimeout(resolve, 0))
++
++      expect(screen.getByText('Invitation expired')).toBeInTheDocument()
++      expect(mockAcceptInvitation).toHaveBeenCalledTimes(1)
++    })
++  })
++
+   describe('Signup Flow', () => {
+     it('builds invitation registration input from the invitation email', () => {
+       expect(
+diff --git a/apps/web/tests/vite-config-serve.spec.ts b/apps/web/tests/vite-config-serve.spec.ts
+new file mode 100644
+index 0000000..8d21758
+--- /dev/null
++++ b/apps/web/tests/vite-config-serve.spec.ts
+@@ -0,0 +1,35 @@
++// @vitest-environment node
++import { readFileSync } from 'node:fs'
++import path from 'node:path'
++import type { ConfigEnv, UserConfig, UserConfigFnObject } from 'vite'
++import { describe, expect, it } from 'vitest'
++import viteConfig from '../vite.config'
++
++// `nx serve web --configuration=<name>` runs `vite <args>` from apps/web. Before the Nx 24
++// migration the @nx/vite:dev-server executor set `hmr: false` for the production configuration;
++// with plain `vite` that has to come from the config itself, keyed on the target's --mode.
++const project = JSON.parse(
++  readFileSync(path.resolve(import.meta.dirname, '../project.json'), 'utf8'),
++) as { targets: { serve: { configurations: Record<string, { args: string }> } } }
++
++function serveMode(configuration: string): string {
++  const args = project.targets.serve.configurations[configuration].args
++  const mode = /--mode[ =](\S+)/.exec(args)?.[1]
++  if (!mode) throw new Error(`serve:${configuration} passes no --mode (${args})`)
++  return mode
++}
++
++function serveConfig(configuration: string): UserConfig {
++  const env: ConfigEnv = { command: 'serve', mode: serveMode(configuration) }
++  return (viteConfig as UserConfigFnObject)(env)
++}
++
++describe('nx serve web', () => {
++  it('serves the production configuration without hot reload', () => {
++    expect(serveConfig('production').server?.hmr).toBe(false)
++  })
++
++  it('keeps hot reload for the development configuration', () => {
++    expect(serveConfig('development').server?.hmr).toBe(true)
++  })
++})
+diff --git a/libs/web-ui/README.md b/libs/web-ui/README.md
+index d262ca0..69f014d 100644
+--- a/libs/web-ui/README.md
++++ b/libs/web-ui/README.md
+@@ -6,6 +6,11 @@ This library was generated with [Nx](https://nx.dev).
+ 
+ Run `nx test web-ui` to execute the unit tests via [Vitest](https://vitest.dev/).
+ 
++The Vite config is `vite.config.mts`, not `vite.config.ts`. This library has no `package.json`, so
++Node treats a `.ts` config here as CommonJS, and Nx's project-graph build `require()`s it. The
++ESM-only `@vitejs/plugin-react` then fails at random in CI ("not yet fully loaded"). An `.mts` file
++always loads as ESM. `vitest.config.mts` imports it as `./vite.config.mts`.
++
+ ## UI Migration Best Practices (Storybook 9, Vitest, React Router 7)
+ 
+ - Always update `@nestled-template` imports to `@nestled-template`, and maintain a mapping table for known package moves.
+diff --git a/libs/web-ui/tsconfig.spec.json b/libs/web-ui/tsconfig.spec.json
+index 2ff3960..c1d3f1e 100644
+--- a/libs/web-ui/tsconfig.spec.json
++++ b/libs/web-ui/tsconfig.spec.json
+@@ -5,7 +5,11 @@
+     // vitest.config.mts imports @storybook/addon-vitest, whose types are reachable only through
+     // package `exports`. Vite/Vitest resolve modules as a bundler does, so check them that way.
+     "moduleResolution": "bundler",
+-    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
++    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"],
++    // vitest.config.mts imports './vite.config.mts' by its full name: an ES module config is
++    // resolved with its extension.
++    "allowImportingTsExtensions": true,
++    "noEmit": true
+   },
+   "include": [
+     "vite.config.ts",
+diff --git a/libs/web-ui/vite.config.ts b/libs/web-ui/vite.config.mts
+similarity index 69%
+rename from libs/web-ui/vite.config.ts
+rename to libs/web-ui/vite.config.mts
+index 86ee8a4..9d41002 100644
+--- a/libs/web-ui/vite.config.ts
++++ b/libs/web-ui/vite.config.mts
+@@ -1,3 +1,9 @@
++// An ES module config (.mts), not vite.config.ts: libs/web-ui has no package.json of its own, so
++// a .ts config here is CommonJS to Node, and Nx's project-graph build `require()`s it. Its
++// @vitejs/plugin-react import is ESM-only, so that require raced the `import()` another config
++// made of the same module and failed at random in CI ("not yet fully loaded"). A .mts file is
++// always loaded as ESM. Keep any config that loads an ESM-only plugin from a CommonJS context as
++// .mts.
+ import { defineConfig } from 'vite'
+ import react from '@vitejs/plugin-react'
+ 
+diff --git a/libs/web-ui/vitest.config.mts b/libs/web-ui/vitest.config.mts
+index 0ae3661..b70ddd1 100644
+--- a/libs/web-ui/vitest.config.mts
++++ b/libs/web-ui/vitest.config.mts
+@@ -1,7 +1,7 @@
+ import { defineConfig, mergeConfig } from 'vitest/config'
+ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
+ import { playwright } from '@vitest/browser-playwright'
+-import viteConfig from './vite.config'
++import viteConfig from './vite.config.mts'
+ import path from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ 
+diff --git a/libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx b/libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx
+new file mode 100644
+index 0000000..a1f206d
+--- /dev/null
++++ b/libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx
+@@ -0,0 +1,235 @@
++import React from 'react'
++import { act, render } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { useInfiniteApolloList, type UseInfiniteApolloListOptions } from './useInfiniteApolloList'
++
++// jsdom has no IntersectionObserver. This one records every instance so a test can report the
++// sentinel as (not) intersecting, and whether it was disconnected.
++class FakeIntersectionObserver {
++  static instances: FakeIntersectionObserver[] = []
++  readonly observed: Element[] = []
++  disconnected = false
++
++  constructor(private readonly callback: IntersectionObserverCallback) {
++    FakeIntersectionObserver.instances.push(this)
++  }
++
++  observe(node: Element) {
++    this.observed.push(node)
++  }
++
++  disconnect() {
++    this.disconnected = true
++  }
++
++  report(isIntersecting: boolean) {
++    this.callback(
++      [{ isIntersecting } as IntersectionObserverEntry],
++      this as unknown as IntersectionObserver,
++    )
++  }
++
++  static latest(): FakeIntersectionObserver {
++    const live = FakeIntersectionObserver.instances.filter(observer => !observer.disconnected)
++    const [latest] = live.slice(-1)
++    if (!latest) throw new Error('no live IntersectionObserver')
++    return latest
++  }
++}
++
++type HookResult = ReturnType<typeof useInfiniteApolloList>
++
++function Harness({
++  options,
++  onResult,
++  withLoader = true,
++}: {
++  readonly options: UseInfiniteApolloListOptions
++  readonly onResult: (result: HookResult) => void
++  readonly withLoader?: boolean
++}) {
++  const result = useInfiniteApolloList(options)
++  const { loaderRef } = result
++  // Reported after every render, once React has committed it.
++  React.useEffect(() => onResult(result))
++  return withLoader ? <div ref={loaderRef} data-testid="loader" /> : null
++}
++
++function deferred<T>() {
++  let resolve: (value: T) => void = () => undefined
++  const promise = new Promise<T>(res => {
++    resolve = res
++  })
++  return { promise, resolve }
++}
++
++function setup(overrides: Partial<UseInfiniteApolloListOptions> = {}, withLoader = true) {
++  let latest: HookResult | undefined
++  const options: UseInfiniteApolloListOptions = {
++    pageSize: 10,
++    fetchMorePage: vi.fn().mockResolvedValue(10),
++    getCurrentCount: vi.fn().mockReturnValue(10),
++    ...overrides,
++  }
++  const onResult = (result: HookResult) => {
++    latest = result
++  }
++  const view = render(<Harness options={options} onResult={onResult} withLoader={withLoader} />)
++  return {
++    options,
++    view,
++    result: () => {
++      if (!latest) throw new Error('hook has not rendered')
++      return latest
++    },
++    rerender: (next: Partial<UseInfiniteApolloListOptions>) => {
++      Object.assign(options, next)
++      view.rerender(
++        <Harness options={{ ...options }} onResult={onResult} withLoader={withLoader} />,
++      )
++    },
++  }
++}
++
++describe('useInfiniteApolloList', () => {
++  beforeEach(() => {
++    FakeIntersectionObserver.instances = []
++    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++  })
++
++  it('observes the loader element', () => {
++    const { view } = setup()
++
++    expect(FakeIntersectionObserver.latest().observed).toEqual([view.getByTestId('loader')])
++  })
++
++  it('fetches the next page from the current count when the loader comes into view', async () => {
++    const page = deferred<number>()
++    const fetchMorePage = vi.fn().mockReturnValue(page.promise)
++    const { result } = setup({ fetchMorePage, getCurrentCount: () => 20 })
++
++    act(() => FakeIntersectionObserver.latest().report(true))
++
++    expect(fetchMorePage).toHaveBeenCalledWith(20)
++    expect(result().isLoading).toBe(true)
++
++    await act(async () => page.resolve(10))
++
++    expect(result().isLoading).toBe(false)
++    expect(result().allLoaded).toBe(false)
++  })
++
++  it('ignores the loader leaving view', () => {
++    const { options } = setup()
++
++    act(() => FakeIntersectionObserver.latest().report(false))
++
++    expect(options.fetchMorePage).not.toHaveBeenCalled()
++  })
++
++  it('fetches one page at a time', () => {
++    const fetchMorePage = vi.fn().mockReturnValue(new Promise(() => undefined))
++    setup({ fetchMorePage })
++
++    act(() => FakeIntersectionObserver.latest().report(true))
++    act(() => FakeIntersectionObserver.latest().report(true))
++
++    expect(fetchMorePage).toHaveBeenCalledTimes(1)
++  })
++
++  it('marks the list loaded after a short page and stops fetching', async () => {
++    const fetchMorePage = vi.fn().mockResolvedValue(3)
++    const { result } = setup({ fetchMorePage })
++
++    await act(async () => FakeIntersectionObserver.latest().report(true))
++
++    expect(result().allLoaded).toBe(true)
++    expect(result().isLoading).toBe(false)
++
++    act(() => FakeIntersectionObserver.latest().report(true))
++    expect(fetchMorePage).toHaveBeenCalledTimes(1)
++  })
++
++  it('does not observe while disabled, and starts when enabled', () => {
++    const { rerender } = setup({ disabled: true })
++
++    expect(FakeIntersectionObserver.instances).toHaveLength(0)
++
++    rerender({ disabled: false })
++    expect(FakeIntersectionObserver.instances).toHaveLength(1)
++  })
++
++  it('does not observe without a loader element', () => {
++    setup({}, false)
++
++    expect(FakeIntersectionObserver.instances).toHaveLength(0)
++  })
++
++  it('starts over when a dependency changes', async () => {
++    const fetchMorePage = vi.fn().mockResolvedValue(3)
++    const { result, rerender } = setup({ fetchMorePage, deps: ['all'] })
++
++    await act(async () => FakeIntersectionObserver.latest().report(true))
++    expect(result().allLoaded).toBe(true)
++
++    rerender({ deps: ['active'] })
++
++    expect(result().allLoaded).toBe(false)
++    expect(result().isLoading).toBe(false)
++
++    await act(async () => FakeIntersectionObserver.latest().report(true))
++    expect(fetchMorePage).toHaveBeenCalledTimes(2)
++  })
++
++  it('keeps its state when the dependencies are unchanged', async () => {
++    const fetchMorePage = vi.fn().mockResolvedValue(3)
++    const filter = { status: 'open' }
++    const { result, rerender } = setup({ fetchMorePage, deps: [filter, 1] })
++
++    await act(async () => FakeIntersectionObserver.latest().report(true))
++    rerender({ deps: [filter, 1] })
++
++    expect(result().allLoaded).toBe(true)
++  })
++
++  it('starts over when the number of dependencies changes', async () => {
++    const { result, rerender } = setup({
++      fetchMorePage: vi.fn().mockResolvedValue(3),
++      deps: ['a'],
++    })
++
++    await act(async () => FakeIntersectionObserver.latest().report(true))
++    rerender({ deps: ['a', 'b'] })
++
++    expect(result().allLoaded).toBe(false)
++  })
++
++  it('reset() clears the loaded and loading flags', () => {
++    const { result } = setup()
++
++    act(() => {
++      result().setAllLoaded(true)
++      result().setIsLoading(true)
++    })
++    expect(result().allLoaded).toBe(true)
++    expect(result().isLoading).toBe(true)
++
++    act(() => result().reset())
++
++    expect(result().allLoaded).toBe(false)
++    expect(result().isLoading).toBe(false)
++  })
++
++  it('disconnects its observer on unmount', () => {
++    const { view } = setup()
++    const observer = FakeIntersectionObserver.latest()
++
++    view.unmount()
++
++    expect(observer.disconnected).toBe(true)
++  })
++})
+diff --git a/scripts/normalize-lcov-paths.spec.mjs b/scripts/normalize-lcov-paths.spec.mjs
+new file mode 100644
+index 0000000..19933eb
+--- /dev/null
++++ b/scripts/normalize-lcov-paths.spec.mjs
+@@ -0,0 +1,119 @@
++import assert from 'node:assert/strict'
++import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { dirname, join } from 'node:path'
++import { after, describe, it } from 'node:test'
++
++import {
++  findLcovReports,
++  normalizeLcov,
++  normalizeLcovReports,
++  normalizeSourceFile,
++} from './normalize-lcov-paths.ts'
++
++const repoRoot = '/work/repo'
++
++describe('normalizeSourceFile', () => {
++  it('prefixes a path Jest wrote relative to an api library root', () => {
++    assert.equal(
++      normalizeSourceFile('SF:src/lib/auth/session-cookie.ts', 'libs/api/utils', repoRoot),
++      'SF:libs/api/utils/src/lib/auth/session-cookie.ts',
++    )
++  })
++
++  it('strips the repo root from an absolute path', () => {
++    assert.equal(
++      normalizeSourceFile('SF:/work/repo/libs/api/custom/src/a.ts', 'libs/api/custom', repoRoot),
++      'SF:libs/api/custom/src/a.ts',
++    )
++  })
++
++  it('keeps a path that is already repo-relative', () => {
++    assert.equal(
++      normalizeSourceFile('SF:libs/api/config/src/a.ts', 'libs/api/config', repoRoot),
++      'SF:libs/api/config/src/a.ts',
++    )
++  })
++
++  it('prefixes app/ and tests/ paths from the web app', () => {
++    assert.equal(
++      normalizeSourceFile('SF:app/root.tsx', 'apps/web', repoRoot),
++      'SF:apps/web/app/root.tsx',
++    )
++    assert.equal(
++      normalizeSourceFile('SF:tests/helpers/x.ts', 'apps/web', repoRoot),
++      'SF:apps/web/tests/helpers/x.ts',
++    )
++  })
++
++  it('resolves a path that climbs out of the project', () => {
++    assert.equal(
++      normalizeSourceFile('SF:../../libs/web/src/a.ts', 'apps/web', repoRoot),
++      'SF:libs/web/src/a.ts',
++    )
++  })
++
++  it('converts Windows separators', () => {
++    assert.equal(
++      normalizeSourceFile('SF:C:\\work\\repo\\libs\\web\\src\\a.ts', 'libs/web', 'C:\\work\\repo'),
++      'SF:libs/web/src/a.ts',
++    )
++  })
++
++  it('leaves non-SF lines alone', () => {
++    assert.equal(normalizeSourceFile('DA:1,1', 'libs/web', repoRoot), 'DA:1,1')
++  })
++
++  it('is idempotent', () => {
++    const lcov = 'TN:\nSF:src/a.ts\nDA:1,1\nend_of_record\n'
++    const once = normalizeLcov(lcov, 'libs/api/utils', repoRoot)
++    assert.equal(normalizeLcov(once, 'libs/api/utils', repoRoot), once)
++  })
++})
++
++describe('normalizeLcovReports', () => {
++  const root = mkdtempSync(join(tmpdir(), 'lcov-paths-'))
++  after(() => rmSync(root, { recursive: true, force: true }))
++
++  const write = (path, content) => {
++    mkdirSync(dirname(join(root, path)), { recursive: true })
++    writeFileSync(join(root, path), content)
++  }
++
++  write('coverage/libs/api/utils/lcov.info', 'TN:\nSF:src/lib/a.ts\nend_of_record\n')
++  write('coverage/libs/api/core/data-access/lcov.info', 'TN:\nSF:src/lib/b.ts\nend_of_record\n')
++  write('coverage/libs/api/utils/lcov-report/index.html', '<html></html>')
++  write('coverage/apps/web/lcov.info', 'TN:\nSF:apps/web/app/root.tsx\nend_of_record\n')
++
++  it('finds every project report under coverage/, with its project root', () => {
++    assert.deepEqual(findLcovReports(root), [
++      { path: 'coverage/apps/web/lcov.info', sourcePrefix: 'apps/web' },
++      {
++        path: 'coverage/libs/api/core/data-access/lcov.info',
++        sourcePrefix: 'libs/api/core/data-access',
++      },
++      { path: 'coverage/libs/api/utils/lcov.info', sourcePrefix: 'libs/api/utils' },
++    ])
++  })
++
++  it('rewrites the api libraries’ Jest reports to repo-relative paths', () => {
++    const changed = normalizeLcovReports(root)
++
++    assert.deepEqual(changed, [
++      'coverage/libs/api/core/data-access/lcov.info',
++      'coverage/libs/api/utils/lcov.info',
++    ])
++    assert.match(
++      readFileSync(join(root, 'coverage/libs/api/utils/lcov.info'), 'utf8'),
++      /^SF:libs\/api\/utils\/src\/lib\/a\.ts$/m,
++    )
++    assert.match(
++      readFileSync(join(root, 'coverage/libs/api/core/data-access/lcov.info'), 'utf8'),
++      /^SF:libs\/api\/core\/data-access\/src\/lib\/b\.ts$/m,
++    )
++  })
++
++  it('returns nothing when there is no coverage directory', () => {
++    assert.deepEqual(normalizeLcovReports(join(root, 'missing')), [])
++  })
++})
+diff --git a/scripts/normalize-lcov-paths.ts b/scripts/normalize-lcov-paths.ts
+index 10074d9..04c49b3 100644
+--- a/scripts/normalize-lcov-paths.ts
++++ b/scripts/normalize-lcov-paths.ts
+@@ -1,61 +1,96 @@
+-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
++import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
++import { join, posix } from 'node:path'
++import { pathToFileURL } from 'node:url'
+ 
+-type LcovReport = {
++// Rewrites every coverage/<project root>/lcov.info so its `SF:` paths are repo-relative, which is
++// what SonarCloud matches against its sources. Test runners write them relative to wherever they
++// ran: Vitest to the config's root, and Jest under Nx 24 to each project's root (it runs from
++// there), so an api library's report says `SF:src/lib/x.ts` for libs/api/utils/src/lib/x.ts and
++// Sonar finds no such file. Every report is found under coverage/ rather than listed, so a new
++// project's report is not silently left with paths Sonar cannot match.
++
++export type LcovReport = {
+   path: string
+   sourcePrefix: string
+ }
+ 
+-const reports: LcovReport[] = [
+-  { path: 'coverage/apps/web/lcov.info', sourcePrefix: 'apps/web' },
+-  { path: 'coverage/apps/api-e2e/lcov.info', sourcePrefix: 'apps/api-e2e' },
+-  { path: 'coverage/libs/web-ui/lcov.info', sourcePrefix: 'libs/web-ui' },
+-  { path: 'coverage/libs/web/lcov.info', sourcePrefix: 'libs/web' },
+-  { path: 'coverage/libs/data-browser/lcov.info', sourcePrefix: 'libs/data-browser' },
+-  { path: 'coverage/libs/shared-components/lcov.info', sourcePrefix: 'libs/shared-components' },
+-  { path: 'coverage/libs/shared/apollo/lcov.info', sourcePrefix: 'libs/shared/apollo' },
+-  { path: 'coverage/libs/shared/utils/lcov.info', sourcePrefix: 'libs/shared/utils' },
+-  { path: 'coverage/libs/shared/sdk/lcov.info', sourcePrefix: 'libs/shared/sdk' },
+-]
+-
+-const repoRoot = process.cwd().replaceAll('\\', '/')
+-
+-const normalizeSourceFile = (line: string, sourcePrefix: string): string => {
++/** Top-level directories of a path written relative to the project root that produced it. */
++const PROJECT_RELATIVE_ROOTS = ['src/', 'app/', 'tests/', 'test/']
++
++/** The `SF:` line rewritten to a repo-relative path; every other line unchanged. */
++export function normalizeSourceFile(line: string, sourcePrefix: string, repoRoot: string): string {
+   if (!line.startsWith('SF:')) {
+     return line
+   }
+ 
+   const sourceFile = line.slice(3).replaceAll('\\', '/')
+-  const relativeSourceFile = sourceFile.startsWith(`${repoRoot}/`)
+-    ? sourceFile.slice(repoRoot.length + 1)
++  const root = repoRoot.replaceAll('\\', '/')
++  const relativeSourceFile = sourceFile.startsWith(`${root}/`)
++    ? sourceFile.slice(root.length + 1)
+     : sourceFile
+ 
+   if (relativeSourceFile.startsWith(`${sourcePrefix}/`)) {
+     return `SF:${relativeSourceFile}`
+   }
+ 
+-  if (
+-    relativeSourceFile.startsWith('src/') ||
+-    relativeSourceFile.startsWith('app/') ||
+-    relativeSourceFile.startsWith('tests/')
+-  ) {
++  if (PROJECT_RELATIVE_ROOTS.some(dir => relativeSourceFile.startsWith(dir))) {
+     return `SF:${sourcePrefix}/${relativeSourceFile}`
+   }
+ 
++  // `../../libs/x/src/y.ts` from a project two levels down: resolve it against the project.
++  if (relativeSourceFile.startsWith('../')) {
++    const resolved = posix.normalize(`${sourcePrefix}/${relativeSourceFile}`)
++    if (!resolved.startsWith('../')) return `SF:${resolved}`
++  }
++
+   return `SF:${relativeSourceFile}`
+ }
+ 
+-for (const report of reports) {
+-  if (!existsSync(report.path)) {
+-    continue
+-  }
+-
+-  const lcov = readFileSync(report.path, 'utf8')
+-  const normalized = lcov
++export function normalizeLcov(lcov: string, sourcePrefix: string, repoRoot: string): string {
++  return lcov
+     .split('\n')
+-    .map(line => normalizeSourceFile(line, report.sourcePrefix))
++    .map(line => normalizeSourceFile(line, sourcePrefix, repoRoot))
+     .join('\n')
++}
++
++/** Every lcov.info under `coverageDir`, each with the project root its directory names. */
++export function findLcovReports(repoRoot: string, coverageDir = 'coverage'): LcovReport[] {
++  const reports: LcovReport[] = []
++  const walk = (relativeDir: string) => {
++    const absoluteDir = join(repoRoot, relativeDir)
++    for (const entry of readdirSync(absoluteDir, { withFileTypes: true })) {
++      const relativePath = posix.join(relativeDir, entry.name)
++      if (entry.isDirectory()) {
++        // Vitest and Jest also write an HTML report beside the lcov; it holds no lcov.info.
++        if (entry.name !== 'lcov-report') walk(relativePath)
++      } else if (entry.name === 'lcov.info' && relativeDir !== coverageDir) {
++        reports.push({
++          path: relativePath,
++          sourcePrefix: posix.relative(coverageDir, relativeDir),
++        })
++      }
++    }
++  }
++  if (existsSync(join(repoRoot, coverageDir))) walk(coverageDir)
++  return reports.sort((a, b) => a.path.localeCompare(b.path))
++}
+ 
+-  if (normalized !== lcov) {
+-    writeFileSync(report.path, normalized)
++/** Rewrites each report in place; returns the paths it changed. */
++export function normalizeLcovReports(repoRoot: string, coverageDir = 'coverage'): string[] {
++  const changed: string[] = []
++  for (const report of findLcovReports(repoRoot, coverageDir)) {
++    const path = join(repoRoot, report.path)
++    const lcov = readFileSync(path, 'utf8')
++    const normalized = normalizeLcov(lcov, report.sourcePrefix, repoRoot)
++    if (normalized !== lcov) {
++      writeFileSync(path, normalized)
++      changed.push(report.path)
++    }
+   }
++  return changed
++}
++
++if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
++  const changed = normalizeLcovReports(process.cwd())
++  for (const path of changed) console.log(`normalized ${path}`)
+ }
+diff --git a/scripts/postgres-readiness.spec.mjs b/scripts/postgres-readiness.spec.mjs
+index 0783d87..db086eb 100644
+--- a/scripts/postgres-readiness.spec.mjs
++++ b/scripts/postgres-readiness.spec.mjs
+@@ -23,8 +23,21 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  */
+ const PROBED_FILES = ['scripts/db-update.mjs', 'scripts/test-db.sh', '.dev/docker-compose.yml']
+ 
+-/** Each `pg_isready` in `source`, with the text that follows it, up to the next one. */
+-function readinessProbes(source) {
++/**
++ * `source` with its comments blanked, so a comment that only mentions `pg_isready` (explaining a
++ * probe, as this file's header does) is not read as one. Shell and YAML comments start at a `#`
++ * that opens the line or follows whitespace; JavaScript has `//` (not a URL's `://`) and `/* *\/`.
++ */
++function withoutComments(source, file) {
++  if (file.endsWith('.mjs') || file.endsWith('.js') || file.endsWith('.ts')) {
++    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
++  }
++  return source.replace(/(^|\s)#.*$/gm, '$1')
++}
++
++/** Each `pg_isready` in the code of `file`, with the text that follows it, up to the next one. */
++function readinessProbes(rawSource, file = '') {
++  const source = withoutComments(rawSource, file)
+   const probes = []
+   const pattern = /pg_isready/g
+   let match = pattern.exec(source)
+@@ -44,7 +57,7 @@ function asksOverTcp(probe) {
+ describe('Postgres readiness probes', () => {
+   for (const file of PROBED_FILES) {
+     it(`${file} waits on the lasting server over TCP, not the init socket`, () => {
+-      const probes = readinessProbes(readFileSync(join(root, file), 'utf8'))
++      const probes = readinessProbes(readFileSync(join(root, file), 'utf8'), file)
+ 
+       assert.ok(probes.length > 0, `${file} has no pg_isready probe to check`)
+       for (const probe of probes) {
+@@ -74,6 +87,39 @@ describe('Postgres readiness probes', () => {
+     assert.equal(asksOverTcp(probes[1]), false)
+   })
+ 
++  it('does not read a comment that mentions pg_isready as a probe', () => {
++    const shell = readinessProbes(
++      '# Wait until pg_isready answers for the lasting server.\n' +
++        'until docker exec "$C" pg_isready -h 127.0.0.1 -U postgres; do sleep 1; done # pg_isready\n',
++      'scripts/test-db.sh',
++    )
++    const yaml = readinessProbes(
++      '    # pg_isready over TCP: the init server listens on the socket only\n' +
++        "    test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']\n",
++      '.dev/docker-compose.yml',
++    )
++    const js = readinessProbes(
++      '// pg_isready alone would ask over the socket.\n' +
++        '/* so is every other pg_isready here */\n' +
++        "spawnSync('docker', ['exec', c, 'pg_isready', '-h', '127.0.0.1'])\n",
++      'scripts/db-update.mjs',
++    )
++
++    for (const probes of [shell, yaml, js]) {
++      assert.equal(probes.length, 1)
++      assert.equal(asksOverTcp(probes[0]), true)
++    }
++  })
++
++  it('keeps a probe whose line holds a URL', () => {
++    const probes = readinessProbes(
++      "const url = 'http://localhost'; run('pg_isready', '-h', '127.0.0.1')\n",
++      'scripts/db-update.mjs',
++    )
++
++    assert.equal(probes.length, 1)
++  })
++
+   it('accepts the argv form db-update.mjs uses', () => {
+     assert.equal(asksOverTcp("'pg_isready',\n      '-h',\n      '127.0.0.1',"), true)
+   })
+diff --git a/scripts/vite-config-module-format.spec.mjs b/scripts/vite-config-module-format.spec.mjs
+new file mode 100644
+index 0000000..5c2fc82
+--- /dev/null
++++ b/scripts/vite-config-module-format.spec.mjs
+@@ -0,0 +1,93 @@
++import assert from 'node:assert/strict'
++import { execFileSync } from 'node:child_process'
++import { existsSync, readFileSync } from 'node:fs'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++
++/**
++ * No Vite or Vitest config that Node would load as CommonJS imports an ESM-only plugin.
++ *
++ * `@vitejs/plugin-react` 6 ships ESM only. A `vite.config.ts` in a directory whose nearest
++ * package.json is not `"type": "module"` (or that has none, which falls back to the repo root's) is
++ * CommonJS to Node, so Nx's project-graph build `require()`s the plugin while another config
++ * `import()`s it. In CI that failed at random with "not yet fully loaded", and never locally. A
++ * `.mts` config is always ESM. A source-shape check: the race does not reproduce on demand.
++ */
++const ESM_ONLY_PLUGINS = ['@vitejs/plugin-react']
++const CONFIG_NAME = /(^|\/)(vite|vitest)\.config\.(ts|js)$/
++
++/** The `type` of the nearest package.json at or above `dir` within the repo, or `commonjs`. */
++export function nearestPackageType(dir, readPackage) {
++  let current = dir
++  for (;;) {
++    const manifest = readPackage(current)
++    if (manifest) return manifest.type === 'module' ? 'module' : 'commonjs'
++    if (current === '.' || current === '') return 'commonjs'
++    const parent = dirname(current)
++    current = parent === current ? '.' : parent
++  }
++}
++
++/** Plugins from ESM_ONLY_PLUGINS that `source` imports, ignoring comments. */
++export function esmOnlyImports(source) {
++  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
++  return ESM_ONLY_PLUGINS.filter(plugin =>
++    new RegExp(String.raw`(from|import|require\()\s*\(?\s*['"]${plugin}['"]`).test(code),
++  )
++}
++
++/** Each tracked config that loads as CommonJS and imports an ESM-only plugin. */
++export function commonJsConfigsWithEsmOnlyPlugins(files, readFile, readPackage) {
++  return files
++    .filter(file => CONFIG_NAME.test(file))
++    .filter(file => nearestPackageType(dirname(file), readPackage) === 'commonjs')
++    .flatMap(file => esmOnlyImports(readFile(file)).map(plugin => `${file} imports ${plugin}`))
++}
++
++function readRepoPackage(dir) {
++  const path = join(root, dir, 'package.json')
++  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined
++}
++
++describe('vite config module format', () => {
++  it('loads no ESM-only plugin from a CommonJS config in this repo', () => {
++    const files = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
++      .split('\n')
++      .filter(Boolean)
++      .filter(file => existsSync(join(root, file)))
++    const offenders = commonJsConfigsWithEsmOnlyPlugins(
++      files,
++      file => readFileSync(join(root, file), 'utf8'),
++      readRepoPackage,
++    )
++    assert.deepEqual(offenders, [], 'rename these configs to .mts')
++  })
++
++  it('flags a .ts config with no package.json of its own under a CommonJS root', () => {
++    const packages = { '.': { name: 'root' } }
++    const offenders = commonJsConfigsWithEsmOnlyPlugins(
++      ['libs/ui/vite.config.ts', 'libs/ui/vite.config.mts'],
++      () => "import react from '@vitejs/plugin-react'\n",
++      dir => packages[dir],
++    )
++    assert.deepEqual(offenders, ['libs/ui/vite.config.ts imports @vitejs/plugin-react'])
++  })
++
++  it('accepts a .ts config whose nearest package.json is an ES module', () => {
++    const packages = { '.': { name: 'root' }, 'libs/ui': { type: 'module' } }
++    const offenders = commonJsConfigsWithEsmOnlyPlugins(
++      ['libs/ui/vite.config.ts'],
++      () => "import react from '@vitejs/plugin-react'\n",
++      dir => packages[dir],
++    )
++    assert.deepEqual(offenders, [])
++  })
++
++  it('ignores a plugin named only in a comment', () => {
++    assert.deepEqual(esmOnlyImports("// import react from '@vitejs/plugin-react'\n"), [])
++    assert.deepEqual(esmOnlyImports("/* from '@vitejs/plugin-react' */\nexport default {}\n"), [])
++  })
++})
+diff --git a/vitest.config.ts b/vitest.config.ts
+index de201bc..0e2ca98 100644
+--- a/vitest.config.ts
++++ b/vitest.config.ts
+@@ -5,7 +5,7 @@ export default defineConfig({
+     projects: [
+       'apps/api-e2e/vitest.config.mts',
+       'apps/web/vite.config.ts',
+-      'libs/web-ui/vite.config.ts',
++      'libs/web-ui/vite.config.mts',
+       'libs/shared/apollo/vite.config.ts',
+       'libs/shared/sdk/vite.config.ts',
+       '!vitest.config.ts',
