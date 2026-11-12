@@ -1,0 +1,815 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 7dfc827..370230a 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -174,12 +174,16 @@ jobs:
+   # a newer push replaces a queued run (see the concurrency group), so scanning only the pushed
+   # range would leave the replaced run's commits unscanned for good. The whole history takes
+   # seconds. A green pull request therefore says nothing about older history: before the first
+-  # merge after enabling this full-history scan, run `gitleaks git .` from a full clone (not a
+-  # shallow one) and resolve every finding, or the develop push goes red on commits the pull
+-  # request never scanned. A history finding that cannot be rewritten is ignored by fingerprint in
+-  # .gitleaksignore (see .gitleaks.toml). The binary is downloaded from the gitleaks release and
+-  # checked against its published SHA-256; the gitleaks GitHub Action needs a paid licence for
+-  # organisation repositories.
++  # merge after enabling this full-history scan, run `gitleaks git .` from a fresh full clone
++  # (`git clone` without `--filter` or `--depth`; a worktree or CI checkout may be partial or
++  # shallow, and then gitleaks silently misses history) and deal with every finding, or the develop
++  # push goes red on commits the pull request never scanned. A few findings that cannot be
++  # rewritten are ignored by fingerprint in .gitleaksignore. Hundreds or thousands go in a baseline
++  # instead: generate gitleaks-baseline.json from that clone, rotate anything live, and commit it;
++  # the scan below passes it with --baseline-path when it exists, so only new findings fail (see
++  # .gitleaks.toml). The binary is downloaded from the gitleaks release and checked against its
++  # published SHA-256; the gitleaks GitHub Action needs a paid licence for organisation
++  # repositories.
+   gitleaks:
+     name: Secret scan (gitleaks)
+     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+@@ -208,8 +212,13 @@ jobs:
+           else
+             range=""
+           fi
+-          echo "Scanning: ${range:-all commits}"
+-          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose ${range:+--log-opts="$range"} .
++          baseline=""
++          if [ -f gitleaks-baseline.json ]; then
++            baseline="gitleaks-baseline.json"
++          fi
++          echo "Scanning: ${range:-all commits}${baseline:+, ignoring the findings in $baseline}"
++          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose \
++            ${range:+--log-opts="$range"} ${baseline:+--baseline-path="$baseline"} .
+ 
+   # `lint` is every project's ESLint target (nx.json names the inferred target `lint`).
+   lint:
+diff --git a/.gitignore b/.gitignore
+index 176e75e..e5e22fc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -27,7 +27,9 @@ node_modules
+ # misc
+ /.sass-cache
+ /connect.lock
+-/coverage
++# Test coverage, at the root (coverage/<project root>/) and beside any project whose test config
++# keeps its runner's default `coverage` directory.
++coverage/
+ /.scannerwork
+ /libpeerconnection.log
+ npm-debug.log
+diff --git a/.gitleaks.toml b/.gitleaks.toml
+index c624e49..6480b6e 100644
+--- a/.gitleaks.toml
++++ b/.gitleaks.toml
+@@ -3,11 +3,25 @@
+ # secrets and are not. Add to it only a value that is provably not a credential (a placeholder in a
+ # spec), never a real key: a leaked key is rotated, not allowlisted.
+ #
++# Scan history from a fresh full clone: `git clone` without `--filter` or `--depth`, then
++# `gitleaks git .` in it. A worktree or CI checkout may be a partial or shallow clone, and gitleaks
++# then misses the history it lacks without saying so.
++#
+ # A finding in history that cannot be rewritten (a key committed long ago and since rotated, or a
+ # placeholder in an old commit) is ignored by its fingerprint, one per line, in .gitleaksignore at
+ # the repository root. gitleaks 8.30 has no fingerprint allowlist in this file. gitleaks prints the
+ # fingerprint with each finding (`<commit>:<file>:<rule>:<line>`); add only findings you have
+ # checked and, for a real key, rotated.
++#
++# A repository with hundreds or thousands of history findings uses a baseline instead, so that CI
++# fails only on new ones. From that full clone:
++#   gitleaks git . --redact --report-format json --report-path gitleaks-baseline.json
++# Review the report and rotate every credential in it that is still live, then commit
++# gitleaks-baseline.json at the repository root. CI's gitleaks job passes it with --baseline-path
++# whenever the file exists; locally, `gitleaks git . --baseline-path gitleaks-baseline.json`.
++# --redact keeps the secrets themselves out of the committed report, and gitleaks still matches
++# findings against it. Regenerate it only to absorb findings you have reviewed, never to silence a
++# new one.
+ title = "Nestled gitleaks configuration"
+ 
+ [extend]
+diff --git a/.gitleaksignore b/.gitleaksignore
+index f58988f..49939fd 100644
+--- a/.gitleaksignore
++++ b/.gitleaksignore
+@@ -6,3 +6,6 @@
+ # rotated, or a placeholder in an old commit. Say why above each entry. A value that is provably
+ # not a credential, wherever it appears, belongs in .gitleaks.toml's allowlist instead, and a live
+ # secret is rotated, never listed here. The template has no history findings, so this lists none.
++#
++# This file is for a handful of findings. A repository with hundreds or thousands commits a
++# gitleaks-baseline.json instead (how to make one is in .gitleaks.toml).
+diff --git a/SONARCLOUD_SETUP.md b/SONARCLOUD_SETUP.md
+index f5c4da5..0becebc 100644
+--- a/SONARCLOUD_SETUP.md
++++ b/SONARCLOUD_SETUP.md
+@@ -28,6 +28,7 @@ libs/api/prisma/src/lib/schemas/migrations/**
+ libs/api/prisma/src/lib/seed/seed-data/**
+ **/*.md
+ **/vite.config.ts
++**/vite.config.mts
+ ```
+ 
+ ---
+@@ -42,6 +43,7 @@ libs/shared/sdk/src/lib/database-models.ts
+ libs/api/prisma/src/lib/prisma-generated/**
+ libs/api/prisma/src/lib/seed/seed-data/**
+ **/vite.config.ts
++**/vite.config.mts
+ **/*.spec.ts
+ **/*.spec.tsx
+ ```
+@@ -58,6 +60,7 @@ libs/api/prisma/src/lib/seed/seed-data/**
+ **/jest.config.ts
+ **/jest.config.js
+ **/vite.config.ts
++**/vite.config.mts
+ **/jest.setup.ts
+ libs/api/generated-crud/**
+ libs/shared/sdk/src/generated/**
+diff --git a/apps/web/app/entry.server.tsx b/apps/web/app/entry.server.tsx
+index 412ce2e..4c757d6 100644
+--- a/apps/web/app/entry.server.tsx
++++ b/apps/web/app/entry.server.tsx
+@@ -147,10 +147,9 @@ export default function handleRequest(
+             resolve(forceLogoutResponse(request))
+           } else if (outcome === 'unavailable') {
+             // The API could not be reached (even if a 401 came back too), or the cause is unknown.
+-            // Keep the session: React
+-            // Router renders the root ErrorBoundary for this 503, which shows the self-recovering
+-            // screen and reloads once the API answers. A real 401 comes back on the client and
+-            // goes through the normal 401 handling there.
++            // Keep the session: React Router renders the root ErrorBoundary for this 503, which
++            // shows the self-recovering screen and reloads once the API answers. A real 401 comes
++            // back on the client and goes through the normal 401 handling there.
+             console.error('[SSR] API unavailable during the shell render — serving 503')
+             // A `Response`, not an Error, on purpose (Sonar S6671): React Router turns a rejected
+             // `Response` into that status and renders the ErrorBoundary for it; an Error is a 500.
+diff --git a/eslint.config.mjs b/eslint.config.mjs
+index c53431f..3a3dade 100644
+--- a/eslint.config.mjs
++++ b/eslint.config.mjs
+@@ -8,6 +8,8 @@ export default [
+   {
+     ignores: [
+       '**/dist',
++      // Coverage reports (lcov-report/ ships its own JS), wherever a project writes them.
++      '**/coverage',
+       '**/vite.config.*.timestamp*',
+       '**/vitest.config.*.timestamp*',
+       '**/build',
+diff --git a/scripts/gitignore-test-output.spec.mjs b/scripts/gitignore-test-output.spec.mjs
+new file mode 100644
+index 0000000..02314c0
+--- /dev/null
++++ b/scripts/gitignore-test-output.spec.mjs
+@@ -0,0 +1,52 @@
++import assert from 'node:assert/strict'
++import { execFileSync, spawnSync } from 'node:child_process'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++
++/**
++ * A test run leaves no untracked files. Coverage goes to coverage/<project root>/ at the repo root
++ * here, but a project whose Jest or Vitest config keeps the default (`coverage` beside its own
++ * config, as a tools/ plugin's often does) writes <project>/coverage/, and `/coverage` in
++ * .gitignore matched only the root one.
++ */
++const TEST_OUTPUT = [
++  'coverage/apps/web/lcov.info',
++  'coverage/libs/api/utils/shard-1/lcov.info',
++  'tools/workspace-plugin/coverage/lcov.info',
++  'tools/workspace-plugin/coverage/lcov-report/index.html',
++  'libs/some-lib/coverage/coverage-final.json',
++  'apps/some-app/coverage/lcov.info',
++]
++
++// The repository's own ignore rules only: a developer's global excludes file must not decide it.
++const git = args => ['-c', 'core.excludesFile=/dev/null', ...args]
++
++/** The paths in `paths` that .gitignore does not ignore. */
++function notIgnored(paths) {
++  return paths.filter(path => {
++    const result = spawnSync('git', git(['check-ignore', '--quiet', '--no-index', path]), {
++      cwd: root,
++    })
++    return result.status !== 0
++  })
++}
++
++describe('.gitignore', () => {
++  it('ignores coverage output wherever a project writes it', () => {
++    assert.deepEqual(notIgnored(TEST_OUTPUT), [])
++  })
++
++  it('ignores no tracked file', () => {
++    const ignoredTracked = execFileSync(
++      'git',
++      git(['ls-files', '--cached', '--ignored', '--exclude-standard']),
++      { cwd: root, encoding: 'utf8' },
++    )
++      .split('\n')
++      .filter(Boolean)
++    assert.deepEqual(ignoredTracked, [])
++  })
++})
+diff --git a/scripts/normalize-lcov-paths.lib.ts b/scripts/normalize-lcov-paths.lib.ts
+new file mode 100644
+index 0000000..de3d655
+--- /dev/null
++++ b/scripts/normalize-lcov-paths.lib.ts
+@@ -0,0 +1,106 @@
++import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
++import { join, posix } from 'node:path'
++
++// The rewrite behind `pnpm coverage:normalize-lcov` (normalize-lcov-paths.ts runs it; the spec
++// imports this file). No `import.meta` here or in the runner: a project that typechecks scripts/ as
++// CommonJS reports it as TS1343.
++//
++// Rewrites every coverage/<project root>/lcov.info so its `SF:` paths are repo-relative, which is
++// what SonarCloud matches against its sources. Test runners write them relative to wherever they
++// ran: Vitest to the config's root, and Jest under Nx 24 to each project's root (it runs from
++// there), so an api library's report says `SF:src/lib/x.ts` for libs/api/utils/src/lib/x.ts and
++// Sonar finds no such file. Every report is found under coverage/ rather than listed, so a new
++// project's report is not silently left with paths Sonar cannot match. A sharded run writes one
++// report per shard, coverage/<project root>/shard-<n>/lcov.info: the shard folder is not part of
++// the project root.
++
++export type LcovReport = {
++  path: string
++  sourcePrefix: string
++}
++
++/** Top-level directories of a path written relative to the project root that produced it. */
++const PROJECT_RELATIVE_ROOTS = ['src/', 'app/', 'tests/', 'test/']
++
++/** A folder a sharded test run adds below the project's coverage directory: `shard-1`, `shard_2`. */
++const SHARD_DIR = /^shard[-_]?\d+$/i
++
++/** The project root a report's directory names: its path under `coverageDir`, minus shard folders. */
++export function projectRootOf(reportDir: string, coverageDir = 'coverage'): string {
++  const segments = posix.relative(coverageDir, reportDir).split('/')
++  while (segments.length > 1 && SHARD_DIR.test(segments.at(-1) ?? '')) segments.pop()
++  return segments.join('/')
++}
++
++/** The `SF:` line rewritten to a repo-relative path; every other line unchanged. */
++export function normalizeSourceFile(line: string, sourcePrefix: string, repoRoot: string): string {
++  if (!line.startsWith('SF:')) {
++    return line
++  }
++
++  const sourceFile = line.slice(3).replaceAll('\\', '/')
++  const root = repoRoot.replaceAll('\\', '/')
++  const relativeSourceFile = sourceFile.startsWith(`${root}/`)
++    ? sourceFile.slice(root.length + 1)
++    : sourceFile
++
++  if (relativeSourceFile.startsWith(`${sourcePrefix}/`)) {
++    return `SF:${relativeSourceFile}`
++  }
++
++  if (PROJECT_RELATIVE_ROOTS.some(dir => relativeSourceFile.startsWith(dir))) {
++    return `SF:${sourcePrefix}/${relativeSourceFile}`
++  }
++
++  // `../../libs/x/src/y.ts` from a project two levels down: resolve it against the project.
++  if (relativeSourceFile.startsWith('../')) {
++    const resolved = posix.normalize(`${sourcePrefix}/${relativeSourceFile}`)
++    if (!resolved.startsWith('../')) return `SF:${resolved}`
++  }
++
++  return `SF:${relativeSourceFile}`
++}
++
++export function normalizeLcov(lcov: string, sourcePrefix: string, repoRoot: string): string {
++  return lcov
++    .split('\n')
++    .map(line => normalizeSourceFile(line, sourcePrefix, repoRoot))
++    .join('\n')
++}
++
++/** Every lcov.info under `coverageDir`, each with the project root its directory names. */
++export function findLcovReports(repoRoot: string, coverageDir = 'coverage'): LcovReport[] {
++  const reports: LcovReport[] = []
++  const walk = (relativeDir: string) => {
++    const absoluteDir = join(repoRoot, relativeDir)
++    for (const entry of readdirSync(absoluteDir, { withFileTypes: true })) {
++      const relativePath = posix.join(relativeDir, entry.name)
++      if (entry.isDirectory()) {
++        // Vitest and Jest also write an HTML report beside the lcov; it holds no lcov.info.
++        if (entry.name !== 'lcov-report') walk(relativePath)
++      } else if (entry.name === 'lcov.info' && relativeDir !== coverageDir) {
++        reports.push({
++          path: relativePath,
++          sourcePrefix: projectRootOf(relativeDir, coverageDir),
++        })
++      }
++    }
++  }
++  if (existsSync(join(repoRoot, coverageDir))) walk(coverageDir)
++  return reports.sort((a, b) => a.path.localeCompare(b.path))
++}
++
++/** Rewrites each report in place; returns the paths it changed. */
++export function normalizeLcovReports(repoRoot: string, coverageDir = 'coverage'): string[] {
++  const changed: string[] = []
++  for (const report of findLcovReports(repoRoot, coverageDir)) {
++    const path = join(repoRoot, report.path)
++    const lcov = readFileSync(path, 'utf8')
++    const normalized = normalizeLcov(lcov, report.sourcePrefix, repoRoot)
++    if (normalized !== lcov) {
++      writeFileSync(path, normalized)
++      changed.push(report.path)
++    }
++  }
++  return changed
++}
+diff --git a/scripts/normalize-lcov-paths.spec.mjs b/scripts/normalize-lcov-paths.spec.mjs
+index 19933eb..8965b21 100644
+--- a/scripts/normalize-lcov-paths.spec.mjs
++++ b/scripts/normalize-lcov-paths.spec.mjs
+@@ -1,5 +1,7 @@
+ import assert from 'node:assert/strict'
++import { execFileSync, spawnSync } from 'node:child_process'
+ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { createRequire } from 'node:module'
+ import { tmpdir } from 'node:os'
+ import { dirname, join } from 'node:path'
+ import { after, describe, it } from 'node:test'
+@@ -9,7 +11,13 @@ import {
+   normalizeLcov,
+   normalizeLcovReports,
+   normalizeSourceFile,
+-} from './normalize-lcov-paths.ts'
++  projectRootOf,
++} from './normalize-lcov-paths.lib.ts'
++
++// No `import.meta` in this spec either: a project that typechecks scripts/ as CommonJS (TS1343).
++const workspaceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
++  encoding: 'utf8',
++}).trim()
+ 
+ const repoRoot = '/work/repo'
+ 
+@@ -71,6 +79,22 @@ describe('normalizeSourceFile', () => {
+   })
+ })
+ 
++describe('projectRootOf', () => {
++  it('is the report directory under coverage/', () => {
++    assert.equal(projectRootOf('coverage/libs/api/utils'), 'libs/api/utils')
++  })
++
++  it('drops the shard folder of a sharded run', () => {
++    assert.equal(projectRootOf('coverage/libs/api/utils/shard-2'), 'libs/api/utils')
++    assert.equal(projectRootOf('coverage/apps/api/shard_1'), 'apps/api')
++    assert.equal(projectRootOf('coverage/apps/api/shard3'), 'apps/api')
++  })
++
++  it('keeps a project whose own name looks like a shard', () => {
++    assert.equal(projectRootOf('coverage/shard-1'), 'shard-1')
++  })
++})
++
+ describe('normalizeLcovReports', () => {
+   const root = mkdtempSync(join(tmpdir(), 'lcov-paths-'))
+   after(() => rmSync(root, { recursive: true, force: true }))
+@@ -84,6 +108,8 @@ describe('normalizeLcovReports', () => {
+   write('coverage/libs/api/core/data-access/lcov.info', 'TN:\nSF:src/lib/b.ts\nend_of_record\n')
+   write('coverage/libs/api/utils/lcov-report/index.html', '<html></html>')
+   write('coverage/apps/web/lcov.info', 'TN:\nSF:apps/web/app/root.tsx\nend_of_record\n')
++  write('coverage/libs/api/custom/shard-1/lcov.info', 'TN:\nSF:src/lib/c.ts\nend_of_record\n')
++  write('coverage/libs/api/custom/shard-2/lcov.info', 'TN:\nSF:src/lib/d.ts\nend_of_record\n')
+ 
+   it('finds every project report under coverage/, with its project root', () => {
+     assert.deepEqual(findLcovReports(root), [
+@@ -92,6 +118,8 @@ describe('normalizeLcovReports', () => {
+         path: 'coverage/libs/api/core/data-access/lcov.info',
+         sourcePrefix: 'libs/api/core/data-access',
+       },
++      { path: 'coverage/libs/api/custom/shard-1/lcov.info', sourcePrefix: 'libs/api/custom' },
++      { path: 'coverage/libs/api/custom/shard-2/lcov.info', sourcePrefix: 'libs/api/custom' },
+       { path: 'coverage/libs/api/utils/lcov.info', sourcePrefix: 'libs/api/utils' },
+     ])
+   })
+@@ -101,8 +129,14 @@ describe('normalizeLcovReports', () => {
+ 
+     assert.deepEqual(changed, [
+       'coverage/libs/api/core/data-access/lcov.info',
++      'coverage/libs/api/custom/shard-1/lcov.info',
++      'coverage/libs/api/custom/shard-2/lcov.info',
+       'coverage/libs/api/utils/lcov.info',
+     ])
++    assert.match(
++      readFileSync(join(root, 'coverage/libs/api/custom/shard-2/lcov.info'), 'utf8'),
++      /^SF:libs\/api\/custom\/src\/lib\/d\.ts$/m,
++    )
+     assert.match(
+       readFileSync(join(root, 'coverage/libs/api/utils/lcov.info'), 'utf8'),
+       /^SF:libs\/api\/utils\/src\/lib\/a\.ts$/m,
+@@ -117,3 +151,26 @@ describe('normalizeLcovReports', () => {
+     assert.deepEqual(normalizeLcovReports(join(root, 'missing')), [])
+   })
+ })
++
++describe('the lcov script compiles under either module system', () => {
++  const tsc = createRequire(join(workspaceRoot, 'package.json')).resolve('typescript/bin/tsc')
++  const files = ['scripts/normalize-lcov-paths.ts', 'scripts/normalize-lcov-paths.lib.ts']
++  const common = ['--noEmit', '--strict', '--skipLibCheck', '--target', 'es2022', '--lib', 'es2023']
++  const compile = moduleOptions =>
++    spawnSync(process.execPath, [tsc, ...common, '--types', 'node', ...moduleOptions, ...files], {
++      cwd: workspaceRoot,
++      encoding: 'utf8',
++    })
++
++  // A project's scripts tsconfig may say "module": "commonjs" (tsconfig.spec.scripts.json in some
++  // apps), where `import.meta` is TS1343; scripts/tsconfig.json here says esnext.
++  for (const [name, moduleOptions] of [
++    ['CommonJS', ['--module', 'commonjs', '--ignoreDeprecations', '6.0']],
++    ['ES modules', ['--module', 'esnext', '--moduleResolution', 'bundler']],
++  ]) {
++    it(`as ${name}`, () => {
++      const result = compile(moduleOptions)
++      assert.equal(result.status, 0, result.stdout + result.stderr)
++    })
++  }
++})
+diff --git a/scripts/normalize-lcov-paths.ts b/scripts/normalize-lcov-paths.ts
+index 04c49b3..7ecb922 100644
+--- a/scripts/normalize-lcov-paths.ts
++++ b/scripts/normalize-lcov-paths.ts
+@@ -1,96 +1,7 @@
+-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+-import { join, posix } from 'node:path'
+-import { pathToFileURL } from 'node:url'
++import { normalizeLcovReports } from './normalize-lcov-paths.lib'
+ 
+-// Rewrites every coverage/<project root>/lcov.info so its `SF:` paths are repo-relative, which is
+-// what SonarCloud matches against its sources. Test runners write them relative to wherever they
+-// ran: Vitest to the config's root, and Jest under Nx 24 to each project's root (it runs from
+-// there), so an api library's report says `SF:src/lib/x.ts` for libs/api/utils/src/lib/x.ts and
+-// Sonar finds no such file. Every report is found under coverage/ rather than listed, so a new
+-// project's report is not silently left with paths Sonar cannot match.
+-
+-export type LcovReport = {
+-  path: string
+-  sourcePrefix: string
+-}
+-
+-/** Top-level directories of a path written relative to the project root that produced it. */
+-const PROJECT_RELATIVE_ROOTS = ['src/', 'app/', 'tests/', 'test/']
+-
+-/** The `SF:` line rewritten to a repo-relative path; every other line unchanged. */
+-export function normalizeSourceFile(line: string, sourcePrefix: string, repoRoot: string): string {
+-  if (!line.startsWith('SF:')) {
+-    return line
+-  }
+-
+-  const sourceFile = line.slice(3).replaceAll('\\', '/')
+-  const root = repoRoot.replaceAll('\\', '/')
+-  const relativeSourceFile = sourceFile.startsWith(`${root}/`)
+-    ? sourceFile.slice(root.length + 1)
+-    : sourceFile
+-
+-  if (relativeSourceFile.startsWith(`${sourcePrefix}/`)) {
+-    return `SF:${relativeSourceFile}`
+-  }
+-
+-  if (PROJECT_RELATIVE_ROOTS.some(dir => relativeSourceFile.startsWith(dir))) {
+-    return `SF:${sourcePrefix}/${relativeSourceFile}`
+-  }
+-
+-  // `../../libs/x/src/y.ts` from a project two levels down: resolve it against the project.
+-  if (relativeSourceFile.startsWith('../')) {
+-    const resolved = posix.normalize(`${sourcePrefix}/${relativeSourceFile}`)
+-    if (!resolved.startsWith('../')) return `SF:${resolved}`
+-  }
+-
+-  return `SF:${relativeSourceFile}`
+-}
+-
+-export function normalizeLcov(lcov: string, sourcePrefix: string, repoRoot: string): string {
+-  return lcov
+-    .split('\n')
+-    .map(line => normalizeSourceFile(line, sourcePrefix, repoRoot))
+-    .join('\n')
+-}
+-
+-/** Every lcov.info under `coverageDir`, each with the project root its directory names. */
+-export function findLcovReports(repoRoot: string, coverageDir = 'coverage'): LcovReport[] {
+-  const reports: LcovReport[] = []
+-  const walk = (relativeDir: string) => {
+-    const absoluteDir = join(repoRoot, relativeDir)
+-    for (const entry of readdirSync(absoluteDir, { withFileTypes: true })) {
+-      const relativePath = posix.join(relativeDir, entry.name)
+-      if (entry.isDirectory()) {
+-        // Vitest and Jest also write an HTML report beside the lcov; it holds no lcov.info.
+-        if (entry.name !== 'lcov-report') walk(relativePath)
+-      } else if (entry.name === 'lcov.info' && relativeDir !== coverageDir) {
+-        reports.push({
+-          path: relativePath,
+-          sourcePrefix: posix.relative(coverageDir, relativeDir),
+-        })
+-      }
+-    }
+-  }
+-  if (existsSync(join(repoRoot, coverageDir))) walk(coverageDir)
+-  return reports.sort((a, b) => a.path.localeCompare(b.path))
+-}
+-
+-/** Rewrites each report in place; returns the paths it changed. */
+-export function normalizeLcovReports(repoRoot: string, coverageDir = 'coverage'): string[] {
+-  const changed: string[] = []
+-  for (const report of findLcovReports(repoRoot, coverageDir)) {
+-    const path = join(repoRoot, report.path)
+-    const lcov = readFileSync(path, 'utf8')
+-    const normalized = normalizeLcov(lcov, report.sourcePrefix, repoRoot)
+-    if (normalized !== lcov) {
+-      writeFileSync(path, normalized)
+-      changed.push(report.path)
+-    }
+-  }
+-  return changed
+-}
+-
+-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+-  const changed = normalizeLcovReports(process.cwd())
+-  for (const path of changed) console.log(`normalized ${path}`)
+-}
++// `pnpm coverage:normalize-lcov`: makes every coverage/**/lcov.info's `SF:` paths repo-relative
++// for SonarCloud. The rewrite lives in normalize-lcov-paths.lib.ts, which the spec imports; this
++// file only runs it. Neither uses `import.meta`, so both typecheck whether a project checks
++// scripts/ as ES modules or as CommonJS (where `import.meta` is TS1343).
++for (const path of normalizeLcovReports(process.cwd())) console.log(`normalized ${path}`)
+diff --git a/scripts/sonar-vite-config-exclusions.spec.mjs b/scripts/sonar-vite-config-exclusions.spec.mjs
+new file mode 100644
+index 0000000..5b7260e
+--- /dev/null
++++ b/scripts/sonar-vite-config-exclusions.spec.mjs
+@@ -0,0 +1,95 @@
++import assert from 'node:assert/strict'
++import { existsSync, readFileSync } from 'node:fs'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++
++/**
++ * Wherever SonarCloud is told to skip `**\/vite.config.ts`, it also skips `**\/vite.config.mts`.
++ *
++ * A config that Node must load as ESM is named vite.config.mts (libs/web-ui's is; see
++ * vite-config-module-format.spec.mjs). Sonar's exclusions are globs on the file name, so a list that
++ * names only the .ts form analyses the .mts config as source, counts it as uncovered code and checks
++ * it for duplication. SONARCLOUD_SETUP.md mirrors the same lists for the SonarCloud UI.
++ */
++const TS_CONFIG = '**/vite.config.ts'
++const MTS_CONFIG = '**/vite.config.mts'
++
++/** Each property of a .properties file, with backslash-continued lines joined, as a list of values. */
++export function propertyLists(source) {
++  const lists = {}
++  const logical = source.replace(/\\\r?\n[ \t]*/g, '').split(/\r?\n/)
++  for (const line of logical) {
++    const match = /^\s*([\w.]+)\s*=\s*(.*)$/.exec(line)
++    if (match) {
++      lists[match[1]] = match[2]
++        .split(',')
++        .map(value => value.trim())
++        .filter(Boolean)
++    }
++  }
++  return lists
++}
++
++/** Properties that list the .ts config without the .mts one. */
++export function propertiesMissingMts(source) {
++  return Object.entries(propertyLists(source))
++    .filter(([, values]) => values.includes(TS_CONFIG) && !values.includes(MTS_CONFIG))
++    .map(([key]) => key)
++}
++
++/** The index of each fenced block of a Markdown file that lists the .ts config without the .mts one. */
++export function fencedBlocksMissingMts(markdown) {
++  const blocks = [...markdown.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)].map(match =>
++    match[1].split('\n').map(line => line.trim()),
++  )
++  return blocks.flatMap((lines, index) =>
++    lines.includes(TS_CONFIG) && !lines.includes(MTS_CONFIG) ? [index] : [],
++  )
++}
++
++describe('Sonar exclusions name vite.config.mts beside vite.config.ts', () => {
++  it('in sonar-project.properties', () => {
++    const path = join(root, 'sonar-project.properties')
++    if (!existsSync(path)) return
++    assert.deepEqual(propertiesMissingMts(readFileSync(path, 'utf8')), [])
++  })
++
++  it('in SONARCLOUD_SETUP.md', () => {
++    const path = join(root, 'SONARCLOUD_SETUP.md')
++    if (!existsSync(path)) return
++    assert.deepEqual(fencedBlocksMissingMts(readFileSync(path, 'utf8')), [])
++  })
++
++  it('flags a continued property list that names only the .ts config', () => {
++    const source = [
++      'sonar.exclusions=\\',
++      '  **/dist/**,\\',
++      '  **/vite.config.ts',
++      'sonar.cpd.exclusions=\\',
++      '  **/vite.config.ts,\\',
++      '  **/vite.config.mts',
++      'sonar.sources=apps',
++      '',
++    ].join('\n')
++    assert.deepEqual(propertiesMissingMts(source), ['sonar.exclusions'])
++  })
++
++  it('flags a fenced list in the setup guide that names only the .ts config', () => {
++    const markdown = [
++      '## Exclusions',
++      '```',
++      '**/vite.config.ts',
++      '```',
++      '## Coverage',
++      '```',
++      '**/vite.config.ts',
++      '**/vite.config.mts',
++      '```',
++      '',
++    ].join('\n')
++    assert.deepEqual(fencedBlocksMissingMts(markdown), [0])
++  })
++})
+diff --git a/scripts/vite-config-module-format.spec.mjs b/scripts/vite-config-module-format.spec.mjs
+index 5c2fc82..b0b2404 100644
+--- a/scripts/vite-config-module-format.spec.mjs
++++ b/scripts/vite-config-module-format.spec.mjs
+@@ -1,7 +1,7 @@
+ import assert from 'node:assert/strict'
+ import { execFileSync } from 'node:child_process'
+ import { existsSync, readFileSync } from 'node:fs'
+-import { dirname, join } from 'node:path'
++import { dirname, join, posix } from 'node:path'
+ import { describe, it } from 'node:test'
+ import { fileURLToPath } from 'node:url'
+ 
+@@ -47,17 +47,73 @@ export function commonJsConfigsWithEsmOnlyPlugins(files, readFile, readPackage)
+     .flatMap(file => esmOnlyImports(readFile(file)).map(plugin => `${file} imports ${plugin}`))
+ }
+ 
++const CODE_FILE = /\.[cm]?[jt]sx?$/
++const CONFIG_REFERENCE = /(^|\/)(vite|vitest)\.config(\.[cm]?[jt]s)?$/
++/** What an import without an extension resolves to: TypeScript and Vite never try `.mts` for it. */
++const EXTENSIONLESS_CANDIDATES = ['.ts', '.js']
++
++/** Relative import specifiers in `source` that name a Vite or Vitest config, ignoring comments. */
++export function configImports(source) {
++  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
++  const specifiers = [...code.matchAll(/(?:\bfrom|\bimport\s*\(?)\s*['"](\.{1,2}\/[^'"]+)['"]/g)]
++  return specifiers.map(match => match[1]).filter(specifier => CONFIG_REFERENCE.test(specifier))
++}
++
++/** Config paths a Vitest config lists as strings (the root config's `projects`), ignoring comments. */
++export function listedConfigPaths(source) {
++  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
++  return [...code.matchAll(/['"]([\w./-]+\/(?:vite|vitest)\.config\.[cm]?[jt]s)['"]/g)]
++    .map(match => match[1])
++    .filter(path => !path.startsWith('.'))
++}
++
++/**
++ * Each reference to a Vite or Vitest config that names no tracked file: an import (or a Vitest
++ * project path) still pointing at a config that was renamed, such as `./vite.config` or
++ * `./vite.config.ts` after libs/web-ui's became vite.config.mts. An import without an extension
++ * must find a `.ts` or `.js` config; a `.mts` one is imported by its full name.
++ */
++export function staleConfigReferences(files, readFile) {
++  const tracked = new Set(files)
++  const resolves = path =>
++    CONFIG_REFERENCE.exec(path)?.[3]
++      ? tracked.has(path)
++      : EXTENSIONLESS_CANDIDATES.some(extension => tracked.has(path + extension))
++  return files
++    .filter(file => CODE_FILE.test(file))
++    .flatMap(file => {
++      const source = readFile(file)
++      const imports = configImports(source).map(specifier => ({
++        specifier,
++        path: posix.normalize(posix.join(posix.dirname(file), specifier)),
++      }))
++      const listed = /(^|\/)vitest\.(config|workspace)\.[cm]?[jt]s$/.test(file)
++        ? listedConfigPaths(source).map(path => ({
++            specifier: path,
++            path: posix.normalize(posix.join(posix.dirname(file), path)),
++          }))
++        : []
++      return [...imports, ...listed]
++        .filter(reference => !resolves(reference.path))
++        .map(reference => `${file} names ${reference.specifier}, which is no tracked config`)
++    })
++}
++
+ function readRepoPackage(dir) {
+   const path = join(root, dir, 'package.json')
+   return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined
+ }
+ 
++function trackedFiles() {
++  return execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
++    .split('\n')
++    .filter(Boolean)
++    .filter(file => existsSync(join(root, file)))
++}
++
+ describe('vite config module format', () => {
+   it('loads no ESM-only plugin from a CommonJS config in this repo', () => {
+-    const files = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+-      .split('\n')
+-      .filter(Boolean)
+-      .filter(file => existsSync(join(root, file)))
++    const files = trackedFiles()
+     const offenders = commonJsConfigsWithEsmOnlyPlugins(
+       files,
+       file => readFileSync(join(root, file), 'utf8'),
+@@ -91,3 +147,45 @@ describe('vite config module format', () => {
+     assert.deepEqual(esmOnlyImports("/* from '@vitejs/plugin-react' */\nexport default {}\n"), [])
+   })
+ })
++
++describe('references to vite and vitest configs', () => {
++  it('every import and Vitest project path in this repo names a tracked config', () => {
++    // This spec's own fixtures below are import-shaped strings naming configs that do not exist.
++    const self = 'scripts/vite-config-module-format.spec.mjs'
++    const files = trackedFiles().filter(file => file !== self)
++    const stale = staleConfigReferences(files, file => readFileSync(join(root, file), 'utf8'))
++    assert.deepEqual(stale, [], 'point these at the renamed config')
++  })
++
++  const files = {
++    'libs/ui/vite.config.mts': 'export default {}\n',
++    'apps/a/vite.config.ts': 'export default {}\n',
++  }
++  const check = (file, source) =>
++    staleConfigReferences([...Object.keys(files), file], path => files[path] ?? source)
++
++  it('flags an import of a config renamed to .mts, with or without an extension', () => {
++    const file = 'libs/ui/vitest.unit.config.mts'
++    assert.deepEqual(check(file, "import viteConfig from './vite.config'\n"), [
++      `${file} names ./vite.config, which is no tracked config`,
++    ])
++    assert.deepEqual(check(file, "import viteConfig from './vite.config.ts'\n"), [
++      `${file} names ./vite.config.ts, which is no tracked config`,
++    ])
++  })
++
++  it('accepts the full .mts name and an extensionless import of a .ts config', () => {
++    assert.deepEqual(check('libs/ui/vitest.config.mts', "import c from './vite.config.mts'\n"), [])
++    assert.deepEqual(check('apps/a/tests/x.spec.ts', "import c from '../vite.config'\n"), [])
++    assert.deepEqual(check('apps/a/tests/y.spec.ts', "await import('../vite.config.ts')\n"), [])
++  })
++
++  it('flags a Vitest project path that names no config, ignoring comments', () => {
++    const source = "export default { test: { projects: ['libs/ui/vite.config.ts'] } }\n"
++    assert.deepEqual(check('vitest.config.ts', source), [
++      'vitest.config.ts names libs/ui/vite.config.ts, which is no tracked config',
++    ])
++    assert.deepEqual(check('vitest.config.ts', "// 'libs/ui/vite.config.ts'\n"), [])
++    assert.deepEqual(check('vitest.config.ts', "projects: ['libs/ui/vite.config.mts']\n"), [])
++  })
++})
+diff --git a/sonar-project.properties b/sonar-project.properties
+index dd76b17..9519e56 100644
+--- a/sonar-project.properties
++++ b/sonar-project.properties
+@@ -40,7 +40,8 @@ sonar.exclusions=\
+   libs/api/generated-crud/**,\
+   libs/api/prisma/src/lib/migrations/**,\
+   libs/api/prisma/src/lib/seed/seed-data/**,\
+-  **/vite.config.ts
++  **/vite.config.ts,\
++  **/vite.config.mts
+ 
+ sonar.cpd.exclusions=\
+   libs/api/prisma/src/lib/seed/seed-data/**,\
+@@ -53,7 +54,8 @@ sonar.cpd.exclusions=\
+   **/*.test.ts,\
+   **/*.test.tsx,\
+   scripts/**/*.spec.mjs,\
+-  **/vite.config.ts
++  **/vite.config.ts,\
++  **/vite.config.mts
+ 
+ # scripts/ holds the workspace scripts' node:test specs (*.spec.mjs). Without them listed as tests,
+ # SonarCloud analysed each spec as source code: its fixtures and stubs were reported as smells.
+@@ -93,6 +95,7 @@ sonar.coverage.exclusions=\
+   **/jest.config.ts,\
+   **/jest.config.js,\
+   **/vite.config.ts,\
++  **/vite.config.mts,\
+   **/jest.setup.ts,\
+   scripts/**,\
+   apps/api-e2e/src/support/**,\
