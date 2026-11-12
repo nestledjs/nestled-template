@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -9,7 +11,13 @@ import {
   normalizeLcov,
   normalizeLcovReports,
   normalizeSourceFile,
-} from './normalize-lcov-paths.ts'
+  projectRootOf,
+} from './normalize-lcov-paths.lib.ts'
+
+// No `import.meta` in this spec either: a project that typechecks scripts/ as CommonJS (TS1343).
+const workspaceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+  encoding: 'utf8',
+}).trim()
 
 const repoRoot = '/work/repo'
 
@@ -71,6 +79,22 @@ describe('normalizeSourceFile', () => {
   })
 })
 
+describe('projectRootOf', () => {
+  it('is the report directory under coverage/', () => {
+    assert.equal(projectRootOf('coverage/libs/api/utils'), 'libs/api/utils')
+  })
+
+  it('drops the shard folder of a sharded run', () => {
+    assert.equal(projectRootOf('coverage/libs/api/utils/shard-2'), 'libs/api/utils')
+    assert.equal(projectRootOf('coverage/apps/api/shard_1'), 'apps/api')
+    assert.equal(projectRootOf('coverage/apps/api/shard3'), 'apps/api')
+  })
+
+  it('keeps a project whose own name looks like a shard', () => {
+    assert.equal(projectRootOf('coverage/shard-1'), 'shard-1')
+  })
+})
+
 describe('normalizeLcovReports', () => {
   const root = mkdtempSync(join(tmpdir(), 'lcov-paths-'))
   after(() => rmSync(root, { recursive: true, force: true }))
@@ -84,6 +108,8 @@ describe('normalizeLcovReports', () => {
   write('coverage/libs/api/core/data-access/lcov.info', 'TN:\nSF:src/lib/b.ts\nend_of_record\n')
   write('coverage/libs/api/utils/lcov-report/index.html', '<html></html>')
   write('coverage/apps/web/lcov.info', 'TN:\nSF:apps/web/app/root.tsx\nend_of_record\n')
+  write('coverage/libs/api/custom/shard-1/lcov.info', 'TN:\nSF:src/lib/c.ts\nend_of_record\n')
+  write('coverage/libs/api/custom/shard-2/lcov.info', 'TN:\nSF:src/lib/d.ts\nend_of_record\n')
 
   it('finds every project report under coverage/, with its project root', () => {
     assert.deepEqual(findLcovReports(root), [
@@ -92,6 +118,8 @@ describe('normalizeLcovReports', () => {
         path: 'coverage/libs/api/core/data-access/lcov.info',
         sourcePrefix: 'libs/api/core/data-access',
       },
+      { path: 'coverage/libs/api/custom/shard-1/lcov.info', sourcePrefix: 'libs/api/custom' },
+      { path: 'coverage/libs/api/custom/shard-2/lcov.info', sourcePrefix: 'libs/api/custom' },
       { path: 'coverage/libs/api/utils/lcov.info', sourcePrefix: 'libs/api/utils' },
     ])
   })
@@ -101,8 +129,14 @@ describe('normalizeLcovReports', () => {
 
     assert.deepEqual(changed, [
       'coverage/libs/api/core/data-access/lcov.info',
+      'coverage/libs/api/custom/shard-1/lcov.info',
+      'coverage/libs/api/custom/shard-2/lcov.info',
       'coverage/libs/api/utils/lcov.info',
     ])
+    assert.match(
+      readFileSync(join(root, 'coverage/libs/api/custom/shard-2/lcov.info'), 'utf8'),
+      /^SF:libs\/api\/custom\/src\/lib\/d\.ts$/m,
+    )
     assert.match(
       readFileSync(join(root, 'coverage/libs/api/utils/lcov.info'), 'utf8'),
       /^SF:libs\/api\/utils\/src\/lib\/a\.ts$/m,
@@ -116,4 +150,27 @@ describe('normalizeLcovReports', () => {
   it('returns nothing when there is no coverage directory', () => {
     assert.deepEqual(normalizeLcovReports(join(root, 'missing')), [])
   })
+})
+
+describe('the lcov script compiles under either module system', () => {
+  const tsc = createRequire(join(workspaceRoot, 'package.json')).resolve('typescript/bin/tsc')
+  const files = ['scripts/normalize-lcov-paths.ts', 'scripts/normalize-lcov-paths.lib.ts']
+  const common = ['--noEmit', '--strict', '--skipLibCheck', '--target', 'es2022', '--lib', 'es2023']
+  const compile = moduleOptions =>
+    spawnSync(process.execPath, [tsc, ...common, '--types', 'node', ...moduleOptions, ...files], {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+    })
+
+  // A project's scripts tsconfig may say "module": "commonjs" (tsconfig.spec.scripts.json in some
+  // apps), where `import.meta` is TS1343; scripts/tsconfig.json here says esnext.
+  for (const [name, moduleOptions] of [
+    ['CommonJS', ['--module', 'commonjs', '--ignoreDeprecations', '6.0']],
+    ['ES modules', ['--module', 'esnext', '--moduleResolution', 'bundler']],
+  ]) {
+    it(`as ${name}`, () => {
+      const result = compile(moduleOptions)
+      assert.equal(result.status, 0, result.stdout + result.stderr)
+    })
+  }
 })

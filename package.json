@@ -109,7 +109,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.2.8",
     "@nestjs/throttler": "^6.5.0",
-    "@nestledjs/data-browser": "^1.0.28",
+    "@nestledjs/data-browser": "^1.0.29",
     "@nestledjs/forms": "0.9.2",
     "@nestledjs/forms-core": "0.9.2",
     "@nestledjs/generators": "4.0.0",

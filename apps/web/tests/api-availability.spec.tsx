@@ -11,11 +11,15 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
+  APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
+  clearApiOutage,
   isApiOutageSignalled,
+  makeClient,
   signalApiOutage,
+  takeDeferredAuthFailure,
 } from '@nestled-template/shared/apollo'
-import { App } from '../app/app'
+import { App, AppCodeErrorMarker, isAppCodeError } from '../app/app'
 import { ErrorBoundary } from '../app/root'
 import {
   CONFIRM_DELAYS_MS,
@@ -310,13 +314,60 @@ describe('root error boundary for a network error', () => {
   it('keeps the session on a 401 while the app has outage evidence', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
     const elsewhere = {}
-    signalApiOutage(elsewhere, true)
+    signalApiOutage(elsewhere)
     try {
-      render(<ErrorBoundary error={new Error('Unauthorized')} />)
+      render(<ErrorBoundary error={new ErrorResponseImpl(401, 'Unauthorized', null)} />)
       expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
     } finally {
-      signalApiOutage(elsewhere, false)
+      clearApiOutage(elsewhere)
     }
+  })
+
+  describe('deciding a logout by status and code, never by message text', () => {
+    function renderWithAssign(error: unknown) {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const assign = vi.fn()
+      vi.stubGlobal('location', { ...globalThis.location, pathname: '/members', assign })
+      render(<ErrorBoundary error={error} />)
+      return assign
+    }
+
+    it.each([
+      ['exactly "Unauthorized"', new Error('Unauthorized')],
+      ['"401"', new Error('Request failed with status 401')],
+      ['"Session has been invalidated"', new Error('Session has been invalidated.')],
+      [
+        '"Unauthorized" in a GraphQL error with no UNAUTHENTICATED code',
+        new CombinedGraphQLErrors({ data: null, errors: [{ message: 'Unauthorized' }] }),
+      ],
+    ])('shows the error screen for an error whose message says %s', (_label, error) => {
+      const assign = renderWithAssign(error)
+
+      expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+      expect(assign).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['a route response with status 401', new ErrorResponseImpl(401, 'Unauthorized', null)],
+      [
+        'an HTTP 401',
+        new ServerError('Response not successful', {
+          response: new Response(null, { status: 401 }),
+          bodyText: '',
+        }),
+      ],
+      [
+        'an UNAUTHENTICATED GraphQL error',
+        new CombinedGraphQLErrors({
+          data: null,
+          errors: [{ message: 'Expired', extensions: { code: 'UNAUTHENTICATED' } }],
+        }),
+      ],
+    ])('still logs out on %s with no outage', (_label, error) => {
+      const assign = renderWithAssign(error)
+
+      expect(assign).toHaveBeenCalledWith('/force-logout?return_url=%2Fmembers')
+    })
   })
 
   it('labels the button "Try again", not "Refresh Page"', () => {
@@ -353,6 +404,66 @@ describe('root error boundary for a network error', () => {
     await advance(retryDelayMs(0))
     expect(probe).toHaveBeenCalledTimes(1)
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('App after an in-flight retry ends with a 401 let pass', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    takeDeferredAuthFailure()
+  })
+
+  it('refetches the query holding that 401 without being asked', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    // The error link lets a 401 pass while an outage is signalled (here, a retry in flight).
+    const retryInFlight = {}
+    signalApiOutage(retryInFlight)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      .query({ query: gql('query Data { data }') })
+      .catch(() => undefined)
+    clearApiOutage(retryInFlight)
+
+    // The query that got it, still active and holding the 401.
+    const held = {
+      getCurrentResult: () => ({
+        error: new ServerError('Response not successful', {
+          response: new Response(null, { status: 401 }),
+          bodyText: '',
+        }),
+      }),
+      refetch: vi.fn().mockResolvedValue({}),
+    }
+    const client = new ApolloClient({ link: ApolloLink.empty(), cache: new InMemoryCache() })
+    vi.spyOn(client, 'getObservableQueries').mockReturnValue(new Set([held]) as never)
+    const router = createMemoryRouter(
+      [{ path: '/', loader: () => ({}), element: <App />, children: [{ index: true }] }],
+      { initialEntries: ['/'] },
+    )
+    await act(async () => {
+      render(
+        <ApolloProvider client={client}>
+          <RouterProvider router={router} />
+        </ApolloProvider>,
+      )
+    })
+
+    await act(async () => {
+      globalThis.dispatchEvent(new CustomEvent(APOLLO_DEFERRED_AUTH_FAILURE_EVENT))
+    })
+
+    expect(held.refetch).toHaveBeenCalledTimes(1)
+    expect(takeDeferredAuthFailure()).toBe(false)
   })
 })
 
@@ -770,8 +881,15 @@ describe('signed-in user after a connectivity blip', () => {
 
   async function renderSignedIn(
     responses: Array<() => Observable<ApolloLink.Result>>,
-    // Held, every loader run after the first waits for it before preloading Me again.
-    retryGate?: Promise<void>,
+    {
+      retryGate,
+      strict = false,
+    }: {
+      // Held, every loader run after the first waits for it before preloading Me again.
+      retryGate?: Promise<void>
+      // Render under <StrictMode>, which replays effects on mount as development does.
+      strict?: boolean
+    } = {},
   ) {
     let requests = 0
     const link = new ApolloLink(() => {
@@ -799,14 +917,16 @@ describe('signed-in user after a connectivity blip', () => {
       ],
       { initialEntries: ['/'] },
     )
+    const tree = (
+      <ApolloProvider client={client}>
+        <RouterProvider router={router} />
+      </ApolloProvider>
+    )
+    let unmount: () => void = () => undefined
     await act(async () => {
-      render(
-        <ApolloProvider client={client}>
-          <RouterProvider router={router} />
-        </ApolloProvider>,
-      )
+      unmount = render(strict ? <StrictMode>{tree}</StrictMode> : tree).unmount
     })
-    return { loaderCalls: () => loaderCalls }
+    return { loaderCalls: () => loaderCalls, unmount }
   }
 
   const fails = (error: Error) => () => new Observable<ApolloLink.Result>(o => o.error(error))
@@ -895,9 +1015,72 @@ describe('signed-in user after a connectivity blip', () => {
       expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
     })
 
+    describe('under StrictMode, which replays effects on mount', () => {
+      it('recovers from a Me 500 on the first render once Me succeeds', async () => {
+        apiUp()
+        const app = await renderSignedIn([serverError(), signedIn], { strict: true })
+
+        await advance(0)
+
+        expect(app.loaderCalls()).toBe(2)
+        expect(seen).not.toContain('Signed out')
+        expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
+      })
+
+      it('keeps retrying with backoff while Me keeps failing', async () => {
+        apiUp()
+        const app = await renderSignedIn([serverError(), serverError(), serverError(), signedIn], {
+          strict: true,
+        })
+
+        await advance(0)
+        expect(app.loaderCalls()).toBe(2)
+        expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+
+        await advance(retryDelayMs(0) - 1)
+        expect(app.loaderCalls()).toBe(2)
+        await advance(1)
+        expect(app.loaderCalls()).toBe(3)
+
+        await advance(retryDelayMs(1))
+        expect(app.loaderCalls()).toBe(4)
+        expect(seen).not.toContain('Signed out')
+        expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
+      })
+
+      it('cancels a queued retry on unmount', async () => {
+        apiUp()
+        const app = await renderSignedIn([serverError()], { strict: true })
+        await advance(0)
+        expect(app.loaderCalls()).toBe(2)
+
+        // The next retry is queued behind the backoff; unmounting drops it.
+        act(() => app.unmount())
+        await advance(retryDelayMs(0) + retryDelayMs(1) + retryDelayMs(2))
+
+        expect(app.loaderCalls()).toBe(2)
+      })
+    })
+
     it('keeps the session on a GraphQL error that is not UNAUTHENTICATED', async () => {
       apiUp()
       const app = await renderSignedIn([graphQLError('INTERNAL_SERVER_ERROR'), signedIn])
+
+      await advance(0)
+
+      expect(seen).not.toContain('Signed out')
+      expect(app.loaderCalls()).toBe(2)
+      expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
+    })
+
+    it('keeps the session on a Me GraphQL error that only says "Unauthorized", with no code', async () => {
+      apiUp()
+      const saysUnauthorized = () =>
+        new Observable<ApolloLink.Result>(o => {
+          o.next({ data: null, errors: [{ message: 'Unauthorized' }] })
+          o.complete()
+        })
+      const app = await renderSignedIn([saysUnauthorized, signedIn])
 
       await advance(0)
 
@@ -929,19 +1112,19 @@ describe('signed-in user after a connectivity blip', () => {
       )
 
     afterEach(() => {
-      signalApiOutage(elsewhere, false)
+      clearApiOutage(elsewhere)
     })
 
     it('keeps the session and retries Me once the API answers', async () => {
       apiUp()
-      signalApiOutage(elsewhere, true)
+      signalApiOutage(elsewhere)
       const app = await renderSignedIn([unauthorized(), signedIn])
 
       // Not rendered as signed out, which a signed-in layout turns into a logout.
       expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
       expect(screen.queryByText('Signed out')).not.toBeInTheDocument()
 
-      signalApiOutage(elsewhere, false)
+      clearApiOutage(elsewhere)
       await advance(CONFIRM_WINDOW_MS)
 
       expect(app.loaderCalls()).toBe(2)
@@ -954,15 +1137,15 @@ describe('signed-in user after a connectivity blip', () => {
       // ref (the retry has not brought a new one yet) and nothing signals an outage any more: the
       // old 401 must still not render as signed out.
       apiDown()
-      signalApiOutage(elsewhere, true)
+      signalApiOutage(elsewhere)
       // The retry's loader takes a while, as a real one can, so the failed Me ref is still the
       // current one when the outage screen comes down.
       let releaseRetry: () => void = () => undefined
       const retryGate = new Promise<void>(resolve => {
         releaseRetry = resolve
       })
-      const app = await renderSignedIn([unauthorized(), signedIn], retryGate)
-      signalApiOutage(elsewhere, false)
+      const app = await renderSignedIn([unauthorized(), signedIn], { retryGate })
+      clearApiOutage(elsewhere)
       await advance(CONFIRM_WINDOW_MS)
       expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
       expect(isApiOutageSignalled()).toBe(true)
@@ -981,11 +1164,11 @@ describe('signed-in user after a connectivity blip', () => {
 
     it('logs out when the retry after recovery gets a 401 with no outage', async () => {
       apiUp()
-      signalApiOutage(elsewhere, true)
+      signalApiOutage(elsewhere)
       const app = await renderSignedIn([unauthorized(), unauthorized()])
       expect(screen.queryByText('Signed out')).not.toBeInTheDocument()
 
-      signalApiOutage(elsewhere, false)
+      clearApiOutage(elsewhere)
       await advance(CONFIRM_WINDOW_MS + retryDelayMs(3))
 
       expect(app.loaderCalls()).toBe(2)
@@ -1011,6 +1194,10 @@ describe('signed-in user after a connectivity blip', () => {
       throw new Error('Unauthorized operation in local component')
     }
 
+    function ThrowsExactlyUnauthorizedInRender(): never {
+      throw new Error('Unauthorized')
+    }
+
     function ThrowsSessionInvalidatedInRender(): never {
       throw new Error('Session has been invalidated in a stale local cache')
     }
@@ -1024,17 +1211,22 @@ describe('signed-in user after a connectivity blip', () => {
 
     const forceLogout = vi.fn()
 
-    async function renderBrokenRoute(Broken: () => ReactNode) {
+    async function renderBrokenRoute(
+      Broken: () => ReactNode,
+      { routeErrorBoundary = false }: { routeErrorBoundary?: boolean } = {},
+    ) {
       const assign = vi.fn()
       vi.stubGlobal('location', { ...globalThis.location, assign, reload: vi.fn() })
       const link = new ApolloLink(() => signedIn())
       const client = new ApolloClient({ link, cache: new InMemoryCache() })
       const preload = createQueryPreloader(client)
+      let loaderCalls = 0
       const router = createMemoryRouter(
         [
           {
             path: '/',
             loader: async () => {
+              loaderCalls += 1
               const meQueryRef = preload(ME)
               await preload.toPromise(meQueryRef).catch(() => undefined)
               return { meQueryRef }
@@ -1044,7 +1236,15 @@ describe('signed-in user after a connectivity blip', () => {
             children: [
               {
                 element: <SignedInLayout />,
-                children: [{ path: 'broken', element: <Broken /> }],
+                children: [
+                  {
+                    path: 'broken',
+                    element: <Broken />,
+                    ...(routeErrorBoundary && {
+                      ErrorBoundary: () => <p>The route&apos;s own error screen</p>,
+                    }),
+                  },
+                ],
               },
               {
                 path: 'force-logout',
@@ -1066,7 +1266,7 @@ describe('signed-in user after a connectivity blip', () => {
         )
       })
       await advance(CONFIRM_WINDOW_MS + retryDelayMs(3))
-      return { router, assign }
+      return { router, assign, loaderCalls: () => loaderCalls }
     }
 
     beforeEach(() => {
@@ -1077,6 +1277,7 @@ describe('signed-in user after a connectivity blip', () => {
       ['during render', ThrowsInRender],
       ['in an effect', ThrowsInEffect],
       ['with "Unauthorized" in its message', ThrowsUnauthorizedInRender],
+      ['with exactly "Unauthorized" as its message', ThrowsExactlyUnauthorizedInRender],
       ['with "Session has been invalidated" in its message', ThrowsSessionInvalidatedInRender],
     ])('keeps the session and shows the error screen for an error thrown %s', async (_, Broken) => {
       apiUp()
@@ -1092,6 +1293,169 @@ describe('signed-in user after a connectivity blip', () => {
       // Nothing about the session was retried either: the API was never in doubt.
       expect(apiProbeCalls()).toHaveLength(0)
     })
+
+    describe("a failure of a route's own API query, not of Me", () => {
+      // What a route's useSuspenseQuery throws when its own query fails.
+      const routeQueryFailures = [
+        [
+          'a 500',
+          new ServerError('Response not successful', {
+            response: new Response(null, { status: 500 }),
+            bodyText: '',
+          }),
+        ],
+        [
+          'a GraphQL error that is not UNAUTHENTICATED',
+          new CombinedGraphQLErrors({
+            data: null,
+            errors: [{ message: 'Boom', extensions: { code: 'INTERNAL_SERVER_ERROR' } }],
+          }),
+        ],
+        [
+          'an UNAUTHENTICATED GraphQL error',
+          new CombinedGraphQLErrors({
+            data: null,
+            errors: [{ message: 'Expired', extensions: { code: 'UNAUTHENTICATED' } }],
+          }),
+        ],
+      ] as const
+
+      it.each(routeQueryFailures)(
+        'shows the root error screen for %s, keeping the session and leaving Me alone',
+        async (_label, error) => {
+          apiUp()
+          const { router, assign, loaderCalls } = await renderBrokenRoute(() => {
+            throw error
+          })
+
+          expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+          // Not the Me boundary's recovering screen, and Me was not retried.
+          expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+          expect(loaderCalls()).toBe(1)
+          expect(apiProbeCalls()).toHaveLength(0)
+          expect(seen).not.toContain('Signed out')
+          expect(forceLogout).not.toHaveBeenCalled()
+          expect(assign).not.toHaveBeenCalled()
+          expect(router.state.location.pathname).toBe('/broken')
+        },
+      )
+
+      it.each(routeQueryFailures)(
+        "leaves %s to the route's own error boundary",
+        async (_label, error) => {
+          apiUp()
+          const { assign, loaderCalls } = await renderBrokenRoute(
+            () => {
+              throw error
+            },
+            { routeErrorBoundary: true },
+          )
+
+          expect(screen.getByText("The route's own error screen")).toBeInTheDocument()
+          expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+          expect(loaderCalls()).toBe(1)
+          expect(forceLogout).not.toHaveBeenCalled()
+          expect(assign).not.toHaveBeenCalled()
+        },
+      )
+    })
+  })
+})
+
+describe('AppCodeErrorMarker', () => {
+  // A route's own query rejected with a 401, thrown during render. The error link deals with the
+  // 401 itself; the error screen must not read the thrown error as a verdict on the session.
+  const thrownByARoute = () =>
+    new ServerError('Response not successful', {
+      response: new Response(null, { status: 401 }),
+      bodyText: '',
+    })
+
+  const forceLogout = vi.fn()
+
+  async function renderRoutes(rootElement: ReactNode, error: Error) {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const assign = vi.fn()
+    vi.stubGlobal('location', { ...globalThis.location, assign, reload: vi.fn() })
+    function Broken(): never {
+      throw error
+    }
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          // No Me query: a signed-out visitor, or an app whose root loader resolved Me already.
+          loader: () => ({}),
+          element: rootElement,
+          ErrorBoundary: () => <ErrorBoundary error={useRouteError()} />,
+          children: [
+            { path: 'broken', element: <Broken /> },
+            {
+              path: 'force-logout',
+              Component: () => {
+                forceLogout()
+                return <p>Force logout</p>
+              },
+            },
+          ],
+        },
+      ],
+      { initialEntries: ['/broken'] },
+    )
+    await act(async () => {
+      render(<RouterProvider router={router} />)
+    })
+    return { assign }
+  }
+
+  beforeEach(() => {
+    forceLogout.mockReset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps the session for a route error in an app that resolves Me in its root loader', async () => {
+    // No Me boundary: the root route wraps its outlet with the marker.
+    const { assign } = await renderRoutes(
+      <AppCodeErrorMarker>
+        <Outlet />
+      </AppCodeErrorMarker>,
+      thrownByARoute(),
+    )
+
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    expect(assign).not.toHaveBeenCalled()
+    expect(forceLogout).not.toHaveBeenCalled()
+  })
+
+  it('without it, the same error reaches the root ErrorBoundary as a rejected session', async () => {
+    const { assign } = await renderRoutes(<Outlet />, thrownByARoute())
+
+    expect(assign).toHaveBeenCalledWith('/force-logout')
+  })
+
+  it("keeps the session for a route error under the template's App with no Me query", async () => {
+    // A public route for a signed-out visitor: App renders the routes without a Me boundary.
+    const { assign } = await renderRoutes(<App />, thrownByARoute())
+
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('passes the error on unchanged and marks it', async () => {
+    const error = thrownByARoute()
+    await renderRoutes(
+      <AppCodeErrorMarker>
+        <Outlet />
+      </AppCodeErrorMarker>,
+      error,
+    )
+
+    expect(isAppCodeError(error)).toBe(true)
+    expect(isAppCodeError(thrownByARoute())).toBe(false)
   })
 })
 

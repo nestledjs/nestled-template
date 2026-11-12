@@ -8,6 +8,8 @@ export default [
   {
     ignores: [
       '**/dist',
+      // Coverage reports (lcov-report/ ships its own JS), wherever a project writes them.
+      '**/coverage',
       '**/vite.config.*.timestamp*',
       '**/vitest.config.*.timestamp*',
       '**/build',

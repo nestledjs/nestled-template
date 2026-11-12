@@ -7,6 +7,7 @@ import {
   type ServerBuild,
 } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CombinedGraphQLErrors } from '@apollo/client'
 import * as entryServer from '../app/entry.server'
 import { shellErrorOutcome } from '../app/entry.server'
 import * as rootModule from '../app/root'
@@ -189,6 +190,23 @@ describe('server render when the Me preload fails', () => {
     expect(clearsTheCookie(response)).toBe(true)
   })
 
+  it.each([
+    ['"Unauthorized"', 'Unauthorized'],
+    ['"401"', 'Request failed with status 401'],
+    ['"Session has been invalidated"', 'Session has been invalidated.'],
+  ])(
+    'keeps the session when a GraphQL error only says %s, with no UNAUTHENTICATED code',
+    async (_label, message) => {
+      // Message text is never evidence of a dead session: only a 401 or the UNAUTHENTICATED code.
+      graphqlAnswers(200, { data: null, errors: [{ message }] })
+
+      const response = await reloadSignedIn('/members/dashboard')
+
+      expect(clearsTheCookie(response)).toBe(false)
+      expect(response.headers.get('Location')).toBeNull()
+    },
+  )
+
   it('keeps the session and serves 503 for a redacted error with no recorded cause', async () => {
     // Nothing recorded why the render failed (no loader's Apollo client saw a failure): fail safe.
     graphqlAnswers(200, { data: { me: { __typename: 'User', id: 'user-1' } } })
@@ -306,6 +324,14 @@ describe('shellErrorOutcome', () => {
       Object.assign(new Error('Response not successful'), { statusCode: 503 }),
       'unavailable',
     ],
+    // Message text alone is not an API's verdict on the session.
+    [
+      undefined,
+      new CombinedGraphQLErrors({ data: null, errors: [{ message: 'Unauthorized' }] }),
+      'error',
+    ],
+    [undefined, new Error('Unauthorized'), 'error'],
+    [undefined, new Error('Request failed with status 401'), 'error'],
   ] as const)('recorded %s with %s -> %s', (cause, error, outcome) => {
     expect(shellErrorOutcome(error, cause)).toBe(outcome)
   })

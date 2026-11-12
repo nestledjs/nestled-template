@@ -174,12 +174,16 @@ jobs:
   # a newer push replaces a queued run (see the concurrency group), so scanning only the pushed
   # range would leave the replaced run's commits unscanned for good. The whole history takes
   # seconds. A green pull request therefore says nothing about older history: before the first
-  # merge after enabling this full-history scan, run `gitleaks git .` from a full clone (not a
-  # shallow one) and resolve every finding, or the develop push goes red on commits the pull
-  # request never scanned. A history finding that cannot be rewritten is ignored by fingerprint in
-  # .gitleaksignore (see .gitleaks.toml). The binary is downloaded from the gitleaks release and
-  # checked against its published SHA-256; the gitleaks GitHub Action needs a paid licence for
-  # organisation repositories.
+  # merge after enabling this full-history scan, run `gitleaks git .` from a fresh full clone
+  # (`git clone` without `--filter` or `--depth`; a worktree or CI checkout may be partial or
+  # shallow, and then gitleaks silently misses history) and deal with every finding, or the develop
+  # push goes red on commits the pull request never scanned. A few findings that cannot be
+  # rewritten are ignored by fingerprint in .gitleaksignore. Hundreds or thousands go in a baseline
+  # instead: generate gitleaks-baseline.json from that clone, rotate anything live, and commit it;
+  # the scan below passes it with --baseline-path when it exists, so only new findings fail (see
+  # .gitleaks.toml). The binary is downloaded from the gitleaks release and checked against its
+  # published SHA-256; the gitleaks GitHub Action needs a paid licence for organisation
+  # repositories.
   gitleaks:
     name: Secret scan (gitleaks)
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
@@ -208,8 +212,13 @@ jobs:
           else
             range=""
           fi
-          echo "Scanning: ${range:-all commits}"
-          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose ${range:+--log-opts="$range"} .
+          baseline=""
+          if [ -f gitleaks-baseline.json ]; then
+            baseline="gitleaks-baseline.json"
+          fi
+          echo "Scanning: ${range:-all commits}${baseline:+, ignoring the findings in $baseline}"
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose \
+            ${range:+--log-opts="$range"} ${baseline:+--baseline-path="$baseline"} .
 
   # `lint` is every project's ESLint target (nx.json names the inferred target `lint`).
   lint:

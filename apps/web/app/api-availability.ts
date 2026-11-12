@@ -3,6 +3,7 @@ import type { ApolloClient } from '@apollo/client'
 import { getApolloContext } from '@apollo/client/react'
 import {
   classifyApiFailure,
+  clearApiOutage,
   isRetryableConnectivityError,
   signalApiOutage,
 } from '@nestled-template/shared/apollo'
@@ -217,11 +218,18 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
   // Any phase but `available` is outage evidence: while it lasts, a 401 does not log the user out
   // (`signalApiOutage`, keyed by this instance so several mounted checks do not clear each other).
   const outageSignalRef = useRef({})
-  const changePhase = useCallback((next: ApiAvailabilityPhase) => {
-    phaseRef.current = next
-    signalApiOutage(outageSignalRef.current, next !== 'available')
-    setPhase(next)
+  const syncOutageSignal = useCallback(() => {
+    if (phaseRef.current === 'available') clearApiOutage(outageSignalRef.current)
+    else signalApiOutage(outageSignalRef.current)
   }, [])
+  const changePhase = useCallback(
+    (next: ApiAvailabilityPhase) => {
+      phaseRef.current = next
+      syncOutageSignal()
+      setPhase(next)
+    },
+    [syncOutageSignal],
+  )
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== undefined) {
@@ -318,7 +326,7 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
   useEffect(() => {
     mountedRef.current = true
     const outageSignal = outageSignalRef.current
-    signalApiOutage(outageSignal, phaseRef.current !== 'available')
+    syncOutageSignal()
     // navigator.onLine is browser-only. Read during render, it would make the hydrated HTML differ
     // from the server's, so it is read once after mount and kept current by the listeners below.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs browser-only state after hydration
@@ -352,14 +360,14 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
     document.addEventListener('visibilitychange', handleVisible)
     return () => {
       mountedRef.current = false
-      signalApiOutage(outageSignal, false)
+      clearApiOutage(outageSignal)
       clearTimer()
       globalThis.removeEventListener('online', handleOnline)
       globalThis.removeEventListener('offline', handleOffline)
       globalThis.removeEventListener('focus', handleVisible)
       document.removeEventListener('visibilitychange', handleVisible)
     }
-  }, [clearTimer, retryNow, schedule, scheduleRetry])
+  }, [clearTimer, retryNow, schedule, scheduleRetry, syncOutageSignal])
 
   return {
     phase,

@@ -6,3 +6,6 @@
 # rotated, or a placeholder in an old commit. Say why above each entry. A value that is provably
 # not a credential, wherever it appears, belongs in .gitleaks.toml's allowlist instead, and a live
 # secret is rotated, never listed here. The template has no history findings, so this lists none.
+#
+# This file is for a handful of findings. A repository with hundreds or thousands commits a
+# gitleaks-baseline.json instead (how to make one is in .gitleaks.toml).

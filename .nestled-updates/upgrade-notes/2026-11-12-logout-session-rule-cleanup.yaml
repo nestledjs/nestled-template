@@ -1,0 +1,256 @@
+id: 2026-11-12-logout-session-rule-cleanup
+title: >-
+  Finish the logout rule: never read message text as a dead session, keep the Me retry alive under
+  StrictMode, judge only the Me query's own failure, count an in-flight retry of an unreachable
+  call as an outage, split signalApiOutage, and ship AppCodeErrorMarker
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-11-logout-only-on-unambiguous-401 (apply it first; this note changes the
+  code it added). The rule: log a user out only when the API has definitely rejected the session,
+  that is a real HTTP 401 or a GraphQL error whose `extensions.code` is `UNAUTHENTICATED`, with no
+  outage evidence. An error's message text ("Unauthorized", "401", "Session has been
+  invalidated") is never evidence of a dead session. Anything else keeps the session and shows an
+  error or recovering state. Six parts. No package changes, and no change to package.json,
+  nx.json or tsconfig.base.json.
+
+
+  1. Message text is never a dead session. Several places decided a logout from what an error
+  said:
+  - libs/shared/apollo/src/lib/apollo.ts `isAuthenticationError` matched "Unauthorized", "User
+    from token not found", "Invalid JWT" and "Session has been invalidated" in a GraphQL error's
+    message, so `classifyApiFailure` called it `unauthenticated` and the error link sent the user
+    to /logout. It now reads only `extensions.code === 'UNAUTHENTICATED'` (the API's
+    `UnauthorizedException` already arrives with that code: Nest maps a 401 to it).
+  - apps/web/app/root.tsx root loader (`handlePrivateRoutePreloadError`) redirected to
+    /login?expired=1 with the cookie cleared for any Me preload error whose message contained
+    "Unauthorized" or "401". It now does so only when `classifyApiFailure(error)` is
+    `unauthenticated`; anything else returns `serviceUnavailable` as before.
+  - apps/web/app/root.tsx `ErrorBoundary` (`isUnauthorizedError`) treated an error whose message,
+    or a `graphQLErrors` entry's message, contained "Unauthorized" or "Session has been
+    invalidated" as a rejected session and went to /force-logout. It now means a route response
+    with status 401, an error `classifyApiFailure` calls `unauthenticated` (an HTTP 401 or an
+    UNAUTHENTICATED code), or a `graphQLErrors` entry with that code. Classifying by status
+    means an HTTP 401 that reaches the root boundary (thrown by a loader, say) now logs out where
+    before only its message could; that is the rule, and the outage check before it is unchanged.
+  - libs/shared/utils/src/lib/error-detection.ts `isAuthError` reads message text to choose a
+    message or panel; it gains a comment that it is for display only and must never decide a
+    logout. No behaviour change. `isNetworkError`'s "Unauthorized means not a network error" check
+    does not decide a logout and is unchanged.
+  Checked and left alone (they never decide a logout from text): entry.server.tsx's redacted
+  stream error test (it recognises Apollo's redaction, and the recorded cause decides),
+  `isFetchFailure`'s fetch-failure messages, mcp-connect's `response.status === 401`, and the
+  data-browser's "Unauthorized" headings.
+  Affected paths: libs/shared/apollo/src/lib/apollo.ts, apps/web/app/root.tsx,
+  libs/shared/utils/src/lib/error-detection.ts, libs/shared/apollo/src/lib/apollo.spec.ts,
+  apps/web/tests/root-loader-session.spec.ts (new), apps/web/tests/entry-server-shell-error.spec.tsx,
+  apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm exec nx test apollo --skip-nx-cache` (a GraphQL error that only says
+  "Unauthorized", "User from token not found…", "Invalid JWT…" or "Session has been
+  invalidated." classifies as `other`, and the error link keeps the session on it);
+  `pnpm exec nx test web --skip-nx-cache` (the root loader keeps the session for a preload error
+  that only says "Unauthorized" or "401" and still redirects for an HTTP 401 or UNAUTHENTICATED;
+  the server render keeps the cookie for a Me GraphQL error with such a message and no code; the
+  root ErrorBoundary shows the error screen for `new Error('Unauthorized')` and logs out for a
+  401 route response, an HTTP 401 and an UNAUTHENTICATED error; a Me GraphQL error that only says
+  "Unauthorized" keeps the session and retries Me; an app-code `Error('Unauthorized')` under the
+  Me boundary shows the error screen).
+
+
+  2. The Me retry survives a StrictMode effect replay. When Me failed on the first render with a
+  500 or a GraphQL error that is not UNAUTHENTICATED, the Me boundary queued the retry while
+  mounting (`componentDidCatch` → `handleMeQueryError` → `retryMeQuery`). React StrictMode then
+  replayed App's effects: the cleanup cleared the timer but left `meRetry.current.timer` set, so
+  every later `retryMeQuery` saw a retry pending and returned, and the recovering screen stayed
+  up for good (development only). apps/web/app/app.tsx: the retry state keeps the queued delay
+  (`meRetry.current.delay`) until the retry runs or is dropped; the effect's cleanup clears the
+  timer and sets `timer` to undefined; the effect re-queues a retry the cleanup cancelled
+  (`timer` undefined, `delay` set). The timer calls the retry through a ref (`runMeRetryRef`), so
+  it revalidates with the current render's revalidator. `handleMeLoaded` and the screen's "Try
+  again" clear the delay too. A real unmount still cancels the retry.
+  Affected paths: apps/web/app/app.tsx, apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (the "under StrictMode" cases: a Me 500
+  on the first render recovers once Me succeeds; a Me that keeps failing keeps retrying with
+  backoff; unmounting cancels a queued retry).
+
+
+  3. The Me boundary judges only the Me query's own failure. `MeQueryErrorBoundary` sits above
+  every route that has no error boundary of its own and judged what it caught by the error's
+  type, so a route's own API query that failed (a 500, a non-auth GraphQL error) showed the
+  recovering screen and retried Me instead of the route's error, and a route query's
+  UNAUTHENTICATED rendered as signed out. Only a failure of the Me/session query is a session
+  matter. AppWithUser now renders the routes' `<Outlet />` inside `AppCodeErrorMarker` (part 6),
+  below the `useReadQuery(meQueryRef)` call. The marker marks whatever the routes throw
+  (`isAppCodeError`) and re-throws it; `isMeSessionFailure` returns false for a marked error, so
+  the Me boundary passes it on (`appError`, re-thrown from `render()`) to the route's or the root
+  error boundary, with the session kept, no Me retry and no connectivity probe. What the Me read
+  itself throws is judged as before (parts 2 to 4 of the 2026-11-11 note). A real 401 from a
+  route's own query is still logged out by the error link, which sees every operation; the error
+  screen only stops reading the thrown error as a verdict on the session.
+  Affected paths: apps/web/app/app.tsx, apps/web/app/app-code-error-marker.tsx (new),
+  apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (the "a failure of a route's own API
+  query, not of Me" cases: a route that throws a 500, a non-auth GraphQL error or an
+  UNAUTHENTICATED error shows the root error screen, never the recovering screen, with one loader
+  run, no probe, no signed-out render and no /force-logout; with a route-level ErrorBoundary that
+  boundary shows instead; the existing Me 500 / Me 401 cases are unchanged).
+
+
+  4. An in-flight retry of an unreachable call is outage evidence. If Me got a 401 while another
+  call was still being retried after failing to reach the API (a refetch once a blip cleared, or
+  a loader's preload when Me is revalidated), the 401 logged out, because the retry had not failed
+  again yet and so nothing signalled an outage. libs/shared/apollo/src/lib/apollo.ts gains a link
+  below the error link (`createOutageRetryLink`) that remembers query operations, keyed by
+  operation name and variables, whose last attempt failed with `isRetryableConnectivityError`
+  (no answer, or a proxy's 502/503/504). While such an operation is sent again it signals an
+  outage (`signalApiOutage`) until the attempt settles: the first answer (any result, an HTTP 200
+  carrying an UNAUTHENTICATED error included) clears it and forgets the operation, a second
+  connectivity failure is reported by the error link as before. Because it sits below the error
+  link, a retried call's own answer or failure clears its evidence before the error link judges
+  it, so the retried call's own 401 or UNAUTHENTICATED is handled as usual. When the last
+  evidence a retry held is withdrawn and the error link let a 401 pass meanwhile, the link
+  dispatches the new `APOLLO_DEFERRED_AUTH_FAILURE_EVENT` on `window`: no availability check left
+  `available`, so no recovery callback would otherwise refetch the query left holding that 401.
+  apps/web/app/app.tsx listens for it and calls
+  `refetchFailedQueries({ includeAuthFailures: takeDeferredAuthFailure() })`, so that query gets
+  a fresh answer (data, or a 401 with no outage that logs out as usual). Browser only (never during a
+  server render, which makes no retries) and queries only (a subscription would hold the evidence
+  as long as it stays open). A 500 is not outage evidence, as in `classifyApiFailure`.
+  Affected paths: libs/shared/apollo/src/lib/apollo.ts, libs/shared/apollo/src/lib/apollo.spec.ts,
+  apps/web/app/app.tsx, apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm exec nx test apollo --skip-nx-cache` (the "a 401 while a retry of an
+  unreachable call is still in flight" cases: kept while the retry is in flight and logged out by
+  a clean 401 once it settles; the end of the evidence is announced only when a 401 was let pass;
+  a call that never failed does not count; a retried call's own HTTP 401, or its own HTTP 200
+  with an UNAUTHENTICATED error, logs out); `pnpm exec nx test web --skip-nx-cache` ("App after
+  an in-flight retry ends with a 401 let pass": the query holding the 401 is refetched without a
+  manual request).
+
+
+  5. Sonar S2301 (boolean selector parameter) on `signalApiOutage(source, active)`. It is split:
+  `signalApiOutage(source)` signals and the new `clearApiOutage(source)` withdraws, both exported
+  from @nestled-template/shared/apollo. Same behaviour (a set of sources; one clearing keeps the
+  others). apps/web/app/api-availability.ts `useApiAvailability` syncs its signal through a small
+  `syncOutageSignal()` that calls one or the other, and every test uses the pair:
+  `signalApiOutage(x, true)` becomes `signalApiOutage(x)`, `signalApiOutage(x, false)` becomes
+  `clearApiOutage(x)`.
+  Affected paths: libs/shared/apollo/src/lib/apollo.ts, apps/web/app/api-availability.ts,
+  libs/shared/apollo/src/lib/apollo.spec.ts, apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm typecheck`, `pnpm exec nx test apollo --skip-nx-cache` ("signalApiOutage /
+  clearApiOutage"), `pnpm exec nx test web --skip-nx-cache`.
+
+
+  6. `AppCodeErrorMarker`. Apps that resolve Me in the root loader have no Me boundary, so an
+  error a route threw during render reached the root ErrorBoundary unmarked and could be read as
+  a rejected session. New apps/web/app/app-code-error-marker.tsx exports `AppCodeErrorMarker` (a
+  class error boundary that marks every error thrown below it with `markAppCodeError` and
+  re-throws it unchanged in `render()`, rendering nothing of its own), `markAppCodeError` and
+  `isAppCodeError` (moved here from app.tsx). apps/web/app/app.tsx re-exports
+  `AppCodeErrorMarker` and `isAppCodeError`, and wraps every routes outlet it renders: inside
+  AppWithUser (part 3), in the Me boundary's signed-out render, and in App's no-Me-query render
+  (a signed-out visitor), where before a route error went straight to the root ErrorBoundary.
+  The root ErrorBoundary already never treats an `isAppCodeError` error as unauthorized. A
+  route's own error boundary below the marker still catches first; loader errors never pass
+  through it. How a root-loader app uses it: wrap the root route's outlet, below whatever
+  provides the session, for example
+  `<SessionProvider user={loaderData.user}><AppCodeErrorMarker><Outlet /></AppCodeErrorMarker></SessionProvider>`
+  in the root component; keep its root ErrorBoundary deciding by status and code (part 1).
+  Affected paths: apps/web/app/app-code-error-marker.tsx (new), apps/web/app/app.tsx,
+  apps/web/app/root.tsx, apps/web/tests/api-availability.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (the "AppCodeErrorMarker" cases: in a
+  root-loader-shaped tree a route that throws an HTTP 401 error shows the error screen and never
+  reaches /force-logout, while the same tree without the marker goes to /force-logout; the
+  template's App with no Me query keeps the session the same way; the marker passes the error on
+  unchanged and marks only it).
+
+why: >
+  Owner decisions of 2026-11-11 and 2026-11-12: log people out only when the API has definitely
+  rejected the session, and an error's message text is never evidence of that. Every part closes
+  a path that signed out, or could sign out, a user whose session was fine, or that left them
+  stuck on the recovering screen: text checks in the error link, the root loader and the root
+  error boundary (part 1), a recovering screen that never retried under StrictMode (part 2), a
+  route's own query failure treated as a Me failure (part 3), a 401 judged before an in-flight
+  retry could record the outage (part 4), and route errors in apps without a Me boundary (part
+  6). Part 5 clears a Sonar issue several projects accepted to pass their gate.
+
+affectedPaths:
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - libs/shared/utils/src/lib/error-detection.ts
+  - apps/web/app/api-availability.ts
+  - apps/web/app/app.tsx
+  - apps/web/app/app-code-error-marker.tsx
+  - apps/web/app/root.tsx
+  - apps/web/tests/api-availability.spec.tsx
+  - apps/web/tests/entry-server-shell-error.spec.tsx
+  - apps/web/tests/root-loader-session.spec.ts
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Part 1: every project has text checks of its own beyond the template's, and each one that
+    decides a logout must go. Grep the web app, its shared Apollo library, the SSR entry and every
+    error boundary for `Unauthorized`, `'401'`, `"401"`, `/401/` and `status.*401` used as string
+    matching (`message.includes(...)`, regexes, `String(error)` tests), and look in particular at:
+    SSR helpers such as `isAuthenticationLoaderError`, global `error` / `unhandledrejection`
+    handlers, custom `apollo-auth-error` (or similarly named) events and whatever listens to them,
+    and error boundaries that check for "access denied". Remove each check that decides a logout,
+    a /force-logout or /logout redirect, a cookie clear or a signed-out render from text, and
+    classify by HTTP status and GraphQL `extensions.code` instead (`classifyApiFailure`). Keep
+    every check that is already status- or code-based. A 403 "access denied" display is not a
+    logout and stays, text check included if that is all it does.
+  - >
+    Part 1: a project whose error link never logged out on an HTTP 401 (only on UNAUTHENTICATED in
+    a 200 response) keeps that structure and only drops the message matching. A project with no
+    /force-logout route, one that unmounts the whole app on a failed Me, or one whose error link
+    only dispatches an event for another component to act on, keeps its structure and applies the
+    same rule where the decision is made; mark a part `superseded` where the shape it changes does
+    not exist.
+  - >
+    Part 2: only for a project whose App queues the Me retry with a timer that an effect cleanup
+    clears. A project whose retry scheduling already survives a cleanup and replay (it re-queues on
+    mount, or does not clear in a cleanup at all) marks part 2 `superseded`. Test helpers differ:
+    do not assume a `retryGate` option on the project's render helper (projects use `{ strict }`,
+    positional flags and others); add a StrictMode switch in whatever form the helper takes, and
+    clean up stubbed globals with `vi.unstubAllGlobals()`.
+  - >
+    Part 3: a project whose Me boundary wraps only the Me read (the routes render outside it)
+    marks part 3 `superseded`. A project with its own Me handling applies the same rule: wrap the
+    routes, not the Me read, in `AppCodeErrorMarker` (or mark route errors some other way) and
+    pass marked errors on with the session kept.
+  - >
+    Part 4: a project with an Apollo RetryLink, or its own retry of failed calls, applies the same
+    rule to it: while a retry of a call that failed to reach the API (no answer, or 502/503/504)
+    is in flight, signal an outage (`signalApiOutage`) and clear it when the retry settles, so a
+    401 in the meantime keeps the session. Keep the link below the error link so a retried call's
+    own 401 is still judged, and settle on the first result, not on completion, so a 200 carrying
+    UNAUTHENTICATED is judged with the evidence already gone. A project whose error link is not in
+    the shared Apollo library adds the link next to its own error link. A project whose App has no
+    `useRefetchFailedQueries` still listens for `APOLLO_DEFERRED_AUTH_FAILURE_EVENT` and refetches
+    the active queries holding a 401 (or reloads) when it fires.
+  - >
+    Part 5: rename every caller, including the project's own code and tests:
+    `signalApiOutage(x, true)` → `signalApiOutage(x)`, `signalApiOutage(x, false)` →
+    `clearApiOutage(x)`, and a computed flag → `if (flag) signalApiOutage(x) else
+    clearApiOutage(x)`. After this part, the project's SonarCloud S2301 issue on
+    `signalApiOutage`, if it was accepted to pass the gate, can be reopened: it closes itself on
+    the next analysis.
+  - >
+    Part 6: a project that resolves Me in its root loader (no Me boundary) copies
+    app-code-error-marker.tsx and wraps its root route's `<Outlet />` with `AppCodeErrorMarker`,
+    below whatever provides the session to the routes, and makes its root ErrorBoundary return
+    "not unauthorized" for `isAppCodeError(error)` before any other check. A project with a Me
+    boundary uses it as the template does (part 3). A project that already marks route errors
+    some other way keeps that and marks part 6 `superseded`.

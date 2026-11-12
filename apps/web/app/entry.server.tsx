@@ -147,10 +147,9 @@ export default function handleRequest(
             resolve(forceLogoutResponse(request))
           } else if (outcome === 'unavailable') {
             // The API could not be reached (even if a 401 came back too), or the cause is unknown.
-            // Keep the session: React
-            // Router renders the root ErrorBoundary for this 503, which shows the self-recovering
-            // screen and reloads once the API answers. A real 401 comes back on the client and
-            // goes through the normal 401 handling there.
+            // Keep the session: React Router renders the root ErrorBoundary for this 503, which
+            // shows the self-recovering screen and reloads once the API answers. A real 401 comes
+            // back on the client and goes through the normal 401 handling there.
             console.error('[SSR] API unavailable during the shell render — serving 503')
             // A `Response`, not an Error, on purpose (Sonar S6671): React Router turns a rejected
             // `Response` into that status and renders the ErrorBoundary for it; an Error is a 500.

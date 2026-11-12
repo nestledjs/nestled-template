@@ -1,6 +1,10 @@
 import { ApolloHydrationHelper } from '@apollo/client-integration-react-router'
 import '@nestled-template/shared/styles'
-import { apolloLoader, isApiOutageSignalled } from '@nestled-template/shared/apollo'
+import {
+  apolloLoader,
+  classifyApiFailure,
+  isApiOutageSignalled,
+} from '@nestled-template/shared/apollo'
 import { Me, type MeQuery } from '@nestled-template/shared/sdk'
 import {
   getCookie,
@@ -79,14 +83,15 @@ function handlePrivateRoutePreloadError(
   theme: string,
 ) {
   console.error('[Root Loader] Error during Me query preload:', error)
-  const errorMessage = (error as Error)?.message || ''
 
   if (isNetworkError(error)) {
     console.log('[Root Loader] Network error detected, returning serviceUnavailable')
     return { serviceUnavailable: true, theme }
   }
 
-  if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
+  // Only an HTTP 401 or an UNAUTHENTICATED GraphQL error is a rejected session. The message is
+  // never read: an error that merely says "Unauthorized" or "401" keeps the session.
+  if (classifyApiFailure(error) === 'unauthenticated') {
     console.log('[Root Loader] Auth error detected, redirecting to login')
     // Append `expired=1` so the rejected session lands on a login form that
     // won't auto-bounce back to the dashboard (breaks the redirect loop).
@@ -190,39 +195,24 @@ export function Layout({ children }: Readonly<{ children: ReactNode }>) {
 
 export default App
 
-type GraphQLErrorLike = {
-  message?: string
-  extensions?: {
-    code?: string
-  }
-}
-
 type ErrorWithGraphQLErrors = Error & {
-  graphQLErrors?: GraphQLErrorLike[]
+  graphQLErrors?: Array<{ extensions?: { code?: string } }>
 }
 
 /**
- * Whether the error says the API rejected the session. An error the Me boundary passed on as the
- * app's own (a render or effect bug) never does, whatever its message says: only the API can
- * reject the session.
+ * Whether the error says the API rejected the session: a route response with status 401, an HTTP
+ * 401, or a GraphQL error whose `extensions.code` is `UNAUTHENTICATED` (`classifyApiFailure`, plus
+ * the older `graphQLErrors` shape). The message is never read: an error that merely says
+ * "Unauthorized" is not evidence of a dead session. An error thrown by the app's own code, below an
+ * `AppCodeErrorMarker` or passed on by the Me boundary (`isAppCodeError`), never is either, whatever
+ * it carries: only the session query, or a loader, may decide a logout.
  */
-function isUnauthorizedError(
-  error: unknown,
-  normalizedError: Error,
-  routeStatus: number | undefined,
-): boolean {
+function isUnauthorizedError(error: unknown, routeStatus: number | undefined): boolean {
   if (isAppCodeError(error)) return false
-  const graphQLError = normalizedError as ErrorWithGraphQLErrors
-  return (
-    routeStatus === 401 ||
-    normalizedError.message.includes('Unauthorized') ||
-    normalizedError.message.includes('Session has been invalidated') ||
-    !!graphQLError.graphQLErrors?.some(
-      e =>
-        (e.message || '').includes('Unauthorized') ||
-        (e.message || '').includes('Session has been invalidated') ||
-        e.extensions?.code === 'UNAUTHENTICATED',
-    )
+  if (routeStatus !== undefined) return routeStatus === 401
+  if (classifyApiFailure(error) === 'unauthenticated') return true
+  return !!(error as ErrorWithGraphQLErrors | null)?.graphQLErrors?.some?.(
+    e => e?.extensions?.code === 'UNAUTHENTICATED',
   )
 }
 
@@ -230,7 +220,7 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   // Auth errors should send the user through logout to clear their session
   const normalizedError = error instanceof Error ? error : new Error('An unexpected error occurred')
   const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
-  const isUnauthorized = isUnauthorizedError(error, normalizedError, routeStatus)
+  const isUnauthorized = isUnauthorizedError(error, routeStatus)
 
   // Log out only on an unambiguous 401. While the app has outage evidence, a 401 is not proof the
   // session is bad: keep it and show the recovering screen, which reloads once the API answers;
