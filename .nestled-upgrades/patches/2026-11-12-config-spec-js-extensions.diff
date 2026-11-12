@@ -1,0 +1,119 @@
+diff --git a/.nestled-updates/upgrade-notes/2026-11-12-config-spec-js-extensions.yaml b/.nestled-updates/upgrade-notes/2026-11-12-config-spec-js-extensions.yaml
+new file mode 100644
+index 0000000..eca6af1
+--- /dev/null
++++ b/.nestled-updates/upgrade-notes/2026-11-12-config-spec-js-extensions.yaml
+@@ -0,0 +1,34 @@
++id: 2026-11-12-config-spec-js-extensions
++title: >-
++  The stale-config spec accepts a JavaScript extension that resolves to the TypeScript config
++  (`./vite.config.mjs` for vite.config.mts)
++priority: normal
++area: infra
++type: correctness
++delivery: code-patch
++
++intent: >
++  Apply after 2026-11-12-wave-corrections. Its part 3 made
++  scripts/vite-config-module-format.spec.mjs fail on any import of a Vite or Vitest config that
++  names no tracked file. But TypeScript and Vite resolve an import's JavaScript extension to the
++  TypeScript source: `./vite.config.mjs` loads vite.config.mts and `./vite.config.js` loads
++  vite.config.ts. The spec reported those working imports as stale. `staleConfigReferences` now
++  accepts `.js` → `.ts`/`.tsx`, `.mjs` → `.mts` and `.cjs` → `.cts` for imports. A Vitest project
++  path (the root config's `projects` list) is still read literally and must name the file exactly.
++  Two new cases cover both rules. No package changes.
++
++why: >
++  A project whose Vitest config imports `./vite.config.mjs` (a common way to import an .mts config)
++  would fail the new spec on a configuration that works.
++
++affectedPaths:
++  - scripts/vite-config-module-format.spec.mjs
++
++verification:
++  - node --test scripts/vite-config-module-format.spec.mjs
++  - node --test scripts/*.spec.mjs
++
++agentHints:
++  - >
++    If the project kept its own copy of the spec or skipped wave-corrections part 3, apply the same
++    extension rule to its check, or mark this note superseded when the check doesn't exist.
+diff --git a/scripts/vite-config-module-format.spec.mjs b/scripts/vite-config-module-format.spec.mjs
+index b0b2404..a3a3ae8 100644
+--- a/scripts/vite-config-module-format.spec.mjs
++++ b/scripts/vite-config-module-format.spec.mjs
+@@ -67,6 +67,9 @@ export function listedConfigPaths(source) {
+     .filter(path => !path.startsWith('.'))
+ }
+ 
++/** The TypeScript sources an import's JavaScript extension may resolve to. */
++const TS_SOURCE_FOR_JS_EXTENSION = { '.js': ['.ts', '.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] }
++
+ /**
+  * Each reference to a Vite or Vitest config that names no tracked file: an import (or a Vitest
+  * project path) still pointing at a config that was renamed, such as `./vite.config` or
+@@ -75,10 +78,19 @@ export function listedConfigPaths(source) {
+  */
+ export function staleConfigReferences(files, readFile) {
+   const tracked = new Set(files)
+-  const resolves = path =>
+-    CONFIG_REFERENCE.exec(path)?.[3]
+-      ? tracked.has(path)
+-      : EXTENSIONLESS_CANDIDATES.some(extension => tracked.has(path + extension))
++  // TypeScript and Vite resolve an import's JavaScript extension to its TypeScript source, so
++  // `./vite.config.mjs` finds vite.config.mts and `./vite.config.js` finds vite.config.ts. A Vitest
++  // project path is read as a literal file, so it must name the file exactly.
++  const resolves = (path, isImport) => {
++    if (!CONFIG_REFERENCE.exec(path)?.[3]) {
++      return EXTENSIONLESS_CANDIDATES.some(extension => tracked.has(path + extension))
++    }
++    if (tracked.has(path)) return true
++    const source = isImport ? TS_SOURCE_FOR_JS_EXTENSION[posix.extname(path)] : undefined
++    return (source ?? []).some(extension =>
++      tracked.has(path.slice(0, -posix.extname(path).length) + extension),
++    )
++  }
+   return files
+     .filter(file => CODE_FILE.test(file))
+     .flatMap(file => {
+@@ -86,6 +98,7 @@ export function staleConfigReferences(files, readFile) {
+       const imports = configImports(source).map(specifier => ({
+         specifier,
+         path: posix.normalize(posix.join(posix.dirname(file), specifier)),
++        isImport: true,
+       }))
+       const listed = /(^|\/)vitest\.(config|workspace)\.[cm]?[jt]s$/.test(file)
+         ? listedConfigPaths(source).map(path => ({
+@@ -94,7 +107,7 @@ export function staleConfigReferences(files, readFile) {
+           }))
+         : []
+       return [...imports, ...listed]
+-        .filter(reference => !resolves(reference.path))
++        .filter(reference => !resolves(reference.path, reference.isImport))
+         .map(reference => `${file} names ${reference.specifier}, which is no tracked config`)
+     })
+ }
+@@ -180,6 +193,23 @@ describe('references to vite and vitest configs', () => {
+     assert.deepEqual(check('apps/a/tests/y.spec.ts', "await import('../vite.config.ts')\n"), [])
+   })
+ 
++  it('accepts a JavaScript extension that resolves to the TypeScript config', () => {
++    assert.deepEqual(
++      check('libs/ui/vitest.unit.config.mts', "import c from './vite.config.mjs'\n"),
++      [],
++    )
++    assert.deepEqual(check('apps/a/tests/z.spec.ts', "import c from '../vite.config.js'\n"), [])
++    assert.deepEqual(check('apps/a/tests/w.spec.ts', "import c from '../vite.config.mjs'\n"), [
++      'apps/a/tests/w.spec.ts names ../vite.config.mjs, which is no tracked config',
++    ])
++  })
++
++  it('reads a Vitest project path literally, with no extension substitution', () => {
++    assert.deepEqual(check('vitest.config.ts', "projects: ['libs/ui/vite.config.mjs']\n"), [
++      'vitest.config.ts names libs/ui/vite.config.mjs, which is no tracked config',
++    ])
++  })
++
+   it('flags a Vitest project path that names no config, ignoring comments', () => {
+     const source = "export default { test: { projects: ['libs/ui/vite.config.ts'] } }\n"
+     assert.deepEqual(check('vitest.config.ts', source), [
