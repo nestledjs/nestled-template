@@ -1775,34 +1775,6 @@ releases:
     title: Release 2026.11.6
     templateCommit: 5f348d5
     notes:
-      - id: 2026-11-12-config-spec-js-extensions
-        title: The stale-config spec accepts a JavaScript extension that resolves to the TypeScript config (`./vite.config.mjs` for vite.config.mts)
-        delivery: code-patch
-        intent: "Apply after 2026-11-12-wave-corrections. Its part 3 made scripts/vite-config-module-format.spec.mjs fail on any import of a Vite or Vitest config that names no tracked file. But TypeScript and Vite resolve an import's JavaScript extension to the TypeScript source: `./vite.config.mjs` loads vite.config.mts and `./vite.config.js` loads vite.config.ts. The spec reported those working imports as stale. `staleConfigReferences` now accepts `.js` → `.ts`/`.tsx`, `.mjs` → `.mts` and `.cjs` → `.cts` for imports. A Vitest project path (the root config's `projects` list) is still read literally and must name the file exactly. Two new cases cover both rules. No package changes."
-        area: infra
-        affectedPaths:
-          - scripts/vite-config-module-format.spec.mjs
-        verification:
-          - node --test scripts/vite-config-module-format.spec.mjs
-          - node --test scripts/*.spec.mjs
-        patch: patches/2026-11-12-config-spec-js-extensions.diff
-      - id: 2026-11-12-data-browser-list-filters
-        title: The admin data browser no longer offers or sends filters on list-valued columns (@nestledjs/data-browser 1.0.29)
-        delivery: package-release
-        intent: "The generated `<Model>FilterInput` has no field for list-valued scalar or enum columns (`String[]`, an enum list such as `Role[]`): the CRUD generator leaves them out, because Prisma filters them with `has` / `hasSome` / `hasEvery`, which it does not model. Since 1.0.28 sends the typed filter input, the data browser's filter panel still offered an enum list on a related model as a related-enum filter (`relation.someEnumList`), and the converter sent it as `{ relation: { someEnumList: { equals } } }`, so GraphQL rejected the variables and the list failed to load. In 1.0.29 the panel offers related-enum filters only for single-valued enums, a URL parameter naming a list-valued column is ignored, and `toFilterInput` drops any value for a list-valued column, own or related, even in operator shape. Upgrade `@nestledjs/data-browser` to the version below in package.json and the lockfile. Do not copy files from libs/data-browser."
-        area: admin
-        verification:
-          - pnpm install
-          - pnpm typecheck
-          - pnpm exec nx test web --skip-nx-cache
-          - pnpm exec nx build web --skip-nx-cache
-          - pnpm run nestled-doctor
-          - "Manual, for a project with an enum-list column on a model reached by a to-one relation: signed in as an admin, open the list of the model holding the relation and open Filters: no filter is offered for the related enum list, and picking any offered filter reloads the list with no GraphQL error."
-        packageReleases:
-          - name: "@nestledjs/data-browser"
-            sourcePath: libs/data-browser
-            targetVersion: 1.0.29
-            versionRange: ^1.0.29
       - id: 2026-11-12-logout-session-rule-cleanup
         title: "Finish the logout rule: never read message text as a dead session, keep the Me retry alive under StrictMode, judge only the Me query's own failure, count an in-flight retry of an unreachable call as an outage, split signalApiOutage, and ship AppCodeErrorMarker"
         delivery: code-patch
@@ -1826,6 +1798,23 @@ releases:
           - pnpm exec nx build web --skip-nx-cache
           - pnpm run nestled-doctor
         patch: patches/2026-11-12-logout-session-rule-cleanup.diff
+      - id: 2026-11-12-data-browser-list-filters
+        title: The admin data browser no longer offers or sends filters on list-valued columns (@nestledjs/data-browser 1.0.29)
+        delivery: package-release
+        intent: "The generated `<Model>FilterInput` has no field for list-valued scalar or enum columns (`String[]`, an enum list such as `Role[]`): the CRUD generator leaves them out, because Prisma filters them with `has` / `hasSome` / `hasEvery`, which it does not model. Since 1.0.28 sends the typed filter input, the data browser's filter panel still offered an enum list on a related model as a related-enum filter (`relation.someEnumList`), and the converter sent it as `{ relation: { someEnumList: { equals } } }`, so GraphQL rejected the variables and the list failed to load. In 1.0.29 the panel offers related-enum filters only for single-valued enums, a URL parameter naming a list-valued column is ignored, and `toFilterInput` drops any value for a list-valued column, own or related, even in operator shape. Upgrade `@nestledjs/data-browser` to the version below in package.json and the lockfile. Do not copy files from libs/data-browser."
+        area: admin
+        verification:
+          - pnpm install
+          - pnpm typecheck
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx build web --skip-nx-cache
+          - pnpm run nestled-doctor
+          - "Manual, for a project with an enum-list column on a model reached by a to-one relation: signed in as an admin, open the list of the model holding the relation and open Filters: no filter is offered for the related enum list, and picking any offered filter reloads the list with no GraphQL error."
+        packageReleases:
+          - name: "@nestledjs/data-browser"
+            sourcePath: libs/data-browser
+            targetVersion: 1.0.29
+            versionRange: ^1.0.29
       - id: 2026-11-12-wave-corrections
         title: "Corrections to the 2026.11.5 follow-ups: the lcov script typechecks as CommonJS and handles sharded reports, Sonar's vite.config.mts exclusions, stale config imports, serve:production's hmr code, coverage output ignored everywhere, gitleaks full clones and baselines, lint overrides in other apps"
         delivery: code-patch
@@ -1860,3 +1849,14 @@ releases:
           - pnpm run nestled-doctor
           - gitleaks git . (from a fresh full clone)
         patch: patches/2026-11-12-wave-corrections.diff
+      - id: 2026-11-12-config-spec-js-extensions
+        title: The stale-config spec accepts a JavaScript extension that resolves to the TypeScript config (`./vite.config.mjs` for vite.config.mts)
+        delivery: code-patch
+        intent: "Apply after 2026-11-12-wave-corrections. Its part 3 made scripts/vite-config-module-format.spec.mjs fail on any import of a Vite or Vitest config that names no tracked file. But TypeScript and Vite resolve an import's JavaScript extension to the TypeScript source: `./vite.config.mjs` loads vite.config.mts and `./vite.config.js` loads vite.config.ts. The spec reported those working imports as stale. `staleConfigReferences` now accepts `.js` → `.ts`/`.tsx`, `.mjs` → `.mts` and `.cjs` → `.cts` for imports. A Vitest project path (the root config's `projects` list) is still read literally and must name the file exactly. Two new cases cover both rules. No package changes."
+        area: infra
+        affectedPaths:
+          - scripts/vite-config-module-format.spec.mjs
+        verification:
+          - node --test scripts/vite-config-module-format.spec.mjs
+          - node --test scripts/*.spec.mjs
+        patch: patches/2026-11-12-config-spec-js-extensions.diff
