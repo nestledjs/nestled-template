@@ -1,0 +1,34 @@
+id: 2026-11-12-config-spec-js-extensions
+title: >-
+  The stale-config spec accepts a JavaScript extension that resolves to the TypeScript config
+  (`./vite.config.mjs` for vite.config.mts)
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Apply after 2026-11-12-wave-corrections. Its part 3 made
+  scripts/vite-config-module-format.spec.mjs fail on any import of a Vite or Vitest config that
+  names no tracked file. But TypeScript and Vite resolve an import's JavaScript extension to the
+  TypeScript source: `./vite.config.mjs` loads vite.config.mts and `./vite.config.js` loads
+  vite.config.ts. The spec reported those working imports as stale. `staleConfigReferences` now
+  accepts `.js` → `.ts`/`.tsx`, `.mjs` → `.mts` and `.cjs` → `.cts` for imports. A Vitest project
+  path (the root config's `projects` list) is still read literally and must name the file exactly.
+  Two new cases cover both rules. No package changes.
+
+why: >
+  A project whose Vitest config imports `./vite.config.mjs` (a common way to import an .mts config)
+  would fail the new spec on a configuration that works.
+
+affectedPaths:
+  - scripts/vite-config-module-format.spec.mjs
+
+verification:
+  - node --test scripts/vite-config-module-format.spec.mjs
+  - node --test scripts/*.spec.mjs
+
+agentHints:
+  - >
+    If the project kept its own copy of the spec or skipped wave-corrections part 3, apply the same
+    extension rule to its check, or mark this note superseded when the check doesn't exist.
