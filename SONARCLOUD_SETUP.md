@@ -28,6 +28,7 @@ libs/api/prisma/src/lib/schemas/migrations/**
 libs/api/prisma/src/lib/seed/seed-data/**
 **/*.md
 **/vite.config.ts
+**/vite.config.mts
 ```
 
 ---
@@ -42,6 +43,7 @@ libs/shared/sdk/src/lib/database-models.ts
 libs/api/prisma/src/lib/prisma-generated/**
 libs/api/prisma/src/lib/seed/seed-data/**
 **/vite.config.ts
+**/vite.config.mts
 **/*.spec.ts
 **/*.spec.tsx
 ```
@@ -58,6 +60,7 @@ libs/api/prisma/src/lib/seed/seed-data/**
 **/jest.config.ts
 **/jest.config.js
 **/vite.config.ts
+**/vite.config.mts
 **/jest.setup.ts
 libs/api/generated-crud/**
 libs/shared/sdk/src/generated/**

@@ -69,6 +69,7 @@ import { SetContextLink } from '@apollo/client/link/context'
 import { ErrorLink } from '@apollo/client/link/error'
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
 import { getMainDefinition } from '@apollo/client/utilities'
+import { print } from 'graphql'
 import { createClient } from 'graphql-ws'
 import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
 import { decodeCookieValue, isFetchFailure, pickNewestJwt } from '@nestled-template/shared/utils'
@@ -89,8 +90,8 @@ export type ClientOptions = {
 
 /**
  * Why an operation against the API failed:
- * - `unauthenticated`: the API rejected the session (HTTP 401, or a GraphQL authentication error
- *   such as `UNAUTHENTICATED`);
+ * - `unauthenticated`: the API rejected the session (HTTP 401, or a GraphQL error whose
+ *   `extensions.code` is `UNAUTHENTICATED`; never judged by message text);
  * - `unavailable`: no HTTP response, or a proxy's 502/503/504 (`isRetryableConnectivityError`);
  * - `other`: the API answered with some other error (a 403, a 500, a resolver or validation error).
  */
@@ -176,14 +177,14 @@ function resolveAuthToken(request?: Request, options?: ClientOptions): string | 
   return null
 }
 
-function isAuthenticationError(message: string, extensions?: any): boolean {
-  return (
-    message.includes('Unauthorized') ||
-    message.includes('User from token not found') ||
-    message.includes('Invalid JWT') ||
-    message.includes('Session has been invalidated') ||
-    extensions?.code === 'UNAUTHENTICATED'
-  )
+/**
+ * A GraphQL error that rejects the session: its `extensions.code` is `UNAUTHENTICATED`, which the
+ * API sets for every 401 (Nest maps an `UnauthorizedException` to it). The message is never read:
+ * text such as "Unauthorized" or "Session has been invalidated" is not evidence of a dead session
+ * (owner rule, 2026-11-12), and matching it logged users out over errors that only said so.
+ */
+function isAuthenticationError(extensions?: { code?: unknown }): boolean {
+  return extensions?.code === 'UNAUTHENTICATED'
 }
 
 function isForbiddenError(extensions?: { code?: unknown }): boolean {
@@ -211,14 +212,18 @@ function handleAuthorizationError(operation: ApolloLink.Operation): void {
 const apiOutageSignals = new Set<object>()
 
 /**
- * Tells the error link whether `source` (any object, such as a component's ref) currently has
- * outage evidence. While any source does, a 401 does not log the user out: a 401 alongside an
- * outage is not proof the session is bad. The app retries once the API recovers, and a 401 then,
- * with no outage, logs out as usual.
+ * Tells the error link that `source` (any object, such as a component's ref) has outage evidence,
+ * until `clearApiOutage(source)`. While any source does, a 401 does not log the user out: a 401
+ * alongside an outage is not proof the session is bad. The app retries once the API recovers, and
+ * a 401 then, with no outage, logs out as usual. Signalling the same source twice is one signal.
  */
-export function signalApiOutage(source: object, active: boolean): void {
-  if (active) apiOutageSignals.add(source)
-  else apiOutageSignals.delete(source)
+export function signalApiOutage(source: object): void {
+  apiOutageSignals.add(source)
+}
+
+/** Withdraws `source`'s outage evidence (`signalApiOutage`); other sources' evidence stays. */
+export function clearApiOutage(source: object): void {
+  apiOutageSignals.delete(source)
 }
 
 /** Whether any source has signalled an outage (`signalApiOutage`) that is still in effect. */
@@ -265,6 +270,85 @@ function handleAuthenticationError(): void {
   }
 }
 
+// Browser only. Query operations (by name and variables) whose last attempt got no answer, or a
+// proxy's 502/503/504 (`isRetryableConnectivityError`); forgotten once one is answered.
+const unreachableOperations = new Set<string>()
+
+function operationKey(operation: ApolloLink.Operation): string {
+  const name = operation.operationName || print(operation.query)
+  return `${name}:${JSON.stringify(operation.variables ?? {})}`
+}
+
+/**
+ * Counts a retry of an unreachable call, while it is in flight, as outage evidence
+ * (`signalApiOutage`). Without it, a 401 that came back while another call was still being retried
+ * after failing to reach the API (a refetch once a blip cleared, or a loader's preload when Me is
+ * revalidated) logged the user out before that retry could fail again and record the outage. The
+ * evidence lasts until the retry settles: an answer clears it (and the 401s after it are judged
+ * as usual), and a second connectivity failure is reported by the error link in the same tick.
+ *
+ * Sits below the error link, so a retry's own failure clears its evidence before the error link
+ * sees it: a retried call that gets a 401 is judged like any other. Queries only (a subscription
+ * stays open, and would hold the evidence as long as it lives); never during a server render.
+ */
+const CANCELLED = Symbol('cancelled')
+
+/**
+ * Dispatched on `window` when the last outage evidence an in-flight retry held is withdrawn
+ * (`createOutageRetryLink`) while the error link has let a 401 pass because of it
+ * (`takeDeferredAuthFailure`). Nothing else marks the end of that evidence: the availability
+ * check never left `available`, so it calls no recovery callback. The web app listens and
+ * refetches the queries holding such a 401, for a fresh answer.
+ */
+export const APOLLO_DEFERRED_AUTH_FAILURE_EVENT = 'apollo-deferred-auth-failure'
+
+function releaseRetryEvidence(evidence: object): void {
+  clearApiOutage(evidence)
+  if (isApiOutageSignalled() || !authFailureDeferred || globalThis.window === undefined) return
+  globalThis.window.dispatchEvent(new CustomEvent(APOLLO_DEFERRED_AUTH_FAILURE_EVENT))
+}
+
+function createOutageRetryLink(): ApolloLink {
+  return new ApolloLink((operation, forward) => {
+    if (globalThis.window === undefined || !isQueryOperation(operation)) return forward(operation)
+    const key = operationKey(operation)
+    return new Observable(observer => {
+      const evidence = {}
+      const retrying = unreachableOperations.has(key)
+      if (retrying) signalApiOutage(evidence)
+      let settled = false
+      // Once per attempt: the first answer, error or cancellation decides.
+      const settle = (error?: unknown) => {
+        if (settled) return
+        settled = true
+        if (isRetryableConnectivityError(error)) unreachableOperations.add(key)
+        else if (error !== CANCELLED) unreachableOperations.delete(key)
+        if (retrying) releaseRetryEvidence(evidence)
+      }
+      const subscription = forward(operation).subscribe({
+        // An answer (an HTTP 200 carrying an UNAUTHENTICATED error among them) settles the attempt
+        // before the error link above judges it, so a clean rejection is not deferred.
+        next: result => {
+          settle()
+          observer.next(result)
+        },
+        error: error => {
+          settle(error)
+          observer.error(error)
+        },
+        complete: () => {
+          settle()
+          observer.complete()
+        },
+      })
+      return () => {
+        settle(CANCELLED)
+        subscription.unsubscribe()
+      }
+    })
+  })
+}
+
 function logDevelopmentExtensions(extensions: any): void {
   if (extensions && typeof process !== 'undefined' && process.env.NODE_ENV === 'development') {
     console.error(`[GraphQL error]: Extensions:`, extensions)
@@ -285,9 +369,7 @@ function errorFromUnknown(value: unknown): Error {
 /** Classifies an Apollo link error; see `ApiFailureCause`. */
 export function classifyApiFailure(error: unknown): ApiFailureCause {
   if (CombinedGraphQLErrors.is(error)) {
-    return error.errors.some(({ message, extensions }) =>
-      isAuthenticationError(message ?? '', extensions),
-    )
+    return error.errors.some(({ extensions }) => isAuthenticationError(extensions))
       ? 'unauthenticated'
       : 'other'
   }
@@ -304,7 +386,7 @@ function createErrorLink(onApiFailure?: (cause: ApiFailureCause) => void): Apoll
       for (const { message, path, extensions } of error.errors) {
         console.error(`[GraphQL error]: Message: ${message}, Path: ${path}`)
 
-        if (isAuthenticationError(message, extensions)) {
+        if (isAuthenticationError(extensions)) {
           handleAuthenticationError()
         } else if (isForbiddenError(extensions)) {
           handleAuthorizationError(operation)
@@ -516,6 +598,7 @@ function createLinkChain(
 
   const links = [
     createErrorLink(onApiFailure),
+    createOutageRetryLink(),
     ...(isDev ? [createLogLink()] : []),
     createAuthLink(token),
     splitLink,

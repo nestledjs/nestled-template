@@ -16,6 +16,7 @@ import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils
 import { ViteCacheError } from '@nestledjs/shared-components'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
+  APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   classifyApiFailure,
   isApiOutageSignalled,
@@ -25,6 +26,7 @@ import {
 import { AccessDenied } from './access-denied'
 import { retryDelayMs, useApiAvailability, useRefetchFailedQueries } from './api-availability'
 import { ApiUnavailableScreen } from './api-unavailable'
+import { AppCodeErrorMarker, isAppCodeError, markAppCodeError } from './app-code-error-marker'
 
 type MeQueryErrorBoundaryProps = {
   children: ReactNode
@@ -79,14 +81,17 @@ function meFailureAwaitsRecovery(error: unknown): boolean {
 }
 
 /**
- * Something the Me query can fail with, and so the only thing the Me boundary may treat as a
- * session failure: an answer from the API (an HTTP error, an unparsable response, a GraphQL error)
- * or a request that never got one. Anything else -- an `Error` thrown by a route's own render or
- * effect, say -- is a bug in the app, not a verdict on the session. Judged by the error itself, not
- * by where it was caught: the boundary also sits above every route that has no error boundary of
- * its own.
+ * A failure of the Me query itself, and so the only thing the Me boundary may treat as a session
+ * matter. The routes render inside an `AppCodeErrorMarker`, so anything they throw (a render or
+ * effect bug, or a failure of a route's own API query) arrives marked (`isAppCodeError`) and is
+ * passed on to the route's or the root error boundary with the session kept: it says nothing about
+ * the session, and treating a route query's 500 as a Me failure put up the recovering screen and
+ * retried Me instead of showing the route's error. What is left is what the Me read threw; of that,
+ * only an answer from the API (an HTTP error, an unparsable response, a GraphQL error) or a request
+ * that never got one is a session failure. Anything else is a bug, passed on too.
  */
 function isMeSessionFailure(error: unknown): boolean {
+  if (isAppCodeError(error)) return false
   return (
     CombinedGraphQLErrors.is(error) ||
     ServerError.is(error) ||
@@ -95,15 +100,7 @@ function isMeSessionFailure(error: unknown): boolean {
   )
 }
 
-// Errors the Me boundary judged to come from the app's own code and passed on. The root
-// ErrorBoundary reads this (`isAppCodeError`) so that an app error whose message happens to say
-// "Unauthorized" is still shown as an error instead of being taken for a rejected session.
-const appCodeErrors = new WeakSet<object>()
-
-/** The Me boundary passed this error on as one from the app's own code, not a session failure. */
-export function isAppCodeError(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && appCodeErrors.has(error)
-}
+export { AppCodeErrorMarker, isAppCodeError }
 
 // Me query refs whose failure was judged to wait for recovery. The decision sticks to the ref: once
 // the outage clears, App mounts the boundary again with the same failed ref until the retry brings
@@ -119,7 +116,7 @@ class MeQueryErrorBoundary extends Component<MeQueryErrorBoundaryProps, MeQueryE
 
   static getDerivedStateFromError(error: unknown): Partial<MeQueryErrorBoundaryState> {
     if (!isMeSessionFailure(error)) {
-      if (typeof error === 'object' && error !== null) appCodeErrors.add(error)
+      markAppCodeError(error)
       return { appError: { error } }
     }
     return { hasError: true, awaitsRecovery: meFailureAwaitsRecovery(error), appError: undefined }
@@ -169,7 +166,9 @@ class MeQueryErrorBoundary extends Component<MeQueryErrorBoundaryProps, MeQueryE
     if (this.state.hasError) {
       return (
         <GlobalContextProvider user={null}>
-          <Outlet />
+          <AppCodeErrorMarker>
+            <Outlet />
+          </AppCodeErrorMarker>
         </GlobalContextProvider>
       )
     }
@@ -226,29 +225,53 @@ export function App() {
   // Retries back off like the refetches, so a /graphql that keeps failing while the liveness route
   // answers cannot turn this into a revalidation loop.
   const meFailedOfflineRef = useRef(false)
-  const meRetry = useRef<{ attempt: number; timer?: ReturnType<typeof setTimeout> }>({ attempt: 0 })
+  // `delay` is the queued retry's delay, kept until it runs or is dropped, so an effect replay that
+  // cancelled its timer can queue it again.
+  const meRetry = useRef<{
+    attempt: number
+    timer?: ReturnType<typeof setTimeout>
+    delay?: number
+  }>({ attempt: 0 })
+  const runMeRetry = () => {
+    meRetry.current.timer = undefined
+    meRetry.current.delay = undefined
+    meFailedOfflineRef.current = false
+    void revalidator.revalidate()
+  }
+  // Read when the timer fires, so it always revalidates through this render's revalidator.
+  const runMeRetryRef = useRef(runMeRetry)
+  useLayoutEffect(() => {
+    runMeRetryRef.current = runMeRetry
+  })
+  const queueMeRetry = (delay: number) => {
+    meRetry.current.delay = delay
+    meRetry.current.timer = setTimeout(() => runMeRetryRef.current(), delay)
+  }
   const retryMeQuery = () => {
     if (!meFailedOfflineRef.current || meRetry.current.timer !== undefined) return
     const delay = meRetry.current.attempt === 0 ? 0 : retryDelayMs(meRetry.current.attempt - 1)
     meRetry.current.attempt += 1
-    meRetry.current.timer = setTimeout(() => {
-      meRetry.current.timer = undefined
-      meFailedOfflineRef.current = false
-      void revalidator.revalidate()
-    }, delay)
+    queueMeRetry(delay)
   }
   // The recovering screen's button: retry the Me query now instead of waiting out the backoff.
   // While the failure is still being confirmed there is no timer yet and the probe decides.
   const retryMeQueryNow = () => {
     if (!meFailedOfflineRef.current || meRetry.current.timer === undefined) return
     clearTimeout(meRetry.current.timer)
-    meRetry.current.timer = undefined
-    meFailedOfflineRef.current = false
-    void revalidator.revalidate()
+    runMeRetry()
   }
+  const queueMeRetryRef = useRef(queueMeRetry)
   useEffect(() => {
     const retry = meRetry.current
-    return () => clearTimeout(retry.timer)
+    // Queue again a retry that the cleanup below cancelled. React StrictMode (development) replays
+    // effects on mount: when Me failed on the first render, the boundary queued its retry while
+    // mounting, the replayed cleanup cancelled the timer and left it recorded as pending, and every
+    // later retry saw it pending and gave up, so the recovering screen stayed up for good.
+    if (retry.timer === undefined && retry.delay !== undefined) queueMeRetryRef.current(retry.delay)
+    return () => {
+      clearTimeout(retry.timer)
+      retry.timer = undefined
+    }
   }, [])
   // For the Me boundary's error callback, which keeps one identity across renders.
   const retryMeQueryRef = useRef(retryMeQuery)
@@ -265,6 +288,7 @@ export function App() {
       clearTimeout(meRetry.current.timer)
       meRetry.current.timer = undefined
     }
+    meRetry.current.delay = undefined
     meFailedOfflineRef.current = false
   }, [])
 
@@ -316,6 +340,10 @@ export function App() {
   useEffect(() => {
     const handleServiceUnavailable = () => reportConnectivityError()
     const handleAccessForbidden = () => setAccessForbidden(true)
+    // An in-flight retry's outage evidence ended with no outage on screen, and a 401 was let pass
+    // meanwhile: refetch the queries holding it, as recovering from an outage does.
+    const handleDeferredAuthFailure = () =>
+      refetchFailedQueries({ includeAuthFailures: takeDeferredAuthFailure() })
 
     const handleGlobalError = (event: ErrorEvent) => {
       const error = event.error
@@ -358,6 +386,7 @@ export function App() {
     // Listen for Apollo service unavailable events
     globalThis.addEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
     globalThis.addEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
+    globalThis.addEventListener(APOLLO_DEFERRED_AUTH_FAILURE_EVENT, handleDeferredAuthFailure)
 
     // Fallback: Listen for global errors
     globalThis.addEventListener('error', handleGlobalError)
@@ -367,10 +396,11 @@ export function App() {
       // noisy during normal usage
       globalThis.removeEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
       globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
+      globalThis.removeEventListener(APOLLO_DEFERRED_AUTH_FAILURE_EVENT, handleDeferredAuthFailure)
       globalThis.removeEventListener('error', handleGlobalError)
       globalThis.removeEventListener('unhandledrejection', handleUnhandledRejection)
     }
-  }, [reportConnectivityError])
+  }, [reportConnectivityError, refetchFailedQueries])
 
   // Show Vite cache error UI if detected
   if (viteCacheError) {
@@ -387,10 +417,13 @@ export function App() {
   }
 
   if (!meQueryRef) {
-    // Always provide the context, user is null
+    // Always provide the context, user is null. No Me boundary here, so the marker is what keeps a
+    // route's error from reaching the root ErrorBoundary looking like a rejected session.
     return (
       <GlobalContextProvider user={null}>
-        <Outlet />
+        <AppCodeErrorMarker>
+          <Outlet />
+        </AppCodeErrorMarker>
       </GlobalContextProvider>
     )
   }
@@ -429,7 +462,10 @@ function AppWithUser({
   }, [meQueryRef, answered, onLoaded])
   return (
     <GlobalContextProvider key={user?.id ?? 'nouser'} user={user}>
-      <Outlet />
+      {/* Below the Me read: what the routes throw is theirs, not a failure of the session query. */}
+      <AppCodeErrorMarker>
+        <Outlet />
+      </AppCodeErrorMarker>
     </GlobalContextProvider>
   )
 }

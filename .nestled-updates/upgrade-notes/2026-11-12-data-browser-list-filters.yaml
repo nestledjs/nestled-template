@@ -1,0 +1,61 @@
+id: 2026-11-12-data-browser-list-filters
+title: >-
+  The admin data browser no longer offers or sends filters on list-valued columns
+  (@nestledjs/data-browser 1.0.29)
+priority: high
+area: admin
+type: correctness
+delivery: package-release
+
+intent: >
+  The generated `<Model>FilterInput` has no field for list-valued scalar or enum columns
+  (`String[]`, an enum list such as `Role[]`): the CRUD generator leaves them out, because Prisma
+  filters them with `has` / `hasSome` / `hasEvery`, which it does not model. Since 1.0.28 sends the
+  typed filter input, the data browser's filter panel still offered an enum list on a related model
+  as a related-enum filter (`relation.someEnumList`), and the converter sent it as
+  `{ relation: { someEnumList: { equals } } }`, so GraphQL rejected the variables and the list
+  failed to load. In 1.0.29 the panel offers related-enum filters only for single-valued enums, a
+  URL parameter naming a list-valued column is ignored, and `toFilterInput` drops any value for a
+  list-valued column, own or related, even in operator shape. Upgrade `@nestledjs/data-browser` to
+  the version below in package.json and the lockfile. Do not copy files from libs/data-browser.
+
+why: >
+  A model whose related model has an enum list showed a filter that broke its list as soon as it was
+  picked, and an old link carrying such a filter broke the page the same way.
+
+packageReleases:
+  - name: '@nestledjs/data-browser'
+    sourcePath: libs/data-browser
+    targetVersion: 1.0.29
+    versionRange: ^1.0.29
+
+skipIf:
+  - The project has no admin data routes (no `@nestledjs/data-browser` dependency).
+
+verification:
+  - pnpm install
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+  - >
+    Manual, for a project with an enum-list column on a model reached by a to-one relation: signed
+    in as an admin, open the list of the model holding the relation and open Filters: no filter is
+    offered for the related enum list, and picking any offered filter reloads the list with no
+    GraphQL error.
+
+agentHints:
+  - >
+    Update package.json and the lockfile to the published version; do not copy files from
+    libs/data-browser.
+  - >
+    An app with its own client-side filter conversion (a wrapper around the list page, a patched copy
+    of it, a hand-written list page, or a custom Apollo link) should check that it also skips
+    list-valued fields, on the model and on related models, rather than sending `{ equals }` or
+    `{ in }` for them; the generated filter inputs have no field for them.
+  - >
+    Optional, recommended: refresh apps/web/tests/routes/admin-data-filters-schema.spec.ts from the
+    template. It now asserts the exact converted filter for every case, and checks the project's own
+    list-valued columns are dropped, against the project's committed api-schema.graphql.
+  - >
+    A project without the admin data routes marks this note not-applicable.

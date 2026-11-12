@@ -1,0 +1,176 @@
+id: 2026-11-12-wave-corrections
+title: >-
+  Corrections to the 2026.11.5 follow-ups: the lcov script typechecks as CommonJS and handles
+  sharded reports, Sonar's vite.config.mts exclusions, stale config imports, serve:production's hmr
+  code, coverage output ignored everywhere, gitleaks full clones and baselines, lint overrides in
+  other apps
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Corrects and completes 2026-11-10-r5b-pilot-followups and 2026-11-11-r5b-wave-followups (apply
+  both first). Eight parts, each independent. No package changes, and no change to package.json,
+  nx.json or tsconfig.base.json.
+
+  1. scripts/normalize-lcov-paths.ts. (a) Its CLI guard compared `import.meta.url` with
+  `process.argv[1]`, and a project that typechecks scripts/ as CommonJS (for example a
+  tsconfig.spec.scripts.json with `"module": "commonjs"`) reported TS1343. The functions move to
+  new scripts/normalize-lcov-paths.lib.ts, unchanged apart from (b) and with no guard;
+  scripts/normalize-lcov-paths.ts now only imports `normalizeLcovReports` from
+  `./normalize-lcov-paths.lib` (no extension) and runs it on `process.cwd()`, printing each changed
+  report, so `pnpm coverage:normalize-lcov` (`tsx scripts/normalize-lcov-paths.ts`) is unchanged.
+  Neither file nor the spec uses `import.meta`: the spec imports `./normalize-lcov-paths.lib.ts`
+  and finds the workspace with `git rev-parse --show-toplevel`. (b) A sharded test run's
+  `coverage/<project root>/shard-<n>/lcov.info` took the shard folder as part of the project root,
+  so its SF: paths became `libs/x/shard-1/src/...`. New exported `projectRootOf(reportDir,
+  coverageDir)` drops trailing folders matching `/^shard[-_]?\d+$/i` (never the last remaining
+  one), and `findLcovReports` uses it. scripts/normalize-lcov-paths.spec.mjs gains cases for
+  `projectRootOf`, two shard reports in the fixture tree, and a check that compiles both files
+  with tsc as CommonJS (`--module commonjs --ignoreDeprecations 6.0`) and as ES modules (`--module
+  esnext --moduleResolution bundler`). (c) The template excludes scripts/** from Sonar coverage and
+  has no CI step measuring script coverage, so its CI is unchanged; see the hint for projects that
+  do.
+
+  2. The wave note said sonar-project.properties and SONARCLOUD_SETUP.md add `**/vite.config.mts`
+  beside each `**/vite.config.ts`. The template had made that change, but template promotion does
+  not carry either file, so the change never reached projects. Add the line after
+  `**/vite.config.ts` in each list that names it: `sonar.exclusions`, `sonar.cpd.exclusions` and
+  `sonar.coverage.exclusions` in sonar-project.properties (keep the backslash continuations), and
+  the three matching lists in SONARCLOUD_SETUP.md. New scripts/sonar-vite-config-exclusions.spec.mjs
+  fails for any property, or fenced list in SONARCLOUD_SETUP.md, that names the .ts config without
+  the .mts one; it passes when either file is absent.
+
+  3. After the web-ui rename to vite.config.mts, any import of `./vite.config` or
+  `./vite.config.ts` that pointed at it is stale; a downstream had one in a second Vitest config of
+  libs/web-ui. The template had none left. scripts/vite-config-module-format.spec.mjs now also
+  fails for every tracked file's relative import of a vite or vitest config, and every path a
+  vitest.config or vitest.workspace lists as a string (the root project list), that names no
+  tracked file. An import without an extension must find a `.ts` or `.js` config; a `.mts` config
+  is imported by its full name, as libs/web-ui/vitest.config.mts does.
+
+  4. Wave part 3 assumed apps/web/vite.config.ts already turned HMR off for production. This is
+  that code, for a project that does not have it: export the config as
+  `defineConfig(({ mode }) => ({ ... }))` and set `hmr: mode !== 'production'` in `server`, with
+  the comment "`nx serve web --configuration=production` serves without HMR, as the removed
+  @nx/vite:dev-server production configuration did (hmr: false); every other mode keeps it." The
+  existing apps/web/tests/vite-config-serve.spec.ts is the test; it fails without the code.
+
+  5. .gitignore ignored only the root `/coverage`, so a project whose test config keeps the
+  runner's default coverage directory (for example tools/workspace-plugin/coverage/) was left
+  untracked after a test run. `/coverage` becomes `coverage/`, with a comment, and the root
+  eslint.config.mjs adds `'**/coverage'` to its `ignores` (lcov-report/ ships JavaScript). New
+  scripts/gitignore-test-output.spec.mjs checks, with the repository's own ignore rules only
+  (`core.excludesFile=/dev/null`), that coverage paths at the root and inside projects are ignored
+  and that no tracked file is ignored.
+
+  6. gitleaks. (a) Scan history from a fresh full clone, `git clone` without `--filter` or
+  `--depth`: a worktree or CI checkout may be a partial or shallow clone, and `gitleaks git .`
+  then misses history without saying so. .gitleaks.toml's header and the gitleaks job's comment in
+  .github/workflows/ci.yml say so. (b) For a repository with hundreds or thousands of history
+  findings, resolving each before the first merge is not realistic, so .gitleaks.toml documents a
+  baseline: from that clone, `gitleaks git . --redact --report-format json --report-path
+  gitleaks-baseline.json`, review the report and rotate every credential in it that is still live,
+  then commit gitleaks-baseline.json at the repository root. --redact keeps the secrets out of the
+  committed file; gitleaks 8.30.1 still matches findings against a redacted baseline. CI's "Scan
+  for secrets" step passes `--baseline-path="$baseline"` when gitleaks-baseline.json exists, so
+  only new findings fail:
+
+    baseline=""
+    if [ -f gitleaks-baseline.json ]; then
+      baseline="gitleaks-baseline.json"
+    fi
+    echo "Scanning: ${range:-all commits}${baseline:+, ignoring the findings in $baseline}"
+    "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose \
+      ${range:+--log-opts="$range"} ${baseline:+--baseline-path="$baseline"} .
+
+  .gitleaksignore's header says it is for a handful of findings and points at the baseline.
+
+  7. The pilot note's part 3 named only apps/web/project.json's own `lint` target as an override
+  of the new `targetDefaults.lint` inputs. Any project may have one: apps/mobile, another app or a
+  library. Every project.json whose `lint` target declares `inputs` either extends their
+  externalDependencies with the lint plugins or drops the override.
+
+  8. apps/web/app/entry.server.tsx: the comment above the 503 rejection, which explains why an
+  unreachable API or unknown cause keeps the session, broke after "Keep the session: React" and
+  continued in short lines. It is rewrapped to the 100-column width; prettier does not rewrap
+  comments. Wording unchanged.
+
+why: >
+  The 2026.11.5 rollout found these: a downstream's CommonJS scripts typecheck rejected the lcov
+  script, sharded Jest coverage still reached Sonar with paths it could not match, the
+  vite.config.mts Sonar exclusions the wave note described were never delivered, a second Vitest
+  config still imported web-ui's old config name, the serve:production part assumed code a
+  project did not have, a test run left coverage output untracked, the gitleaks history scan was
+  run from a shallow worktree and missed findings, and a repository with thousands of history
+  findings could not resolve them all before the first merge.
+
+affectedPaths:
+  - scripts/normalize-lcov-paths.ts
+  - scripts/normalize-lcov-paths.lib.ts
+  - scripts/normalize-lcov-paths.spec.mjs
+  - sonar-project.properties
+  - SONARCLOUD_SETUP.md
+  - scripts/sonar-vite-config-exclusions.spec.mjs
+  - scripts/vite-config-module-format.spec.mjs
+  - apps/web/vite.config.ts
+  - apps/web/tests/vite-config-serve.spec.ts
+  - .gitignore
+  - eslint.config.mjs
+  - scripts/gitignore-test-output.spec.mjs
+  - .gitleaks.toml
+  - .gitleaksignore
+  - .github/workflows/ci.yml
+  - apps/web/app/entry.server.tsx
+
+verification:
+  - node --test scripts/*.spec.mjs
+  - pnpm typecheck:workspace
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx run-many -t test --coverage --skip-nx-cache && pnpm coverage:normalize-lcov && git status --short
+  - grep -h '^SF:' coverage/libs/api/*/lcov.info | head
+  - pnpm exec nx run-many -t lint --skip-nx-cache
+  - pnpm exec nx show project web --json
+  - pnpm run nestled-doctor
+  - gitleaks git . (from a fresh full clone)
+
+agentHints:
+  - >
+    Part 1: a project whose lcov script differs keeps its own and applies the same two rules: no
+    `import.meta` in the script or its spec (split the functions from the runner), and a trailing
+    shard-<n> folder under coverage/<project root>/ is not part of the project root. Where Sonar
+    lists lcov reports explicitly, list each shard's report too. A project whose CI has a scripts
+    coverage step (`node --test --experimental-test-coverage --test-reporter=lcov ...` naming the
+    specs it measures) adds scripts/normalize-lcov-paths.spec.mjs to it, so the lcov script's own
+    coverage reaches Sonar. A project that typechecks scripts/ with a CommonJS tsconfig keeps it.
+  - >
+    Parts 1 and 3: an app whose tsconfig.spec.json lists only `vite.config.ts` and whose Vitest
+    config imports `./vite.config.mjs` needs no tsconfig change.
+  - >
+    Part 2 is made by hand (promotion does not carry the Sonar files). A project that already has
+    `**/vite.config.mts` in all of its lists marks part 2 `superseded` but still adds the spec.
+  - >
+    Part 3: run the spec; it lists every stale reference, each to be pointed at the config's
+    current name. A project with none takes only the spec.
+  - >
+    Part 4: a project whose vite.config already sets `hmr: mode !== 'production'` (or `hmr: false`
+    for production) marks part 4 `superseded`. Run apps/web/tests/vite-config-serve.spec.ts either
+    way.
+  - >
+    Part 5: a project whose .gitignore already ignores every coverage/ directory marks the
+    .gitignore change `superseded` and still adds the spec, with TEST_OUTPUT naming its own
+    coverage folders. After the full test run, `git status --short` must be empty; ignore any other
+    untracked test output it shows the same way.
+  - >
+    Part 6: everyone takes the wording. The baseline matters only for a project with history
+    findings: generate it from a fresh full clone, never from a worktree, rotate live credentials
+    first, and commit only the --redact report. A project with a few findings may keep using
+    .gitleaksignore instead.
+  - >
+    Part 7: run `grep -l '"lint"' apps/*/project.json libs/**/project.json` and check each hit's
+    `inputs`. A project with no other override marks part 7 `superseded`.
+  - >
+    Part 8: a project whose comment differs, or that already rewrapped it, marks part 8
+    `superseded`.

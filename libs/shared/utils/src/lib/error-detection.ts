@@ -259,6 +259,10 @@ function checkErrorMessage(
 /**
  * Detects if an error is an authentication or authorization error from GraphQL/API
  * Returns detailed information about the type of auth error
+ *
+ * For display only (which message or panel to show). It reads message text, so it must never
+ * decide a logout: a session is rejected only by an HTTP 401 or a GraphQL error whose
+ * `extensions.code` is `UNAUTHENTICATED` (`classifyApiFailure` in @nestled-template/shared/apollo).
  */
 export function isAuthError(error: unknown): AuthErrorInfo {
   if (!error || typeof error !== 'object') {

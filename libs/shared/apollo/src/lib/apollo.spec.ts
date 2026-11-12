@@ -2,8 +2,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
+  APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   classifyApiFailure,
+  clearApiOutage,
   isApiOutageSignalled,
   isRetryableConnectivityError,
   makeClient,
@@ -364,6 +366,195 @@ describe('makeClient', () => {
     )
   })
 
+  it('keeps the session on a GraphQL error that only says "Unauthorized", with no code', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const testWindow = { location: { pathname: '/members', search: '', hash: '', href: '' } }
+    vi.stubGlobal('window', testWindow)
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: null,
+          errors: [{ message: 'Unauthorized' }, { message: 'Session has been invalidated.' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+
+    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      .query({
+        query: gql`
+          query PrivateData {
+            privateData
+          }
+        `,
+      })
+      .catch(() => undefined)
+
+    expect(testWindow.location.href).toBe('')
+  })
+
+  describe('a 401 while a retry of an unreachable call is still in flight', () => {
+    const FLAKY = gql`
+      query Flaky {
+        flaky
+      }
+    `
+    const ME = gql`
+      query Me {
+        me {
+          id
+        }
+      }
+    `
+    const json = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      })
+
+    function setUp(flakyAttempts: Array<() => Promise<Response>>) {
+      vi.spyOn(console, 'log').mockImplementation(() => undefined)
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const testWindow = {
+        location: { pathname: '/members', search: '', hash: '', href: '' },
+        dispatchEvent: vi.fn(),
+      }
+      vi.stubGlobal('window', testWindow)
+      let flakyCalls = 0
+      globalThis.fetch = vi.fn().mockImplementation(async (_url: unknown, init?: RequestInit) => {
+        const { operationName } = JSON.parse(String(init?.body))
+        if (operationName === 'Me') return json(401, { message: 'Unauthorized' })
+        const attempt = flakyAttempts[Math.min(flakyCalls, flakyAttempts.length - 1)]
+        flakyCalls += 1
+        return attempt()
+      })
+      const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      const run = (query: typeof ME) =>
+        client.query({ query, fetchPolicy: 'network-only' }).catch(() => undefined)
+      return { testWindow, run }
+    }
+
+    afterEach(() => {
+      takeDeferredAuthFailure()
+    })
+
+    it('keeps the session until the retry settles, then logs out on a clean 401', async () => {
+      let answerRetry: () => void = () => undefined
+      const { testWindow, run } = setUp([
+        () => Promise.reject(new TypeError('Failed to fetch')),
+        () =>
+          new Promise<Response>(resolve => {
+            answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
+          }),
+      ])
+      await run(FLAKY)
+
+      const retry = run(FLAKY)
+      await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
+      await run(ME)
+
+      // The 401 came back while the unreachable call was still being retried: kept.
+      expect(testWindow.location.href).toBe('')
+      expect(takeDeferredAuthFailure()).toBe(true)
+
+      answerRetry()
+      await retry
+      expect(isApiOutageSignalled()).toBe(false)
+
+      await run(ME)
+      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
+    })
+
+    it('announces the end of the evidence when a 401 was let pass meanwhile', async () => {
+      let answerRetry: () => void = () => undefined
+      const { testWindow, run } = setUp([
+        () => Promise.reject(new TypeError('Failed to fetch')),
+        () =>
+          new Promise<Response>(resolve => {
+            answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
+          }),
+      ])
+      const announced = () =>
+        testWindow.dispatchEvent.mock.calls.filter(
+          ([event]) => (event as Event).type === APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
+        )
+      await run(FLAKY)
+      const retry = run(FLAKY)
+      await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
+      await run(ME)
+      expect(announced()).toHaveLength(0)
+
+      answerRetry()
+      await retry
+
+      // Nothing else would tell the app to refetch the query left holding the deferred 401.
+      expect(announced()).toHaveLength(1)
+    })
+
+    it('does not announce anything when no 401 was let pass', async () => {
+      const { testWindow, run } = setUp([
+        () => Promise.reject(new TypeError('Failed to fetch')),
+        async () => json(200, { data: { flaky: 'ok' } }),
+      ])
+      await run(FLAKY)
+      await run(FLAKY)
+
+      expect(
+        testWindow.dispatchEvent.mock.calls.filter(
+          ([event]) => (event as Event).type === APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
+        ),
+      ).toHaveLength(0)
+    })
+
+    it('logs out when the retry itself is answered 200 with an UNAUTHENTICATED error', async () => {
+      const { testWindow, run } = setUp([
+        () => Promise.reject(new TypeError('Failed to fetch')),
+        async () =>
+          json(200, {
+            data: null,
+            errors: [{ message: 'Expired', extensions: { code: 'UNAUTHENTICATED' } }],
+          }),
+      ])
+      await run(FLAKY)
+
+      await run(FLAKY)
+
+      expect(isApiOutageSignalled()).toBe(false)
+      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
+    })
+
+    it('does not count a call that never failed to reach the API', async () => {
+      let answerFirst: () => void = () => undefined
+      const { testWindow, run } = setUp([
+        () =>
+          new Promise<Response>(resolve => {
+            answerFirst = () => resolve(json(200, { data: { flaky: 'ok' } }))
+          }),
+      ])
+
+      const inFlight = run(FLAKY)
+      await run(ME)
+
+      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
+      answerFirst()
+      await inFlight
+    })
+
+    it("judges a retried call's own 401 like any other", async () => {
+      const { testWindow, run } = setUp([
+        () => Promise.reject(new TypeError('Failed to fetch')),
+        async () => json(401, { message: 'Unauthorized' }),
+      ])
+      await run(FLAKY)
+
+      await run(FLAKY)
+
+      expect(isApiOutageSignalled()).toBe(false)
+      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
+    })
+  })
+
   it('keeps the session on a 401 while an outage is signalled, and logs out once it clears', async () => {
     const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -384,8 +575,8 @@ describe('makeClient', () => {
     const first = {}
     const second = {}
     try {
-      signalApiOutage(first, true)
-      signalApiOutage(second, true)
+      signalApiOutage(first)
+      signalApiOutage(second)
       expect(isApiOutageSignalled()).toBe(true)
       expect(takeDeferredAuthFailure()).toBe(false)
       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
@@ -398,21 +589,21 @@ describe('makeClient', () => {
       expect(takeDeferredAuthFailure()).toBe(false)
 
       // One source clearing does not clear another's evidence.
-      signalApiOutage(first, false)
+      clearApiOutage(first)
       expect(isApiOutageSignalled()).toBe(true)
       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
       expect(testWindow.location.href).toBe('')
       expect(takeDeferredAuthFailure()).toBe(true)
 
-      signalApiOutage(second, false)
+      clearApiOutage(second)
       expect(isApiOutageSignalled()).toBe(false)
       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
       expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
       expect(takeDeferredAuthFailure()).toBe(false)
     } finally {
       takeDeferredAuthFailure()
-      signalApiOutage(first, false)
-      signalApiOutage(second, false)
+      clearApiOutage(first)
+      clearApiOutage(second)
     }
   })
 
@@ -474,6 +665,36 @@ describe('makeClient', () => {
 
     expect(forbiddenHandler).not.toHaveBeenCalled()
     globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, forbiddenHandler)
+  })
+})
+
+describe('signalApiOutage / clearApiOutage', () => {
+  it('signals per source, and clearing one source keeps the others', () => {
+    const first = {}
+    const second = {}
+    try {
+      expect(isApiOutageSignalled()).toBe(false)
+      signalApiOutage(first)
+      signalApiOutage(first)
+      signalApiOutage(second)
+      expect(isApiOutageSignalled()).toBe(true)
+
+      clearApiOutage(first)
+      expect(isApiOutageSignalled()).toBe(true)
+      clearApiOutage(second)
+      expect(isApiOutageSignalled()).toBe(false)
+      // Clearing a source that signalled nothing is harmless.
+      clearApiOutage({})
+      expect(isApiOutageSignalled()).toBe(false)
+    } finally {
+      clearApiOutage(first)
+      clearApiOutage(second)
+    }
+  })
+
+  it('takes the source alone: no boolean flag (Sonar S2301)', () => {
+    expect(signalApiOutage).toHaveLength(1)
+    expect(clearApiOutage).toHaveLength(1)
   })
 })
 
@@ -560,6 +781,22 @@ describe('classifyApiFailure', () => {
       'other',
     ],
     ['an application TypeError', new TypeError('Cannot read properties of undefined'), 'other'],
+    // Message text is never evidence of a dead session: only the status or the code.
+    ...[
+      'Unauthorized',
+      'User from token not found or invalid.',
+      'Invalid JWT payload.',
+      'Session has been invalidated.',
+      'Request failed with status 401',
+    ].map(
+      message =>
+        [
+          `a GraphQL error that only says "${message}"`,
+          new CombinedGraphQLErrors({ errors: [{ message }] }),
+          'other',
+        ] as const,
+    ),
+    ['an Error that only says "Unauthorized"', new Error('Unauthorized'), 'other'],
   ] as const)('classifies %s as %s', (_label, error, cause) => {
     expect(classifyApiFailure(error)).toBe(cause)
   })

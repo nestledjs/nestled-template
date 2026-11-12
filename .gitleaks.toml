@@ -3,11 +3,25 @@
 # secrets and are not. Add to it only a value that is provably not a credential (a placeholder in a
 # spec), never a real key: a leaked key is rotated, not allowlisted.
 #
+# Scan history from a fresh full clone: `git clone` without `--filter` or `--depth`, then
+# `gitleaks git .` in it. A worktree or CI checkout may be a partial or shallow clone, and gitleaks
+# then misses the history it lacks without saying so.
+#
 # A finding in history that cannot be rewritten (a key committed long ago and since rotated, or a
 # placeholder in an old commit) is ignored by its fingerprint, one per line, in .gitleaksignore at
 # the repository root. gitleaks 8.30 has no fingerprint allowlist in this file. gitleaks prints the
 # fingerprint with each finding (`<commit>:<file>:<rule>:<line>`); add only findings you have
 # checked and, for a real key, rotated.
+#
+# A repository with hundreds or thousands of history findings uses a baseline instead, so that CI
+# fails only on new ones. From that full clone:
+#   gitleaks git . --redact --report-format json --report-path gitleaks-baseline.json
+# Review the report and rotate every credential in it that is still live, then commit
+# gitleaks-baseline.json at the repository root. CI's gitleaks job passes it with --baseline-path
+# whenever the file exists; locally, `gitleaks git . --baseline-path gitleaks-baseline.json`.
+# --redact keeps the secrets themselves out of the committed report, and gitleaks still matches
+# findings against it. Regenerate it only to absorb findings you have reviewed, never to silence a
+# new one.
 title = "Nestled gitleaks configuration"
 
 [extend]
