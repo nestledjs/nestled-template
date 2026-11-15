@@ -1,0 +1,375 @@
+diff --git a/libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx b/libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx
+index a1f206d..648cf4d 100644
+--- a/libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx
++++ b/libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx
+@@ -1,8 +1,18 @@
+ import React from 'react'
+-import { act, render } from '@testing-library/react'
++import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { useInfiniteApolloList, type UseInfiniteApolloListOptions } from './useInfiniteApolloList'
+ 
++// React's scheduler runs work outside act() through setImmediate, which it reads once at load.
++// Delaying it here makes a passive effect scheduled outside act() still pending when the test
++// ends: the order CI reaches at random, when Node runs a setTimeout(0) (waitFor's last tick)
++// before a setImmediate. See the teardown test at the end.
++vi.hoisted(() => {
++  const realSetImmediate = globalThis.setImmediate
++  globalThis.setImmediate = ((callback: () => void) =>
++    realSetImmediate(() => setTimeout(callback, 30))) as unknown as typeof setImmediate
++})
++
+ // jsdom has no IntersectionObserver. This one records every instance so a test can report the
+ // sentinel as (not) intersecting, and whether it was disconnected.
+ class FakeIntersectionObserver {
+@@ -97,7 +107,11 @@ describe('useInfiniteApolloList', () => {
+     vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+   })
+ 
++  // Unmount before unstubbing. Testing Library's own cleanup is an afterEach registered first, so
++  // it runs after this one, and unmounting flushes any passive effect still pending: one that
++  // re-creates the observer then hit an unstubbed global ("IntersectionObserver is not defined").
+   afterEach(() => {
++    cleanup()
+     vi.unstubAllGlobals()
+   })
+ 
+@@ -232,4 +246,22 @@ describe('useInfiniteApolloList', () => {
+ 
+     expect(observer.disconnected).toBe(true)
+   })
++
++  it('keeps the observer stubbed until an effect pending at teardown has run', async () => {
++    // The update lands outside act(), so the effect that re-creates the observer for the new
++    // isLoading value is still pending when waitFor sees the DOM change and the test ends.
++    function Status() {
++      const { loaderRef, isLoading } = useInfiniteApolloList({
++        pageSize: 10,
++        fetchMorePage: () => Promise.resolve(10),
++        getCurrentCount: () => 0,
++      })
++      return <div ref={loaderRef}>{isLoading ? 'loading' : 'idle'}</div>
++    }
++    render(<Status />)
++
++    act(() => FakeIntersectionObserver.latest().report(true))
++
++    await waitFor(() => expect(screen.getByText('idle')).toBeTruthy())
++  })
+ })
+diff --git a/scripts/gitignore-test-output.spec.mjs b/scripts/gitignore-test-output.spec.mjs
+index 02314c0..9bd233b 100644
+--- a/scripts/gitignore-test-output.spec.mjs
++++ b/scripts/gitignore-test-output.spec.mjs
+@@ -1,6 +1,8 @@
+ import assert from 'node:assert/strict'
+ import { execFileSync, spawnSync } from 'node:child_process'
+-import { dirname, join } from 'node:path'
++import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { dirname, join, posix } from 'node:path'
+ import { describe, it } from 'node:test'
+ import { fileURLToPath } from 'node:url'
+ 
+@@ -10,17 +12,25 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  * A test run leaves no untracked files. Coverage goes to coverage/<project root>/ at the repo root
+  * here, but a project whose Jest or Vitest config keeps the default (`coverage` beside its own
+  * config, as a tools/ plugin's often does) writes <project>/coverage/, and `/coverage` in
+- * .gitignore matched only the root one.
++ * .gitignore matched only the root one. Every tracked project.json's folder is checked, so a
++ * plugin is covered whatever the app calls it, beside these fixed examples.
+  */
+ const TEST_OUTPUT = [
+   'coverage/apps/web/lcov.info',
+   'coverage/libs/api/utils/shard-1/lcov.info',
+-  'tools/workspace-plugin/coverage/lcov.info',
+-  'tools/workspace-plugin/coverage/lcov-report/index.html',
++  'tools/some-plugin/coverage/lcov.info',
++  'tools/some-plugin/coverage/lcov-report/index.html',
+   'libs/some-lib/coverage/coverage-final.json',
+   'apps/some-app/coverage/lcov.info',
+ ]
+ 
++/**
++ * Tracked files this repository keeps although .gitignore matches them, one repo-relative path
++ * each, as a JSON array. It is the app's own list, kept outside this spec so an upgrade that
++ * replaces the spec leaves it alone. Empty in the template.
++ */
++const KNOWN_TRACKED_IGNORED = 'scripts/known-tracked-ignored.json'
++
+ // The repository's own ignore rules only: a developer's global excludes file must not decide it.
+ const git = args => ['-c', 'core.excludesFile=/dev/null', ...args]
+ 
+@@ -34,12 +44,45 @@ function notIgnored(paths) {
+   })
+ }
+ 
++/** Where each project with a tracked project.json would write coverage beside its own config. */
++export function projectCoverageOutput(trackedFiles) {
++  return trackedFiles
++    .filter(file => posix.basename(file) === 'project.json' && posix.dirname(file) !== '.')
++    .map(file => `${posix.dirname(file)}/coverage/lcov.info`)
++}
++
++/** The allowlist at `path`: an array of paths, or none when the file is absent. */
++export function readKnownTrackedIgnored(path) {
++  if (!existsSync(path)) return []
++  const list = JSON.parse(readFileSync(path, 'utf8'))
++  if (!Array.isArray(list) || !list.every(entry => typeof entry === 'string')) {
++    throw new TypeError(`${path} must be a JSON array of repo-relative paths`)
++  }
++  return list
++}
++
++/**
++ * Tracked-but-ignored files the allowlist does not name (`unlisted`), and allowlist entries that
++ * are no longer tracked-but-ignored (`stale`), so the list cannot hide a file it no longer needs to.
++ */
++export function compareWithAllowlist(ignoredTracked, allowlist) {
++  const allowed = new Set(allowlist)
++  const found = new Set(ignoredTracked)
++  return {
++    unlisted: ignoredTracked.filter(file => !allowed.has(file)),
++    stale: allowlist.filter(file => !found.has(file)),
++  }
++}
++
+ describe('.gitignore', () => {
+   it('ignores coverage output wherever a project writes it', () => {
+-    assert.deepEqual(notIgnored(TEST_OUTPUT), [])
++    const tracked = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
++      .split('\n')
++      .filter(Boolean)
++    assert.deepEqual(notIgnored([...TEST_OUTPUT, ...projectCoverageOutput(tracked)]), [])
+   })
+ 
+-  it('ignores no tracked file', () => {
++  it('ignores no tracked file outside the known list', () => {
+     const ignoredTracked = execFileSync(
+       'git',
+       git(['ls-files', '--cached', '--ignored', '--exclude-standard']),
+@@ -47,6 +90,50 @@ describe('.gitignore', () => {
+     )
+       .split('\n')
+       .filter(Boolean)
+-    assert.deepEqual(ignoredTracked, [])
++    const { unlisted, stale } = compareWithAllowlist(
++      ignoredTracked,
++      readKnownTrackedIgnored(join(root, KNOWN_TRACKED_IGNORED)),
++    )
++    assert.deepEqual(unlisted, [], `untrack these, or list them in ${KNOWN_TRACKED_IGNORED}`)
++    assert.deepEqual(stale, [], `remove these from ${KNOWN_TRACKED_IGNORED}`)
++  })
++})
++
++describe('the known tracked-but-ignored list', () => {
++  it('fails for a tracked-but-ignored file it does not name', () => {
++    assert.deepEqual(compareWithAllowlist(['a/kept.bin', 'b/new.log'], ['a/kept.bin']), {
++      unlisted: ['b/new.log'],
++      stale: [],
++    })
++  })
++
++  it('reports an entry that is no longer tracked-but-ignored', () => {
++    assert.deepEqual(compareWithAllowlist([], ['a/kept.bin']), {
++      unlisted: [],
++      stale: ['a/kept.bin'],
++    })
++  })
++
++  it('reads an absent file as empty and rejects anything but an array of paths', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'known-tracked-ignored-'))
++    try {
++      assert.deepEqual(readKnownTrackedIgnored(join(dir, 'missing.json')), [])
++      const file = join(dir, 'list.json')
++      writeFileSync(file, '["a/kept.bin"]\n')
++      assert.deepEqual(readKnownTrackedIgnored(file), ['a/kept.bin'])
++      writeFileSync(file, '{"files": ["a/kept.bin"]}\n')
++      assert.throws(() => readKnownTrackedIgnored(file), /must be a JSON array/)
++    } finally {
++      rmSync(dir, { recursive: true, force: true })
++    }
++  })
++})
++
++describe('project coverage output', () => {
++  it('names the coverage folder beside every project.json but the root one', () => {
++    assert.deepEqual(
++      projectCoverageOutput(['project.json', 'tools/my-plugin/project.json', 'apps/web/src/a.ts']),
++      ['tools/my-plugin/coverage/lcov.info'],
++    )
+   })
+ })
+diff --git a/scripts/known-tracked-ignored.json b/scripts/known-tracked-ignored.json
+new file mode 100644
+index 0000000..fe51488
+--- /dev/null
++++ b/scripts/known-tracked-ignored.json
+@@ -0,0 +1 @@
++[]
+diff --git a/scripts/normalize-lcov-paths.spec.mjs b/scripts/normalize-lcov-paths.spec.mjs
+index 8965b21..e7175da 100644
+--- a/scripts/normalize-lcov-paths.spec.mjs
++++ b/scripts/normalize-lcov-paths.spec.mjs
+@@ -152,16 +152,53 @@ describe('normalizeLcovReports', () => {
+   })
+ })
+ 
++/**
++ * `--ignoreConfig` where this TypeScript has it. From TypeScript 6, naming files on the command line
++ * while a tsconfig.json sits in the working directory is error TS5112 unless the flag is passed;
++ * TypeScript 5 has neither the error nor the flag (TS5023, unknown option), so it is probed.
++ */
++export function ignoreConfigFlag(tsc) {
++  const probe = spawnSync(process.execPath, [tsc, '--ignoreConfig', '--version'], {
++    encoding: 'utf8',
++  })
++  return probe.status === 0 ? ['--ignoreConfig'] : []
++}
++
+ describe('the lcov script compiles under either module system', () => {
+   const tsc = createRequire(join(workspaceRoot, 'package.json')).resolve('typescript/bin/tsc')
+   const files = ['scripts/normalize-lcov-paths.ts', 'scripts/normalize-lcov-paths.lib.ts']
+-  const common = ['--noEmit', '--strict', '--skipLibCheck', '--target', 'es2022', '--lib', 'es2023']
++  const common = [
++    '--noEmit',
++    '--strict',
++    '--skipLibCheck',
++    '--target',
++    'es2022',
++    '--lib',
++    'es2023',
++    ...ignoreConfigFlag(tsc),
++  ]
+   const compile = moduleOptions =>
+     spawnSync(process.execPath, [tsc, ...common, '--types', 'node', ...moduleOptions, ...files], {
+       cwd: workspaceRoot,
+       encoding: 'utf8',
+     })
+ 
++  // A project with a root tsconfig.json (this repository has only tsconfig.base.json) hit TS5112.
++  it('names its files while a tsconfig.json is in the working directory', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'tsc-files-with-config-'))
++    try {
++      writeFileSync(join(dir, 'tsconfig.json'), '{ "compilerOptions": { "strict": true } }\n')
++      writeFileSync(join(dir, 'a.ts'), 'export const a: number = 1\n')
++      const result = spawnSync(process.execPath, [tsc, ...common, 'a.ts'], {
++        cwd: dir,
++        encoding: 'utf8',
++      })
++      assert.equal(result.status, 0, result.stdout + result.stderr)
++    } finally {
++      rmSync(dir, { recursive: true, force: true })
++    }
++  })
++
+   // A project's scripts tsconfig may say "module": "commonjs" (tsconfig.spec.scripts.json in some
+   // apps), where `import.meta` is TS1343; scripts/tsconfig.json here says esnext.
+   for (const [name, moduleOptions] of [
+diff --git a/scripts/vite-config-module-format.spec.mjs b/scripts/vite-config-module-format.spec.mjs
+index a3a3ae8..862e39f 100644
+--- a/scripts/vite-config-module-format.spec.mjs
++++ b/scripts/vite-config-module-format.spec.mjs
+@@ -59,12 +59,46 @@ export function configImports(source) {
+   return specifiers.map(match => match[1]).filter(specifier => CONFIG_REFERENCE.test(specifier))
+ }
+ 
+-/** Config paths a Vitest config lists as strings (the root config's `projects`), ignoring comments. */
+-export function listedConfigPaths(source) {
+-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+-  return [...code.matchAll(/['"]([\w./-]+\/(?:vite|vitest)\.config\.[cm]?[jt]s)['"]/g)]
+-    .map(match => match[1])
+-    .filter(path => !path.startsWith('.'))
++/** The text of each `projects: [...]` array in `code`, brackets matched, strings skipped. */
++function projectLists(code) {
++  const lists = []
++  for (const match of code.matchAll(/\bprojects\s*:\s*\[/g)) {
++    const start = match.index + match[0].length
++    let depth = 1
++    let quote = ''
++    let end = start
++    for (; end < code.length && depth > 0; end++) {
++      const char = code[end]
++      if (quote) {
++        if (char === '\\') end++
++        else if (char === quote) quote = ''
++      } else if (char === "'" || char === '"' || char === '`') quote = char
++      else if (char === '[') depth++
++      else if (char === ']') depth--
++    }
++    lists.push(code.slice(start, end - 1))
++  }
++  return lists
++}
++
++/**
++ * Config paths a Vitest config lists as projects, ignoring comments: the strings in a config's
++ * `projects: [...]`, or anywhere in a vitest.workspace file (whose export is the project list).
++ * Other strings, such as a coverage exclusion naming a config that may legitimately be absent,
++ * are not project paths. A `./` or `../` path is kept: the caller resolves it against the listing
++ * file's directory. Import specifiers are left out, since `configImports` checks those with
++ * extension substitution.
++ */
++export function listedConfigPaths(source, { workspace = false } = {}) {
++  const code = source
++    .replace(/\/\*[\s\S]*?\*\//g, '')
++    .replace(/(^|[^:])\/\/.*$/gm, '$1')
++    .replace(/(?:\bfrom|\bimport\s*\(?)\s*['"][^'"]*['"]/g, '')
++  return (workspace ? [code] : projectLists(code)).flatMap(list =>
++    [...list.matchAll(/['"]([\w./-]+\/(?:vite|vitest)\.config\.[cm]?[jt]s)['"]/g)].map(
++      match => match[1],
++    ),
++  )
+ }
+ 
+ /** The TypeScript sources an import's JavaScript extension may resolve to. */
+@@ -100,8 +134,9 @@ export function staleConfigReferences(files, readFile) {
+         path: posix.normalize(posix.join(posix.dirname(file), specifier)),
+         isImport: true,
+       }))
+-      const listed = /(^|\/)vitest\.(config|workspace)\.[cm]?[jt]s$/.test(file)
+-        ? listedConfigPaths(source).map(path => ({
++      const listing = /(^|\/)vitest\.(config|workspace)\.[cm]?[jt]s$/.exec(file)
++      const listed = listing
++        ? listedConfigPaths(source, { workspace: listing[2] === 'workspace' }).map(path => ({
+             specifier: path,
+             path: posix.normalize(posix.join(posix.dirname(file), path)),
+           }))
+@@ -210,6 +245,37 @@ describe('references to vite and vitest configs', () => {
+     ])
+   })
+ 
++  it('resolves a ./ or ../ project path against the listing file, still literally', () => {
++    assert.deepEqual(check('vitest.config.ts', "projects: ['./libs/ui/vite.config.ts']\n"), [
++      'vitest.config.ts names ./libs/ui/vite.config.ts, which is no tracked config',
++    ])
++    assert.deepEqual(check('vitest.config.ts', "projects: ['./libs/ui/vite.config.mts']\n"), [])
++    assert.deepEqual(check('libs/ui/vitest.workspace.ts', "['../../apps/a/vite.config.ts']\n"), [])
++    assert.deepEqual(check('libs/ui/vitest.workspace.ts', "['../../apps/a/vite.config.mts']\n"), [
++      'libs/ui/vitest.workspace.ts names ../../apps/a/vite.config.mts, which is no tracked config',
++    ])
++  })
++
++  it('reads only project lists, not other strings such as a coverage exclusion', () => {
++    const source =
++      "export default { test: { projects: ['./libs/ui/vite.config.mts'], coverage: { exclude: ['./vite.config.ts', 'libs/x/vite.config.ts'] } } }\n"
++    assert.deepEqual(check('vitest.config.ts', source), [])
++    assert.deepEqual(
++      listedConfigPaths(
++        "projects: ['a/vite.config.ts', { extends: './b/vite.config.ts' }], x: ['c/vite.config.ts']",
++      ),
++      ['a/vite.config.ts', './b/vite.config.ts'],
++    )
++  })
++
++  it('leaves an import in a Vitest config to the import rule, reported once', () => {
++    const file = 'libs/ui/vitest.config.mts'
++    assert.deepEqual(check(file, "import c from './vite.config.mjs'\n"), [])
++    assert.deepEqual(check(file, "import c from './vite.config.ts'\n"), [
++      `${file} names ./vite.config.ts, which is no tracked config`,
++    ])
++  })
++
+   it('flags a Vitest project path that names no config, ignoring comments', () => {
+     const source = "export default { test: { projects: ['libs/ui/vite.config.ts'] } }\n"
+     assert.deepEqual(check('vitest.config.ts', source), [

@@ -1,0 +1,1083 @@
+diff --git a/apps/api-e2e/src/auth/auth-error-codes.spec.ts b/apps/api-e2e/src/auth/auth-error-codes.spec.ts
+new file mode 100644
+index 0000000..c98cec8
+--- /dev/null
++++ b/apps/api-e2e/src/auth/auth-error-codes.spec.ts
+@@ -0,0 +1,65 @@
++import { describe, it, expect } from 'vitest'
++import axios from 'axios'
++import { TestHelpers, type GraphQLResponse, type TestUser } from '../support/test-helpers'
++import { UserFactory } from '../support/factories/user.factory'
++import { sql } from '../support/test-db'
++
++/**
++ * Clients log a user out on a 401 or `UNAUTHENTICATED`, so the API keeps those for a missing,
++ * invalid or expired session. A signed-in request with no organization context is a 403
++ * `ORGANIZATION_CONTEXT_REQUIRED` instead: the session is fine.
++ */
++
++const CURRENT_SUBSCRIPTION_ACTIVE = `query { currentSubscriptionActive }`
++
++const post = (authorization: string | undefined, query: string) =>
++  axios.post<GraphQLResponse<unknown>>(
++    '/graphql',
++    { query },
++    {
++      headers: {
++        'Content-Type': 'application/json',
++        ...(authorization ? { Authorization: authorization } : {}),
++      },
++      validateStatus: () => true,
++    },
++  )
++
++const bearer = (user: TestUser) => `Bearer ${user.tokens?.accessToken}`
++
++describe('API auth error codes', () => {
++  it('answers a bad bearer with UNAUTHENTICATED (a 401)', async () => {
++    const response = await post('Bearer not-a-real-token', CURRENT_SUBSCRIPTION_ACTIVE)
++    const error = response.data.errors?.[0]
++
++    expect(error?.extensions?.['code']).toBe('UNAUTHENTICATED')
++    expect(error?.extensions?.['originalError']).toMatchObject({ statusCode: 401 })
++  })
++
++  it('answers a signed-in request with no organization context with a 403 ORGANIZATION_CONTEXT_REQUIRED', async () => {
++    const owner = await TestHelpers.registerUser(UserFactory.create())
++    const outsider = await TestHelpers.registerUser(UserFactory.create())
++    const ownersOrganizationId = sql(
++      `SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`,
++      {
++        id: owner.id,
++      },
++    )
++
++    // The outsider is signed in, but its active organization is one it does not belong to.
++    sql(`UPDATE "User" SET "activeOrganizationId" = :'orgId' WHERE id = :'userId';`, {
++      userId: outsider.id,
++      orgId: ownersOrganizationId,
++    })
++
++    const response = await post(bearer(outsider), CURRENT_SUBSCRIPTION_ACTIVE)
++    const error = response.data.errors?.[0]
++
++    expect(error?.extensions?.['code']).toBe('ORGANIZATION_CONTEXT_REQUIRED')
++    expect(error?.extensions?.['originalError']).toMatchObject({ statusCode: 403 })
++
++    // The session itself is still good.
++    const me = await post(bearer(outsider), `query { me { id } }`)
++    expect(me.data.errors).toBeUndefined()
++  })
++})
+diff --git a/apps/web/app/app.tsx b/apps/web/app/app.tsx
+index ef906bb..49f80bd 100644
+--- a/apps/web/app/app.tsx
++++ b/apps/web/app/app.tsx
+@@ -16,6 +16,7 @@ import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils
+ import { ViteCacheError } from '@nestledjs/shared-components'
+ import {
+   APOLLO_ACCESS_FORBIDDEN_EVENT,
++  APOLLO_ORGANIZATION_REQUIRED_EVENT,
+   APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
+   APOLLO_SERVICE_UNAVAILABLE_EVENT,
+   classifyApiFailure,
+@@ -24,6 +25,7 @@ import {
+   takeDeferredAuthFailure,
+ } from '@nestled-template/shared/apollo'
+ import { AccessDenied } from './access-denied'
++import { OrganizationRequired } from './organization-required'
+ import { retryDelayMs, useApiAvailability, useRefetchFailedQueries } from './api-availability'
+ import { ApiUnavailableScreen } from './api-unavailable'
+ import { AppCodeErrorMarker, isAppCodeError, markAppCodeError } from './app-code-error-marker'
+@@ -191,6 +193,9 @@ export function App() {
+   const revalidator = useRevalidator()
+   const [viteCacheError, setViteCacheError] = useState(false)
+   const [accessForbidden, setAccessForbidden] = useState(false)
++  // A query refused with ORGANIZATION_CONTEXT_REQUIRED: signed in, no active organization. Cleared
++  // on navigation like `accessForbidden`; choosing an organization reloads the page.
++  const [organizationRequired, setOrganizationRequired] = useState(false)
+   // Keyed on the whole navigation, not the pathname. A route that changes only its query string
+   // -- switching the active organization, say -- is a new request that may well be permitted, and
+   // keying on pathname alone leaves the access-denied screen up over it with no way to clear it.
+@@ -200,6 +205,7 @@ export function App() {
+   if (accessForbiddenKey !== location.key) {
+     setAccessForbiddenKey(location.key)
+     setAccessForbidden(false)
++    setOrganizationRequired(false)
+   }
+ 
+   // The root loader says "unavailable" when the server could not reach the API. Once the browser
+@@ -340,6 +346,7 @@ export function App() {
+   useEffect(() => {
+     const handleServiceUnavailable = () => reportConnectivityError()
+     const handleAccessForbidden = () => setAccessForbidden(true)
++    const handleOrganizationRequired = () => setOrganizationRequired(true)
+     // An in-flight retry's outage evidence ended with no outage on screen, and a 401 was let pass
+     // meanwhile: refetch the queries holding it, as recovering from an outage does.
+     const handleDeferredAuthFailure = () =>
+@@ -386,6 +393,7 @@ export function App() {
+     // Listen for Apollo service unavailable events
+     globalThis.addEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
+     globalThis.addEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
++    globalThis.addEventListener(APOLLO_ORGANIZATION_REQUIRED_EVENT, handleOrganizationRequired)
+     globalThis.addEventListener(APOLLO_DEFERRED_AUTH_FAILURE_EVENT, handleDeferredAuthFailure)
+ 
+     // Fallback: Listen for global errors
+@@ -396,6 +404,7 @@ export function App() {
+       // noisy during normal usage
+       globalThis.removeEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
+       globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
++      globalThis.removeEventListener(APOLLO_ORGANIZATION_REQUIRED_EVENT, handleOrganizationRequired)
+       globalThis.removeEventListener(APOLLO_DEFERRED_AUTH_FAILURE_EVENT, handleDeferredAuthFailure)
+       globalThis.removeEventListener('error', handleGlobalError)
+       globalThis.removeEventListener('unhandledrejection', handleUnhandledRejection)
+@@ -412,6 +421,10 @@ export function App() {
+     return <ApiUnavailableScreen reason={api.reason} onRetry={api.retryNow} />
+   }
+ 
++  if (organizationRequired) {
++    return <OrganizationRequired />
++  }
++
+   if (accessForbidden) {
+     return <AccessDenied />
+   }
+diff --git a/apps/web/app/organization-required.tsx b/apps/web/app/organization-required.tsx
+new file mode 100644
+index 0000000..47026ee
+--- /dev/null
++++ b/apps/web/app/organization-required.tsx
+@@ -0,0 +1,174 @@
++import { useState, type ReactNode } from 'react'
++import { CombinedGraphQLErrors } from '@apollo/client'
++import { useMutation, useQuery } from '@apollo/client/react'
++import { ORGANIZATION_CONTEXT_REQUIRED_CODE } from '@nestled-template/shared/apollo'
++import {
++  MyOrganizations,
++  SwitchActiveOrganization,
++  type MyOrganizationsQuery,
++  type SwitchActiveOrganizationMutation,
++  type SwitchActiveOrganizationMutationVariables,
++} from '@nestled-template/shared/sdk'
++import { Link } from 'react-router'
++
++type ErrorWithGraphQLErrors = {
++  graphQLErrors?: Array<{ extensions?: { code?: unknown } }>
++}
++
++export const ORGANIZATION_PICKER_TITLE = 'Choose an organization'
++export const NO_ORGANIZATIONS_TITLE = 'You are not a member of any organization'
++export const SWITCH_FAILED_MESSAGE =
++  'We couldn’t switch to that organization. Please try again, or choose another one.'
++export const ORGANIZATIONS_UNAVAILABLE_MESSAGE = 'We couldn’t load your organizations.'
++
++/**
++ * Whether the API refused the request because it has no active organization (a 403
++ * `ORGANIZATION_CONTEXT_REQUIRED`): the user is signed in, so this is never a logout.
++ */
++export function isOrganizationContextRequired(error: unknown): boolean {
++  const errors = CombinedGraphQLErrors.is(error)
++    ? error.errors
++    : (error as ErrorWithGraphQLErrors | null)?.graphQLErrors
++  return !!errors?.some?.(e => e?.extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE)
++}
++
++/**
++ * Makes `organizationId` the active organization for this browser and reloads, so every query runs
++ * again under it. The Apollo client sends the stored id as `X-Organization-ID`, which the API reads
++ * before the user's active organization, so a stale stored id would keep the old refusal.
++ */
++function activateAndReload(organizationId: string): void {
++  try {
++    localStorage.setItem('activeOrganizationId', organizationId)
++  } catch {
++    // Storage blocked: the user's active organization, just switched on the API, still applies.
++  }
++  globalThis.location.reload()
++}
++
++function Panel({
++  eyebrow,
++  title,
++  children,
++}: Readonly<{ eyebrow: string; title: string; children: ReactNode }>) {
++  return (
++    <main className="flex min-h-screen items-center justify-center bg-zinc-100 px-6 text-zinc-900 dark:bg-zinc-950 dark:text-white">
++      <section className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-xl dark:border-white/10 dark:bg-zinc-900">
++        <p className="text-sm font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">
++          {eyebrow}
++        </p>
++        <h1 className="mt-3 text-3xl font-bold">{title}</h1>
++        {children}
++      </section>
++    </main>
++  )
++}
++
++const buttonClass =
++  'inline-flex justify-center rounded-lg bg-emerald-500 px-5 py-3 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-60'
++
++/**
++ * Shown when a page needs an organization and the account has none active, or is no longer a member
++ * of the one it had. The session is kept throughout. It lists the user's organizations; choosing one
++ * makes it active (`switchActiveOrganization`) and reloads. With none, it says so and offers a
++ * normal sign-out.
++ */
++export function OrganizationRequired() {
++  const organizations = useQuery<MyOrganizationsQuery>(MyOrganizations, {
++    fetchPolicy: 'network-only',
++  })
++  const [switchOrganization] = useMutation<
++    SwitchActiveOrganizationMutation,
++    SwitchActiveOrganizationMutationVariables
++  >(SwitchActiveOrganization, {
++    // The app client's default is `errorPolicy: 'all'`, under which the API refusing the switch (a
++    // GraphQL error) resolves instead of throwing. This must throw, so the catch below shows the
++    // failure and the refused id is never stored or reloaded into.
++    errorPolicy: 'none',
++  })
++  const [switchingTo, setSwitchingTo] = useState<string | null>(null)
++  const [switchFailed, setSwitchFailed] = useState(false)
++
++  const choose = async (organizationId: string) => {
++    setSwitchFailed(false)
++    setSwitchingTo(organizationId)
++    try {
++      await switchOrganization({ variables: { input: { organizationId } } })
++    } catch {
++      setSwitchingTo(null)
++      setSwitchFailed(true)
++      return
++    }
++    activateAndReload(organizationId)
++  }
++
++  if (organizations.loading && !organizations.data) {
++    return (
++      <Panel eyebrow="No organization selected" title={ORGANIZATION_PICKER_TITLE}>
++        <p className="mt-4 text-zinc-600 dark:text-zinc-300">Loading your organizations…</p>
++      </Panel>
++    )
++  }
++
++  if (organizations.error && !organizations.data) {
++    return (
++      <Panel eyebrow="No organization selected" title={ORGANIZATION_PICKER_TITLE}>
++        <p role="alert" className="mt-4 text-zinc-600 dark:text-zinc-300">
++          {ORGANIZATIONS_UNAVAILABLE_MESSAGE} You are still signed in.
++        </p>
++        <button
++          type="button"
++          className={`mt-6 ${buttonClass}`}
++          onClick={() => void organizations.refetch()}
++        >
++          Try again
++        </button>
++      </Panel>
++    )
++  }
++
++  const list = organizations.data?.myOrganizations ?? []
++
++  if (list.length === 0) {
++    return (
++      <Panel eyebrow="No organization" title={NO_ORGANIZATIONS_TITLE}>
++        <p className="mt-4 text-zinc-600 dark:text-zinc-300">
++          This page needs an organization, and your account does not belong to one. Ask an
++          organization owner to invite you, or sign out.
++        </p>
++        <Link to="/logout" className={`mt-6 ${buttonClass}`}>
++          Sign out
++        </Link>
++      </Panel>
++    )
++  }
++
++  return (
++    <Panel eyebrow="No organization selected" title={ORGANIZATION_PICKER_TITLE}>
++      <p className="mt-4 text-zinc-600 dark:text-zinc-300">
++        You are still signed in, but this page needs an active organization. Choose one to continue.
++      </p>
++      {switchFailed && (
++        <p role="alert" className="mt-4 font-medium text-red-600 dark:text-red-400">
++          {SWITCH_FAILED_MESSAGE}
++        </p>
++      )}
++      <ul className="mt-6 flex flex-col gap-3">
++        {list.map(organization => (
++          <li key={organization.id}>
++            <button
++              type="button"
++              className={`w-full ${buttonClass}`}
++              disabled={switchingTo !== null}
++              onClick={() => void choose(organization.id)}
++            >
++              {switchingTo === organization.id
++                ? `Switching to ${organization.name}…`
++                : organization.name}
++            </button>
++          </li>
++        ))}
++      </ul>
++    </Panel>
++  )
++}
+diff --git a/apps/web/tests/organization-required.spec.tsx b/apps/web/tests/organization-required.spec.tsx
+new file mode 100644
+index 0000000..42e7886
+--- /dev/null
++++ b/apps/web/tests/organization-required.spec.tsx
+@@ -0,0 +1,164 @@
++import { act, fireEvent, render, screen } from '@testing-library/react'
++import { MemoryRouter } from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { ApolloProvider } from '@apollo/client/react'
++import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
++import { makeClient } from '@nestled-template/shared/apollo'
++import {
++  NO_ORGANIZATIONS_TITLE,
++  ORGANIZATION_PICKER_TITLE,
++  ORGANIZATIONS_UNAVAILABLE_MESSAGE,
++  OrganizationRequired,
++  SWITCH_FAILED_MESSAGE,
++} from '../app/organization-required'
++
++type Organization = { id: string; name: string }
++
++const organization = ({ id, name }: Organization) => ({
++  __typename: 'Organization',
++  id,
++  name,
++  createdAt: '2026-01-01T00:00:00.000Z',
++  updatedAt: '2026-01-01T00:00:00.000Z',
++  logo: null,
++})
++
++function renderPicker({
++  organizations = [] as Organization[],
++  listFails = false,
++  switchFails = false,
++} = {}) {
++  const switched: string[] = []
++  const link = new ApolloLink(
++    operation =>
++      new Observable<ApolloLink.Result>(observer => {
++        if (operation.operationName === 'myOrganizations') {
++          if (listFails) {
++            observer.next({ errors: [{ message: 'Internal server error' }] } as never)
++          } else {
++            observer.next({ data: { myOrganizations: organizations.map(organization) } })
++          }
++        } else if (operation.operationName === 'switchActiveOrganization') {
++          switched.push(operation.variables['input'].organizationId)
++          if (switchFails) {
++            observer.next({
++              errors: [{ message: 'You are not a member of this organization' }],
++            } as never)
++          } else {
++            observer.next({
++              data: {
++                switchActiveOrganization: {
++                  __typename: 'User',
++                  id: 'user-1',
++                  activeOrganizationId: operation.variables['input'].organizationId,
++                },
++              },
++            })
++          }
++        }
++        observer.complete()
++      }),
++  )
++  // The app's client defaults (`makeClient`: `errorPolicy: 'all'` for queries and mutations), so a
++  // GraphQL refusal behaves here as it does in the app: it resolves, it does not throw.
++  const client = new ApolloClient({
++    link,
++    cache: new InMemoryCache(),
++    defaultOptions: makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' })
++      .defaultOptions,
++  })
++  render(
++    <ApolloProvider client={client}>
++      <MemoryRouter>
++        <OrganizationRequired />
++      </MemoryRouter>
++    </ApolloProvider>,
++  )
++  return { switched }
++}
++
++describe('OrganizationRequired', () => {
++  const reload = vi.fn()
++  const assign = vi.fn()
++
++  beforeEach(() => {
++    reload.mockReset()
++    assign.mockReset()
++    vi.stubGlobal('location', { ...globalThis.location, reload, assign })
++    localStorage.removeItem('activeOrganizationId')
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++    localStorage.removeItem('activeOrganizationId')
++  })
++
++  it("lists the user's organizations", async () => {
++    renderPicker({
++      organizations: [
++        { id: 'org-1', name: 'First Org' },
++        { id: 'org-2', name: 'Second Org' },
++      ],
++    })
++
++    expect(await screen.findByRole('heading', { name: ORGANIZATION_PICKER_TITLE })).toBeVisible()
++    expect(screen.getByRole('button', { name: 'First Org' })).toBeVisible()
++    expect(screen.getByRole('button', { name: 'Second Org' })).toBeVisible()
++    expect(screen.getByText(/You are still signed in/)).toBeVisible()
++  })
++
++  it('switches to the chosen organization, then reloads', async () => {
++    const { switched } = renderPicker({
++      organizations: [
++        { id: 'org-1', name: 'First Org' },
++        { id: 'org-2', name: 'Second Org' },
++      ],
++    })
++
++    await act(async () => {
++      fireEvent.click(await screen.findByRole('button', { name: 'Second Org' }))
++    })
++
++    expect(switched).toEqual(['org-2'])
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
++    expect(reload).toHaveBeenCalledTimes(1)
++    expect(assign).not.toHaveBeenCalled()
++  })
++
++  it('says plainly that there are none, and offers a normal sign-out', async () => {
++    renderPicker({ organizations: [] })
++
++    expect(await screen.findByRole('heading', { name: NO_ORGANIZATIONS_TITLE })).toBeVisible()
++    expect(screen.getByText(/does not belong to one/)).toBeVisible()
++    expect(screen.getByRole('link', { name: 'Sign out' })).toHaveAttribute('href', '/logout')
++    expect(screen.queryByRole('button')).not.toBeInTheDocument()
++    expect(assign).not.toHaveBeenCalled()
++  })
++
++  it('shows a message, stores nothing and does not reload when the API refuses the switch', async () => {
++    const { switched } = renderPicker({
++      organizations: [{ id: 'org-1', name: 'First Org' }],
++      switchFails: true,
++    })
++
++    await act(async () => {
++      fireEvent.click(await screen.findByRole('button', { name: 'First Org' }))
++    })
++
++    expect(switched).toEqual(['org-1'])
++    expect(await screen.findByRole('alert')).toHaveTextContent(SWITCH_FAILED_MESSAGE)
++    // Still on the picker, able to try again: no reload, no logout, nothing stored.
++    expect(screen.getByRole('button', { name: 'First Org' })).toBeEnabled()
++    expect(reload).not.toHaveBeenCalled()
++    expect(assign).not.toHaveBeenCalled()
++    expect(localStorage.getItem('activeOrganizationId')).toBeNull()
++  })
++
++  it('keeps the session when the organizations cannot be loaded', async () => {
++    renderPicker({ listFails: true })
++
++    expect(await screen.findByRole('alert')).toHaveTextContent(ORGANIZATIONS_UNAVAILABLE_MESSAGE)
++    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
++    expect(assign).not.toHaveBeenCalled()
++  })
++})
+diff --git a/libs/api/core/feature/src/lib/api-core-feature.module.ts b/libs/api/core/feature/src/lib/api-core-feature.module.ts
+index 5ac73a9..2b02d60 100644
+--- a/libs/api/core/feature/src/lib/api-core-feature.module.ts
++++ b/libs/api/core/feature/src/lib/api-core-feature.module.ts
+@@ -4,6 +4,7 @@ import { GraphQLModule } from '@nestjs/graphql'
+ import { join } from 'node:path'
+ import { Request, Response } from 'express'
+ import { apiCorePubSub } from '@nestled-template/api/core/data-access'
++import { formatApiError } from '@nestled-template/api/utils'
+ import { Context } from 'graphql-ws'
+ import { ApiCoreFeatureController } from './api-core-feature.controller'
+ import { ApiCoreFeatureResolver } from './api-core-feature.resolver'
+@@ -56,6 +57,9 @@ const redisPubSubProvider = {
+         }
+         return { req, res }
+       },
++      // Keeps the code a 403 was thrown with (`forbiddenWithCode`), so a client can tell "pick an
++      // organization" from "no permission". Nest's own HTTP-status mapping runs before it.
++      formatError: formatApiError,
+       sortSchema: true,
+       buildSchemaOptions: {
+         dateScalarMode: 'isoDate',
+diff --git a/libs/api/custom/src/lib/plugins/auth/oauth.service.spec.ts b/libs/api/custom/src/lib/plugins/auth/oauth.service.spec.ts
+index 7a4a32c..f7590f5 100644
+--- a/libs/api/custom/src/lib/plugins/auth/oauth.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/oauth.service.spec.ts
+@@ -1,5 +1,10 @@
+ import { Test, TestingModule } from '@nestjs/testing'
+-import { UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common'
++import {
++  UnauthorizedException,
++  BadRequestException,
++  ConflictException,
++  ForbiddenException,
++} from '@nestjs/common'
+ import { ConfigService } from '@nestjs/config'
+ import { OAuthService } from './oauth.service'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+@@ -15,6 +20,24 @@ jest.mock('@octokit/oauth-app', () => ({
+     createToken: jest.fn(),
+   })),
+ }))
++
++/**
++ * A provider that refuses the token is a 403 `OAUTH_PROVIDER_REJECTED`. A 401 would be read as a
++ * dead session: `linkOAuthAccount` runs signed in, and the web logs the user out on a 401.
++ */
++async function expectProviderRejected(promise: Promise<unknown>): Promise<void> {
++  const error = await promise.then(
++    () => undefined,
++    (rejection: unknown) => rejection,
++  )
++  expect(error).toBeInstanceOf(ForbiddenException)
++  expect(error).not.toBeInstanceOf(UnauthorizedException)
++  expect((error as ForbiddenException).getStatus()).toBe(403)
++  expect((error as ForbiddenException).getResponse()).toMatchObject({
++    code: 'OAUTH_PROVIDER_REJECTED',
++  })
++}
++
+ describe('OAuthService', () => {
+   let service: OAuthService
+   let mockData: any
+@@ -614,47 +637,39 @@ describe('OAuthService', () => {
+     })
+   })
+   describe('verifyGoogleToken Edge Cases', () => {
+-    it('should throw UnauthorizedException when payload is missing', async () => {
++    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when payload is missing', async () => {
+       const mockGoogleClient = {
+         verifyIdToken: jest.fn().mockResolvedValue({
+           getPayload: () => null,
+         }),
+       }
+       ;(service as any).googleClient = mockGoogleClient
+-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
+-        UnauthorizedException,
+-      )
++      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
+     })
+-    it('should throw UnauthorizedException when sub (provider user ID) is missing', async () => {
++    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when sub (provider user ID) is missing', async () => {
+       const mockGoogleClient = {
+         verifyIdToken: jest.fn().mockResolvedValue({
+           getPayload: () => ({ email: 'user@example.com' }),
+         }),
+       }
+       ;(service as any).googleClient = mockGoogleClient
+-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
+-        UnauthorizedException,
+-      )
++      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
+     })
+-    it('should throw UnauthorizedException when email is missing', async () => {
++    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when email is missing', async () => {
+       const mockGoogleClient = {
+         verifyIdToken: jest.fn().mockResolvedValue({
+           getPayload: () => ({ sub: 'google-user-id' }),
+         }),
+       }
+       ;(service as any).googleClient = mockGoogleClient
+-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
+-        UnauthorizedException,
+-      )
++      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
+     })
+-    it('should throw UnauthorizedException when token verification fails', async () => {
++    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when token verification fails', async () => {
+       const mockGoogleClient = {
+         verifyIdToken: jest.fn().mockRejectedValue(new Error('Verification failed')),
+       }
+       ;(service as any).googleClient = mockGoogleClient
+-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
+-        UnauthorizedException,
+-      )
++      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
+     })
+     it('should return valid profile when token is valid', async () => {
+       const mockGoogleClient = {
+@@ -683,7 +698,31 @@ describe('OAuthService', () => {
+       // Mock global fetch
+       globalThis.fetch = jest.fn()
+     })
+-    it('should throw UnauthorizedException when GitHub API returns error', async () => {
++    it('should reject with a 403 OAUTH_PROVIDER_REJECTED when the code exchange fails', async () => {
++      ;(service as any).githubApp = {
++        createToken: jest.fn().mockRejectedValue(new Error('bad_verification_code')),
++      }
++      await expectProviderRejected(service.verifyGitHubCode('invalid-code'))
++    })
++    it('should reject with a 403 OAUTH_PROVIDER_REJECTED when the account has no email', async () => {
++      ;(service as any).githubApp = {
++        createToken: jest.fn().mockResolvedValue({ authentication: { token: 'github-token' } }),
++      }
++      ;(globalThis.fetch as jest.Mock)
++        .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 1, login: 'octo' }) })
++        .mockResolvedValueOnce({ ok: true, json: async () => [] })
++      await expectProviderRejected(service.verifyGitHubCode('code'))
++    })
++    it('keeps a signed-in user signed in when linking with a token the provider rejects', async () => {
++      ;(service as any).googleClient = {
++        verifyIdToken: jest.fn().mockRejectedValue(new Error('Token used too late')),
++      }
++      await expectProviderRejected(
++        service.linkOAuthAccount('user-123', OAuthProvider.GOOGLE, 'expired-google-token'),
++      )
++      expect(mockData.oAuthAccount.create).not.toHaveBeenCalled()
++    })
++    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when GitHub API returns error', async () => {
+       const mockGitHubApp = {
+         createToken: jest.fn().mockResolvedValue({
+           authentication: { token: 'github-token' },
+@@ -694,7 +733,7 @@ describe('OAuthService', () => {
+         ok: false,
+         status: 401,
+       })
+-      await expect(service.verifyGitHubCode('invalid-code')).rejects.toThrow(UnauthorizedException)
++      await expectProviderRejected(service.verifyGitHubCode('invalid-code'))
+     })
+     it('should handle missing email by fetching from emails endpoint', async () => {
+       const mockGitHubApp = {
+diff --git a/libs/api/custom/src/lib/plugins/auth/oauth.service.ts b/libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+index 313953c..ff16b96 100644
+--- a/libs/api/custom/src/lib/plugins/auth/oauth.service.ts
++++ b/libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+@@ -3,11 +3,13 @@ import {
+   UnauthorizedException,
+   BadRequestException,
+   ConflictException,
++  ForbiddenException,
+ } from '@nestjs/common'
+ import { ConfigService } from '@nestjs/config'
+ import { OAuth2Client } from 'google-auth-library'
+ import { OAuthApp } from '@octokit/oauth-app'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
++import { API_ERROR_CODES, forbiddenWithCode } from '@nestled-template/api/utils'
+ import { OAuthProvider } from './dto'
+ import { recordAuditLog } from '../../shared/audit-log'
+ 
+@@ -19,6 +21,16 @@ export interface OAuthUserProfile {
+   picture?: string
+ }
+ 
++/**
++ * The provider refused the token or code it was given. A 403 `OAUTH_PROVIDER_REJECTED`, never a 401:
++ * `linkOAuthAccount` runs inside a signed-in session, and a 401 there would log the user out over a
++ * failed provider check. (The sign-in callback catches every error and redirects to the OAuth error
++ * page, so the type does not reach it.)
++ */
++function providerRejected(message: string): ForbiddenException {
++  return forbiddenWithCode(API_ERROR_CODES.OAUTH_PROVIDER_REJECTED, message)
++}
++
+ @Injectable()
+ export class OAuthService {
+   private googleClient: OAuth2Client | null = null
+@@ -98,7 +110,7 @@ export class OAuthService {
+ 
+       const payload = ticket.getPayload()
+       if (!payload?.sub || !payload.email) {
+-        throw new UnauthorizedException('Invalid Google token payload')
++        throw providerRejected('Invalid Google token payload')
+       }
+ 
+       return {
+@@ -109,8 +121,8 @@ export class OAuthService {
+         picture: payload.picture,
+       }
+     } catch (error) {
+-      if (error instanceof UnauthorizedException) throw error
+-      throw new UnauthorizedException('Invalid Google token')
++      if (error instanceof ForbiddenException) throw error
++      throw providerRejected('Invalid Google token')
+     }
+   }
+ 
+@@ -137,7 +149,7 @@ export class OAuthService {
+       })
+ 
+       if (!response.ok) {
+-        throw new UnauthorizedException('Failed to fetch GitHub user profile')
++        throw providerRejected('Failed to fetch GitHub user profile')
+       }
+ 
+       const githubUser = (await response.json()) as {
+@@ -170,7 +182,7 @@ export class OAuthService {
+       }
+ 
+       if (!email) {
+-        throw new UnauthorizedException('GitHub account must have a verified email address')
++        throw providerRejected('GitHub account must have a verified email address')
+       }
+ 
+       return {
+@@ -181,10 +193,10 @@ export class OAuthService {
+         picture: githubUser.avatar_url,
+       }
+     } catch (error) {
+-      if (error instanceof UnauthorizedException || error instanceof BadRequestException) {
++      if (error instanceof ForbiddenException || error instanceof BadRequestException) {
+         throw error
+       }
+-      throw new UnauthorizedException('Invalid GitHub authorization code')
++      throw providerRejected('Invalid GitHub authorization code')
+     }
+   }
+ 
+diff --git a/libs/api/utils/src/index.ts b/libs/api/utils/src/index.ts
+index 1994391..9cf15f2 100644
+--- a/libs/api/utils/src/index.ts
++++ b/libs/api/utils/src/index.ts
+@@ -12,6 +12,7 @@ export * from './lib/guards/permissions.guard'
+ export * from './lib/guards/subscription.guard'
+ export * from './lib/decorators/ctx-user.decorator'
+ export * from './lib/decorators/ctx-organization.decorator'
++export * from './lib/errors/api-error-code'
+ export * from './lib/services/auth-cache.service'
+ export * from './lib/services/auth-loader.service'
+ export * from './lib/services/organization-context.service'
+diff --git a/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts b/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+index 086f620..fe6599c 100644
+--- a/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
++++ b/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+@@ -1,10 +1,13 @@
+-import { createParamDecorator, ExecutionContext, UnauthorizedException } from '@nestjs/common'
++import { createParamDecorator, ExecutionContext } from '@nestjs/common'
+ import { GqlExecutionContext } from '@nestjs/graphql'
++import { organizationContextRequired } from '../errors/api-error-code'
+ import { OrganizationContext } from '../types/nest-context-type'
+ 
+ /**
+  * Extract organization context from GraphQL request
+- * Throws UnauthorizedException if no organization context is found
++ * Throws a 403 `ORGANIZATION_CONTEXT_REQUIRED` if no organization context is found (no active
++ * organization, or one the user no longer belongs to). Never a 401: the session is fine, and a 401
++ * would log the user out.
+  */
+ export const CtxOrganization = createParamDecorator(
+   (data: unknown, ctx: ExecutionContext): OrganizationContext => {
+@@ -12,9 +15,7 @@ export const CtxOrganization = createParamDecorator(
+     const organizationContext = gqlContext.req.organizationContext
+ 
+     if (!organizationContext) {
+-      throw new UnauthorizedException(
+-        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.',
+-      )
++      throw organizationContextRequired()
+     }
+ 
+     return organizationContext
+@@ -23,7 +24,9 @@ export const CtxOrganization = createParamDecorator(
+ 
+ /**
+  * Extract organization ID from context
+- * Throws UnauthorizedException if no organization context is found
++ * Throws a 403 `ORGANIZATION_CONTEXT_REQUIRED` if no organization context is found (no active
++ * organization, or one the user no longer belongs to). Never a 401: the session is fine, and a 401
++ * would log the user out.
+  */
+ export const CtxOrganizationId = createParamDecorator(
+   (data: unknown, ctx: ExecutionContext): string => {
+@@ -31,9 +34,7 @@ export const CtxOrganizationId = createParamDecorator(
+     const organizationContext = gqlContext.req.organizationContext
+ 
+     if (!organizationContext) {
+-      throw new UnauthorizedException(
+-        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.',
+-      )
++      throw organizationContextRequired()
+     }
+ 
+     return organizationContext.organizationId
+diff --git a/libs/api/utils/src/lib/errors/api-error-code.spec.ts b/libs/api/utils/src/lib/errors/api-error-code.spec.ts
+new file mode 100644
+index 0000000..ff523e7
+--- /dev/null
++++ b/libs/api/utils/src/lib/errors/api-error-code.spec.ts
+@@ -0,0 +1,137 @@
++import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo'
++import { ApolloServer } from '@apollo/server'
++import { INestApplication, UnauthorizedException } from '@nestjs/common'
++import { GraphQLModule, Query, Resolver } from '@nestjs/graphql'
++import { Test } from '@nestjs/testing'
++import type { GraphQLFormattedError } from 'graphql'
++import { CtxOrganization, CtxOrganizationId } from '../decorators/ctx-organization.decorator'
++import {
++  API_ERROR_CODES,
++  forbiddenWithCode,
++  formatApiError,
++  organizationContextRequired,
++} from './api-error-code'
++
++@Resolver()
++class ProbeResolver {
++  @Query(() => String)
++  organizationId(@CtxOrganizationId() organizationId: string): string {
++    return organizationId
++  }
++
++  @Query(() => String)
++  organizationName(@CtxOrganization() organization: { organizationId: string }): string {
++    return organization.organizationId
++  }
++
++  @Query(() => String)
++  deadSession(): string {
++    throw new UnauthorizedException('Session has been invalidated.')
++  }
++
++  @Query(() => String)
++  claimsUnauthenticated(): string {
++    throw forbiddenWithCode('UNAUTHENTICATED', 'A 403 may not mint a logout')
++  }
++}
++
++/**
++ * The real pipeline: `@nestjs/apollo`'s HTTP-exception mapping, then the API's `formatError`,
++ * configured as `ApiCoreFeatureModule` configures it.
++ */
++describe('API error codes over GraphQL', () => {
++  let app: INestApplication
++  let server: ApolloServer
++
++  beforeAll(async () => {
++    const moduleRef = await Test.createTestingModule({
++      imports: [
++        GraphQLModule.forRoot<ApolloDriverConfig>({
++          driver: ApolloDriver,
++          autoSchemaFile: true,
++          formatError: formatApiError,
++        }),
++      ],
++      providers: [ProbeResolver],
++    }).compile()
++    app = moduleRef.createNestApplication()
++    await app.init()
++    server = (app.get(GraphQLModule) as unknown as { graphQlAdapter: { instance: ApolloServer } })
++      .graphQlAdapter.instance
++  })
++
++  afterAll(async () => {
++    await app?.close()
++  })
++
++  const firstError = async (
++    query: string,
++    req: Record<string, unknown> = { user: { id: 'user-1' } },
++  ): Promise<GraphQLFormattedError> => {
++    const response = await server.executeOperation({ query }, { contextValue: { req } })
++    if (response.body.kind !== 'single') throw new Error('expected a single result')
++    const error = response.body.singleResult.errors?.[0]
++    if (!error) throw new Error('expected an error')
++    return error
++  }
++
++  it.each(['{ organizationId }', '{ organizationName }'])(
++    'answers a signed-in request with no organization context (%s) with a 403 ORGANIZATION_CONTEXT_REQUIRED, not UNAUTHENTICATED',
++    async query => {
++      const error = await firstError(query)
++
++      expect(error.extensions?.['code']).toBe('ORGANIZATION_CONTEXT_REQUIRED')
++      expect(error.extensions?.['originalError']).toMatchObject({ statusCode: 403 })
++      expect(error.message).toMatch(/organization context required/i)
++    },
++  )
++
++  it('still answers a dead session with UNAUTHENTICATED', async () => {
++    const error = await firstError('{ deadSession }')
++
++    expect(error.extensions?.['code']).toBe('UNAUTHENTICATED')
++  })
++
++  it('never lets a 403 claim UNAUTHENTICATED', async () => {
++    const error = await firstError('{ claimsUnauthenticated }')
++
++    expect(error.extensions?.['code']).toBe('FORBIDDEN')
++  })
++})
++
++describe('organizationContextRequired', () => {
++  it('is an HTTP 403 whose body carries the code', () => {
++    const error = organizationContextRequired()
++
++    expect(error.getStatus()).toBe(403)
++    expect(error.getResponse()).toMatchObject({
++      statusCode: 403,
++      code: API_ERROR_CODES.ORGANIZATION_CONTEXT_REQUIRED,
++    })
++    expect(error.message).toMatch(/organization context required/i)
++  })
++})
++
++describe('formatApiError', () => {
++  const formatted = (originalError: unknown, code = 'FORBIDDEN'): GraphQLFormattedError => ({
++    message: 'm',
++    extensions: { code, originalError },
++  })
++
++  it('leaves errors without a coded body alone', () => {
++    const error = formatted({ statusCode: 403, message: 'No permission' })
++    expect(formatApiError(error)).toBe(error)
++    const plain: GraphQLFormattedError = { message: 'm' }
++    expect(formatApiError(plain)).toBe(plain)
++  })
++
++  it('never sets a code on a 401', () => {
++    const error = formatted({ statusCode: 401, code: 'SOMETHING_ELSE' }, 'UNAUTHENTICATED')
++    expect(formatApiError(error).extensions?.['code']).toBe('UNAUTHENTICATED')
++  })
++
++  it('ignores a code that is not upper snake case', () => {
++    const error = formatted({ statusCode: 403, code: 'not a code' })
++    expect(formatApiError(error).extensions?.['code']).toBe('FORBIDDEN')
++  })
++})
+diff --git a/libs/api/utils/src/lib/errors/api-error-code.ts b/libs/api/utils/src/lib/errors/api-error-code.ts
+new file mode 100644
+index 0000000..9eecdd3
+--- /dev/null
++++ b/libs/api/utils/src/lib/errors/api-error-code.ts
+@@ -0,0 +1,63 @@
++import { ForbiddenException } from '@nestjs/common'
++import type { GraphQLFormattedError } from 'graphql'
++
++/**
++ * GraphQL error codes the API sets on its own, beyond the ones `@nestjs/apollo` derives from an
++ * HTTP status (`UNAUTHENTICATED` for 401, `FORBIDDEN` for 403, `BAD_REQUEST` for 400, ...).
++ *
++ * Clients log a user out only on a 401 or `UNAUTHENTICATED`, so anything that is not "this session
++ * is missing, invalid or expired" must never be an `UnauthorizedException`. A refusal that a client
++ * should handle on its own terms (pick an organization, retry the provider sign-in) is a 403 with
++ * one of these codes instead. The web keeps the session for every one of them.
++ */
++export const API_ERROR_CODES = {
++  /** Signed in, but the request has no active organization, or one the user no longer belongs to. */
++  ORGANIZATION_CONTEXT_REQUIRED: 'ORGANIZATION_CONTEXT_REQUIRED',
++  /** The OAuth provider rejected the token or code it was given. Says nothing about the session. */
++  OAUTH_PROVIDER_REJECTED: 'OAUTH_PROVIDER_REJECTED',
++} as const
++
++export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES]
++
++const ORGANIZATION_CONTEXT_REQUIRED_MESSAGE =
++  'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.'
++
++// Upper snake case, like the codes Apollo and Nest use.
++const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/
++
++/**
++ * A 403 whose GraphQL error carries `extensions.code: code` (see `formatApiError`). Over REST it is
++ * an ordinary 403 whose JSON body also has `code`.
++ */
++export function forbiddenWithCode(code: string, message: string): ForbiddenException {
++  return new ForbiddenException({ statusCode: 403, error: 'Forbidden', message, code })
++}
++
++/** The request has no organization context: a 403 `ORGANIZATION_CONTEXT_REQUIRED`, never a 401. */
++export function organizationContextRequired(
++  message: string = ORGANIZATION_CONTEXT_REQUIRED_MESSAGE,
++): ForbiddenException {
++  return forbiddenWithCode(API_ERROR_CODES.ORGANIZATION_CONTEXT_REQUIRED, message)
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null
++}
++
++/**
++ * The GraphQL `formatError`. `@nestjs/apollo` runs first and replaces the code of every HTTP
++ * exception with the one for its status, keeping the exception's body as
++ * `extensions.originalError`. This puts back the code `forbiddenWithCode` gave the body. It never
++ * sets a code on a 401, and never sets `UNAUTHENTICATED`: only a real 401 may tell a client the
++ * session is dead.
++ */
++export function formatApiError(formattedError: GraphQLFormattedError): GraphQLFormattedError {
++  const originalError = formattedError.extensions?.['originalError']
++  if (!isRecord(originalError)) return formattedError
++
++  const { code, statusCode } = originalError
++  if (typeof code !== 'string' || !ERROR_CODE_PATTERN.test(code)) return formattedError
++  if (statusCode === 401 || code === 'UNAUTHENTICATED') return formattedError
++
++  return { ...formattedError, extensions: { ...formattedError.extensions, code } }
++}
+diff --git a/libs/api/utils/src/lib/guards/gql-organization-scoped.guard.ts b/libs/api/utils/src/lib/guards/gql-organization-scoped.guard.ts
+index 8f61002..31d4b2d 100644
+--- a/libs/api/utils/src/lib/guards/gql-organization-scoped.guard.ts
++++ b/libs/api/utils/src/lib/guards/gql-organization-scoped.guard.ts
+@@ -1,5 +1,6 @@
+ import { ExecutionContext, Injectable, ForbiddenException, Optional } from '@nestjs/common'
+ import { GqlExecutionContext } from '@nestjs/graphql'
++import { organizationContextRequired } from '../errors/api-error-code'
+ import { AuthGuard } from '@nestjs/passport'
+ import { OrganizationContextService } from '../services/organization-context.service'
+ import { OrganizationContext } from '../types/nest-context-type'
+@@ -47,7 +48,7 @@ export class GqlOrganizationScopedGuard extends AuthGuard('jwt') {
+     organizationContext: OrganizationContext | undefined,
+   ): asserts organizationContext is OrganizationContext {
+     if (!organizationContext) {
+-      throw new ForbiddenException(
++      throw organizationContextRequired(
+         'Organization context is required for this operation. Please set an active organization.',
+       )
+     }
+diff --git a/libs/api/utils/src/lib/guards/permissions.guard.ts b/libs/api/utils/src/lib/guards/permissions.guard.ts
+index ed85d41..a93a48e 100644
+--- a/libs/api/utils/src/lib/guards/permissions.guard.ts
++++ b/libs/api/utils/src/lib/guards/permissions.guard.ts
+@@ -6,6 +6,7 @@ import {
+   SetMetadata,
+ } from '@nestjs/common'
+ import { Reflector } from '@nestjs/core'
++import { organizationContextRequired } from '../errors/api-error-code'
+ import { GqlExecutionContext } from '@nestjs/graphql'
+ import { OrganizationContext } from '../types/nest-context-type'
+ 
+@@ -45,7 +46,7 @@ export class PermissionsGuard implements CanActivate {
+     const organizationContext: OrganizationContext | undefined = gqlContext.req.organizationContext
+ 
+     if (!organizationContext) {
+-      throw new ForbiddenException('Organization context required for this operation')
++      throw organizationContextRequired('Organization context required for this operation')
+     }
+ 
+     // Check if user has ALL required permissions
+diff --git a/libs/api/utils/src/lib/guards/subscription.guard.ts b/libs/api/utils/src/lib/guards/subscription.guard.ts
+index 007c463..b8f8502 100644
+--- a/libs/api/utils/src/lib/guards/subscription.guard.ts
++++ b/libs/api/utils/src/lib/guards/subscription.guard.ts
+@@ -6,6 +6,7 @@ import {
+   HttpStatus,
+ } from '@nestjs/common'
+ import { GqlExecutionContext } from '@nestjs/graphql'
++import { organizationContextRequired } from '../errors/api-error-code'
+ import { SubscriptionStatus } from '@nestled-template/api/prisma'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+ import { OrganizationContextService } from '../services/organization-context.service'
+@@ -51,10 +52,7 @@ export class SubscriptionGuard implements CanActivate {
+ 
+     const organization = await this.organizationContext.attach(req)
+     if (!organization) {
+-      throw new HttpException(
+-        'No active organization. Please select an organization.',
+-        HttpStatus.FORBIDDEN,
+-      )
++      throw organizationContextRequired('No active organization. Please select an organization.')
+     }
+ 
+     // Get organization's subscription
