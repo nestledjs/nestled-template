@@ -6,6 +6,7 @@ import {
   Outlet,
   RouterProvider,
   UNSAFE_ErrorResponseImpl as ErrorResponseImpl,
+  useLoaderData,
   useRouteError,
 } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -21,6 +22,7 @@ import {
 } from '@nestled-template/shared/apollo'
 import { App, AppCodeErrorMarker, isAppCodeError } from '../app/app'
 import { ErrorBoundary } from '../app/root'
+import { OUTAGE_EVIDENCE_RECHECK_MS } from '../app/deferred-auth-recovery'
 import {
   CONFIRM_DELAYS_MS,
   RETURN_TRIGGER_DEBOUNCE_MS,
@@ -33,7 +35,12 @@ import {
   useApiAvailability,
   useRefetchFailedQueries,
 } from '../app/api-availability'
-import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
+import {
+  ApolloProvider,
+  createQueryPreloader,
+  type QueryRef,
+  useReadQuery,
+} from '@apollo/client/react'
 import {
   ApolloClient,
   ApolloLink,
@@ -51,6 +58,13 @@ import {
   SERVER_TROUBLE_MESSAGE,
   SERVER_TROUBLE_TITLE,
 } from '../app/api-unavailable'
+
+/**
+ * The root ErrorBoundary's own `error` prop type, whatever the app declares it as (`unknown` here;
+ * an app may type it `Error`), so these tests compile against either.
+ */
+type BoundaryError = Parameters<typeof ErrorBoundary>[0]['error']
+const boundaryError = (error: unknown) => error as BoundaryError
 
 const CONFIRM_WINDOW_MS = CONFIRM_DELAYS_MS.reduce((total, delay) => total + delay, 0)
 const SERVER_DOWN = SERVER_TROUBLE_TITLE
@@ -307,7 +321,7 @@ describe('root error boundary for a network error', () => {
 
   it('renders the recovering screen instead of a static one', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(<ErrorBoundary error={new TypeError('Failed to fetch')} />)
+    render(<ErrorBoundary error={boundaryError(new TypeError('Failed to fetch'))} />)
     expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
   })
 
@@ -316,7 +330,9 @@ describe('root error boundary for a network error', () => {
     const elsewhere = {}
     signalApiOutage(elsewhere)
     try {
-      render(<ErrorBoundary error={new ErrorResponseImpl(401, 'Unauthorized', null)} />)
+      render(
+        <ErrorBoundary error={boundaryError(new ErrorResponseImpl(401, 'Unauthorized', null))} />,
+      )
       expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
     } finally {
       clearApiOutage(elsewhere)
@@ -328,7 +344,7 @@ describe('root error boundary for a network error', () => {
       vi.spyOn(console, 'error').mockImplementation(() => undefined)
       const assign = vi.fn()
       vi.stubGlobal('location', { ...globalThis.location, pathname: '/members', assign })
-      render(<ErrorBoundary error={error} />)
+      render(<ErrorBoundary error={boundaryError(error)} />)
       return assign
     }
 
@@ -372,14 +388,18 @@ describe('root error boundary for a network error', () => {
 
   it('labels the button "Try again", not "Refresh Page"', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(<ErrorBoundary error={new TypeError('Load failed')} />)
+    render(<ErrorBoundary error={boundaryError(new TypeError('Load failed'))} />)
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
     expect(screen.queryByText(/refresh/i)).not.toBeInTheDocument()
   })
 
   it('treats a proxy 503 route response as a connectivity failure', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(<ErrorBoundary error={new ErrorResponseImpl(503, 'Service Unavailable', null)} />)
+    render(
+      <ErrorBoundary
+        error={boundaryError(new ErrorResponseImpl(503, 'Service Unavailable', null))}
+      />,
+    )
     expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
   })
 
@@ -387,7 +407,9 @@ describe('root error boundary for a network error', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const reload = vi.fn()
     vi.stubGlobal('location', { ...globalThis.location, reload })
-    render(<ErrorBoundary error={new Error('Cannot read properties of undefined')} />)
+    render(
+      <ErrorBoundary error={boundaryError(new Error('Cannot read properties of undefined'))} />,
+    )
 
     expect(screen.getByText('Something went wrong')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
@@ -1232,7 +1254,7 @@ describe('signed-in user after a connectivity blip', () => {
               return { meQueryRef }
             },
             element: <App />,
-            ErrorBoundary: () => <ErrorBoundary error={useRouteError()} />,
+            ErrorBoundary: () => <ErrorBoundary error={boundaryError(useRouteError())} />,
             children: [
               {
                 element: <SignedInLayout />,
@@ -1387,7 +1409,7 @@ describe('AppCodeErrorMarker', () => {
           // No Me query: a signed-out visitor, or an app whose root loader resolved Me already.
           loader: () => ({}),
           element: rootElement,
-          ErrorBoundary: () => <ErrorBoundary error={useRouteError()} />,
+          ErrorBoundary: () => <ErrorBoundary error={boundaryError(useRouteError())} />,
           children: [
             { path: 'broken', element: <Broken /> },
             {
@@ -1459,13 +1481,297 @@ describe('AppCodeErrorMarker', () => {
   })
 })
 
+describe('root error boundary for a 401 a route threw while the app had outage evidence', () => {
+  const FLAKY = gql`
+    query Flaky {
+      flaky
+    }
+  `
+  const DATA = gql`
+    query Data {
+      data
+    }
+  `
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  const unauthorized = () => json(401, { message: 'Unauthorized' })
+  const dataOk = () => json(200, { data: { data: 'fresh' } })
+
+  let dataResponses: Array<() => Response> = []
+  let answerRetry: () => void = () => undefined
+  const reload = vi.fn()
+  const assign = vi.fn()
+  const testLocation = { pathname: '/data', search: '', hash: '', href: '' }
+
+  function DataPage() {
+    const { dataRef } = useLoaderData() as { dataRef: QueryRef<{ data: string }> }
+    const { data } = useReadQuery(dataRef)
+    return <p>Data: {data?.data}</p>
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    reload.mockReset()
+    assign.mockReset()
+    testLocation.href = ''
+    vi.stubGlobal('location', { ...globalThis.location, ...testLocation, reload, assign })
+    let flakyCalls = 0
+    let dataCalls = 0
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
+      if (isApiProbe(url)) return new Response('12.3', { status: 200 })
+      const { operationName } = JSON.parse(String(init?.body))
+      if (operationName === 'Flaky') {
+        flakyCalls += 1
+        if (flakyCalls === 1) throw new TypeError('Failed to fetch')
+        return new Promise<Response>(resolve => {
+          answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
+        })
+      }
+      const respond = dataResponses[Math.min(dataCalls, dataResponses.length - 1)]
+      dataCalls += 1
+      return respond()
+    })
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    answerRetry()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+    takeDeferredAuthFailure()
+  })
+
+  /**
+   * A call that failed to reach the API is being retried (its retry held until `answerRetry`), and
+   * meanwhile the route's own query gets a 401: the error link lets it pass, the route throws it,
+   * and the root error boundary takes over from App.
+   */
+  async function renderWhileRetryInFlight() {
+    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+    await client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
+    void client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
+    await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
+
+    const preload = createQueryPreloader(client)
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          loader: () => ({}),
+          element: <App />,
+          ErrorBoundary: () => <ErrorBoundary error={boundaryError(useRouteError())} />,
+          children: [
+            {
+              path: 'data',
+              loader: async () => {
+                const dataRef = preload(DATA, { fetchPolicy: 'network-only' })
+                await preload.toPromise(dataRef).catch(() => undefined)
+                return { dataRef }
+              },
+              Component: DataPage,
+            },
+          ],
+        },
+      ],
+      { initialEntries: ['/data'] },
+    )
+    await act(async () => {
+      render(
+        <ApolloProvider client={client}>
+          <RouterProvider router={router} />
+        </ApolloProvider>,
+      )
+    })
+    return router
+  }
+
+  it('shows the self-recovering screen, not the error screen', async () => {
+    dataResponses = [unauthorized]
+    await renderWhileRetryInFlight()
+
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument()
+    expect(testLocation.href).toBe('')
+    expect(globalThis.location.href).toBe('')
+  })
+
+  it('revalidates the route once the held retry settles, and the route recovers with no reload', async () => {
+    dataResponses = [unauthorized, dataOk]
+    const router = await renderWhileRetryInFlight()
+
+    // The API answers the probe, but the retry still holds outage evidence: wait for it.
+    await advance(retryDelayMs(0))
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+
+    await act(async () => answerRetry())
+    await advance(0)
+
+    expect(screen.getByText('Data: fresh')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/data')
+    expect(reload).not.toHaveBeenCalled()
+    expect(globalThis.location.href).toBe('')
+  })
+
+  it('logs out when the fresh answer after the held retry is a confirmed 401', async () => {
+    dataResponses = [unauthorized]
+    await renderWhileRetryInFlight()
+
+    await advance(retryDelayMs(0))
+    await act(async () => answerRetry())
+    await advance(0)
+
+    // No outage evidence left: the error link sends the user through logout.
+    expect(globalThis.location.href).toBe('/logout?return_url=%2Fdata')
+    expect(isApiOutageSignalled()).toBe(false)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('revalidates once the screen’s own probe recovers when the retry settled first', async () => {
+    dataResponses = [unauthorized, dataOk]
+    await renderWhileRetryInFlight()
+
+    // The retry settles while the screen still holds its own evidence: no event, the probe decides.
+    await act(async () => answerRetry())
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+    await advance(retryDelayMs(0))
+
+    expect(screen.getByText('Data: fresh')).toBeInTheDocument()
+    expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+describe('root error boundary for an UNAUTHENTICATED error a route threw during an outage', () => {
+  const routeError = () =>
+    new CombinedGraphQLErrors({
+      data: null,
+      errors: [{ message: 'Expired', extensions: { code: 'UNAUTHENTICATED' } }],
+    })
+
+  let failing = true
+  const outage = {}
+
+  function Route() {
+    if (failing) throw routeError()
+    return <p>Route recovered</p>
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    failing = true
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal('location', { ...globalThis.location, reload: vi.fn(), assign: vi.fn() })
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    clearApiOutage(outage)
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+  })
+
+  it('shows the self-recovering outage screen, and the route again once the API answers', async () => {
+    apiDown()
+    // A connectivity failure is being confirmed (or the outage screen was up) elsewhere in the app.
+    signalApiOutage(outage)
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          loader: () => ({}),
+          element: <App />,
+          ErrorBoundary: () => <ErrorBoundary error={boundaryError(useRouteError())} />,
+          children: [{ path: 'page', Component: Route }],
+        },
+      ],
+      { initialEntries: ['/page'] },
+    )
+    await act(async () => {
+      render(<RouterProvider router={router} />)
+    })
+
+    // The app-code marker does not turn it into a plain error during an outage.
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument()
+    expect(globalThis.location.assign).not.toHaveBeenCalled()
+
+    clearApiOutage(outage)
+    failing = false
+    apiUp()
+    await advance(retryDelayMs(0))
+
+    expect(screen.getByText('Route recovered')).toBeInTheDocument()
+    expect(globalThis.location.reload).not.toHaveBeenCalled()
+  })
+
+  it('recovers when the outage evidence held elsewhere ends after its probe, with no event', async () => {
+    apiUp()
+    signalApiOutage(outage)
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          loader: () => ({}),
+          element: <App />,
+          ErrorBoundary: () => <ErrorBoundary error={boundaryError(useRouteError())} />,
+          children: [{ path: 'page', Component: Route }],
+        },
+      ],
+      { initialEntries: ['/page'] },
+    )
+    await act(async () => {
+      render(<RouterProvider router={router} />)
+    })
+
+    // The screen's own probe answers, but another source still holds evidence: it waits.
+    await advance(retryDelayMs(0))
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+
+    // That evidence ends without any announcement; the screen notices on its own.
+    failing = false
+    clearApiOutage(outage)
+    await advance(OUTAGE_EVIDENCE_RECHECK_MS)
+
+    expect(screen.getByText('Route recovered')).toBeInTheDocument()
+  })
+
+  it('still shows the error screen for the same error with no outage', async () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          loader: () => ({}),
+          element: <App />,
+          ErrorBoundary: () => <ErrorBoundary error={boundaryError(useRouteError())} />,
+          children: [{ path: 'page', Component: Route }],
+        },
+      ],
+      { initialEntries: ['/page'] },
+    )
+    await act(async () => {
+      render(<RouterProvider router={router} />)
+    })
+
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    expect(globalThis.location.assign).not.toHaveBeenCalled()
+  })
+})
+
 describe('root error boundary for a route error response', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
   it('shows a not-found page for a 404', () => {
-    render(<ErrorBoundary error={new ErrorResponseImpl(404, 'Not Found', null)} />)
+    render(<ErrorBoundary error={boundaryError(new ErrorResponseImpl(404, 'Not Found', null))} />)
 
     expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
     expect(screen.getByText('404')).toBeInTheDocument()
@@ -1476,7 +1782,11 @@ describe('root error boundary for a route error response', () => {
   it('shows the status and its text for a 500', () => {
     const reload = vi.fn()
     vi.stubGlobal('location', { ...globalThis.location, reload })
-    render(<ErrorBoundary error={new ErrorResponseImpl(500, 'Internal Server Error', null)} />)
+    render(
+      <ErrorBoundary
+        error={boundaryError(new ErrorResponseImpl(500, 'Internal Server Error', null))}
+      />,
+    )
 
     expect(screen.getByText('500')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Internal Server Error' })).toBeInTheDocument()
@@ -1554,7 +1864,11 @@ describe('offline vs server trouble', () => {
 
   it('says server trouble for the server-rendered 503 (the page reached the browser)', () => {
     networkDown()
-    render(<ErrorBoundary error={new ErrorResponseImpl(503, 'Service Unavailable', null)} />)
+    render(
+      <ErrorBoundary
+        error={boundaryError(new ErrorResponseImpl(503, 'Service Unavailable', null))}
+      />,
+    )
 
     expect(screen.getByRole('heading', { name: SERVER_TROUBLE_TITLE })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()

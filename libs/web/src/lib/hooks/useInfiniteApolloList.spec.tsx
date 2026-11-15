@@ -1,7 +1,17 @@
 import React from 'react'
-import { act, render } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useInfiniteApolloList, type UseInfiniteApolloListOptions } from './useInfiniteApolloList'
+
+// React's scheduler runs work outside act() through setImmediate, which it reads once at load.
+// Delaying it here makes a passive effect scheduled outside act() still pending when the test
+// ends: the order CI reaches at random, when Node runs a setTimeout(0) (waitFor's last tick)
+// before a setImmediate. See the teardown test at the end.
+vi.hoisted(() => {
+  const realSetImmediate = globalThis.setImmediate
+  globalThis.setImmediate = ((callback: () => void) =>
+    realSetImmediate(() => setTimeout(callback, 30))) as unknown as typeof setImmediate
+})
 
 // jsdom has no IntersectionObserver. This one records every instance so a test can report the
 // sentinel as (not) intersecting, and whether it was disconnected.
@@ -97,7 +107,11 @@ describe('useInfiniteApolloList', () => {
     vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
   })
 
+  // Unmount before unstubbing. Testing Library's own cleanup is an afterEach registered first, so
+  // it runs after this one, and unmounting flushes any passive effect still pending: one that
+  // re-creates the observer then hit an unstubbed global ("IntersectionObserver is not defined").
   afterEach(() => {
+    cleanup()
     vi.unstubAllGlobals()
   })
 
@@ -231,5 +245,23 @@ describe('useInfiniteApolloList', () => {
     view.unmount()
 
     expect(observer.disconnected).toBe(true)
+  })
+
+  it('keeps the observer stubbed until an effect pending at teardown has run', async () => {
+    // The update lands outside act(), so the effect that re-creates the observer for the new
+    // isLoading value is still pending when waitFor sees the DOM change and the test ends.
+    function Status() {
+      const { loaderRef, isLoading } = useInfiniteApolloList({
+        pageSize: 10,
+        fetchMorePage: () => Promise.resolve(10),
+        getCurrentCount: () => 0,
+      })
+      return <div ref={loaderRef}>{isLoading ? 'loading' : 'idle'}</div>
+    }
+    render(<Status />)
+
+    act(() => FakeIntersectionObserver.latest().report(true))
+
+    await waitFor(() => expect(screen.getByText('idle')).toBeTruthy())
   })
 })

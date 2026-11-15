@@ -1,14 +1,28 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
+import {
+  ApolloLink,
+  CombinedGraphQLErrors,
+  execute,
+  gql,
+  Observable,
+  ServerError,
+  type ApolloClient,
+} from '@apollo/client'
+import { RetryLink } from '@apollo/client/link/retry'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
+  APOLLO_ORGANIZATION_REQUIRED_EVENT,
   APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   classifyApiFailure,
   clearApiOutage,
+  createOutageRetryLink,
   isApiOutageSignalled,
+  isAuthFailureDeferred,
+  isQueryOperation,
   isRetryableConnectivityError,
   makeClient,
+  ORGANIZATION_CONTEXT_REQUIRED_CODE,
   signalApiOutage,
   subscriptionRetryDelayMs,
   takeDeferredAuthFailure,
@@ -666,6 +680,286 @@ describe('makeClient', () => {
     expect(forbiddenHandler).not.toHaveBeenCalled()
     globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, forbiddenHandler)
   })
+
+  describe('a 403 with its own code', () => {
+    function answerWith(code: string) {
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: null,
+            errors: [
+              {
+                message: 'Refused',
+                extensions: { code, originalError: { statusCode: 403, code } },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+    }
+
+    async function queryAsSignedInUser() {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const dispatchEvent = vi.fn()
+      const testWindow = {
+        location: { pathname: '/settings/members', search: '', hash: '', href: '' },
+        dispatchEvent,
+      }
+      vi.stubGlobal('window', testWindow)
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({
+        query: gql`
+          query CurrentSubscriptionActive {
+            currentSubscriptionActive
+          }
+        `,
+      })
+      return { testWindow, dispatchEvent }
+    }
+
+    it('keeps the session and sends ORGANIZATION_CONTEXT_REQUIRED to the organization picker', async () => {
+      answerWith(ORGANIZATION_CONTEXT_REQUIRED_CODE)
+
+      const { testWindow, dispatchEvent } = await queryAsSignedInUser()
+
+      expect(testWindow.location.href).toBe('')
+      expect(dispatchEvent).toHaveBeenCalledTimes(1)
+      expect(dispatchEvent.mock.calls[0][0].type).toBe(APOLLO_ORGANIZATION_REQUIRED_EVENT)
+    })
+
+    it('leaves a mutation refused with ORGANIZATION_CONTEXT_REQUIRED to the invoking UI', async () => {
+      answerWith(ORGANIZATION_CONTEXT_REQUIRED_CODE)
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const dispatchEvent = vi.fn()
+      const testWindow = {
+        location: { pathname: '/settings/members', search: '', hash: '', href: '' },
+        dispatchEvent,
+      }
+      vi.stubGlobal('window', testWindow)
+
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+        .mutate({
+          mutation: gql`
+            mutation CancelSubscription {
+              cancelSubscription
+            }
+          `,
+        })
+        .catch(() => undefined)
+
+      expect(testWindow.location.href).toBe('')
+      expect(dispatchEvent).not.toHaveBeenCalled()
+    })
+
+    it('treats any other coded 403 as access denied, never a logout', async () => {
+      answerWith('PLAN_LIMIT_REACHED')
+
+      const { testWindow, dispatchEvent } = await queryAsSignedInUser()
+
+      expect(testWindow.location.href).toBe('')
+      expect(dispatchEvent).toHaveBeenCalledTimes(1)
+      expect(dispatchEvent.mock.calls[0][0].type).toBe(APOLLO_ACCESS_FORBIDDEN_EVENT)
+    })
+  })
+})
+
+describe('isQueryOperation', () => {
+  const operation = (source: string) => ({ query: gql(source) }) as unknown as ApolloLink.Operation
+
+  it('is true for a query only', () => {
+    expect(isQueryOperation(operation('query Q { a }'))).toBe(true)
+    expect(isQueryOperation(operation('mutation M { a }'))).toBe(false)
+    expect(isQueryOperation(operation('subscription S { a }'))).toBe(false)
+  })
+})
+
+describe('isAuthFailureDeferred', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    takeDeferredAuthFailure()
+  })
+
+  it('reports a 401 let pass during an outage without taking it', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal('window', { location: { pathname: '/', search: '', hash: '', href: '' } })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 401 })),
+    )
+    const outage = {}
+    signalApiOutage(outage)
+    try {
+      expect(isAuthFailureDeferred()).toBe(false)
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+        .query({ query: gql('query Q { a }') })
+        .catch(() => undefined)
+
+      expect(isAuthFailureDeferred()).toBe(true)
+      expect(isAuthFailureDeferred()).toBe(true)
+      expect(takeDeferredAuthFailure()).toBe(true)
+      expect(isAuthFailureDeferred()).toBe(false)
+    } finally {
+      clearApiOutage(outage)
+    }
+  })
+})
+
+describe('createOutageRetryLink with a RetryLink above it', () => {
+  // The placement an app with its own RetryLink uses: error link, RetryLink, this link, transport.
+  // Each attempt the RetryLink makes passes through the outage link, so the attempt after one that
+  // could not reach the API counts as outage evidence while it is in flight.
+  let releaseSecondAttempt: () => void = () => undefined
+
+  function chain(options?: Parameters<typeof createOutageRetryLink>[0]) {
+    let attempts = 0
+    const transport = new ApolloLink(
+      () =>
+        new Observable<ApolloLink.Result>(observer => {
+          attempts += 1
+          if (attempts === 1) {
+            observer.error(new TypeError('Failed to fetch'))
+            return
+          }
+          releaseSecondAttempt = () => {
+            observer.next({ data: { saved: true } })
+            observer.complete()
+          }
+        }),
+    )
+    const retry = new RetryLink({
+      delay: { initial: 1, max: 1, jitter: false },
+      attempts: { max: 2, retryIf: error => isRetryableConnectivityError(error) },
+    })
+    return ApolloLink.from([retry, createOutageRetryLink(options), transport])
+  }
+
+  function run(link: ApolloLink, source: string) {
+    const client = { queryDeduplication: false } as unknown as ApolloClient
+    return new Promise<void>((resolve, reject) => {
+      execute(link, { query: gql(source) }, { client }).subscribe({
+        complete: resolve,
+        error: reject,
+      })
+    })
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('window', { dispatchEvent: vi.fn() })
+  })
+
+  afterEach(() => {
+    releaseSecondAttempt()
+    vi.unstubAllGlobals()
+  })
+
+  it("counts a query's retry as outage evidence while it is in flight", async () => {
+    const done = run(chain(), 'query Saved { saved }')
+    await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
+
+    releaseSecondAttempt()
+    await done
+    expect(isApiOutageSignalled()).toBe(false)
+  })
+
+  it('counts a retried mutation only when told to', async () => {
+    const notCounted = run(chain(), 'mutation SaveA { saved }')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(isApiOutageSignalled()).toBe(false)
+    releaseSecondAttempt()
+    await notCounted
+
+    const counted = run(chain({ counts: () => true }), 'mutation SaveB { saved }')
+    await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
+    releaseSecondAttempt()
+    await counted
+    expect(isApiOutageSignalled()).toBe(false)
+  })
+})
+
+describe('cancelling a request through the link chain', () => {
+  // A cancelled request must not leave outage evidence behind: every link passes the
+  // unsubscription down to the transport, which aborts the fetch.
+  const FLAKY = gql`
+    query Flaky {
+      flaky
+    }
+  `
+  const signals: AbortSignal[] = []
+  let calls = 0
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal('window', {
+      location: { pathname: '/', search: '', hash: '', href: '' },
+      dispatchEvent: vi.fn(),
+    })
+    signals.length = 0
+    calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((_url: unknown, init?: RequestInit) => {
+        calls += 1
+        const signal = init?.signal as AbortSignal
+        signals.push(signal)
+        if (calls === 1) return Promise.reject(new TypeError('Failed to fetch'))
+        // A hanging request, as to an API that is down; rejects like fetch when aborted.
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () =>
+            reject(new DOMException('This operation was aborted', 'AbortError')),
+          )
+        })
+      }),
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  async function retryInFlight() {
+    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+    await client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
+    return client
+  }
+
+  it('withdraws the evidence and aborts the fetch when the query is unsubscribed', async () => {
+    const client = await retryInFlight()
+    const subscription = client
+      .watchQuery({ query: FLAKY, fetchPolicy: 'network-only' })
+      .subscribe(() => undefined)
+    await vi.waitFor(() => expect(calls).toBe(2))
+    expect(isApiOutageSignalled()).toBe(true)
+
+    subscription.unsubscribe()
+
+    await vi.waitFor(() => expect(signals[1].aborted).toBe(true))
+    expect(isApiOutageSignalled()).toBe(false)
+  })
+
+  it('leaves no evidence behind when the caller aborts the request', async () => {
+    const client = await retryInFlight()
+    const controller = new AbortController()
+    const aborted = client.query({
+      query: FLAKY,
+      fetchPolicy: 'network-only',
+      context: { fetchOptions: { signal: controller.signal } },
+    })
+    await vi.waitFor(() => expect(calls).toBe(2))
+    expect(isApiOutageSignalled()).toBe(true)
+
+    controller.abort()
+    await aborted.catch(() => undefined)
+
+    expect(isApiOutageSignalled()).toBe(false)
+    // The aborted attempt was not an outage either: the next one is not counted as a retry.
+    void client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
+    await vi.waitFor(() => expect(calls).toBe(3))
+    expect(isApiOutageSignalled()).toBe(false)
+  })
 })
 
 describe('signalApiOutage / clearApiOutage', () => {
@@ -778,6 +1072,21 @@ describe('classifyApiFailure', () => {
     [
       'a FORBIDDEN GraphQL error',
       new CombinedGraphQLErrors({ errors: [{ message: 'No', extensions: { code: 'FORBIDDEN' } }] }),
+      'other',
+    ],
+    [
+      'an ORGANIZATION_CONTEXT_REQUIRED GraphQL error',
+      new CombinedGraphQLErrors({
+        errors: [
+          {
+            message: 'Organization context required.',
+            extensions: {
+              code: 'ORGANIZATION_CONTEXT_REQUIRED',
+              originalError: { statusCode: 403 },
+            },
+          },
+        ],
+      }),
       'other',
     ],
     ['an application TypeError', new TypeError('Cannot read properties of undefined'), 'other'],

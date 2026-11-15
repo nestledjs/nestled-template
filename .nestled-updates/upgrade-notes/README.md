@@ -46,6 +46,11 @@ goes out; each one has cost a downstream rollout time.
   report which services the merge restarts.
 - **`package.json` and lockfiles are not mirrored by promotion.** A note that changes them must
   spell out each version, script or override change, so a project can apply it by hand.
+- **A note that ships or suggests a raw patch says how to apply it.** Tell agents to run
+  `patch -N` (or `git apply --3way`), never plain `patch`: without a terminal, plain `patch`
+  answers its own "Reversed (or previously applied) patch detected! Assume -R?" prompt with yes,
+  and undoes every hunk that was already in place. After any patch run, re-check each file that
+  was edited by hand, and read `git diff` before committing.
 
 Already-published notes are not rewritten to follow these rules; they apply to new notes.
 

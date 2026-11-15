@@ -6,6 +6,7 @@ import {
   HttpStatus,
 } from '@nestjs/common'
 import { GqlExecutionContext } from '@nestjs/graphql'
+import { organizationContextRequired } from '../errors/api-error-code'
 import { SubscriptionStatus } from '@nestled-template/api/prisma'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { OrganizationContextService } from '../services/organization-context.service'
@@ -51,10 +52,7 @@ export class SubscriptionGuard implements CanActivate {
 
     const organization = await this.organizationContext.attach(req)
     if (!organization) {
-      throw new HttpException(
-        'No active organization. Please select an organization.',
-        HttpStatus.FORBIDDEN,
-      )
+      throw organizationContextRequired('No active organization. Please select an organization.')
     }
 
     // Get organization's subscription

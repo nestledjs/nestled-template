@@ -16,6 +16,7 @@ import { isViteCacheError, isNetworkError } from '@nestled-template/shared/utils
 import { ViteCacheError } from '@nestledjs/shared-components'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
+  APOLLO_ORGANIZATION_REQUIRED_EVENT,
   APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   classifyApiFailure,
@@ -24,6 +25,7 @@ import {
   takeDeferredAuthFailure,
 } from '@nestled-template/shared/apollo'
 import { AccessDenied } from './access-denied'
+import { OrganizationRequired } from './organization-required'
 import { retryDelayMs, useApiAvailability, useRefetchFailedQueries } from './api-availability'
 import { ApiUnavailableScreen } from './api-unavailable'
 import { AppCodeErrorMarker, isAppCodeError, markAppCodeError } from './app-code-error-marker'
@@ -191,6 +193,9 @@ export function App() {
   const revalidator = useRevalidator()
   const [viteCacheError, setViteCacheError] = useState(false)
   const [accessForbidden, setAccessForbidden] = useState(false)
+  // A query refused with ORGANIZATION_CONTEXT_REQUIRED: signed in, no active organization. Cleared
+  // on navigation like `accessForbidden`; choosing an organization reloads the page.
+  const [organizationRequired, setOrganizationRequired] = useState(false)
   // Keyed on the whole navigation, not the pathname. A route that changes only its query string
   // -- switching the active organization, say -- is a new request that may well be permitted, and
   // keying on pathname alone leaves the access-denied screen up over it with no way to clear it.
@@ -200,6 +205,7 @@ export function App() {
   if (accessForbiddenKey !== location.key) {
     setAccessForbiddenKey(location.key)
     setAccessForbidden(false)
+    setOrganizationRequired(false)
   }
 
   // The root loader says "unavailable" when the server could not reach the API. Once the browser
@@ -340,6 +346,7 @@ export function App() {
   useEffect(() => {
     const handleServiceUnavailable = () => reportConnectivityError()
     const handleAccessForbidden = () => setAccessForbidden(true)
+    const handleOrganizationRequired = () => setOrganizationRequired(true)
     // An in-flight retry's outage evidence ended with no outage on screen, and a 401 was let pass
     // meanwhile: refetch the queries holding it, as recovering from an outage does.
     const handleDeferredAuthFailure = () =>
@@ -386,6 +393,7 @@ export function App() {
     // Listen for Apollo service unavailable events
     globalThis.addEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
     globalThis.addEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
+    globalThis.addEventListener(APOLLO_ORGANIZATION_REQUIRED_EVENT, handleOrganizationRequired)
     globalThis.addEventListener(APOLLO_DEFERRED_AUTH_FAILURE_EVENT, handleDeferredAuthFailure)
 
     // Fallback: Listen for global errors
@@ -396,6 +404,7 @@ export function App() {
       // noisy during normal usage
       globalThis.removeEventListener(APOLLO_SERVICE_UNAVAILABLE_EVENT, handleServiceUnavailable)
       globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, handleAccessForbidden)
+      globalThis.removeEventListener(APOLLO_ORGANIZATION_REQUIRED_EVENT, handleOrganizationRequired)
       globalThis.removeEventListener(APOLLO_DEFERRED_AUTH_FAILURE_EVENT, handleDeferredAuthFailure)
       globalThis.removeEventListener('error', handleGlobalError)
       globalThis.removeEventListener('unhandledrejection', handleUnhandledRejection)
@@ -410,6 +419,10 @@ export function App() {
   // Shown only for a confirmed outage, and cleared by itself when the API answers again
   if (serviceUnavailable) {
     return <ApiUnavailableScreen reason={api.reason} onRetry={api.retryNow} />
+  }
+
+  if (organizationRequired) {
+    return <OrganizationRequired />
   }
 
   if (accessForbidden) {

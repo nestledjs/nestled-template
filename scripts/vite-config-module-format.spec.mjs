@@ -59,12 +59,46 @@ export function configImports(source) {
   return specifiers.map(match => match[1]).filter(specifier => CONFIG_REFERENCE.test(specifier))
 }
 
-/** Config paths a Vitest config lists as strings (the root config's `projects`), ignoring comments. */
-export function listedConfigPaths(source) {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
-  return [...code.matchAll(/['"]([\w./-]+\/(?:vite|vitest)\.config\.[cm]?[jt]s)['"]/g)]
-    .map(match => match[1])
-    .filter(path => !path.startsWith('.'))
+/** The text of each `projects: [...]` array in `code`, brackets matched, strings skipped. */
+function projectLists(code) {
+  const lists = []
+  for (const match of code.matchAll(/\bprojects\s*:\s*\[/g)) {
+    const start = match.index + match[0].length
+    let depth = 1
+    let quote = ''
+    let end = start
+    for (; end < code.length && depth > 0; end++) {
+      const char = code[end]
+      if (quote) {
+        if (char === '\\') end++
+        else if (char === quote) quote = ''
+      } else if (char === "'" || char === '"' || char === '`') quote = char
+      else if (char === '[') depth++
+      else if (char === ']') depth--
+    }
+    lists.push(code.slice(start, end - 1))
+  }
+  return lists
+}
+
+/**
+ * Config paths a Vitest config lists as projects, ignoring comments: the strings in a config's
+ * `projects: [...]`, or anywhere in a vitest.workspace file (whose export is the project list).
+ * Other strings, such as a coverage exclusion naming a config that may legitimately be absent,
+ * are not project paths. A `./` or `../` path is kept: the caller resolves it against the listing
+ * file's directory. Import specifiers are left out, since `configImports` checks those with
+ * extension substitution.
+ */
+export function listedConfigPaths(source, { workspace = false } = {}) {
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+    .replace(/(?:\bfrom|\bimport\s*\(?)\s*['"][^'"]*['"]/g, '')
+  return (workspace ? [code] : projectLists(code)).flatMap(list =>
+    [...list.matchAll(/['"]([\w./-]+\/(?:vite|vitest)\.config\.[cm]?[jt]s)['"]/g)].map(
+      match => match[1],
+    ),
+  )
 }
 
 /** The TypeScript sources an import's JavaScript extension may resolve to. */
@@ -100,8 +134,9 @@ export function staleConfigReferences(files, readFile) {
         path: posix.normalize(posix.join(posix.dirname(file), specifier)),
         isImport: true,
       }))
-      const listed = /(^|\/)vitest\.(config|workspace)\.[cm]?[jt]s$/.test(file)
-        ? listedConfigPaths(source).map(path => ({
+      const listing = /(^|\/)vitest\.(config|workspace)\.[cm]?[jt]s$/.exec(file)
+      const listed = listing
+        ? listedConfigPaths(source, { workspace: listing[2] === 'workspace' }).map(path => ({
             specifier: path,
             path: posix.normalize(posix.join(posix.dirname(file), path)),
           }))
@@ -207,6 +242,37 @@ describe('references to vite and vitest configs', () => {
   it('reads a Vitest project path literally, with no extension substitution', () => {
     assert.deepEqual(check('vitest.config.ts', "projects: ['libs/ui/vite.config.mjs']\n"), [
       'vitest.config.ts names libs/ui/vite.config.mjs, which is no tracked config',
+    ])
+  })
+
+  it('resolves a ./ or ../ project path against the listing file, still literally', () => {
+    assert.deepEqual(check('vitest.config.ts', "projects: ['./libs/ui/vite.config.ts']\n"), [
+      'vitest.config.ts names ./libs/ui/vite.config.ts, which is no tracked config',
+    ])
+    assert.deepEqual(check('vitest.config.ts', "projects: ['./libs/ui/vite.config.mts']\n"), [])
+    assert.deepEqual(check('libs/ui/vitest.workspace.ts', "['../../apps/a/vite.config.ts']\n"), [])
+    assert.deepEqual(check('libs/ui/vitest.workspace.ts', "['../../apps/a/vite.config.mts']\n"), [
+      'libs/ui/vitest.workspace.ts names ../../apps/a/vite.config.mts, which is no tracked config',
+    ])
+  })
+
+  it('reads only project lists, not other strings such as a coverage exclusion', () => {
+    const source =
+      "export default { test: { projects: ['./libs/ui/vite.config.mts'], coverage: { exclude: ['./vite.config.ts', 'libs/x/vite.config.ts'] } } }\n"
+    assert.deepEqual(check('vitest.config.ts', source), [])
+    assert.deepEqual(
+      listedConfigPaths(
+        "projects: ['a/vite.config.ts', { extends: './b/vite.config.ts' }], x: ['c/vite.config.ts']",
+      ),
+      ['a/vite.config.ts', './b/vite.config.ts'],
+    )
+  })
+
+  it('leaves an import in a Vitest config to the import rule, reported once', () => {
+    const file = 'libs/ui/vitest.config.mts'
+    assert.deepEqual(check(file, "import c from './vite.config.mjs'\n"), [])
+    assert.deepEqual(check(file, "import c from './vite.config.ts'\n"), [
+      `${file} names ./vite.config.ts, which is no tracked config`,
     ])
   })
 

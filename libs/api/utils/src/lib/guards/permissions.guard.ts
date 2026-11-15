@@ -6,6 +6,7 @@ import {
   SetMetadata,
 } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
+import { organizationContextRequired } from '../errors/api-error-code'
 import { GqlExecutionContext } from '@nestjs/graphql'
 import { OrganizationContext } from '../types/nest-context-type'
 
@@ -45,7 +46,7 @@ export class PermissionsGuard implements CanActivate {
     const organizationContext: OrganizationContext | undefined = gqlContext.req.organizationContext
 
     if (!organizationContext) {
-      throw new ForbiddenException('Organization context required for this operation')
+      throw organizationContextRequired('Organization context required for this operation')
     }
 
     // Check if user has ALL required permissions

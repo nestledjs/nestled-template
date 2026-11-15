@@ -100,6 +100,13 @@ export type ApiFailureCause = 'unauthenticated' | 'unavailable' | 'other'
 export const APOLLO_ACCESS_FORBIDDEN_EVENT = 'apollo-access-forbidden'
 
 /**
+ * Dispatched on `window` when a query is refused with `ORGANIZATION_CONTEXT_REQUIRED`: the user is
+ * signed in but has no active organization (or a stale one). The web app shows its organization
+ * picker; the session is kept.
+ */
+export const APOLLO_ORGANIZATION_REQUIRED_EVENT = 'apollo-organization-required'
+
+/**
  * Dispatched on `window` when a request fails without reaching the server. It is a report, not a
  * verdict: the web app confirms it with its own reachability probe before showing anything, and
  * clears the screen again by itself once the API answers (apps/web/app/api-availability.ts).
@@ -187,13 +194,49 @@ function isAuthenticationError(extensions?: { code?: unknown }): boolean {
   return extensions?.code === 'UNAUTHENTICATED'
 }
 
-function isForbiddenError(extensions?: { code?: unknown }): boolean {
-  return extensions?.code === 'FORBIDDEN'
+/**
+ * The API's 403 for a signed-in request with no active organization (or a stale one). The session
+ * is fine: a query refused with it dispatches `APOLLO_ORGANIZATION_REQUIRED_EVENT`, and the app
+ * shows its organization picker (apps/web/app/organization-required.tsx), never a logout and never
+ * the access-denied screen.
+ */
+export const ORGANIZATION_CONTEXT_REQUIRED_CODE = 'ORGANIZATION_CONTEXT_REQUIRED'
+
+/**
+ * A permission refusal, shown as access denied: `FORBIDDEN`, or any other code the API gave a 403
+ * (`forbiddenWithCode` keeps the code and the 403 in `originalError.statusCode`), except
+ * `ORGANIZATION_CONTEXT_REQUIRED`, which has its own screen. None of them is ever a logout.
+ */
+function isForbiddenError(extensions?: { code?: unknown; originalError?: unknown }): boolean {
+  if (extensions?.code === 'FORBIDDEN') return true
+  if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) return false
+  const originalError = extensions?.originalError as { statusCode?: unknown } | null | undefined
+  return originalError?.statusCode === 403
 }
 
-function isQueryOperation(operation: ApolloLink.Operation): boolean {
+/**
+ * Whether `operation` is a query (not a mutation or a subscription). The outage-retry link
+ * (`createOutageRetryLink`) and the access-forbidden event depend on it; exported so an app with a
+ * link chain of its own can use the same test.
+ */
+export function isQueryOperation(operation: ApolloLink.Operation): boolean {
   const definition = getMainDefinition(operation.query)
   return definition.kind === 'OperationDefinition' && definition.operation === 'query'
+}
+
+function isSubscriptionOperation(operation: ApolloLink.Operation): boolean {
+  const definition = getMainDefinition(operation.query)
+  return definition.kind === 'OperationDefinition' && definition.operation === 'subscription'
+}
+
+function handleOrganizationRequired(operation: ApolloLink.Operation): void {
+  if (globalThis.window === undefined || !isQueryOperation(operation)) return
+
+  globalThis.window.dispatchEvent(
+    new CustomEvent(APOLLO_ORGANIZATION_REQUIRED_EVENT, {
+      detail: { operation: operation.operationName },
+    }),
+  )
 }
 
 function handleAuthorizationError(operation: ApolloLink.Operation): void {
@@ -245,6 +288,16 @@ export function takeDeferredAuthFailure(): boolean {
   return deferred
 }
 
+/**
+ * Whether the error link has let a 401 pass because an outage was signalled and nothing has taken
+ * it yet (`takeDeferredAuthFailure`). Unlike `takeDeferredAuthFailure` it leaves the record in
+ * place: the root error boundary reads it to tell a 401 that is still waiting for a fresh answer
+ * from one that was judged with no outage.
+ */
+export function isAuthFailureDeferred(): boolean {
+  return authFailureDeferred
+}
+
 function handleAuthenticationError(): void {
   if (isApiOutageSignalled()) {
     authFailureDeferred = true
@@ -270,7 +323,7 @@ function handleAuthenticationError(): void {
   }
 }
 
-// Browser only. Query operations (by name and variables) whose last attempt got no answer, or a
+// Browser only. Operations (by name and variables) whose last attempt got no answer, or a
 // proxy's 502/503/504 (`isRetryableConnectivityError`); forgotten once one is answered.
 const unreachableOperations = new Set<string>()
 
@@ -279,18 +332,6 @@ function operationKey(operation: ApolloLink.Operation): string {
   return `${name}:${JSON.stringify(operation.variables ?? {})}`
 }
 
-/**
- * Counts a retry of an unreachable call, while it is in flight, as outage evidence
- * (`signalApiOutage`). Without it, a 401 that came back while another call was still being retried
- * after failing to reach the API (a refetch once a blip cleared, or a loader's preload when Me is
- * revalidated) logged the user out before that retry could fail again and record the outage. The
- * evidence lasts until the retry settles: an answer clears it (and the 401s after it are judged
- * as usual), and a second connectivity failure is reported by the error link in the same tick.
- *
- * Sits below the error link, so a retry's own failure clears its evidence before the error link
- * sees it: a retried call that gets a 401 is judged like any other. Queries only (a subscription
- * stays open, and would hold the evidence as long as it lives); never during a server render.
- */
 const CANCELLED = Symbol('cancelled')
 
 /**
@@ -308,9 +349,39 @@ function releaseRetryEvidence(evidence: object): void {
   globalThis.window.dispatchEvent(new CustomEvent(APOLLO_DEFERRED_AUTH_FAILURE_EVENT))
 }
 
-function createOutageRetryLink(): ApolloLink {
+/**
+ * Counts a retry of an unreachable call, while it is in flight, as outage evidence
+ * (`signalApiOutage`). Without it, a 401 that came back while another call was still being retried
+ * after failing to reach the API (a refetch once a blip cleared, or a loader's preload when Me is
+ * revalidated) logged the user out before that retry could fail again and record the outage. The
+ * evidence lasts until the retry settles: an answer clears it (and the 401s after it are judged
+ * as usual), and a second connectivity failure is reported by the error link in the same tick.
+ *
+ * Sits below the error link, so a retry's own failure clears its evidence before the error link
+ * sees it: a retried call that gets a 401 is judged like any other. Queries only by default (see
+ * `counts` below); never a subscription, which stays open and would hold the evidence as long as
+ * it lives; never during a server render.
+ *
+ * `makeClient` puts it directly below the error link. Exported for an app that builds its own link
+ * chain: place it below that chain's error link, and place a RetryLink of its own between the two
+ * (error link, RetryLink, this link), so each attempt the RetryLink makes passes through here and
+ * an attempt after an unreachable one counts as outage evidence while it is in flight. A RetryLink
+ * that also retries mutations passes `counts` to widen the default (queries only); subscriptions
+ * never count. Cancellation is forwarded: unsubscribing withdraws the attempt's evidence and
+ * cancels the request below, so a cancelled request leaves no evidence behind.
+ */
+export function createOutageRetryLink(
+  options: { counts?: (operation: ApolloLink.Operation) => boolean } = {},
+): ApolloLink {
+  const counts = options.counts ?? isQueryOperation
   return new ApolloLink((operation, forward) => {
-    if (globalThis.window === undefined || !isQueryOperation(operation)) return forward(operation)
+    if (
+      globalThis.window === undefined ||
+      isSubscriptionOperation(operation) ||
+      !counts(operation)
+    ) {
+      return forward(operation)
+    }
     const key = operationKey(operation)
     return new Observable(observer => {
       const evidence = {}
@@ -388,6 +459,8 @@ function createErrorLink(onApiFailure?: (cause: ApiFailureCause) => void): Apoll
 
         if (isAuthenticationError(extensions)) {
           handleAuthenticationError()
+        } else if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) {
+          handleOrganizationRequired(operation)
         } else if (isForbiddenError(extensions)) {
           handleAuthorizationError(operation)
         }

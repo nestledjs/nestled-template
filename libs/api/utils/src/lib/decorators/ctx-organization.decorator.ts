@@ -1,10 +1,13 @@
-import { createParamDecorator, ExecutionContext, UnauthorizedException } from '@nestjs/common'
+import { createParamDecorator, ExecutionContext } from '@nestjs/common'
 import { GqlExecutionContext } from '@nestjs/graphql'
+import { organizationContextRequired } from '../errors/api-error-code'
 import { OrganizationContext } from '../types/nest-context-type'
 
 /**
  * Extract organization context from GraphQL request
- * Throws UnauthorizedException if no organization context is found
+ * Throws a 403 `ORGANIZATION_CONTEXT_REQUIRED` if no organization context is found (no active
+ * organization, or one the user no longer belongs to). Never a 401: the session is fine, and a 401
+ * would log the user out.
  */
 export const CtxOrganization = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): OrganizationContext => {
@@ -12,9 +15,7 @@ export const CtxOrganization = createParamDecorator(
     const organizationContext = gqlContext.req.organizationContext
 
     if (!organizationContext) {
-      throw new UnauthorizedException(
-        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.',
-      )
+      throw organizationContextRequired()
     }
 
     return organizationContext
@@ -23,7 +24,9 @@ export const CtxOrganization = createParamDecorator(
 
 /**
  * Extract organization ID from context
- * Throws UnauthorizedException if no organization context is found
+ * Throws a 403 `ORGANIZATION_CONTEXT_REQUIRED` if no organization context is found (no active
+ * organization, or one the user no longer belongs to). Never a 401: the session is fine, and a 401
+ * would log the user out.
  */
 export const CtxOrganizationId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string => {
@@ -31,9 +34,7 @@ export const CtxOrganizationId = createParamDecorator(
     const organizationContext = gqlContext.req.organizationContext
 
     if (!organizationContext) {
-      throw new UnauthorizedException(
-        'Organization context required. Please set X-Organization-ID header or ensure user has an active organization.',
-      )
+      throw organizationContextRequired()
     }
 
     return organizationContext.organizationId
