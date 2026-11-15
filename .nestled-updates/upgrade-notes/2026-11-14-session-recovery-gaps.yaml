@@ -236,6 +236,7 @@ why: >
   an outage (a downstream fixed this locally), a signed-in layout that logged out over a missing
   user, and a server render that served a 500 for a real 401 instead of signing out. Parts 5 and
   6 close the remaining ways an app's own links could keep or lose outage evidence wrongly.
+  This note and 2026-11-14-api-auth-error-codes are meant to be applied together, in one change.
 
 affectedPaths:
   - libs/shared/apollo/src/lib/apollo.ts
@@ -315,3 +316,13 @@ agentHints:
   - >
     Part 7: rename nothing; the exports are additions. If the project's ErrorBoundary is typed
     `{ error: Error }`, the `boundaryError()` helper is what makes the copied specs compile.
+  - >
+    Apply this note together with 2026-11-14-api-auth-error-codes, in one change. The files both
+    notes touch (apps/web/app/root.tsx, entry.server.tsx, session-recheck.tsx,
+    routes/_authenticated/_layout.tsx, libs/shared/apollo/src/lib/apollo.ts and their specs) ship in
+    this note's patch with that note's changes already in them, among them imports of
+    apps/web/app/organization-required.tsx, which only that note's patch creates. A project that
+    applies this note's patch alone must remove the organization-required imports and branches
+    (`isOrganizationContextRequired`, `OrganizationRequired`, `organizationRequiredResponse`,
+    `ORGANIZATION_CONTEXT_REQUIRED_CODE`, the `organization-required` outcomes and their tests), or
+    the web app will not build.

@@ -159,6 +159,39 @@ intent: >
   shows the message, leaves the button enabled, never reloads or calls `location.assign`, and leaves
   `activeOrganizationId` unset).
 
+
+  5. Web: a loader's ORGANIZATION_CONTEXT_REQUIRED during the server render shows the picker, not
+  the generic error page. A loader that awaits a query the API refuses with
+  `ORGANIZATION_CONTEXT_REQUIRED` throws a `CombinedGraphQLErrors` carrying the code. In production
+  React Router replaces it with a bare "Unexpected Server Error" before `handleRequest` runs, so
+  `handleError` (apps/web/app/entry.server.tsx) recorded it only as `other`, the root
+  `ErrorBoundary` got the sanitized error, and a signed-in user with no active organization saw the
+  generic error page instead of the picker. `handleError` now also records, per request, whether
+  the error was that refusal (`isOrganizationContextRequired`), the same way it records a 401's
+  cause (2026-11-14-session-recovery-gaps parts 4 and 8); only that fact is kept, never the error
+  or its message. `routeErrorOutcome` takes it as a fourth argument (`thrownOrganizationRequired`,
+  default false) and returns the new outcome `organization-required` when neither `force-logout`
+  nor `unavailable` applies; `handleRequest` then keeps the cookie and rejects with
+  `organizationRequiredResponse()` (new in apps/web/app/organization-required.tsx: a 403 whose JSON
+  data is `{ code: 'ORGANIZATION_CONTEXT_REQUIRED' }` and nothing else). React Router renders the
+  root `ErrorBoundary` for it as a route error response; the guard set that lets the recovering
+  503's second render go ahead (`servedUnavailable`) is renamed `servedErrorResponse` and covers
+  both. `isOrganizationContextRequired` recognises that 403 route error response too, and the root
+  `ErrorBoundary`'s `refusalScreen` checks it before the generic 403 (access denied). Logout
+  precedence is unchanged: a request that also holds an unambiguous 401 still logs out, and a 401
+  beside outage evidence still serves the recovering 503.
+  Affected paths: apps/web/app/entry.server.tsx, apps/web/app/organization-required.tsx,
+  apps/web/app/root.tsx, apps/web/tests/entry-server-shell-error.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (entry-server-shell-error.spec.tsx renders
+  a signed-in reload through a production `createRequestHandler` with the real entry.server.tsx and
+  root route, whose members loader awaits a query answered with `ORGANIZATION_CONTEXT_REQUIRED`:
+  the response is a 403 with the picker's title, the cookie kept, no redirect, and neither the
+  access-denied screen, the generic error nor the API's message in the page; `routeErrorOutcome`
+  returns `organization-required` for the recorded refusal and still `force-logout` or
+  `unavailable` when a 401 is in the request). By hand: `pnpm exec nx build web`, start the built
+  server, sign in as a user with no active organization and reload a page whose loader queries
+  something organization-scoped: the picker renders, not "Something went wrong".
+
 why: >
   Since 2026.11.6 clients trust the code, not the message: `UNAUTHENTICATED` means the session is
   dead. But the API still threw `UnauthorizedException` for a missing organization and for a
@@ -184,10 +217,12 @@ affectedPaths:
   - apps/web/app/organization-required.tsx
   - apps/web/app/app.tsx
   - apps/web/app/root.tsx
+  - apps/web/app/entry.server.tsx
   - apps/web/app/session-recheck.tsx
   - apps/web/app/routes/_authenticated/_layout.tsx
   - apps/web/tests/organization-required.spec.tsx
   - apps/web/tests/auth-error-navigation.spec.tsx
+  - apps/web/tests/entry-server-shell-error.spec.tsx
   - apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
 
 skipIf:
@@ -202,6 +237,7 @@ verification:
   - pnpm exec nx test web --skip-nx-cache
   - pnpm exec nx run-many -t typecheck --skip-nx-cache
   - pnpm exec nx build api --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
   - pnpm run nestled-doctor
 
 agentHints:
@@ -253,3 +289,13 @@ agentHints:
     a `catch` (or `.catch`) while the client default is `errorPolicy: 'all'`; each needs
     `errorPolicy: 'none'` or a result check. Test it with a client carrying the app's real
     `defaultOptions`: a test client without them throws on a GraphQL error and hides the bug.
+  - >
+    Part 5: apply it where the project's server render decides on a loader's error. A project with
+    its own `handleError` adds the record to it rather than replacing it; one that has no
+    `handleError` export, or whose `handleRequest` does not read the router context's errors,
+    applies 2026-11-14-session-recovery-gaps part 4 first. Keep the rejected response to the code
+    alone: never put the API's message or the original error in it, since it is serialized into
+    the page. A project with its own organization picker or onboarding route renders that for the
+    403 instead. Prove it with a production-mode request (`createRequestHandler(build,
+    'production')`, or the built server): in development React Router does not sanitize the error,
+    so the bug does not show.
