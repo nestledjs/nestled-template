@@ -16,6 +16,7 @@ type UpgradeNote = {
   skipIf?: unknown
   verification?: unknown
   agentHints?: unknown
+  applyAfter?: unknown
 }
 
 type PackageRelease = {
@@ -26,6 +27,8 @@ type PackageRelease = {
 }
 
 const notesDir = '.nestled-updates/upgrade-notes'
+// Retired notes move here. They are not validated, but a note may still name one in `applyAfter`.
+const archiveDir = join(notesDir, 'archive')
 const idPattern = /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/
 const priorities = new Set(['critical', 'high', 'normal', 'low', 'ignore'])
 const areas = new Set(['auth', 'billing', 'admin', 'ui', 'api', 'web', 'database', 'infra', 'docs'])
@@ -191,6 +194,28 @@ const getYamlFiles = (dir: string): string[] => {
     .sort((left, right) => left.localeCompare(right))
 }
 
+// `applyAfter` names notes this one must be applied after: one id or a non-empty list. The upgrader
+// orders a release by it and refuses a cycle, so an id that matches no note, or the note itself,
+// could only block a release later; it is caught here instead.
+const validateApplyAfter = (note: UpgradeNote, knownIds: Set<string>, errors: string[]) => {
+  const value = note.applyAfter
+  if (value === undefined) return
+
+  const ids = typeof value === 'string' ? [value] : value
+  if (!isStringList(ids) || ids.length === 0) {
+    errors.push('applyAfter must be a note id or a non-empty list of note ids when present')
+    return
+  }
+
+  for (const id of ids.map(entry => entry.trim())) {
+    if (id === note.id) {
+      errors.push('applyAfter must not name the note itself')
+    } else if (!knownIds.has(id)) {
+      errors.push(`applyAfter names ${id}, which matches no note in ${notesDir} or its archive`)
+    }
+  }
+}
+
 const validateIdentity = (note: UpgradeNote, filenameId: string, errors: string[]) => {
   if (!isNonEmptyString(note.id)) {
     errors.push('id is required')
@@ -306,7 +331,7 @@ const validateIgnoredNote = (note: UpgradeNote, errors: string[]) => {
   }
 }
 
-const validateNote = (filePath: string): string[] => {
+const validateNote = (filePath: string, knownIds: Set<string>): string[] => {
   const errors: string[] = []
   const filenameId = basename(filePath, '.yaml')
   let note: UpgradeNote
@@ -334,15 +359,20 @@ const validateNote = (filePath: string): string[] => {
   validateOptionalStringList(note, 'skipIf', errors)
   validateOptionalStringList(note, 'verification', errors)
   validateOptionalStringList(note, 'agentHints', errors)
+  validateApplyAfter(note, knownIds, errors)
 
   return errors
 }
 
 const files = getYamlFiles(notesDir)
+// A note's id must match its filename (validateIdentity), so the filenames are the ids.
+const knownIds = new Set(
+  [...files, ...getYamlFiles(archiveDir)].map(file => basename(file, '.yaml')),
+)
 let errorCount = 0
 
 for (const file of files) {
-  const errors = validateNote(file)
+  const errors = validateNote(file, knownIds)
 
   if (errors.length > 0) {
     errorCount += errors.length

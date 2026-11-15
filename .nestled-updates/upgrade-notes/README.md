@@ -104,6 +104,19 @@ Recommended fields:
 - `verification`
 - `agentHints`
 
+Optional ordering:
+
+- `applyAfter`: the id of a note this one must be applied after, or a non-empty list of ids. Use it
+  when this note's change builds on another note's, such as a follow-up to a file another note adds
+  or edits. The upgrader's `feed-publish` writes a release's notes in an order that honours it, and
+  refuses a cycle. Each id must match a note in this directory or `archive/`, and a note must not
+  name itself; `pnpm template:validate-upgrade-notes` checks both. Without it, notes keep their
+  default order (sync order, then id).
+
+  ```yaml
+  applyAfter: [2026-05-13-auth-session-hardening]
+  ```
+
 Use `priority: ignore` for a note that records a change that should not propagate
 downstream.
 

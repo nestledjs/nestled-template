@@ -7,6 +7,8 @@ priority: high
 area: auth
 type: correctness
 delivery: code-patch
+# The web changes here (root ErrorBoundary, authenticated layout, apollo link) build on that note's.
+applyAfter: [2026-11-14-session-recovery-gaps]
 
 intent: >
   Follow-up to 2026-11-11-logout-only-on-unambiguous-401 (apply it first). Clients log a user out
