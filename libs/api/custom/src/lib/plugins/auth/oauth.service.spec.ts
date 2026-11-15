@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing'
-import { UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common'
+import {
+  UnauthorizedException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { OAuthService } from './oauth.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
@@ -15,6 +20,24 @@ jest.mock('@octokit/oauth-app', () => ({
     createToken: jest.fn(),
   })),
 }))
+
+/**
+ * A provider that refuses the token is a 403 `OAUTH_PROVIDER_REJECTED`. A 401 would be read as a
+ * dead session: `linkOAuthAccount` runs signed in, and the web logs the user out on a 401.
+ */
+async function expectProviderRejected(promise: Promise<unknown>): Promise<void> {
+  const error = await promise.then(
+    () => undefined,
+    (rejection: unknown) => rejection,
+  )
+  expect(error).toBeInstanceOf(ForbiddenException)
+  expect(error).not.toBeInstanceOf(UnauthorizedException)
+  expect((error as ForbiddenException).getStatus()).toBe(403)
+  expect((error as ForbiddenException).getResponse()).toMatchObject({
+    code: 'OAUTH_PROVIDER_REJECTED',
+  })
+}
+
 describe('OAuthService', () => {
   let service: OAuthService
   let mockData: any
@@ -614,47 +637,39 @@ describe('OAuthService', () => {
     })
   })
   describe('verifyGoogleToken Edge Cases', () => {
-    it('should throw UnauthorizedException when payload is missing', async () => {
+    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when payload is missing', async () => {
       const mockGoogleClient = {
         verifyIdToken: jest.fn().mockResolvedValue({
           getPayload: () => null,
         }),
       }
       ;(service as any).googleClient = mockGoogleClient
-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
-        UnauthorizedException,
-      )
+      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
     })
-    it('should throw UnauthorizedException when sub (provider user ID) is missing', async () => {
+    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when sub (provider user ID) is missing', async () => {
       const mockGoogleClient = {
         verifyIdToken: jest.fn().mockResolvedValue({
           getPayload: () => ({ email: 'user@example.com' }),
         }),
       }
       ;(service as any).googleClient = mockGoogleClient
-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
-        UnauthorizedException,
-      )
+      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
     })
-    it('should throw UnauthorizedException when email is missing', async () => {
+    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when email is missing', async () => {
       const mockGoogleClient = {
         verifyIdToken: jest.fn().mockResolvedValue({
           getPayload: () => ({ sub: 'google-user-id' }),
         }),
       }
       ;(service as any).googleClient = mockGoogleClient
-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
-        UnauthorizedException,
-      )
+      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
     })
-    it('should throw UnauthorizedException when token verification fails', async () => {
+    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when token verification fails', async () => {
       const mockGoogleClient = {
         verifyIdToken: jest.fn().mockRejectedValue(new Error('Verification failed')),
       }
       ;(service as any).googleClient = mockGoogleClient
-      await expect(service.verifyGoogleToken('invalid-token')).rejects.toThrow(
-        UnauthorizedException,
-      )
+      await expectProviderRejected(service.verifyGoogleToken('invalid-token'))
     })
     it('should return valid profile when token is valid', async () => {
       const mockGoogleClient = {
@@ -683,7 +698,31 @@ describe('OAuthService', () => {
       // Mock global fetch
       globalThis.fetch = jest.fn()
     })
-    it('should throw UnauthorizedException when GitHub API returns error', async () => {
+    it('should reject with a 403 OAUTH_PROVIDER_REJECTED when the code exchange fails', async () => {
+      ;(service as any).githubApp = {
+        createToken: jest.fn().mockRejectedValue(new Error('bad_verification_code')),
+      }
+      await expectProviderRejected(service.verifyGitHubCode('invalid-code'))
+    })
+    it('should reject with a 403 OAUTH_PROVIDER_REJECTED when the account has no email', async () => {
+      ;(service as any).githubApp = {
+        createToken: jest.fn().mockResolvedValue({ authentication: { token: 'github-token' } }),
+      }
+      ;(globalThis.fetch as jest.Mock)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 1, login: 'octo' }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      await expectProviderRejected(service.verifyGitHubCode('code'))
+    })
+    it('keeps a signed-in user signed in when linking with a token the provider rejects', async () => {
+      ;(service as any).googleClient = {
+        verifyIdToken: jest.fn().mockRejectedValue(new Error('Token used too late')),
+      }
+      await expectProviderRejected(
+        service.linkOAuthAccount('user-123', OAuthProvider.GOOGLE, 'expired-google-token'),
+      )
+      expect(mockData.oAuthAccount.create).not.toHaveBeenCalled()
+    })
+    it('should reject with a 403 OAUTH_PROVIDER_REJECTED, not a 401, when GitHub API returns error', async () => {
       const mockGitHubApp = {
         createToken: jest.fn().mockResolvedValue({
           authentication: { token: 'github-token' },
@@ -694,7 +733,7 @@ describe('OAuthService', () => {
         ok: false,
         status: 401,
       })
-      await expect(service.verifyGitHubCode('invalid-code')).rejects.toThrow(UnauthorizedException)
+      await expectProviderRejected(service.verifyGitHubCode('invalid-code'))
     })
     it('should handle missing email by fetching from emails endpoint', async () => {
       const mockGitHubApp = {

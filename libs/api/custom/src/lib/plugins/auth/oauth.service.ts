@@ -3,11 +3,13 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { OAuth2Client } from 'google-auth-library'
 import { OAuthApp } from '@octokit/oauth-app'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+import { API_ERROR_CODES, forbiddenWithCode } from '@nestled-template/api/utils'
 import { OAuthProvider } from './dto'
 import { recordAuditLog } from '../../shared/audit-log'
 
@@ -17,6 +19,16 @@ export interface OAuthUserProfile {
   email: string
   name?: string
   picture?: string
+}
+
+/**
+ * The provider refused the token or code it was given. A 403 `OAUTH_PROVIDER_REJECTED`, never a 401:
+ * `linkOAuthAccount` runs inside a signed-in session, and a 401 there would log the user out over a
+ * failed provider check. (The sign-in callback catches every error and redirects to the OAuth error
+ * page, so the type does not reach it.)
+ */
+function providerRejected(message: string): ForbiddenException {
+  return forbiddenWithCode(API_ERROR_CODES.OAUTH_PROVIDER_REJECTED, message)
 }
 
 @Injectable()
@@ -98,7 +110,7 @@ export class OAuthService {
 
       const payload = ticket.getPayload()
       if (!payload?.sub || !payload.email) {
-        throw new UnauthorizedException('Invalid Google token payload')
+        throw providerRejected('Invalid Google token payload')
       }
 
       return {
@@ -109,8 +121,8 @@ export class OAuthService {
         picture: payload.picture,
       }
     } catch (error) {
-      if (error instanceof UnauthorizedException) throw error
-      throw new UnauthorizedException('Invalid Google token')
+      if (error instanceof ForbiddenException) throw error
+      throw providerRejected('Invalid Google token')
     }
   }
 
@@ -137,7 +149,7 @@ export class OAuthService {
       })
 
       if (!response.ok) {
-        throw new UnauthorizedException('Failed to fetch GitHub user profile')
+        throw providerRejected('Failed to fetch GitHub user profile')
       }
 
       const githubUser = (await response.json()) as {
@@ -170,7 +182,7 @@ export class OAuthService {
       }
 
       if (!email) {
-        throw new UnauthorizedException('GitHub account must have a verified email address')
+        throw providerRejected('GitHub account must have a verified email address')
       }
 
       return {
@@ -181,10 +193,10 @@ export class OAuthService {
         picture: githubUser.avatar_url,
       }
     } catch (error) {
-      if (error instanceof UnauthorizedException || error instanceof BadRequestException) {
+      if (error instanceof ForbiddenException || error instanceof BadRequestException) {
         throw error
       }
-      throw new UnauthorizedException('Invalid GitHub authorization code')
+      throw providerRejected('Invalid GitHub authorization code')
     }
   }
 

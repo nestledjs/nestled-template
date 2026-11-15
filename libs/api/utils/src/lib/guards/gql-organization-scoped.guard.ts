@@ -1,5 +1,6 @@
 import { ExecutionContext, Injectable, ForbiddenException, Optional } from '@nestjs/common'
 import { GqlExecutionContext } from '@nestjs/graphql'
+import { organizationContextRequired } from '../errors/api-error-code'
 import { AuthGuard } from '@nestjs/passport'
 import { OrganizationContextService } from '../services/organization-context.service'
 import { OrganizationContext } from '../types/nest-context-type'
@@ -47,7 +48,7 @@ export class GqlOrganizationScopedGuard extends AuthGuard('jwt') {
     organizationContext: OrganizationContext | undefined,
   ): asserts organizationContext is OrganizationContext {
     if (!organizationContext) {
-      throw new ForbiddenException(
+      throw organizationContextRequired(
         'Organization context is required for this operation. Please set an active organization.',
       )
     }

@@ -4,6 +4,7 @@ import {
   apolloLoader,
   classifyApiFailure,
   isApiOutageSignalled,
+  isAuthFailureDeferred,
 } from '@nestled-template/shared/apollo'
 import { Me, type MeQuery } from '@nestled-template/shared/sdk'
 import {
@@ -29,7 +30,9 @@ import {
 import { GTMNoScript, GTMScript } from './gtm'
 import App, { isAppCodeError } from './app'
 import { AccessDenied } from './access-denied'
+import { isOrganizationContextRequired, OrganizationRequired } from './organization-required'
 import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
+import { DeferredAuthRecovery } from './deferred-auth-recovery'
 
 export const meta: MetaFunction = () => [
   {
@@ -200,20 +203,57 @@ type ErrorWithGraphQLErrors = Error & {
 }
 
 /**
- * Whether the error says the API rejected the session: a route response with status 401, an HTTP
- * 401, or a GraphQL error whose `extensions.code` is `UNAUTHENTICATED` (`classifyApiFailure`, plus
- * the older `graphQLErrors` shape). The message is never read: an error that merely says
- * "Unauthorized" is not evidence of a dead session. An error thrown by the app's own code, below an
- * `AppCodeErrorMarker` or passed on by the Me boundary (`isAppCodeError`), never is either, whatever
- * it carries: only the session query, or a loader, may decide a logout.
+ * Whether the error carries the API's rejection of a session: a route response with status 401,
+ * an HTTP 401, or a GraphQL error whose `extensions.code` is `UNAUTHENTICATED`
+ * (`classifyApiFailure`, plus the older `graphQLErrors` shape). The message is never read: an
+ * error that merely says "Unauthorized" is not evidence of a dead session.
  */
-function isUnauthorizedError(error: unknown, routeStatus: number | undefined): boolean {
-  if (isAppCodeError(error)) return false
+function carriesApiRejection(error: unknown, routeStatus: number | undefined): boolean {
   if (routeStatus !== undefined) return routeStatus === 401
   if (classifyApiFailure(error) === 'unauthenticated') return true
   return !!(error as ErrorWithGraphQLErrors | null)?.graphQLErrors?.some?.(
     e => e?.extensions?.code === 'UNAUTHENTICATED',
   )
+}
+
+/**
+ * Whether the error says the API rejected the session (`carriesApiRejection`). An error thrown by
+ * the app's own code, below an `AppCodeErrorMarker` or passed on by the Me boundary
+ * (`isAppCodeError`), never does, whatever it carries: only the session query, or a loader, may
+ * decide a logout.
+ */
+function isUnauthorizedError(error: unknown, routeStatus: number | undefined): boolean {
+  if (isAppCodeError(error)) return false
+  return carriesApiRejection(error, routeStatus)
+}
+
+// Errors shown with the self-recovering screen for a 401 kept during an outage. The decision
+// sticks to the error: once that screen's own outage evidence clears and it revalidates, the
+// boundary renders again while the loaders run, and judging the same 401 afresh then (no outage
+// left) would flash the error screen, or log out, before the fresh answer arrives.
+const errorsAwaitingFreshAnswer = new WeakSet<object>()
+
+function awaitsFreshAnswer(error: unknown, routeStatus: number | undefined): boolean {
+  const isObject = typeof error === 'object' && error !== null
+  if (isObject && errorsAwaitingFreshAnswer.has(error)) return true
+  const awaits =
+    carriesApiRejection(error, routeStatus) && (isApiOutageSignalled() || isAuthFailureDeferred())
+  if (awaits && isObject) errorsAwaitingFreshAnswer.add(error)
+  return awaits
+}
+
+// One key per error object, so each error gets a fresh recovery screen (and a fresh revalidation).
+const errorKeys = new WeakMap<object, number>()
+let lastErrorKey = 0
+function errorKey(error: unknown): number {
+  if (typeof error !== 'object' || error === null) return 0
+  let key = errorKeys.get(error)
+  if (key === undefined) {
+    lastErrorKey += 1
+    key = lastErrorKey
+    errorKeys.set(error, key)
+  }
+  return key
 }
 
 export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
@@ -222,11 +262,14 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
   const isUnauthorized = isUnauthorizedError(error, routeStatus)
 
-  // Log out only on an unambiguous 401. While the app has outage evidence, a 401 is not proof the
-  // session is bad: keep it and show the recovering screen, which reloads once the API answers;
-  // the server render then decides again with a clean answer.
-  if (isUnauthorized && isApiOutageSignalled()) {
-    return <RecoveringApiUnavailable initialReason="server" />
+  // Log out only on an unambiguous 401. While the app has outage evidence, or while the error link
+  // has let a 401 pass because of some, a 401 is not proof the session is bad, whoever threw it (a
+  // loader, the Me query, or a route's own query: the app-code marker does not matter here). Keep
+  // the session and show the self-recovering screen: once the API answers and no evidence is left
+  // it revalidates the route, which renders again with a fresh answer (data, or a clean 401 that
+  // logs out). It lives here, not in App, because the error has unmounted App.
+  if (awaitsFreshAnswer(error, routeStatus)) {
+    return <DeferredAuthRecovery key={errorKey(error)} initialReason="server" />
   }
 
   if (isUnauthorized && globalThis.window !== undefined) {
@@ -237,9 +280,8 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
     return null
   }
 
-  if (routeStatus === 403) {
-    return <AccessDenied />
-  }
+  const refusal = refusalScreen(error, routeStatus)
+  if (refusal) return refusal
 
   // A connectivity failure (no response from the API, or a proxy's 502/503/504 while it
   // restarts) gets the screen that probes the API and reloads by itself once it answers. A route
@@ -264,6 +306,17 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   }
 
   return <RootErrorScreen error={normalizedError} />
+}
+
+/**
+ * The screen for a signed-in request the API refused, which never logs out: access denied for a
+ * route-level 403, or, when the page needs an organization and none is active, the
+ * organization-required screen.
+ */
+function refusalScreen(error: unknown, routeStatus: number | undefined): ReactNode {
+  if (routeStatus === 403) return <AccessDenied />
+  if (isOrganizationContextRequired(error)) return <OrganizationRequired />
+  return null
 }
 
 const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])

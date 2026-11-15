@@ -7,7 +7,7 @@
 import { PassThrough } from 'node:stream'
 
 import type { AppLoadContext, EntryContext } from 'react-router'
-import { ServerRouter } from 'react-router'
+import { isRouteErrorResponse, ServerRouter } from 'react-router'
 import { createReadableStreamFromReadable } from '@react-router/node'
 import { isbot } from 'isbot'
 import type { RenderToPipeableStreamOptions } from 'react-dom/server'
@@ -75,6 +75,64 @@ export function shellErrorOutcome(
   return 'error'
 }
 
+const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+
+function routeErrorCause(error: unknown): ApiFailureCause {
+  if (isRouteErrorResponse(error)) {
+    if (error.status === 401) return 'unauthenticated'
+    return GATEWAY_UNAVAILABLE_STATUSES.has(error.status) ? 'unavailable' : 'other'
+  }
+  return classifyApiFailure(error)
+}
+
+// Request -> what the errors its loaders threw were, as React Router hands them to `handleError`
+// below. That is the only place the server sees them raw: in production the errors in the router
+// context are sanitized ("Unexpected Server Error") before `handleRequest` runs, status and all.
+const loaderErrorCauses = new WeakMap<Request, ApiFailureCause>()
+
+/**
+ * React Router's server error hook. It logs the error as React Router's default one does, and
+ * records what it was (`routeErrorOutcome`) for the request's `handleRequest`, which runs after it.
+ */
+export function handleError(error: unknown, { request }: { request: Request }): void {
+  if (!request.signal.aborted) console.error(error)
+  loaderErrorCauses.set(
+    request,
+    mergeApiFailureCauses(loaderErrorCauses.get(request), routeErrorCause(error)) ?? 'other',
+  )
+}
+
+/**
+ * What to do when a loader threw during a document request, before anything renders. `errors` is
+ * the router context's `staticHandlerContext.errors`; `thrownCause` is what those errors were before
+ * React Router sanitized them (recorded by `handleError`); `recordedCause` the recorded cause of the
+ * request's failed preloads, as for `shellErrorOutcome`.
+ *
+ * A loader that awaited Me (or any query) and got a 401 used to reach the root ErrorBoundary
+ * during the server render, which cannot redirect there, so the browser got a 500 "Something went
+ * wrong" page and kept the stale cookie; the error the page then hydrated with had lost its
+ * status, so the browser did not log out either. Now:
+ * - `force-logout`: a loader's error carries the API's rejection (an HTTP 401, an UNAUTHENTICATED
+ *   GraphQL error, or a route response with status 401) and nothing in the request, another
+ *   loader's error or a recorded preload failure, points to an outage. Clear the cookie and
+ *   redirect, as the browser does.
+ * - `render`: anything else, outage evidence alongside a 401 included (the session is kept), is
+ *   rendered by the root ErrorBoundary as before.
+ */
+export function routeErrorOutcome(
+  errors: Record<string, unknown> | null | undefined,
+  thrownCause: ApiFailureCause | undefined,
+  recordedCause?: ApiFailureCause,
+): 'force-logout' | 'render' {
+  const thrown = Object.values(errors ?? {})
+  if (thrown.length === 0) return 'render'
+  let ownCause = thrownCause
+  for (const error of thrown) ownCause = mergeApiFailureCauses(ownCause, routeErrorCause(error))
+  if (ownCause !== 'unauthenticated') return 'render'
+  const effective = mergeApiFailureCauses(ownCause, recordedCause)
+  return effective === 'unauthenticated' ? 'force-logout' : 'render'
+}
+
 function forceLogoutResponse(request: Request): Response {
   const cookieName = process.env.VITE_COOKIE_NAME || '__session'
   const cookieDomain = process.env.VITE_COOKIE_DOMAIN
@@ -103,6 +161,17 @@ export default function handleRequest(
   // https://react.dev/reference/react-dom/server/renderToPipeableStream#waiting-for-all-content-to-load-for-crawlers-and-static-generation
   const readyOption: keyof RenderToPipeableStreamOptions =
     (userAgent && isbot(userAgent)) || routerContext.isSpaMode ? 'onAllReady' : 'onShellReady'
+
+  const handlerContext = routerContext.staticHandlerContext
+  const loaderOutcome = routeErrorOutcome(
+    handlerContext?.errors,
+    loaderErrorCauses.get(request),
+    ssrApiFailureCause(handlerContext?.loaderData),
+  )
+  if (loaderOutcome === 'force-logout') {
+    console.error('[SSR] A loader got a 401 from the API — redirecting to force-logout')
+    return Promise.resolve(forceLogoutResponse(request))
+  }
 
   const client = makeClient(request, {
     apiUrl: `${process.env.VITE_API_URL || 'http://localhost:3000'}/graphql`,

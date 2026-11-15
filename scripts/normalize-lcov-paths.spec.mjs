@@ -152,15 +152,52 @@ describe('normalizeLcovReports', () => {
   })
 })
 
+/**
+ * `--ignoreConfig` where this TypeScript has it. From TypeScript 6, naming files on the command line
+ * while a tsconfig.json sits in the working directory is error TS5112 unless the flag is passed;
+ * TypeScript 5 has neither the error nor the flag (TS5023, unknown option), so it is probed.
+ */
+export function ignoreConfigFlag(tsc) {
+  const probe = spawnSync(process.execPath, [tsc, '--ignoreConfig', '--version'], {
+    encoding: 'utf8',
+  })
+  return probe.status === 0 ? ['--ignoreConfig'] : []
+}
+
 describe('the lcov script compiles under either module system', () => {
   const tsc = createRequire(join(workspaceRoot, 'package.json')).resolve('typescript/bin/tsc')
   const files = ['scripts/normalize-lcov-paths.ts', 'scripts/normalize-lcov-paths.lib.ts']
-  const common = ['--noEmit', '--strict', '--skipLibCheck', '--target', 'es2022', '--lib', 'es2023']
+  const common = [
+    '--noEmit',
+    '--strict',
+    '--skipLibCheck',
+    '--target',
+    'es2022',
+    '--lib',
+    'es2023',
+    ...ignoreConfigFlag(tsc),
+  ]
   const compile = moduleOptions =>
     spawnSync(process.execPath, [tsc, ...common, '--types', 'node', ...moduleOptions, ...files], {
       cwd: workspaceRoot,
       encoding: 'utf8',
     })
+
+  // A project with a root tsconfig.json (this repository has only tsconfig.base.json) hit TS5112.
+  it('names its files while a tsconfig.json is in the working directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tsc-files-with-config-'))
+    try {
+      writeFileSync(join(dir, 'tsconfig.json'), '{ "compilerOptions": { "strict": true } }\n')
+      writeFileSync(join(dir, 'a.ts'), 'export const a: number = 1\n')
+      const result = spawnSync(process.execPath, [tsc, ...common, 'a.ts'], {
+        cwd: dir,
+        encoding: 'utf8',
+      })
+      assert.equal(result.status, 0, result.stdout + result.stderr)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   // A project's scripts tsconfig may say "module": "commonjs" (tsconfig.spec.scripts.json in some
   // apps), where `import.meta` is TS1343; scripts/tsconfig.json here says esnext.

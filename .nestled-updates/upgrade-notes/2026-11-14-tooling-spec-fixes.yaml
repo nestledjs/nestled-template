@@ -1,0 +1,134 @@
+id: 2026-11-14-tooling-spec-fixes
+title: >-
+  Repo-tooling spec fixes from the 2026.11.6 rollout: relative Vitest project paths, a local list
+  of tracked-but-ignored files, the IntersectionObserver teardown flake, TS5112 in the lcov spec,
+  no hard-coded plugin folder, and coverage for the lcov runner
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Fixes to the workspace specs that 2026-11-11-r5b-wave-followups, 2026-11-12-wave-corrections and
+  2026-11-12-config-spec-js-extensions added (apply those first). Six parts, each independent. No
+  package changes, and no change to package.json, nx.json or tsconfig.base.json.
+
+
+  1. scripts/vite-config-module-format.spec.mjs: `listedConfigPaths` dropped every listed path
+  that starts with `.`, so a root Vitest `projects` entry written as `'./libs/ui/vite.config.ts'`
+  or `'../x/vite.config.ts'` was never checked, and a stale one passed. Relative paths are now
+  kept; `staleConfigReferences` already resolves each listed path against the listing file's
+  directory, still literally (no extension substitution). Import specifiers (`from '...'`,
+  `import('...')`) are stripped before matching, so an import inside a Vitest config is checked
+  once, by the import rule, with its `.mjs` → `.mts` substitution. Only project paths are read:
+  the strings inside a config's `projects: [...]` (brackets matched), or anywhere in a
+  vitest.workspace file, whose export is the project list. Other strings, such as a coverage
+  exclusion naming a config that may legitimately be absent, are no longer checked. Three new
+  cases.
+
+
+  2. scripts/gitignore-test-output.spec.mjs, "ignores no tracked file": it failed in projects that
+  track files their .gitignore matches, and the only way through was editing the spec, which the
+  next upgrade replaces. The test is now "ignores no tracked file outside the known list". It reads
+  new scripts/known-tracked-ignored.json, a JSON array of repo-relative paths (`[]` in the
+  template; an absent file counts as empty; anything but an array of strings is an error). It
+  fails for every tracked-but-ignored file the list does not name, and for every listed file that
+  is no longer tracked-but-ignored. The comparison is the exported `compareWithAllowlist`, and the
+  reader `readKnownTrackedIgnored`; new cases cover unlisted, stale, absent and malformed lists.
+
+
+  3. libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx failed at random on CI with
+  "ReferenceError: IntersectionObserver is not defined", thrown from the hook's effect during
+  React's flushPassiveEffects. The cause is teardown order. Testing Library's auto-cleanup is an
+  afterEach registered when it is imported, and Vitest runs afterEach hooks in reverse order, so it
+  ran after the spec's own afterEach, which had already called `vi.unstubAllGlobals()`. When a
+  state update landed outside act() (a test that awaits a DOM change with `waitFor`, as a spec
+  written in a downstream does), the effect that re-creates the observer for the new `isLoading`
+  was still pending when the test ended; unmounting flushed it against the unstubbed global.
+  Whether it was still pending depended on whether Node ran waitFor's final `setTimeout(0)` before
+  React's `setImmediate`, which varies from run to run. The spec's afterEach now calls `cleanup()`
+  (imported from @testing-library/react) before `vi.unstubAllGlobals()`. A new last test
+  reproduces the race on every run: a `vi.hoisted` block delays `setImmediate` before React loads,
+  so the pending effect always outlives `waitFor`; it fails without the `cleanup()` call. The hook
+  is unchanged.
+
+
+  4. scripts/normalize-lcov-paths.spec.mjs compiles the lcov script with tsc by naming the files on
+  the command line. From TypeScript 6 that is error TS5112 when a tsconfig.json is in the working
+  directory, as it is in any project with a root tsconfig.json. TypeScript 5 has no TS5112 and
+  rejects `--ignoreConfig` as an unknown option (TS5023), so new exported `ignoreConfigFlag(tsc)`
+  probes `tsc --ignoreConfig --version` and the spec adds the flag only where it exists. A new case
+  compiles from a temporary directory holding a tsconfig.json. No other script, note
+  verification or project target in the template runs tsc with a file list; the others use `-p`.
+
+
+  5. scripts/gitignore-test-output.spec.mjs named `tools/workspace-plugin`, which most projects do
+  not have under that name. TEST_OUTPUT now uses neutral examples (`tools/some-plugin/coverage/...`),
+  and the coverage test also checks `<dir>/coverage/lcov.info` beside every tracked project.json
+  other than the root one (exported `projectCoverageOutput`), so a project's plugin is covered
+  whatever it is called. Where an older note names `tools/workspace-plugin`, read it as the
+  project's own plugin folder.
+
+
+  6. scripts/normalize-lcov-paths.ts, the runner, imports `./normalize-lcov-paths.lib` without an
+  extension, so `node --test` cannot load it and no spec can cover it that way; the spec covers
+  the .lib.ts file. The template excludes `scripts/**` from Sonar coverage and has no CI step that
+  measures script coverage, so it needs no change here. See the hint for a project that does.
+
+why: >
+  The 2026.11.6 rollout hit each of these: a stale Vitest project path written with `./` passed
+  the stale-config spec; three projects had tracked files their .gitignore matched and had to edit
+  a template-owned spec; the useInfiniteApolloList spec failed CI at random and was re-run each
+  time; the lcov spec failed with TS5112 in projects with a root tsconfig.json; projects edited the
+  gitignore spec to rename a plugin folder they do not have; and a project measuring script
+  coverage could not cover the lcov runner.
+
+affectedPaths:
+  - scripts/vite-config-module-format.spec.mjs
+  - scripts/gitignore-test-output.spec.mjs
+  - scripts/known-tracked-ignored.json
+  - libs/web/src/lib/hooks/useInfiniteApolloList.spec.tsx
+  - scripts/normalize-lcov-paths.spec.mjs
+  - sonar-project.properties
+
+verification:
+  - node --test scripts/*.spec.mjs
+  - pnpm exec nx test web-components --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx run-many -t lint --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Applying a raw patch for any part: run `patch -N` (or `git apply --3way`), never plain `patch`.
+    Without a terminal, plain `patch` treats hunks that are already applied as reversed and undoes
+    them. After any patch run, re-check every file you edited by hand and read `git diff`.
+  - >
+    Part 1: run the spec; every stale `./` or `../` project path it now lists is pointed at the
+    config's current name.
+  - >
+    Part 2: if the spec fails, untrack each file it lists (`git rm --cached <path>`) unless the
+    project means to keep it, and list the ones it keeps in scripts/known-tracked-ignored.json.
+    That file belongs to the project: a later upgrade that ships a new copy of the spec does not
+    replace it. Never commit a large binary to make the list pass; tell the owner about one
+    instead.
+  - >
+    Part 3: a project that kept its own useInfiniteApolloList spec (or any spec that stubs a
+    browser global and calls `vi.unstubAllGlobals()` in afterEach while rendering with Testing
+    Library) applies the same fix: import `cleanup` and call it first in that afterEach. Search with
+    `grep -rln "unstubAllGlobals" --include=*.spec.tsx apps libs`. Prove it with the file run 20
+    times, for example `for i in $(seq 20); do pnpm exec vitest run --config
+    libs/web/vitest.config.mts --sequence.shuffle --sequence.seed=$i <spec> || break; done`.
+  - >
+    Part 4: a project that runs tsc with a file list anywhere else (a project.json command, a
+    script, a CI step) adds `--ignoreConfig` there when its TypeScript is 6 or later
+    (`pnpm exec tsc -v`), or switches it to `-p <tsconfig>`.
+  - >
+    Part 5: a project that renamed the plugin path in its copy of the spec takes the template's
+    copy; no rename is needed any more.
+  - >
+    Part 6: only for a project whose CI measures script coverage (`node --test
+    --experimental-test-coverage ...`) or whose sonar.coverage.exclusions does not cover
+    `scripts/**`. Add `--test-coverage-exclude=scripts/normalize-lcov-paths.ts` to that node
+    command, and `scripts/normalize-lcov-paths.ts` to sonar.coverage.exclusions (keep the backslash
+    continuations). Otherwise mark part 6 `not-applicable`.

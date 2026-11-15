@@ -7,9 +7,10 @@ import {
   type ServerBuild,
 } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CombinedGraphQLErrors } from '@apollo/client'
+import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
+import { makeClient } from '@nestled-template/shared/apollo'
 import * as entryServer from '../app/entry.server'
-import { shellErrorOutcome } from '../app/entry.server'
+import { routeErrorOutcome, shellErrorOutcome } from '../app/entry.server'
 import * as rootModule from '../app/root'
 import { OFFLINE_TITLE, SERVER_TROUBLE_MESSAGE, SERVER_TROUBLE_TITLE } from '../app/api-unavailable'
 
@@ -27,13 +28,13 @@ function unexpiredJwt(): string {
   return `header.${payload}.signature`
 }
 
-function routeEntry(id: string, path: string | undefined, parentId?: string) {
+function routeEntry(id: string, path: string | undefined, parentId?: string, hasLoader = false) {
   return {
     id,
     path,
     parentId,
     hasAction: false,
-    hasLoader: id === 'root',
+    hasLoader: id === 'root' || hasLoader,
     hasClientAction: false,
     hasClientLoader: false,
     hasClientMiddleware: false,
@@ -59,9 +60,10 @@ function MembersPage() {
 
 /**
  * The root route as the framework build serves it (the Vite plugin wraps the component and the
- * ErrorBoundary to pass them their props), or with a component that throws `rootError`.
+ * ErrorBoundary to pass them their props), or with a component that throws `rootError`. The
+ * members route gets `membersLoader` when one is given.
  */
-function build(rootError?: Error): ServerBuild {
+function build(rootError?: Error, membersLoader?: () => Promise<unknown>): ServerBuild {
   const root = {
     ...rootModule,
     default: withComponentProps(
@@ -81,14 +83,14 @@ function build(rootError?: Error): ServerBuild {
         id: 'routes/members',
         parentId: 'root',
         path: 'members/*',
-        module: { default: MembersPage },
+        module: { default: MembersPage, ...(membersLoader && { loader: membersLoader }) },
       },
     },
     assets: {
       entry: { imports: [], module: '/entry.client.js' },
       routes: {
         root: routeEntry('root', ''),
-        'routes/members': routeEntry('routes/members', 'members/*', 'root'),
+        'routes/members': routeEntry('routes/members', 'members/*', 'root', !!membersLoader),
       },
       url: '/manifest.js',
       version: 'test',
@@ -113,6 +115,14 @@ async function reloadSignedIn(path: string, serverBuild: ServerBuild = build()) 
 }
 
 const fetchMock = vi.fn()
+
+/** What the Apollo HTTP link rejects with for an answered request: a real response's status. */
+function httpError(status: number): ServerError {
+  return new ServerError('Response not successful', {
+    response: new Response(null, { status }),
+    bodyText: '',
+  })
+}
 
 function graphqlAnswers(status: number, body: unknown = { errors: [{ message: 'error' }] }) {
   fetchMock.mockImplementation(
@@ -250,12 +260,113 @@ describe('server render when the Me preload fails', () => {
   )
 })
 
+describe('server render when a loader awaiting Me gets a 401', () => {
+  const MEMBERS_DATA = gql`
+    query MembersData {
+      membersData
+    }
+  `
+
+  // The root preloads Me as usual; the members route's loader awaits a query of its own (as an app
+  // that resolves Me in a loader does), so a failure there is thrown from the loader.
+  function answer(byOperation: Record<string, () => Response>) {
+    fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      const { operationName } = JSON.parse(String(init?.body))
+      return byOperation[operationName]()
+    })
+  }
+  const json = (status: number, body: unknown) => () =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  const signedIn = json(200, { data: { me: { __typename: 'User', id: 'user-1' } } })
+
+  const awaitsQuery = async () => {
+    await makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' }).query({
+      query: MEMBERS_DATA,
+      fetchPolicy: 'network-only',
+      errorPolicy: 'none',
+    })
+    return {}
+  }
+
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it.each([
+    ['an HTTP 401', json(401, { message: 'Unauthorized' })],
+    [
+      'an UNAUTHENTICATED GraphQL error',
+      json(200, {
+        data: null,
+        errors: [{ message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } }],
+      }),
+    ],
+  ])('clears the cookie and goes to /force-logout for %s, not a 500', async (_label, rejects) => {
+    answer({ Me: signedIn, MembersData: rejects })
+
+    const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get('Location')).toBe(
+      `/force-logout?return_url=${encodeURIComponent('/members/dashboard')}`,
+    )
+    expect(clearsTheCookie(response)).toBe(true)
+  })
+
+  it('keeps the session when the 401 came with outage evidence', async () => {
+    // Me's preload got a proxy's 503, recorded by the root loader's client.
+    answer({ Me: json(503, {}), MembersData: json(401, { message: 'Unauthorized' }) })
+
+    const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+    expect(clearsTheCookie(response)).toBe(false)
+    expect(response.headers.get('Location')).toBeNull()
+  })
+
+  it('leaves any other loader error to the error screen, cookie kept', async () => {
+    answer({ Me: signedIn, MembersData: json(500, { errors: [{ message: 'boom' }] }) })
+
+    const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+    expect(response.status).toBe(500)
+    expect(clearsTheCookie(response)).toBe(false)
+    expect(response.headers.get('Location')).toBeNull()
+  })
+
+  it('decides by status and code, never by message text, and outage outranks a 401', () => {
+    const sanitized = { 'routes/members': new Error('Unexpected Server Error') }
+    const failed = (error: unknown) => ({ 'routes/members': error })
+
+    expect(routeErrorOutcome(failed(new Error('Request failed with status 401')), undefined)).toBe(
+      'render',
+    )
+    expect(routeErrorOutcome(failed(httpError(401)), undefined)).toBe('force-logout')
+    // Production: the router context holds the sanitized error; `handleError` saw the 401.
+    expect(routeErrorOutcome(sanitized, 'unauthenticated')).toBe('force-logout')
+    expect(routeErrorOutcome(sanitized, undefined)).toBe('render')
+    expect(routeErrorOutcome(failed(httpError(401)), undefined, 'unavailable')).toBe('render')
+    expect(
+      routeErrorOutcome({ 'routes/a': httpError(401), 'routes/b': httpError(502) }, undefined),
+    ).toBe('render')
+    expect(routeErrorOutcome(null, 'unauthenticated')).toBe('render')
+  })
+})
+
 describe('shellErrorOutcome', () => {
   // Log out only on an unambiguous 401: at least one `unauthenticated` and no outage evidence
   // anywhere. Any outage (the shell error's own or a recorded one) keeps the session (503). A
   // shell error that is not an API failure is a plain 500, whatever was recorded.
   const shellErrors = {
-    unauthenticated: Object.assign(new Error('Response not successful'), { statusCode: 401 }),
+    unauthenticated: httpError(401),
     unavailable: new TypeError('fetch failed'),
     other: new Error('A render bug'),
     redacted: new Error('Error from event stream. Redacted for security concerns.'),
@@ -314,16 +425,8 @@ describe('shellErrorOutcome', () => {
     // A plain TypeError from application code is not an API failure.
     ['unavailable', new TypeError("Cannot read properties of undefined (reading 'id')"), 'error'],
     // A proxy's 503 is outage evidence of its own, and outranks a recorded 401.
-    [
-      'unauthenticated',
-      Object.assign(new Error('Response not successful'), { statusCode: 503 }),
-      'unavailable',
-    ],
-    [
-      undefined,
-      Object.assign(new Error('Response not successful'), { statusCode: 503 }),
-      'unavailable',
-    ],
+    ['unauthenticated', httpError(503), 'unavailable'],
+    [undefined, httpError(503), 'unavailable'],
     // Message text alone is not an API's verdict on the session.
     [
       undefined,

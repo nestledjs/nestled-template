@@ -1,0 +1,45 @@
+id: 2026-11-12-service-unavailable-dark-mode
+title: >-
+  The "trouble reaching our servers" / "You're offline" screen is readable in dark mode
+  (@nestledjs/shared-components 1.0.21)
+priority: normal
+area: ui
+type: correctness
+delivery: package-release
+
+intent: >
+  `ServiceUnavailable` (the screen the app shows while the API is unreachable or the browser is
+  offline) set its text to `text-gray-800` with no dark-mode colour, so on a dark background the
+  title, icon and message were dark grey on near-black and hard to read. In 1.0.21 the container
+  adds `dark:text-gray-100` (title and icon) and the message `text-gray-600 dark:text-gray-300`.
+  The "Try again" button is unchanged. Upgrade `@nestledjs/shared-components` to the version below
+  in package.json and the lockfile. Do not copy files from libs/shared-components.
+
+why: >
+  The outage screen is what users see when something is already wrong; in dark mode it was barely
+  legible.
+
+packageReleases:
+  - name: '@nestledjs/shared-components'
+    sourcePath: libs/shared-components
+    targetVersion: 1.0.21
+    versionRange: ^1.0.21
+
+verification:
+  - pnpm install
+  - pnpm typecheck
+  - pnpm exec nx build web --skip-nx-cache
+  - >
+    Manual: in dark mode, signed in, block the API domain in the browser's devtools and reload: the
+    "We're having trouble reaching our servers" title and "Retrying automatically." message are
+    clearly readable.
+
+agentHints:
+  - >
+    The `dark:` classes work only if the app's CSS defines the class-based dark variant
+    (`@custom-variant dark (&:where(.dark, .dark *));`) and its Tailwind entry has an `@source` for
+    `node_modules/@nestledjs/shared-components` (note 2026-10-26-tailwind-package-source-path). An app
+    that themes dark mode differently checks the screen by hand.
+  - >
+    An app that wraps or restyles the screen with its own classes keeps them; check it stays
+    readable in both themes.

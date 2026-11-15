@@ -1,0 +1,223 @@
+id: 2026-11-14-api-auth-error-codes
+title: >-
+  The API keeps 401 / UNAUTHENTICATED for a dead session only: no active organization becomes a
+  403 ORGANIZATION_CONTEXT_REQUIRED, a provider-rejected OAuth link a 403 OAUTH_PROVIDER_REJECTED,
+  and the web keeps the session for both
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-up to 2026-11-11-logout-only-on-unambiguous-401 (apply it first). Clients log a user out
+  on an HTTP 401 or a GraphQL error whose `extensions.code` is `UNAUTHENTICATED`, and
+  `@nestjs/apollo` gives that code to every `UnauthorizedException`. So anything the API throws as
+  Unauthorized that is not "the session or token is missing, invalid or expired" logs the user
+  out. The rule: a dead session stays a 401; a permission denial, a business-rule failure or "you
+  need a different/elevated session" is a `ForbiddenException` (403), with a specific code when a
+  client should handle it on its own terms. No package changes.
+
+
+  1. API: a 403 with its own GraphQL code, and no organization context. New
+  libs/api/utils/src/lib/errors/api-error-code.ts (exported from `@nestled-template/api/utils`):
+  `API_ERROR_CODES` (`ORGANIZATION_CONTEXT_REQUIRED`, `OAUTH_PROVIDER_REJECTED`),
+  `forbiddenWithCode(code, message)` (a `ForbiddenException` whose body is
+  `{ statusCode: 403, error: 'Forbidden', message, code }`), `organizationContextRequired(message?)`,
+  and `formatApiError`, the GraphQL `formatError`. `@nestjs/apollo` runs first and overwrites the
+  code of every HTTP exception with the one for its status (403 -> FORBIDDEN), keeping the body as
+  `extensions.originalError`; `formatApiError` puts back the body's `code` (upper snake case only),
+  and never on a 401 or as `UNAUTHENTICATED`. libs/api/core/feature/src/lib/api-core-feature.module.ts
+  passes `formatError: formatApiError` to `GraphQLModule.forRoot`. `CtxOrganization` and
+  `CtxOrganizationId` (libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts) threw
+  `UnauthorizedException('Organization context required...')` when the active organization was
+  missing or stale, so a signed-in user with no organization (or one removed from theirs) was
+  logged out by any query that read it, including `currentSubscriptionActive`, which the signed-in
+  layout runs on every page. They now throw `organizationContextRequired()`: a 403 with
+  `extensions.code: 'ORGANIZATION_CONTEXT_REQUIRED'` and `extensions.originalError.statusCode: 403`.
+  The other "no organization context" refusals, already 403 `FORBIDDEN`, get the same code so
+  clients see one shape: `PermissionsGuard` (permissions.guard.ts), `GqlOrganizationScopedGuard`
+  when no context attaches (gql-organization-scoped.guard.ts), and `SubscriptionGuard` when no
+  organization attaches (subscription.guard.ts). Their messages are unchanged.
+  Affected paths: libs/api/utils/src/lib/errors/api-error-code.ts,
+  libs/api/utils/src/lib/errors/api-error-code.spec.ts, libs/api/utils/src/index.ts,
+  libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts,
+  libs/api/utils/src/lib/guards/permissions.guard.ts,
+  libs/api/utils/src/lib/guards/gql-organization-scoped.guard.ts,
+  libs/api/utils/src/lib/guards/subscription.guard.ts,
+  libs/api/core/feature/src/lib/api-core-feature.module.ts,
+  apps/api-e2e/src/auth/auth-error-codes.spec.ts.
+  Verification: `pnpm exec nx test api-utils --skip-nx-cache` (api-error-code.spec.ts runs a real
+  Nest GraphQL module with `formatApiError`: `CtxOrganizationId` / `CtxOrganization` with no
+  context answer `ORGANIZATION_CONTEXT_REQUIRED` with `originalError.statusCode` 403, an
+  `UnauthorizedException` still answers `UNAUTHENTICATED`, and a 403 that claims
+  `UNAUTHENTICATED` stays `FORBIDDEN`); the API e2e suite (auth-error-codes.spec.ts: a bad bearer
+  gets `UNAUTHENTICATED` with `originalError.statusCode` 401; a signed-in user whose active
+  organization is one it does not belong to gets `ORGANIZATION_CONTEXT_REQUIRED` with 403 on
+  `currentSubscriptionActive`, and `me` still answers). By hand against a running API:
+  `curl -s localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer
+  bad' -d '{"query":"{ currentSubscriptionActive }"}'` shows `"code":"UNAUTHENTICATED"`; the same
+  with a real token for a user with no active organization shows
+  `"code":"ORGANIZATION_CONTEXT_REQUIRED"` and `"statusCode":403`.
+
+
+  2. API: the audit of every other `UnauthorizedException`. Verdicts in the template:
+  - libs/api/custom/src/lib/plugins/auth/oauth.service.ts `verifyGoogleToken` (bad payload, failed
+    verification) and `verifyGitHubCode` (profile fetch failed, no verified email, failed code
+    exchange): these say the provider refused a token or code, not that the session is bad, and
+    `linkOAuthAccount` calls them inside a signed-in session, so a failed provider check logged
+    the user out. Now `forbiddenWithCode('OAUTH_PROVIDER_REJECTED', <same message>)` through a
+    local `providerRejected(message)`; the rethrow guards check `ForbiddenException` instead of
+    `UnauthorizedException`. The sign-in callback (oauth.controller.ts `handleCallback`) catches
+    every error and redirects to /auth/oauth-error?error=authentication_failed, so the login
+    flow and its messages are unchanged. Password login, 2FA and invitation failures were already
+    `BadRequestException` and are untouched.
+  - oauth.service.ts `unlinkOAuthAccount` "User not found": the session's own user no longer
+    exists, a dead session. Stays 401.
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts (invalid payload, user missing
+    or disabled, session invalidated): dead session. Stays 401.
+  - libs/api/utils/src/lib/guards/access-policy.guard.ts `if (!request.user?.id) throw new
+    UnauthorizedException()`: no authenticated user. Stays 401. access-policy.decorator.ts only
+    mentions it in a comment.
+  - libs/api/utils/src/lib/guards/subscription.guard.ts `HttpException('Authentication required',
+    401)` with no user: stays 401.
+  - libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts (no or invalid bearer, RFC 6750
+    challenge) and mcp-oauth.controller.ts `login_required` (no session cookie): REST, for MCP
+    clients, and both are "no valid credential". Stay 401.
+  - libs/shared/apollo/src/lib/apollo.ts: client code, mentions it in a comment only.
+  - No `AuthenticationError` remains anywhere.
+  Affected paths: libs/api/custom/src/lib/plugins/auth/oauth.service.ts,
+  libs/api/custom/src/lib/plugins/auth/oauth.service.spec.ts.
+  Verification: `pnpm exec nx test api-custom --skip-nx-cache` (oauth.service.spec.ts: every
+  provider refusal, including `linkOAuthAccount` with a token Google rejects, is a 403
+  `ForbiddenException` with body code `OAUTH_PROVIDER_REJECTED` and not an
+  `UnauthorizedException`); `grep -rn "UnauthorizedException\|AuthenticationError\|HttpStatus.UNAUTHORIZED\|status(401)" apps/api libs/api`
+  lists only the dead-session sites above.
+
+
+  3. Web: keep the session, and say what is wrong. libs/shared/apollo/src/lib/apollo.ts exports
+  `ORGANIZATION_CONTEXT_REQUIRED_CODE`, and the error link's `isForbiddenError` now treats the
+  whole 403 family as access denied: `FORBIDDEN`, or any other code whose
+  `extensions.originalError.statusCode` is 403 (what `forbiddenWithCode` produces), except
+  `ORGANIZATION_CONTEXT_REQUIRED`. Only `UNAUTHENTICATED` or an HTTP 401 ever logs out, as before,
+  so none of these do. A query refused with `ORGANIZATION_CONTEXT_REQUIRED` (for example
+  `currentSubscriptionActive`, which the signed-in layout's subscription context runs on every page)
+  dispatches the new `APOLLO_ORGANIZATION_REQUIRED_EVENT`; a mutation is left to the UI that called
+  it. New apps/web/app/organization-required.tsx: `isOrganizationContextRequired(error)` (a
+  `CombinedGraphQLErrors`, or the older `graphQLErrors` shape, carrying the code) and the
+  `OrganizationRequired` picker. It lists the user's organizations (`myOrganizations`); choosing
+  one calls `switchActiveOrganization`, stores the id as `activeOrganizationId` in localStorage (the
+  client sends it as `X-Organization-ID`, which the API reads before the user's active organization,
+  so a stale stored id would keep the refusal) and reloads. With no organizations it says so and
+  offers a normal sign-out (a link to /logout). A failed switch shows a message and leaves the
+  list up to try again; a failed list load shows a message and "Try again". The session is kept in
+  every case. It is shown from three places:
+  - apps/web/app/app.tsx: on `APOLLO_ORGANIZATION_REQUIRED_EVENT` (state cleared on navigation,
+    like the access-denied state), ahead of the access-denied screen;
+  - apps/web/app/root.tsx `ErrorBoundary` (`refusalScreen`): for that code from a loader or
+    suspense query, after the 401 / deferred-auth recovery checks of
+    2026-11-14-session-recovery-gaps, which are unchanged;
+  - the signed-in layout's Me re-check (2026-11-14-session-recovery-gaps): apps/web/app/session-recheck.tsx
+    `sessionRecheckOutcome` returns `organization-required` for that code, and
+    apps/web/app/routes/_authenticated/_layout.tsx renders the picker for it: no /force-logout, and
+    no retry, since asking again gets the same answer until an organization is chosen.
+  Affected paths: libs/shared/apollo/src/lib/apollo.ts, libs/shared/apollo/src/lib/apollo.spec.ts,
+  apps/web/app/organization-required.tsx, apps/web/app/app.tsx, apps/web/app/root.tsx,
+  apps/web/app/session-recheck.tsx, apps/web/app/routes/_authenticated/_layout.tsx,
+  apps/web/tests/organization-required.spec.tsx, apps/web/tests/auth-error-navigation.spec.tsx,
+  apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx.
+  Verification: `pnpm exec nx test apollo --skip-nx-cache` (a `CurrentSubscriptionActive` query
+  answered with `ORGANIZATION_CONTEXT_REQUIRED` dispatches the organization-required event and does
+  not log out; a mutation answered with it dispatches nothing; another coded 403 dispatches
+  access-forbidden and does not log out; `classifyApiFailure` calls the code `other`);
+  `pnpm exec nx test web --skip-nx-cache` (organization-required.spec.tsx: the list renders;
+  choosing one switches, stores the id and reloads; with none, the copy and the Sign out link to
+  /logout appear; a failed switch shows the message, keeps the list and never reloads or logs out;
+  auth-error-navigation.spec.tsx: the root `ErrorBoundary` and the App event both show the picker,
+  never `location.assign`; authenticated-layout-me-recovery.spec.tsx: a Me re-check answered with
+  the code shows the picker, stays on the page and asks Me only once).
+
+why: >
+  Since 2026.11.6 clients trust the code, not the message: `UNAUTHENTICATED` means the session is
+  dead. But the API still threw `UnauthorizedException` for a missing organization and for a
+  provider that rejected an OAuth token, so a signed-in user with no active organization, or one
+  removed from theirs, was logged out on the first page that asked for it, and a failed "link my
+  Google account" signed the user out. Keeping 401 for a dead session only makes the code mean
+  what clients take it to mean.
+
+affectedPaths:
+  - libs/api/utils/src/lib/errors/api-error-code.ts
+  - libs/api/utils/src/lib/errors/api-error-code.spec.ts
+  - libs/api/utils/src/index.ts
+  - libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+  - libs/api/utils/src/lib/guards/permissions.guard.ts
+  - libs/api/utils/src/lib/guards/gql-organization-scoped.guard.ts
+  - libs/api/utils/src/lib/guards/subscription.guard.ts
+  - libs/api/core/feature/src/lib/api-core-feature.module.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/oauth.service.spec.ts
+  - apps/api-e2e/src/auth/auth-error-codes.spec.ts
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/app/organization-required.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/root.tsx
+  - apps/web/app/session-recheck.tsx
+  - apps/web/app/routes/_authenticated/_layout.tsx
+  - apps/web/tests/organization-required.spec.tsx
+  - apps/web/tests/auth-error-navigation.spec.tsx
+  - apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+
+skipIf:
+  - The project's API throws no `UnauthorizedException` (or 401) for anything but a missing,
+    invalid or expired session, gives "no organization context" a 403 with its own code, and its
+    clients keep the session for every 403.
+
+verification:
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Part 1: a project whose GraphQL module already has a `formatError` composes it with
+    `formatApiError` (run `formatApiError` first, then the project's own) rather than replacing
+    it. Do not try to set the code by passing it to `ForbiddenException` alone: `@nestjs/apollo`
+    overwrites it with `FORBIDDEN` unless `formatError` restores it. Keep the error messages: e2e
+    specs in the template and downstream match "organization context" in them.
+  - >
+    Part 1: grep the project's resolvers for its own "no organization" checks (`if
+    (!organizationId)`, `req.organizationContext` reads, a project guard) and throw
+    `organizationContextRequired()` from each, so clients see one code for one condition.
+  - >
+    Part 1 and 3: the template answers `ORGANIZATION_CONTEXT_REQUIRED` with its own organization
+    picker (list `myOrganizations`, `switchActiveOrganization`, reload; with none, say so and offer
+    a normal sign-out). A project that already has an organization picker or onboarding route
+    sends the code there instead of adopting `OrganizationRequired` (from the error-link event, the
+    root error boundary and the signed-in layout's Me re-check), and keeps the session either way.
+  - >
+    Part 2: projects add their own `UnauthorizedException`s. Grep the whole API (`grep -rn
+    "UnauthorizedException\|AuthenticationError\|HttpStatus.UNAUTHORIZED\|status(401)" apps libs`)
+    and give each the template's verdict: a missing, invalid or expired session or token stays a
+    401; a permission denial, a business-rule failure, or "you need a different or elevated
+    session" becomes `forbiddenWithCode(<SPECIFIC_CODE>, <same message>)`. A known shape is admin
+    impersonation / emulation ("requires a current admin session", "not emulating"): the admin's
+    own session is fine, so it must be a 403 and must not log the admin out. Login-form failures
+    (wrong password, OAuth state mismatch) are not session expiry either: check what the project's
+    login form reads (the message, a code, the HTTP status) before changing one, and keep its error
+    messages working. List every site with its verdict in the PR.
+  - >
+    Part 3: check every client of the API (web, mobile, an SDK or MCP client) for logout or
+    re-login keyed on `UNAUTHENTICATED`, on HTTP 401, or on message text such as "Unauthorized" or
+    "Organization context required", and make sure the moved errors (now 403s with
+    `ORGANIZATION_CONTEXT_REQUIRED`, `OAUTH_PROVIDER_REJECTED` or the project's own codes) keep the
+    session and reach the user as a message or screen, not a blank page. Report a mobile client
+    that needs a change rather than changing it when the app's owner has mobile work in flight.
+  - >
+    Part 3: a project whose error link already treats every 403 as access denied keeps that, as
+    long as `ORGANIZATION_CONTEXT_REQUIRED` is excluded from it and routed to the picker. A project
+    that stores the active organization somewhere other than localStorage `activeOrganizationId`
+    updates its own store before reloading, or the stale header keeps the refusal.
