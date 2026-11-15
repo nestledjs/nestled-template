@@ -314,8 +314,10 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
  * organization-required screen.
  */
 function refusalScreen(error: unknown, routeStatus: number | undefined): ReactNode {
-  if (routeStatus === 403) return <AccessDenied />
+  // First: the server render answers a loader's ORGANIZATION_CONTEXT_REQUIRED with a 403 route
+  // error response carrying the code, which the access-denied check below would otherwise take.
   if (isOrganizationContextRequired(error)) return <OrganizationRequired />
+  if (routeStatus === 403) return <AccessDenied />
   return null
 }
 

@@ -22,6 +22,10 @@ import {
 import { ApolloProvider } from '@apollo/client/react'
 import { ApolloSearchProvider } from '@nestledjs/forms/apollo'
 import { disableFragmentWarnings } from 'graphql-tag'
+import {
+  isOrganizationContextRequired,
+  organizationRequiredResponse,
+} from './organization-required'
 
 disableFragmentWarnings()
 
@@ -90,6 +94,11 @@ function routeErrorCause(error: unknown): ApiFailureCause {
 // context are sanitized ("Unexpected Server Error") before `handleRequest` runs, status and all.
 const loaderErrorCauses = new WeakMap<Request, ApiFailureCause>()
 
+// Requests whose loaders threw an `ORGANIZATION_CONTEXT_REQUIRED` refusal, recorded by `handleError`
+// for the same reason: the sanitized error has lost its code. Only that fact is kept, never the
+// error itself or its message.
+const loaderOrganizationRequired = new WeakSet<Request>()
+
 /**
  * React Router's server error hook. It logs the error as React Router's default one does, and
  * records what it was (`routeErrorOutcome`) for the request's `handleRequest`, which runs after it.
@@ -100,6 +109,7 @@ export function handleError(error: unknown, { request }: { request: Request }): 
     request,
     mergeApiFailureCauses(loaderErrorCauses.get(request), routeErrorCause(error)) ?? 'other',
   )
+  if (isOrganizationContextRequired(error)) loaderOrganizationRequired.add(request)
 }
 
 /**
@@ -121,6 +131,11 @@ export function handleError(error: unknown, { request }: { request: Request }): 
  *   preload failure). Keep the cookie and serve the 503 recovering screen, as `shellErrorOutcome`
  *   does: outage outranks a 401, and the generic error screen would lose that evidence and never
  *   recover by itself.
+ * - `organization-required`: neither of those, and a loader's error was the API's 403
+ *   `ORGANIZATION_CONTEXT_REQUIRED` (`thrownOrganizationRequired`, recorded by `handleError`, or the
+ *   error itself when it is not sanitized). The user is signed in with no active organization: keep
+ *   the cookie and serve the organization picker (a 403 carrying only the code), not the generic
+ *   error page the sanitized error would get.
  * - `render`: anything else (no loader error, or one that is not an API failure) is rendered by
  *   the root ErrorBoundary as before.
  */
@@ -128,15 +143,20 @@ export function routeErrorOutcome(
   errors: Record<string, unknown> | null | undefined,
   thrownCause: ApiFailureCause | undefined,
   recordedCause?: ApiFailureCause,
-): 'force-logout' | 'unavailable' | 'render' {
+  thrownOrganizationRequired = false,
+): 'force-logout' | 'unavailable' | 'organization-required' | 'render' {
   const thrown = Object.values(errors ?? {})
   if (thrown.length === 0) return 'render'
   let ownCause = thrownCause
   for (const error of thrown) ownCause = mergeApiFailureCauses(ownCause, routeErrorCause(error))
-  if (ownCause !== 'unauthenticated' && ownCause !== 'unavailable') return 'render'
-  const effective = mergeApiFailureCauses(ownCause, recordedCause)
-  if (effective === 'unavailable') return 'unavailable'
-  return effective === 'unauthenticated' ? 'force-logout' : 'render'
+  if (ownCause === 'unauthenticated' || ownCause === 'unavailable') {
+    const effective = mergeApiFailureCauses(ownCause, recordedCause)
+    if (effective === 'unavailable') return 'unavailable'
+    if (effective === 'unauthenticated') return 'force-logout'
+  }
+  const organizationRequired =
+    thrownOrganizationRequired || thrown.some(error => isOrganizationContextRequired(error))
+  return organizationRequired ? 'organization-required' : 'render'
 }
 
 /**
@@ -149,11 +169,11 @@ function unavailableResponse(): Response {
   return new Response(null, { status: 503, statusText: 'Service Unavailable' })
 }
 
-// Requests already answered with the recovering 503. React Router renders the ErrorBoundary for
-// it by calling `handleRequest` again with that 503 as the route error; this marks that second
-// render, which must go ahead and render rather than reject again (a second rejection is React
-// Router's bare last-resort 500).
-const servedUnavailable = new WeakSet<Request>()
+// Requests already answered with a rejected `Response` (the recovering 503, or the organization
+// picker's 403). React Router renders the ErrorBoundary for it by calling `handleRequest` again
+// with that response as the route error; this marks that second render, which must go ahead and
+// render rather than reject again (a second rejection is React Router's bare last-resort 500).
+const servedErrorResponse = new WeakSet<Request>()
 
 function forceLogoutResponse(request: Request): Response {
   const cookieName = process.env.VITE_COOKIE_NAME || '__session'
@@ -185,12 +205,13 @@ export default function handleRequest(
     (userAgent && isbot(userAgent)) || routerContext.isSpaMode ? 'onAllReady' : 'onShellReady'
 
   const handlerContext = routerContext.staticHandlerContext
-  const loaderOutcome = servedUnavailable.has(request)
+  const loaderOutcome = servedErrorResponse.has(request)
     ? 'render'
     : routeErrorOutcome(
         handlerContext?.errors,
         loaderErrorCauses.get(request),
         ssrApiFailureCause(handlerContext?.loaderData),
+        loaderOrganizationRequired.has(request),
       )
   if (loaderOutcome === 'force-logout') {
     console.error('[SSR] A loader got a 401 from the API — redirecting to force-logout')
@@ -200,8 +221,15 @@ export default function handleRequest(
     // A loader failed and the API showed signs of an outage (even if a 401 came back too). Keep
     // the session and serve the same recovering 503 as an unavailable shell render.
     console.error('[SSR] A loader failed while the API was unavailable — serving 503')
-    servedUnavailable.add(request)
+    servedErrorResponse.add(request)
     return Promise.reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
+  }
+  if (loaderOutcome === 'organization-required') {
+    // Signed in, no active organization. Keep the session: React Router renders the root
+    // ErrorBoundary for this 403, which recognises the code and shows the organization picker.
+    console.error('[SSR] A loader needs an active organization — serving the organization picker')
+    servedErrorResponse.add(request)
+    return Promise.reject(organizationRequiredResponse()) // NOSONAR: a Response on purpose, as above
   }
 
   const client = makeClient(request, {
@@ -251,7 +279,7 @@ export default function handleRequest(
             // shows the self-recovering screen and reloads once the API answers. A real 401 comes
             // back on the client and goes through the normal 401 handling there.
             console.error('[SSR] API unavailable during the shell render — serving 503')
-            servedUnavailable.add(request)
+            servedErrorResponse.add(request)
             reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
           } else {
             reject(error)

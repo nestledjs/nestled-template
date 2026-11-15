@@ -9,7 +9,7 @@ import {
   type SwitchActiveOrganizationMutation,
   type SwitchActiveOrganizationMutationVariables,
 } from '@nestled-template/shared/sdk'
-import { Link } from 'react-router'
+import { isRouteErrorResponse, Link } from 'react-router'
 
 type ErrorWithGraphQLErrors = {
   graphQLErrors?: Array<{ extensions?: { code?: unknown } }>
@@ -22,10 +22,31 @@ export const SWITCH_FAILED_MESSAGE =
 export const ORGANIZATIONS_UNAVAILABLE_MESSAGE = 'We couldn’t load your organizations.'
 
 /**
+ * The server render's answer when a loader's query was refused with `ORGANIZATION_CONTEXT_REQUIRED`
+ * (entry.server.tsx). In production React Router replaces a loader's error with a bare
+ * "Unexpected Server Error" before the render, so the code would be lost and the root
+ * ErrorBoundary would show the generic error page. `handleRequest` rejects with this instead, and
+ * React Router renders the ErrorBoundary for it as a route error response: a 403 whose data is the
+ * code alone, never the API's message.
+ */
+export function organizationRequiredResponse(): Response {
+  return Response.json(
+    { code: ORGANIZATION_CONTEXT_REQUIRED_CODE },
+    { status: 403, statusText: 'Forbidden' },
+  )
+}
+
+/**
  * Whether the API refused the request because it has no active organization (a 403
- * `ORGANIZATION_CONTEXT_REQUIRED`): the user is signed in, so this is never a logout.
+ * `ORGANIZATION_CONTEXT_REQUIRED`): the user is signed in, so this is never a logout. Recognises the
+ * Apollo error, and the route error response the server render turns it into
+ * (`organizationRequiredResponse`).
  */
 export function isOrganizationContextRequired(error: unknown): boolean {
+  if (isRouteErrorResponse(error)) {
+    const data = error.data as { code?: unknown } | null | undefined
+    return error.status === 403 && data?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE
+  }
   const errors = CombinedGraphQLErrors.is(error)
     ? error.errors
     : (error as ErrorWithGraphQLErrors | null)?.graphQLErrors

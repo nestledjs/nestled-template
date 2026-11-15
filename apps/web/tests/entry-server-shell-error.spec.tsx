@@ -13,6 +13,7 @@ import * as entryServer from '../app/entry.server'
 import { routeErrorOutcome, shellErrorOutcome } from '../app/entry.server'
 import * as rootModule from '../app/root'
 import { OFFLINE_TITLE, SERVER_TROUBLE_MESSAGE, SERVER_TROUBLE_TITLE } from '../app/api-unavailable'
+import { ORGANIZATION_PICKER_TITLE } from '../app/organization-required'
 
 // A signed-in reload, rendered on the server through React Router's own request handler, the real
 // entry.server.tsx and the real root route (loader, App, Layout and ErrorBoundary). The Me preload
@@ -351,6 +352,43 @@ describe('server render when a loader awaiting Me gets a 401', () => {
     expect(await response.text()).toContain(SERVER_TROUBLE_TITLE)
   })
 
+  it('keeps the session and shows the organization picker when the loader gets ORGANIZATION_CONTEXT_REQUIRED', async () => {
+    // Signed in, but no active organization: the API refuses with a 403 code. In production React
+    // Router sanitizes the loader's error to "Unexpected Server Error" before `handleRequest`, so
+    // the code has to survive through `handleError`, or the root ErrorBoundary shows the generic
+    // error page instead of the picker.
+    const refusal = 'Organization context required: secret detail'
+    answer({
+      Me: signedIn,
+      MembersData: json(200, {
+        data: null,
+        errors: [
+          {
+            message: refusal,
+            extensions: {
+              code: 'ORGANIZATION_CONTEXT_REQUIRED',
+              originalError: { statusCode: 403, code: 'ORGANIZATION_CONTEXT_REQUIRED' },
+            },
+          },
+        ],
+      }),
+    })
+
+    const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+    const html = await response.text()
+
+    expect(response.status).toBe(403)
+    expect(clearsTheCookie(response)).toBe(false)
+    expect(response.headers.get('Location')).toBeNull()
+    expect(html).not.toContain('/force-logout')
+    expect(html).toContain(ORGANIZATION_PICKER_TITLE)
+    expect(html).not.toContain('You don’t have permission to view this page')
+    // The generic error screen shows the sanitized error.
+    expect(html).not.toContain('Unexpected Server Error')
+    // Only the code reaches the page: never the API's message.
+    expect(html).not.toContain(refusal)
+  })
+
   it('leaves any other loader error to the error screen, cookie kept', async () => {
     answer({ Me: signedIn, MembersData: json(500, { errors: [{ message: 'boom' }] }) })
 
@@ -384,6 +422,13 @@ describe('server render when a loader awaiting Me gets a 401', () => {
       'render',
     )
     expect(routeErrorOutcome(null, 'unauthenticated')).toBe('render')
+    // ORGANIZATION_CONTEXT_REQUIRED, recorded by `handleError` for a sanitized error: the picker,
+    // unless the request also holds an unambiguous 401 (logout) or outage evidence beside a 401.
+    expect(routeErrorOutcome(sanitized, 'other', undefined, true)).toBe('organization-required')
+    expect(routeErrorOutcome(sanitized, 'other', 'unavailable', true)).toBe('organization-required')
+    expect(routeErrorOutcome(sanitized, 'unauthenticated', undefined, true)).toBe('force-logout')
+    expect(routeErrorOutcome(sanitized, 'unauthenticated', 'unavailable', true)).toBe('unavailable')
+    expect(routeErrorOutcome(null, 'other', undefined, true)).toBe('render')
   })
 })
 
