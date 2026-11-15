@@ -136,6 +136,27 @@ intent: >
   never `location.assign`; authenticated-layout-me-recovery.spec.tsx: a Me re-check answered with
   the code shows the picker, stays on the page and asks Me only once).
 
+
+  4. Web: the picker stores the organization and reloads only after the switch succeeded.
+  apps/web/app/organization-required.tsx read a failed `switchActiveOrganization` with try/catch,
+  but the app's client (`makeClient`) sets `defaultOptions.mutate.errorPolicy: 'all'`, under which
+  a GraphQL refusal (the API answering the mutation with an error, for example "You are not a
+  member of this organization") resolves with the error instead of throwing. The catch never ran:
+  the picker stored the refused id as `activeOrganizationId` and reloaded, and the reload, sending
+  that id as `X-Organization-ID`, got the same refusal again. The `useMutation` call now passes
+  `errorPolicy: 'none'`, so a GraphQL error rejects, the catch shows `SWITCH_FAILED_MESSAGE` and
+  keeps the list up, and nothing is stored or reloaded. The rest of the 2026-11-14 code was checked
+  for the same pattern (errors read with try/catch, or `.then`/`.catch`, on a call that inherits
+  `errorPolicy: 'all'`): session-recheck.tsx's Me query already passes `errorPolicy: 'none'`, and
+  the picker's `myOrganizations` `useQuery` reads `error` from the hook result (`watchQuery` has no
+  `errorPolicy` default in `makeClient`), so neither needed a change.
+  Affected paths: apps/web/app/organization-required.tsx,
+  apps/web/tests/organization-required.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (organization-required.spec.tsx, whose
+  client now takes `makeClient`'s `defaultOptions`: a switch the API refuses with a GraphQL error
+  shows the message, leaves the button enabled, never reloads or calls `location.assign`, and leaves
+  `activeOrganizationId` unset).
+
 why: >
   Since 2026.11.6 clients trust the code, not the message: `UNAUTHENTICATED` means the session is
   dead. But the API still threw `UnauthorizedException` for a missing organization and for a
@@ -221,3 +242,12 @@ agentHints:
     long as `ORGANIZATION_CONTEXT_REQUIRED` is excluded from it and routed to the picker. A project
     that stores the active organization somewhere other than localStorage `activeOrganizationId`
     updates its own store before reloading, or the stale header keeps the refusal.
+  - >
+    Part 4, for an app that already has part 3: give its organization switch `errorPolicy: 'none'`
+    (or check the result's `error` and `errors` before storing anything), so the id is stored and
+    the page reloads only after a successful switch. If the app uses its own picker or switcher
+    instead of `OrganizationRequired`, fix that one. Then grep the app for the same pattern: a
+    `useMutation`, `client.mutate`, `client.query` or `useLazyQuery` call whose failure is handled in
+    a `catch` (or `.catch`) while the client default is `errorPolicy: 'all'`; each needs
+    `errorPolicy: 'none'` or a result check. Test it with a client carrying the app's real
+    `defaultOptions`: a test client without them throws on a GraphQL error and hides the bug.

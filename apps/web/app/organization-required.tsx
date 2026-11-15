@@ -80,7 +80,12 @@ export function OrganizationRequired() {
   const [switchOrganization] = useMutation<
     SwitchActiveOrganizationMutation,
     SwitchActiveOrganizationMutationVariables
-  >(SwitchActiveOrganization)
+  >(SwitchActiveOrganization, {
+    // The app client's default is `errorPolicy: 'all'`, under which the API refusing the switch (a
+    // GraphQL error) resolves instead of throwing. This must throw, so the catch below shows the
+    // failure and the refused id is never stored or reloaded into.
+    errorPolicy: 'none',
+  })
   const [switchingTo, setSwitchingTo] = useState<string | null>(null)
   const [switchFailed, setSwitchFailed] = useState(false)
 

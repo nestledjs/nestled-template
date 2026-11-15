@@ -116,22 +116,44 @@ export function handleError(error: unknown, { request }: { request: Request }): 
  *   GraphQL error, or a route response with status 401) and nothing in the request, another
  *   loader's error or a recorded preload failure, points to an outage. Clear the cookie and
  *   redirect, as the browser does.
- * - `render`: anything else, outage evidence alongside a 401 included (the session is kept), is
- *   rendered by the root ErrorBoundary as before.
+ * - `unavailable`: a loader's error is an API failure (a 401 or an outage) and the request holds
+ *   outage evidence (unreachable, 502/503/504: the loader's own, another loader's, or a recorded
+ *   preload failure). Keep the cookie and serve the 503 recovering screen, as `shellErrorOutcome`
+ *   does: outage outranks a 401, and the generic error screen would lose that evidence and never
+ *   recover by itself.
+ * - `render`: anything else (no loader error, or one that is not an API failure) is rendered by
+ *   the root ErrorBoundary as before.
  */
 export function routeErrorOutcome(
   errors: Record<string, unknown> | null | undefined,
   thrownCause: ApiFailureCause | undefined,
   recordedCause?: ApiFailureCause,
-): 'force-logout' | 'render' {
+): 'force-logout' | 'unavailable' | 'render' {
   const thrown = Object.values(errors ?? {})
   if (thrown.length === 0) return 'render'
   let ownCause = thrownCause
   for (const error of thrown) ownCause = mergeApiFailureCauses(ownCause, routeErrorCause(error))
-  if (ownCause !== 'unauthenticated') return 'render'
+  if (ownCause !== 'unauthenticated' && ownCause !== 'unavailable') return 'render'
   const effective = mergeApiFailureCauses(ownCause, recordedCause)
+  if (effective === 'unavailable') return 'unavailable'
   return effective === 'unauthenticated' ? 'force-logout' : 'render'
 }
+
+/**
+ * The recovering screen's response: `handleRequest` rejects with it, and React Router renders the
+ * root ErrorBoundary for that status (the self-recovering screen, which reloads once the API
+ * answers). A `Response`, not an Error, on purpose (Sonar S6671): React Router turns a rejected
+ * `Response` into that status; an Error is a 500.
+ */
+function unavailableResponse(): Response {
+  return new Response(null, { status: 503, statusText: 'Service Unavailable' })
+}
+
+// Requests already answered with the recovering 503. React Router renders the ErrorBoundary for
+// it by calling `handleRequest` again with that 503 as the route error; this marks that second
+// render, which must go ahead and render rather than reject again (a second rejection is React
+// Router's bare last-resort 500).
+const servedUnavailable = new WeakSet<Request>()
 
 function forceLogoutResponse(request: Request): Response {
   const cookieName = process.env.VITE_COOKIE_NAME || '__session'
@@ -163,14 +185,23 @@ export default function handleRequest(
     (userAgent && isbot(userAgent)) || routerContext.isSpaMode ? 'onAllReady' : 'onShellReady'
 
   const handlerContext = routerContext.staticHandlerContext
-  const loaderOutcome = routeErrorOutcome(
-    handlerContext?.errors,
-    loaderErrorCauses.get(request),
-    ssrApiFailureCause(handlerContext?.loaderData),
-  )
+  const loaderOutcome = servedUnavailable.has(request)
+    ? 'render'
+    : routeErrorOutcome(
+        handlerContext?.errors,
+        loaderErrorCauses.get(request),
+        ssrApiFailureCause(handlerContext?.loaderData),
+      )
   if (loaderOutcome === 'force-logout') {
     console.error('[SSR] A loader got a 401 from the API — redirecting to force-logout')
     return Promise.resolve(forceLogoutResponse(request))
+  }
+  if (loaderOutcome === 'unavailable') {
+    // A loader failed and the API showed signs of an outage (even if a 401 came back too). Keep
+    // the session and serve the same recovering 503 as an unavailable shell render.
+    console.error('[SSR] A loader failed while the API was unavailable — serving 503')
+    servedUnavailable.add(request)
+    return Promise.reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
   }
 
   const client = makeClient(request, {
@@ -220,9 +251,8 @@ export default function handleRequest(
             // shows the self-recovering screen and reloads once the API answers. A real 401 comes
             // back on the client and goes through the normal 401 handling there.
             console.error('[SSR] API unavailable during the shell render — serving 503')
-            // A `Response`, not an Error, on purpose (Sonar S6671): React Router turns a rejected
-            // `Response` into that status and renders the ErrorBoundary for it; an Error is a 500.
-            reject(new Response(null, { status: 503, statusText: 'Service Unavailable' })) // NOSONAR
+            servedUnavailable.add(request)
+            reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
           } else {
             reject(error)
           }

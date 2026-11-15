@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApolloProvider } from '@apollo/client/react'
 import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
+import { makeClient } from '@nestled-template/shared/apollo'
 import {
   NO_ORGANIZATIONS_TITLE,
   ORGANIZATION_PICKER_TITLE,
@@ -58,7 +59,14 @@ function renderPicker({
         observer.complete()
       }),
   )
-  const client = new ApolloClient({ link, cache: new InMemoryCache() })
+  // The app's client defaults (`makeClient`: `errorPolicy: 'all'` for queries and mutations), so a
+  // GraphQL refusal behaves here as it does in the app: it resolves, it does not throw.
+  const client = new ApolloClient({
+    link,
+    cache: new InMemoryCache(),
+    defaultOptions: makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' })
+      .defaultOptions,
+  })
   render(
     <ApolloProvider client={client}>
       <MemoryRouter>
@@ -127,7 +135,7 @@ describe('OrganizationRequired', () => {
     expect(assign).not.toHaveBeenCalled()
   })
 
-  it('shows a message and keeps the session when the switch fails', async () => {
+  it('shows a message, stores nothing and does not reload when the API refuses the switch', async () => {
     const { switched } = renderPicker({
       organizations: [{ id: 'org-1', name: 'First Org' }],
       switchFails: true,

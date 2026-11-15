@@ -322,14 +322,33 @@ describe('server render when a loader awaiting Me gets a 401', () => {
     expect(clearsTheCookie(response)).toBe(true)
   })
 
-  it('keeps the session when the 401 came with outage evidence', async () => {
+  it('keeps the session and serves the 503 recovering screen when the 401 came with outage evidence', async () => {
     // Me's preload got a proxy's 503, recorded by the root loader's client.
     answer({ Me: json(503, {}), MembersData: json(401, { message: 'Unauthorized' }) })
 
     const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+    const html = await response.text()
 
+    // Outage outranks the 401: no logout, and the outage evidence survives as the recovering 503,
+    // not a generic error screen that never recovers by itself.
+    expect(response.status).toBe(503)
     expect(clearsTheCookie(response)).toBe(false)
     expect(response.headers.get('Location')).toBeNull()
+    expect(html).not.toContain('/force-logout')
+    expect(html).toContain(SERVER_TROUBLE_TITLE)
+    expect(html).toContain(SERVER_TROUBLE_MESSAGE)
+    expect(html).toContain('Try again')
+  })
+
+  it('serves the 503 recovering screen when the loader itself finds the API unreachable', async () => {
+    answer({ Me: signedIn, MembersData: json(502, {}) })
+
+    const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+    expect(response.status).toBe(503)
+    expect(clearsTheCookie(response)).toBe(false)
+    expect(response.headers.get('Location')).toBeNull()
+    expect(await response.text()).toContain(SERVER_TROUBLE_TITLE)
   })
 
   it('leaves any other loader error to the error screen, cookie kept', async () => {
@@ -353,10 +372,17 @@ describe('server render when a loader awaiting Me gets a 401', () => {
     // Production: the router context holds the sanitized error; `handleError` saw the 401.
     expect(routeErrorOutcome(sanitized, 'unauthenticated')).toBe('force-logout')
     expect(routeErrorOutcome(sanitized, undefined)).toBe('render')
-    expect(routeErrorOutcome(failed(httpError(401)), undefined, 'unavailable')).toBe('render')
+    // Outage evidence alongside a 401 keeps the session and serves the recovering 503.
+    expect(routeErrorOutcome(failed(httpError(401)), undefined, 'unavailable')).toBe('unavailable')
     expect(
       routeErrorOutcome({ 'routes/a': httpError(401), 'routes/b': httpError(502) }, undefined),
-    ).toBe('render')
+    ).toBe('unavailable')
+    expect(routeErrorOutcome(sanitized, 'unauthenticated', 'unavailable')).toBe('unavailable')
+    expect(routeErrorOutcome(failed(httpError(503)), undefined)).toBe('unavailable')
+    // A loader error that is not an API failure stays with the error screen, whatever was recorded.
+    expect(routeErrorOutcome(failed(new Error('A loader bug')), undefined, 'unavailable')).toBe(
+      'render',
+    )
     expect(routeErrorOutcome(null, 'unauthenticated')).toBe('render')
   })
 })

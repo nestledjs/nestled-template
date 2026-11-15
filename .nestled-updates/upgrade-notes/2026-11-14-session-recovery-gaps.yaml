@@ -3,7 +3,8 @@ title: >-
   Close the session-recovery gaps: recover a deferred 401 from the root error boundary, show the
   recovering screen for a route's UNAUTHENTICATED during an outage, re-check Me before a signed-in
   layout logs out, sign out on a loader's 401 during the server render, place a RetryLink, forward
-  cancellation, and small export and spec fixes
+  cancellation, small export and spec fixes, and serve the recovering 503 for a loader's 401 during
+  an outage
 priority: high
 area: web
 type: correctness
@@ -15,7 +16,7 @@ intent: >
   out only when the API has definitely rejected the session, that is a real HTTP 401 or a GraphQL
   error whose `extensions.code` is `UNAUTHENTICATED`, with no outage evidence. Outage evidence
   outranks a 401, and message text never decides. Anything else keeps the session and shows an
-  error or a recovering state that recovers by itself. Seven parts. No package changes, and no
+  error or a recovering state that recovers by itself. Eight parts. No package changes, and no
   change to package.json, nx.json or tsconfig.base.json.
 
 
@@ -25,8 +26,10 @@ intent: >
   answers (parts 1 and 2); (b) a signed-in layout rendering with no user now asks the API for Me
   before logging out, and logs out only if that gets a real 401 (part 3); (c) a document request
   whose loader got a real 401 now clears the cookie and redirects to /force-logout instead of
-  serving a 500 page (part 4). That last one logs out in a case that did not log out before: the
-  API rejected the session and nothing pointed to an outage, which is the rule. Nothing else logs
+  serving a 500 page (part 4), and one whose loader got a 401 or an outage while the API showed
+  signs of an outage now serves the self-recovering 503 screen instead of the generic error page,
+  with the cookie kept (part 8). Part 4's sign-out logs out in a case that did not log out before:
+  the API rejected the session and nothing pointed to an outage, which is the rule. Nothing else logs
   out more often than before.
 
 
@@ -196,6 +199,36 @@ intent: >
   apps/web/tests/entry-server-shell-error.spec.tsx.
   Verification: `pnpm typecheck`; `pnpm exec nx test apollo --skip-nx-cache` ("isQueryOperation").
 
+
+  8. A loader's 401 during an outage serves the recovering 503, not the generic error page. Part 4's
+  `routeErrorOutcome` returned `render` for everything but `force-logout`, so when a loader threw
+  a 401 while the request held outage evidence (another loader's 502/503/504 or unreachable, or a
+  preload's recorded `unavailable`, such as the Me preload getting a proxy's 503), the cookie was
+  kept but the outage evidence was lost: the root ErrorBoundary got the sanitized loader error and
+  showed "Something went wrong", which never recovers by itself. apps/web/app/entry.server.tsx:
+  - `routeErrorOutcome` returns `'force-logout' | 'unavailable' | 'render'`. When the loaders'
+    errors are an API failure (merged with `handleError`'s recorded cause: `unauthenticated` or
+    `unavailable`), it merges in the preloads' recorded cause: `unavailable` gives `unavailable`,
+    `unauthenticated` gives `force-logout`. A loader error that is not an API failure (a loader
+    bug, an answered 500) is still `render`, whatever was recorded. A loader that itself finds the
+    API unreachable (a 502/503/504) is `unavailable` too, the same outcome `shellErrorOutcome`
+    gives a shell render.
+  - `handleRequest` handles `unavailable` before rendering with the same recovering 503 the shell
+    path serves: it rejects with `unavailableResponse()` (`new Response(null, { status: 503,
+    statusText: 'Service Unavailable' })`, a Response on purpose, see Sonar S6671), and React Router
+    renders the root ErrorBoundary for that status. No cookie is cleared and no redirect is sent.
+  - React Router renders that ErrorBoundary by calling `handleRequest` a second time, with the 503
+    as the route error. A module-level `WeakSet<Request>` (`servedUnavailable`), filled wherever
+    the 503 is served (this path and the shell path), makes that second call skip the outcome check
+    and render; rejecting again would give React Router's bare last-resort 500.
+  Affected paths: apps/web/app/entry.server.tsx, apps/web/tests/entry-server-shell-error.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("server render when a loader awaiting Me
+  gets a 401": with Me's preload answering 503 and the loader's query 401, the response is 503 with
+  the server-trouble copy and "Try again", no Set-Cookie clearing the session and no Location; a
+  loader answered 502 gives the same 503; `routeErrorOutcome` returns `unavailable` for a 401 with a
+  recorded `unavailable`, for a 401 beside another loader's 502 and for the sanitized production
+  error with both recorded, and `render` for a loader bug with a recorded `unavailable`).
+
 why: >
   Owner rule of 2026-11-11 and 2026-11-12: log a user out only when the API has definitely
   rejected the session. The 2026.11.6 fleet rollout found the places that still did not follow
@@ -260,6 +293,16 @@ agentHints:
     Part 4: a project that already exports `handleError` from entry.server.tsx (Sentry, say) adds
     the cause recording to it and keeps what it does. A project without /force-logout redirects
     wherever its browser path sends a rejected session, with the cookie cleared.
+  - >
+    Part 8, for an app that already has part 4: widen its `routeErrorOutcome` (or the equivalent
+    check in its entry.server.tsx) to return `unavailable` when a loader's API failure meets outage
+    evidence, and handle it in `handleRequest` by rejecting with the same 503 Response its shell
+    path already serves, not a new screen. If the app's shell path rejects with something else (a
+    thrown Error, a custom status), make both paths serve the one recovering response. Add the
+    `servedUnavailable` guard (or an equivalent "already serving the 503" check) to both paths, and
+    confirm by test that the 503 body is the recovering screen: without the guard the second render
+    rejects again and the response is a plain-text 500. An app whose root ErrorBoundary does not
+    render a self-recovering screen for a 503 route response does part 2 first.
   - >
     Part 5: a project with a RetryLink moves it between the error link and
     `createOutageRetryLink` (import it from the shared Apollo library instead of a local copy), and
