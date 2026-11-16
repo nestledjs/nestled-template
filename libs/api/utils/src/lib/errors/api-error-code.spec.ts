@@ -1,6 +1,10 @@
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo'
 import { ApolloServer } from '@apollo/server'
-import { INestApplication, UnauthorizedException } from '@nestjs/common'
+import {
+  INestApplication,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common'
 import { GraphQLModule, Query, Resolver } from '@nestjs/graphql'
 import { Test } from '@nestjs/testing'
 import type { GraphQLFormattedError } from 'graphql'
@@ -32,6 +36,18 @@ class ProbeResolver {
   @Query(() => String)
   claimsUnauthenticated(): string {
     throw forbiddenWithCode('UNAUTHENTICATED', 'A 403 may not mint a logout')
+  }
+
+  // An app's own code, not one of API_ERROR_CODES.
+  @Query(() => String)
+  appWorkflowRefusal(): string {
+    throw forbiddenWithCode('WORKFLOW_STEP_LOCKED', 'This step is locked until the review is done')
+  }
+
+  // What JwtStrategy throws when an API token lookup fails (the database is down, say).
+  @Query(() => String)
+  lookupUnavailable(): string {
+    throw new ServiceUnavailableException('API token validation is temporarily unavailable')
   }
 }
 
@@ -97,6 +113,37 @@ describe('API error codes over GraphQL', () => {
 
     expect(error.extensions?.['code']).toBe('FORBIDDEN')
   })
+
+  // formatApiError restores any upper-snake-case code a 403 was thrown with, not only the
+  // template's: an app's own codes (workflow states, plan limits, ...) reach its clients as-is.
+  it("keeps an app's own forbiddenWithCode code", async () => {
+    const error = await firstError('{ appWorkflowRefusal }')
+
+    expect(error.extensions?.['code']).toBe('WORKFLOW_STEP_LOCKED')
+    expect(error.extensions?.['originalError']).toMatchObject({ statusCode: 403 })
+    expect(error.message).toBe('This step is locked until the review is done')
+  })
+
+  // An internal failure keeps the session: Nest gives a 503 INTERNAL_SERVER_ERROR with its status,
+  // and formatApiError leaves it so.
+  it('answers an internal failure (503) without UNAUTHENTICATED', async () => {
+    const error = await firstError('{ lookupUnavailable }')
+
+    expect(error.extensions?.['code']).toBe('INTERNAL_SERVER_ERROR')
+    expect(error.extensions?.['status']).toBe(503)
+  })
+
+  it.each(['{ organizationId }', '{ organizationName }'])(
+    'answers a GraphQL context with no request (%s) with a 500, not UNAUTHENTICATED or the 403',
+    async query => {
+      const response = await server.executeOperation({ query }, { contextValue: {} })
+      if (response.body.kind !== 'single') throw new Error('expected a single result')
+      const error = response.body.singleResult.errors?.[0]
+
+      expect(error?.extensions?.['code']).toBe('INTERNAL_SERVER_ERROR')
+      expect(error?.extensions?.['status']).toBe(500)
+    },
+  )
 })
 
 describe('organizationContextRequired', () => {

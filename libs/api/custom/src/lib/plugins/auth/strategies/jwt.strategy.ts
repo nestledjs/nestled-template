@@ -1,4 +1,9 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common'
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common'
 import { PassportStrategy } from '@nestjs/passport'
 import { Request } from 'express'
 import { ExtractJwt, Strategy } from 'passport-jwt'
@@ -167,8 +172,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
         return this.success(user)
       } catch (error) {
-        this.logger.warn(`API token validation failed: ${(error as Error).message}`)
-        return this.fail({ message: 'API token validation failed' }, 401)
+        // Every "this token is not good" answer above is a return, not a throw. Reaching here
+        // means the lookup itself failed (the database is down, say), which says nothing about
+        // the token: a 401 would make the client discard a good token. A 503 is what clients
+        // treat as outage evidence, so they keep the token and retry. Over GraphQL it arrives as
+        // INTERNAL_SERVER_ERROR with status 503, never UNAUTHENTICATED.
+        this.logger.error(
+          `API token validation could not complete: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error.stack : undefined,
+        )
+        return this.error(
+          new ServiceUnavailableException('API token validation is temporarily unavailable'),
+        )
       }
     }
 

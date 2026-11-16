@@ -2793,12 +2793,11 @@ describe('AuthService', () => {
       const result = await service.isSessionValid('nonexistent-session')
       expect(result).toBe(false)
     })
-    it('should return false when session validation lookup fails', async () => {
+    // "Invalid" logs the user out; a failed lookup is an outage, not an invalid session.
+    it('throws, rather than calling the session invalid, when the lookup fails', async () => {
       mockData.userSession.findUnique.mockRejectedValue(new Error('database unavailable'))
 
-      const result = await service.isSessionValid('session-123')
-
-      expect(result).toBe(false)
+      await expect(service.isSessionValid('session-123')).rejects.toThrow('database unavailable')
     })
   })
   describe('Session Cookies', () => {

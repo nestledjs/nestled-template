@@ -1,4 +1,4 @@
-import { Injectable, NestMiddleware, Logger } from '@nestjs/common'
+import { Injectable, NestMiddleware, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { Request, Response, NextFunction } from 'express'
 import { ApiTokensService } from '../plugins/api-tokens/api-tokens.service'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
@@ -51,7 +51,13 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
           this.logger.warn('Invalid or expired API token provided')
         }
       } catch (error) {
+        // The lookup failed (the database is down, say): that says nothing about the token.
+        // Carrying on without a user would get the MCP client a 401 `invalid_token`, and it would
+        // throw away a good token and re-authorize. A 503 tells it to retry instead.
         this.logger.error('Error validating API token', error)
+        return next(
+          new ServiceUnavailableException('API token validation is temporarily unavailable'),
+        )
       }
     }
 
