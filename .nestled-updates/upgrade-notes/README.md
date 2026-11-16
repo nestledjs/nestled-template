@@ -47,10 +47,26 @@ goes out; each one has cost a downstream rollout time.
 - **`package.json` and lockfiles are not mirrored by promotion.** A note that changes them must
   spell out each version, script or override change, so a project can apply it by hand.
 - **A note that ships or suggests a raw patch says how to apply it.** Tell agents to run
-  `patch -N` (or `git apply --3way`), never plain `patch`: without a terminal, plain `patch`
-  answers its own "Reversed (or previously applied) patch detected! Assume -R?" prompt with yes,
-  and undoes every hunk that was already in place. After any patch run, re-check each file that
-  was edited by hand, and read `git diff` before committing.
+  `patch -N`, or `git merge-file` with the template's before and after copies of the file, never
+  plain `patch` and never `git apply --3way`. Without a terminal, plain `patch` answers its own
+  "Reversed (or previously applied) patch detected! Assume -R?" prompt with yes, and undoes every
+  hunk that was already in place. `git apply --3way` needs the patch's base blobs in the project's
+  own object store, which a downstream project does not have, and fails the whole patch on the
+  first missing one ("repository lacks the necessary blob"). After any patch run, re-check each
+  file that was edited by hand, and read `git diff` before committing.
+- **Do not assume the app has the template's routes and helpers.** Projects differ: some have no
+  signed-in layout route, no `/force-logout` route, no organization switch mutation, no
+  access-forbidden event, no `currentSubscriptionActive` query; some unmount the whole app when
+  `Me` fails, and some resolve `Me` in the root loader instead. When a note's change relies on one
+  of these, name it, and give agents what to do where it is missing: the equivalent to look for
+  (the project's own sign-out path, the layout that guards signed-in routes, wherever `Me` is
+  resolved) and the fallback when there is none (skip that part and record it as not-applicable,
+  or adapt it to the shape the project has). A patch or spec that depends on such a route or
+  helper says so in its agent hint, so an agent does not port a test for code the project lacks.
+- **Two notes that edit the same file declare their order.** When a note edits a file that another
+  note in the same release also edits, give the later one `applyAfter` with the earlier one's id
+  (see Optional ordering below), even when the edits look independent: without it the order is
+  only the default, and a patch written against the other order does not apply.
 
 Already-published notes are not rewritten to follow these rules; they apply to new notes.
 

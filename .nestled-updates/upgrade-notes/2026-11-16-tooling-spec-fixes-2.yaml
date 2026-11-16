@@ -1,0 +1,113 @@
+id: 2026-11-16-tooling-spec-fixes-2
+title: >-
+  Repo-tooling fixes from the 2026.11.7 rollout: the gitignore spec checks every folder and keeps a
+  project's own test output, safe global-stub teardown for every web spec, and note-authoring rules
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-ups to 2026-11-14-tooling-spec-fixes (apply that first). Three parts, each independent.
+  No package changes, and no change to package.json, nx.json or tsconfig.base.json.
+
+
+  1. scripts/gitignore-test-output.spec.mjs, "ignores coverage output wherever a project writes
+  it". (a) It found projects only by a tracked project.json, so a folder without one (a tools/
+  plugin such as tools/nx-plugins, a library configured another way) was never checked, and
+  neither was a shard folder. Discovery is now every folder that holds a tracked file, at any depth,
+  with no project.json needed (exported `trackedFolders`). For each one, `coverageOutputCandidates`
+  checks `<folder>/coverage/lcov.info`, `<folder>/coverage/shard-1/lcov.info`,
+  `coverage/<folder>/lcov.info` and `coverage/<folder>/shard-1/lcov.info`. All paths go to one
+  `git check-ignore --no-index --stdin -z` call (`notIgnored(paths, cwd)`), not one call per path.
+  `projectCoverageOutput` is gone. (b) A project's own entries lived in TEST_OUTPUT, inside the
+  template-owned spec, so taking the template's copy dropped them. They now go in new
+  scripts/known-test-output.json: a JSON array of repo-relative paths that must be ignored (`[]` in
+  the template; an absent file counts as empty; anything but an array of strings is an error).
+  It belongs to the project, like scripts/known-tracked-ignored.json, which works as before. The
+  `tools/workspace-plugin/coverage/...` examples that 2026.11.7 removed are back in TEST_OUTPUT.
+  New cases: a folder without project.json, shard folders, the repository root, and a scratch
+  repository whose narrower .gitignore misses a plugin's coverage. Three of them fail against the
+  2026.11.7 discovery.
+
+
+  2. apps/web/tests/setup.ts (the web app's Vitest setup file). 2026.11.7 part 3 fixed the
+  teardown order in one spec. Every spec that stubs a global and calls `vi.unstubAllGlobals()` in
+  its own afterEach has the same problem. Vitest runs afterEach hooks in reverse order of
+  registration, and Testing Library registers its automatic cleanup when it is imported, so the
+  spec's unstub runs first and the unmount after it. Passive effects flushed by that unmount then
+  meet the real global: "IntersectionObserver is not defined", or a real fetch or location. Whether
+  an effect is still pending depends on timing, so the failure is random and depends on test
+  order. The setup file now wraps `vi.unstubAllGlobals` so that it calls Testing Library's
+  `cleanup()` first. `cleanup()` is idempotent, so the later automatic cleanup finds nothing to
+  unmount. No individual spec needs its own `cleanup()` call any more; the ones that have one keep
+  working. New apps/web/tests/setup-teardown-order.spec.tsx stubs a global, unstubs it in
+  afterEach, and checks right after the unstub that the component has unmounted and saw the
+  stub. It fails without the setup change on every run, and each test can run alone.
+
+
+  3. .nestled-updates/upgrade-notes/README.md, "Before you publish a note": three authoring rules.
+  Raw patches are applied with `patch -N` or `git merge-file`, never `git apply --3way` (a
+  downstream project lacks the patch's base blobs, and the whole apply fails). A note must not
+  assume the project has the template's routes and helpers (a signed-in layout, `/force-logout`,
+  an organization switch mutation, an access-forbidden event, `currentSubscriptionActive`, Me
+  resolved in a layout rather than the root loader) and gives a fallback for each shape. Two notes
+  in a release that edit the same file declare `applyAfter`. This only changes authoring guidance;
+  a project that writes no upgrade notes of its own needs nothing.
+
+why: >
+  The 2026.11.7 rollout hit each of these. Projects whose plugin folder had no project.json, or
+  that wrote shard reports, were not checked, and projects that took the template's spec lost
+  their own test-output lines and had to put them back by hand. Five projects added `cleanup()` to
+  between one and seventeen afterEach hooks each, spec by spec, for the race that 2026.11.7 fixed
+  in a single spec. Agents applying the notes' raw patches with `git apply --3way` failed on every
+  file ("repository lacks the necessary blob"), and several notes assumed routes, events and
+  queries that some projects never had.
+
+affectedPaths:
+  - scripts/gitignore-test-output.spec.mjs
+  - scripts/known-test-output.json
+  - apps/web/tests/setup.ts
+  - apps/web/tests/setup-teardown-order.spec.tsx
+  - .nestled-updates/upgrade-notes/README.md
+
+verification:
+  - node --test scripts/*.spec.mjs
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec vitest run --config apps/web/vite.config.ts --sequence.shuffle --sequence.seed=1
+  - pnpm exec vitest run --config apps/web/vite.config.ts --sequence.shuffle --sequence.seed=2
+  - pnpm exec vitest run --config apps/web/vite.config.ts --sequence.shuffle --sequence.seed=3
+  - pnpm exec nx run-many -t lint --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Applying a raw patch for any part: run `patch -N`, or `git merge-file` with the template's
+    before and after copies of the file. Never use plain `patch` (without a terminal it treats
+    hunks that are already applied as reversed and undoes them), and never `git apply --3way`: it
+    needs the patch's base blobs, which this project's object store does not have, and it refuses
+    the whole patch on the first missing one. After any patch run, re-check every file you edited
+    by hand and read `git diff`.
+  - >
+    Part 1: take the template's spec. Move every repo-local line you had added to TEST_OUTPUT (a
+    shard report, a plugin's coverage, a report folder of your own) into
+    scripts/known-test-output.json, and create that file as `[]` if you have none. Keep your
+    scripts/known-tracked-ignored.json as it is. If the spec now lists paths that are not ignored,
+    widen .gitignore (the template ignores every `coverage/` folder) rather than editing the spec.
+    A project with tens of thousands of tracked folders still makes one git call; if the spec is
+    slow there, report it rather than narrowing discovery.
+  - >
+    Part 2: apply the wrap to the setup file of every Vitest project that renders with Testing
+    Library, not only apps/web: find them with `grep -n setupFiles` in each vite.config.* and
+    vitest.config.* under apps and libs. A project with no setup file (libs/web in the template)
+    either gets one, wired through `setupFiles` and excluded from the library's tsconfig.lib.json,
+    or keeps its per-spec `cleanup()` calls. A project that is not jsdom (node environment, api-e2e)
+    needs nothing. Remove the per-spec `cleanup()` calls only if you want to; they are harmless.
+    Do not apply the wrap where a spec calls `vi.unstubAllGlobals()` in the middle of a test and
+    then reads the rendered DOM: the wrap unmounts it. Search with `grep -rn "unstubAllGlobals"
+    apps libs --include=*.spec.tsx --include=*.spec.ts` and read each call outside an afterEach
+    or a test's final `finally` (none in the template). Prove it with the web suite shuffled at
+    least three times, as in verification.
+  - >
+    Part 3: a project that writes its own upgrade notes takes the README's three rules; otherwise
+    take the file as it is, or mark the part not-applicable if the project has no copy of it.
