@@ -121,6 +121,12 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
       enabled: !!user,
       sessionKey: user?.id,
       afterSwitch: () => client.refetchQueries({ include: 'active' }),
+      // `user` is this provider's own state, which the restore's cache write cannot reach: set the
+      // restored organization on it, for the user it was restored for only (as a switch does).
+      onRestored: (activeOrganizationId, restoredFor) =>
+        setUser(current =>
+          current?.id === restoredFor ? { ...current, activeOrganizationId } : current,
+        ),
     },
   )
 
