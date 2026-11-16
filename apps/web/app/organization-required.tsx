@@ -3,7 +3,7 @@ import { CombinedGraphQLErrors } from '@apollo/client'
 import { useQuery } from '@apollo/client/react'
 import { ORGANIZATION_CONTEXT_REQUIRED_CODE } from '@nestled-template/shared/apollo'
 import { MyOrganizations, type MyOrganizationsQuery } from '@nestled-template/shared/sdk'
-import { useSwitchActiveOrganization } from '@nestled-template/web'
+import { isOrganizationSwitchSuperseded, useSwitchActiveOrganization } from '@nestled-template/web'
 import { isRouteErrorResponse, Link } from 'react-router'
 
 type ErrorWithGraphQLErrors = {
@@ -91,9 +91,11 @@ export function OrganizationRequired() {
     setSwitchingTo(organizationId)
     try {
       await switchOrganization(organizationId)
-    } catch {
+    } catch (error) {
       setSwitchingTo(null)
-      setSwitchFailed(true)
+      // Answered after the session ended (a logout, or the picker left): nothing was stored, and
+      // there is nothing to report or reload into.
+      if (!isOrganizationSwitchSuperseded(error)) setSwitchFailed(true)
       return
     }
     globalThis.location.reload()

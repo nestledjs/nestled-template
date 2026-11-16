@@ -14,6 +14,7 @@ import {
   APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
   APOLLO_ORGANIZATION_REQUIRED_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
+  activeOrganizationSession,
   classifyApiFailure,
   clearApiOutage,
   createOutageRetryLink,
@@ -1766,6 +1767,16 @@ describe('the stored active organization', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     localStorage.clear()
+  })
+
+  it('ends the organization session when forgotten (a logout), not when another is stored', () => {
+    const before = activeOrganizationSession()
+    storeActiveOrganizationId('org-1')
+    storeActiveOrganizationId('org-2')
+    expect(activeOrganizationSession()).toBe(before)
+
+    storeActiveOrganizationId(null)
+    expect(activeOrganizationSession()).not.toBe(before)
   })
 
   it('is what the next request sends as x-organization-id, and forgetting it drops the header', async () => {

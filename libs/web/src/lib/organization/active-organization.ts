@@ -1,11 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
+  activeOrganizationSession,
   getStoredActiveOrganizationId,
   isActiveOrganizationAmbiguous,
   rememberActiveOrganization,
   resolveActiveOrganization,
 } from '@nestled-template/shared/apollo'
-import { useSwitchActiveOrganization } from './switch-active-organization'
+import {
+  isOrganizationSwitchSuperseded,
+  useSwitchActiveOrganization,
+  type ActiveOrganizationSwitch,
+} from './switch-active-organization'
 
 export interface ActiveOrganizationOptions {
   /** False while there is no signed-in user: nothing is resolved, stored or switched. */
@@ -19,9 +24,11 @@ export interface ActiveOrganizationOptions {
   /**
    * Makes the stored organization active and resolves with the id now active; it must reject on a
    * refusal. Defaults to the shared switch (`useSwitchActiveOrganization`). An app whose API has no
-   * switch mutation passes one that only stores the id, without reloading.
+   * switch mutation passes one that only stores the id, without reloading. It is handed
+   * `{ isCurrent }`: a switch that awaits anything checks it before storing, and stores nothing
+   * once it is false (the shared switch does).
    */
-  switchOrganization?: (organizationId: string) => Promise<string>
+  switchOrganization?: ActiveOrganizationSwitch
   /**
    * Who is signed in (the user's id). A change, or `enabled` turning false, starts over: a choice
    * restored for one session is never carried into the next, and a restore still in flight for it
@@ -100,6 +107,14 @@ export function useActiveOrganization<T extends { id: string }>(
     sessionKeyRef.current = sessionKey
     startedForRef.current = undefined
   }, [sessionKey])
+  // A restore still in flight when the shell unmounts is dropped too.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const pending = ambiguous && chosen === undefined && settledFor === sessionKey
 
   useEffect(() => {
@@ -117,12 +132,21 @@ export function useActiveOrganization<T extends { id: string }>(
       return
     }
     setSwitching(true)
+    // The session this restore is for: the same user, the same organization session (no logout
+    // since, `activeOrganizationSession`), and the shell still mounted. Once it has ended, the
+    // switch's answer is neither stored nor cached (the switch checks `isCurrent`), and nothing
+    // here refreshes or settles for it.
+    const session = activeOrganizationSession()
+    const stillCurrent = () =>
+      mountedRef.current &&
+      sessionKeyRef.current === sessionKey &&
+      activeOrganizationSession() === session
     void (async () => {
-      const stillCurrent = () => sessionKeyRef.current === sessionKey
       let restored: string | null = null
       try {
-        restored = await switchActiveOrganization(restore)
+        restored = await switchActiveOrganization(restore, { isCurrent: stillCurrent })
       } catch (error) {
+        if (isOrganizationSwitchSuperseded(error)) return
         console.error(
           '[ActiveOrganization] Could not restore the stored organization; keeping the server’s',
           error,

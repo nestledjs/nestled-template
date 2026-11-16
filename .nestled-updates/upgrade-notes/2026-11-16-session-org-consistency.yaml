@@ -4,7 +4,8 @@ title: >-
   keep a re-checked user live, one active organization for the UI, the header and the server, one
   switch function, a way to silence the error link, cancellation through timeout wrappers, specs
   that do not assume an HTTP-401 logout, mutations that throw on a refusal, a GraphQL 503 that
-  counts as an outage, and an active organization that hydrates as the server rendered it
+  counts as an outage, an active organization that hydrates as the server rendered it, and a switch
+  whose late answer cannot outlive its session
 priority: high
 area: web
 type: correctness
@@ -18,7 +19,7 @@ intent: >
   organization picker). Apply those first. The session rule is unchanged: log a user out only when
   the API has definitely rejected the session (a real HTTP 401, or a GraphQL error whose
   `extensions.code` is `UNAUTHENTICATED`) with no outage evidence; outage evidence outranks a 401;
-  message text never decides; anything else keeps the session. Ten parts. No package changes and
+  message text never decides; anything else keeps the session. Eleven parts. No package changes and
   no change to package.json, nx.json or tsconfig.base.json. The Me fragment gains a field, so the
   SDK is regenerated (`pnpm sdk`).
 
@@ -37,8 +38,10 @@ intent: >
   server does not know the user's active organization, the shell first renders the server's choice
   (the first organization) with its content held back, and restores the browser's stored choice
   after hydration through the shared switch, instead of rendering the stored one straight away
-  (part 10; this replaces part 3's "else the stored one" step). Nothing logs out more often than
-  before.
+  (part 10; this replaces part 3's "else the stored one" step); (h) a switch whose answer arrives
+  after a logout, a change of user or the unmount of the component that started it is dropped:
+  nothing is stored, cached or refreshed, and it rejects with `OrganizationSwitchSupersededError`
+  (part 11). Nothing logs out more often than before.
 
 
   1. Deferred-auth recovery on a URL with a fragment (issue 113 on nestled-dev-template).
@@ -318,6 +321,56 @@ intent: >
   organization the server does not know", "starts over after logout"); `pnpm exec nx test apollo --skip-nx-cache` ("is never
   read by resolveActiveOrganization").
 
+
+  11. A switch answered after its session ended stores nothing. The shared switch stored the id the
+  API answered with as soon as the answer arrived. When part 10's restore (or a picker or header
+  switch) was still in flight and the user logged out, the logout cleared the stored organization,
+  then the late answer wrote the previous session's organization back (and Apollo cached it): the
+  next user's requests carried the old `x-organization-id`. `useActiveOrganization`'s session check
+  came too late, after the switch had stored. A change of user without a logout, or an unmounted
+  shell, had the same gap, and `AuthProvider.switchOrganization` set the old user back after a
+  logout (`setUser({ ...user, activeOrganizationId })` from a stale closure).
+  - libs/shared/apollo: new `activeOrganizationSession()`, a number that `storeActiveOrganizationId(null)`
+    advances. Every logout already calls that, so every logout ends the organization session.
+  - libs/web/src/lib/organization/switch-active-organization.ts: the switch takes
+    `(organizationId, { isCurrent })` (type `ActiveOrganizationSwitch`). It reads the session before
+    the request and checks, when the answer arrives, that the session is unchanged, the component is
+    still mounted and `isCurrent()` (if given) is true; otherwise it stores and caches nothing and
+    throws `OrganizationSwitchSupersededError` (`isOrganizationSwitchSuperseded(error)`). The
+    mutation now runs with `fetchPolicy: 'no-cache'` and the switch writes the answer to the cache
+    itself (`client.cache.writeQuery`) after that check, so the cache is updated exactly as before
+    for a current session and not at all for an ended one.
+  - `useActiveOrganization` passes `isCurrent` (same `sessionKey`, same organization session, still
+    mounted), drops a superseded answer without logging it, and runs `afterSwitch` and settles only
+    for a current session.
+  - `AuthProvider.switchOrganization` passes `isCurrent` (the signed-in user is still the one it
+    started for), updates the user from the current state and only for that user, and rethrows a
+    superseded error without logging it, so a switcher that reloads after it does not reload.
+  - The picker (apps/web/app/organization-required.tsx) neither reloads nor shows its failure
+    message for a superseded switch. `OrganizationSwitcher` already reloads only when the switch
+    resolves; its doc now says the switch must reject for a dropped answer too.
+  For each app shape:
+  - A switch of its own (part 4): give it the same check, reading `activeOrganizationSession()` before
+    the request and comparing after, plus a mounted check, before it stores, caches or returns. If it
+    relies on Apollo's automatic cache write, move to `fetchPolicy: 'no-cache'` and write the answer
+    after the check, or the cache still takes the late answer.
+  - No switch mutation (the store-only switch of parts 4 and 10): it stores synchronously and has no
+    late answer; nothing to change. If it awaits anything before storing, check `isCurrent` first.
+  - A logout that forgets the organization some other way (`localStorage.removeItem`, clearing all
+    storage): call `storeActiveOrganizationId(null)` instead, or the session does not end and a late
+    answer is still stored.
+  - A login that replaces the user without a logout: pass `isCurrent` comparing the user id, as
+    `AuthProvider` does.
+  - A caller that treats any rejection as a failure to show: check `isOrganizationSwitchSuperseded`
+    and stay quiet for it.
+  Verification: `pnpm exec nx test web-components --skip-nx-cache`
+  (libs/web/src/lib/organization/active-organization.spec.tsx "a switch answered after its session
+  ended": logout, user change and unmount while the restore is pending, and
+  `AuthProvider.switchOrganization` answered after logout); `pnpm exec nx test web --skip-nx-cache`
+  (organization-required "stores nothing and does not reload when the switch is answered after a
+  logout"); `pnpm exec nx test apollo --skip-nx-cache` ("ends the organization session when
+  forgotten").
+
 why: >
   The 2026.11.7 fleet rollout found these: a recovery gap on fragment URLs (issue 113), a re-checked
   user that never updated, a shell that showed the first organization while its requests went to
@@ -327,7 +380,8 @@ why: >
   175 mutation call sites per app whose try/catch never saw an error. Review of the template
   promotion found two more: a GraphQL 503 the shared classifier did not count as an outage (part 9),
   and a hydration mismatch in part 3's resolver when the browser stored a non-first organization the
-  server did not know (part 10).
+  server did not know (part 10), and a late switch answer that wrote the previous session's
+  organization back after a logout (part 11).
 
 affectedPaths:
   - apps/web/app/deferred-auth-recovery.tsx
@@ -409,3 +463,12 @@ agentHints:
     a test for at least one (the API answers the mutation with a GraphQL error; the page shows the
     error, not the success state; build the test client with the app's `makeClient` defaults so it
     behaves as in the app), and report the count. Do not change the client default.
+  - >
+    Part 11 after parts 4 and 10: it changes the shared switch they both use. Specs that mock
+    `@apollo/client/react` by hand and render `AuthProvider` or call `useSwitchActiveOrganization`
+    need `useApolloClient` to return a client with `cache.writeQuery`; specs asserting the switch
+    mutation's options see `fetchPolicy: 'no-cache'` beside `errorPolicy: 'none'`; specs that mock
+    the shared Apollo library by hand need `activeOrganizationSession`. To check the fix, hold the
+    switch's answer, log out (or change user, or unmount), release it, and assert storage, the
+    Apollo cache and the next request's `x-organization-id`; before the fix storage holds the old
+    organization.

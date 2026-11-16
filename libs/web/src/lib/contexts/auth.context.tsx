@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useState, useMemo, ReactNode } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  ReactNode,
+} from 'react'
 import { useApolloClient, useQuery } from '@apollo/client/react'
 import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 import {
@@ -6,7 +14,10 @@ import {
   type MyOrganizationsWithMembersQuery,
   type User,
 } from '@nestled-template/shared/sdk'
-import { useSwitchActiveOrganization } from '../organization/switch-active-organization'
+import {
+  isOrganizationSwitchSuperseded,
+  useSwitchActiveOrganization,
+} from '../organization/switch-active-organization'
 import { useActiveOrganization } from '../organization/active-organization'
 
 type OrganizationContextItem = MyOrganizationsWithMembersQuery['myOrganizations'][number]
@@ -91,6 +102,12 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   })
 
   const switchActiveOrganization = useSwitchActiveOrganization()
+  // Who is signed in now, for a switch whose answer arrives later: if it is someone else (or no
+  // one), the answer belongs to a session that has ended.
+  const userIdRef = useRef(user?.id)
+  useLayoutEffect(() => {
+    userIdRef.current = user?.id
+  }, [user?.id])
 
   const client = useApolloClient()
   const organizations = orgsData?.myOrganizations || []
@@ -130,13 +147,23 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
   const switchOrganization = async (organizationId: string) => {
     if (!user) return
+    const startedFor = user.id
 
     try {
-      // The shared switch: the API, then the stored id for the header. It throws on a refusal.
-      const activeOrganizationId = await switchActiveOrganization(organizationId)
-      setUser({ ...user, activeOrganizationId })
+      // The shared switch: the API, then the stored id for the header. It throws on a refusal, and
+      // drops an answer that arrives after a logout or for another user (nothing stored).
+      const activeOrganizationId = await switchActiveOrganization(organizationId, {
+        isCurrent: () => userIdRef.current === startedFor,
+      })
+      // From the current state, not this render's `user`: only the user the switch was for.
+      setUser(current =>
+        current?.id === startedFor ? { ...current, activeOrganizationId } : current,
+      )
     } catch (error) {
-      console.error('Failed to switch organization:', error)
+      // A dropped answer (the session it was for has ended) is not a failure to log, but it still
+      // rejects, so a caller that reloads after the switch does not reload for it.
+      if (!isOrganizationSwitchSuperseded(error))
+        console.error('Failed to switch organization:', error)
       throw error
     }
   }

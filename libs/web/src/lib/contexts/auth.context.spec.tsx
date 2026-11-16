@@ -12,11 +12,12 @@ import {
 const useQuery = vi.fn()
 const useMutation = vi.fn()
 const refetchQueries = vi.fn()
+const writeQuery = vi.fn()
 
 vi.mock('@apollo/client/react', () => ({
   useQuery: (...args: unknown[]) => useQuery(...args),
   useMutation: (...args: unknown[]) => useMutation(...args),
-  useApolloClient: () => ({ refetchQueries }),
+  useApolloClient: () => ({ refetchQueries, cache: { writeQuery } }),
 }))
 
 vi.mock('@nestled-template/shared/sdk', () => ({
@@ -121,7 +122,10 @@ describe('AuthProvider', () => {
     })
 
     // The shared switch's mutation throws on a GraphQL refusal, whatever the client's default.
-    expect(useMutation).toHaveBeenCalledWith(expect.anything(), { errorPolicy: 'none' })
+    expect(useMutation).toHaveBeenCalledWith(expect.anything(), {
+      errorPolicy: 'none',
+      fetchPolicy: 'no-cache',
+    })
     expect(result.current.user?.activeOrganizationId).toBe('org-1')
     expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
   })
