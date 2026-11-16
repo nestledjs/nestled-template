@@ -672,6 +672,63 @@ describe('server render sign-out decisions with the whole request in view', () =
     })
   })
 
+  // What the API answers when it cannot complete a lookup (JwtStrategy's failed API-token lookup):
+  // HTTP 200, INTERNAL_SERVER_ERROR with extensions.status 503 (formatApiError's real shape).
+  const graphQL503 = json(200, {
+    data: null,
+    errors: [
+      {
+        message: 'API token validation is temporarily unavailable',
+        extensions: {
+          code: 'INTERNAL_SERVER_ERROR',
+          status: 503,
+          originalError: { statusCode: 503, error: 'Service Unavailable' },
+        },
+      },
+    ],
+  })
+  const graphQL500 = json(200, {
+    data: null,
+    errors: [{ message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } }],
+  })
+
+  describe('a GraphQL 503 is outage evidence, like a proxy 503', () => {
+    it("keeps the session and serves the recovering 503 when Me's 401 comes beside a preload's GraphQL 503", async () => {
+      answer({ Me: unauthorized, MembersData: later(50, graphQL503) })
+
+      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
+
+      expectRecovering503(response, await response.text())
+    })
+
+    it("keeps the session when a loader's 401 comes beside Me's GraphQL 503", async () => {
+      answer({ Me: later(50, graphQL503), MembersData: unauthorized })
+
+      const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+      expectRecovering503(response, await response.text())
+    })
+
+    it("still signs out on Me's 401 beside a plain INTERNAL_SERVER_ERROR (no 5xx gateway status)", async () => {
+      answer({ Me: unauthorized, MembersData: later(50, graphQL500) })
+
+      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
+
+      expect(response.status).toBe(302)
+      expect(clearsTheCookie(response)).toBe(true)
+    })
+
+    it('decides unavailable for a shell error that is itself a GraphQL 503, whatever was recorded', () => {
+      const shellError = new CombinedGraphQLErrors({
+        errors: [
+          { message: 'unavailable', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 503 } },
+        ],
+      })
+      expect(shellErrorOutcome(shellError, 'unauthenticated')).toBe('unavailable')
+      expect(shellErrorOutcome(shellError, undefined)).toBe('unavailable')
+    })
+  })
+
   describe("the root loader's outage flag is outage evidence", () => {
     // The root loader could not start the Me preload and returned its flag instead: nothing went
     // through an Apollo client, so only the flag says the API was unreachable.

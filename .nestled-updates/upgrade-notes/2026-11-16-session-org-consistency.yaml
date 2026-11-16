@@ -3,7 +3,8 @@ title: >-
   Make the browser's session re-check and organization switching consistent: recover fragment URLs,
   keep a re-checked user live, one active organization for the UI, the header and the server, one
   switch function, a way to silence the error link, cancellation through timeout wrappers, specs
-  that do not assume an HTTP-401 logout, and mutations that throw on a refusal
+  that do not assume an HTTP-401 logout, mutations that throw on a refusal, a GraphQL 503 that
+  counts as an outage, and an active organization that hydrates as the server rendered it
 priority: high
 area: web
 type: correctness
@@ -17,7 +18,7 @@ intent: >
   organization picker). Apply those first. The session rule is unchanged: log a user out only when
   the API has definitely rejected the session (a real HTTP 401, or a GraphQL error whose
   `extensions.code` is `UNAUTHENTICATED`) with no outage evidence; outage evidence outranks a 401;
-  message text never decides; anything else keeps the session. Eight parts. No package changes and
+  message text never decides; anything else keeps the session. Ten parts. No package changes and
   no change to package.json, nx.json or tsconfig.base.json. The Me fragment gains a field, so the
   SDK is regenerated (`pnpm sdk`).
 
@@ -30,7 +31,14 @@ intent: >
   `x-organization-id` as soon as the shell renders, and forgets it on logout (part 3); (d) the
   picker, `AuthProvider` and any header switcher switch through one function that throws on a
   refusal (part 4); (e) about fifty mutations in the template that used to report success when the
-  API refused them now show their error (part 8). Nothing logs out more often than before.
+  API refused them now show their error (part 8); (f) a GraphQL error carrying a 502/503/504 (the
+  API's answer when it cannot complete a lookup) is outage evidence: it is reported, refetched on
+  recovery, and outranks a 401, in the browser and in the server render (part 9); (g) when the
+  server does not know the user's active organization, the shell first renders the server's choice
+  (the first organization) with its content held back, and restores the browser's stored choice
+  after hydration through the shared switch, instead of rendering the stored one straight away
+  (part 10; this replaces part 3's "else the stored one" step). Nothing logs out more often than
+  before.
 
 
   1. Deferred-auth recovery on a URL with a fragment (issue 113 on nestled-dev-template).
@@ -205,13 +213,121 @@ intent: >
   Verification: `pnpm exec nx test web --skip-nx-cache` (members.error-policy,
   TransferOwnershipModal.error-policy: a refusal shows its error, not the success message).
 
+  9. A GraphQL 502/503/504 is outage evidence. The API throws a `ServiceUnavailableException`
+  when a lookup it needs fails (JwtStrategy's API-token lookup). Over GraphQL that arrives as HTTP
+  200 with `extensions.code: 'INTERNAL_SERVER_ERROR'` and `extensions.status: 503` (libs/api/utils
+  `formatApiError` keeps it so; `originalError.statusCode` is 503 too). The shared classifier called
+  it `other`, so the error link reported no outage, the query was never refetched on recovery, and
+  in the server render a concurrent 401 could still sign the user out.
+  libs/shared/apollo/src/lib/apollo.ts now:
+  - exports `isGatewayUnavailableGraphQLError(error)`: a `CombinedGraphQLErrors` with an error whose
+    `extensions.status`, else `extensions.originalError.statusCode`, is 502, 503 or 504. A plain
+    `INTERNAL_SERVER_ERROR` (500, or no status) is not.
+  - `isRetryableConnectivityError` is true for it, so `refetchFailedQueries` refetches the query
+    once the API answers, and the Me boundary waits for recovery instead of signing out.
+  - `classifyApiFailure` returns `unavailable` for it, checked before UNAUTHENTICATED: a 503 and an
+    UNAUTHENTICATED in the same answer is an outage. Through the classifier, the server render's
+    recorded cause (`apolloLoader`'s `onApiFailure`), `shellErrorOutcome` and `routeErrorOutcome`
+    treat it as outage evidence, so a GraphQL 503 beside a concurrent 401 serves the recovering 503
+    with the cookie kept.
+  - the error link dispatches `APOLLO_SERVICE_UNAVAILABLE_EVENT` for it (also for a request passing
+    `SKIP_AUTH_ERROR_REPORT_CONTEXT`, as for a network outage), and an UNAUTHENTICATED in the same
+    answer is let pass as during any outage (`takeDeferredAuthFailure` is set; no logout).
+  - `createOutageRetryLink` counts an answer carrying such an error as unreachable, so its retry is
+    outage evidence while in flight, as after a proxy's 503.
+  For each app shape:
+  - An app with its own error link, classifier or `isRetryableConnectivityError` copy: make the
+    same change there, and keep the classifier and the connectivity test sharing one status check.
+    Look for an early `if (CombinedGraphQLErrors.is(error)) return false` (or `'other'`) before any
+    status check: that is the line that hid the 503.
+  - An app whose root loader resolves Me with `makeClient().query` and decides there: a Me failure
+    for which `classifyApiFailure` is `unavailable` (or `isRetryableConnectivityError` is true) must
+    return the loader's `serviceUnavailable` flag, never render signed out or redirect.
+  - An app whose error link only dispatches events: dispatch the service-unavailable event for it,
+    and no logout event for an UNAUTHENTICATED in the same answer.
+  - An app whose API never throws a 5xx `HttpException` (API tokens validated only in an MCP
+    controller, say): apply it anyway. It is a client-side classifier change at no cost, and covers
+    any resolver that throws a `ServiceUnavailableException` later.
+  Verification: `pnpm exec nx test apollo --skip-nx-cache` ("a GraphQL 503", "counts the retry of a
+  query answered with a GraphQL 503", "records a GraphQL 503 beside a concurrent 401");
+  `pnpm exec nx test web --skip-nx-cache` (entry-server-shell-error "a GraphQL 503 is outage
+  evidence"; api-availability "refetches a query the API answered with a GraphQL 503").
+
+
+  10. The active organization hydrates as the server rendered it. Part 3's resolver fell back to
+  the browser's stored organization while rendering. A server render cannot see storage, so when
+  `Me.activeOrganizationId` was null or no longer one of the user's organizations and the browser
+  had stored a non-first one, the server picked the first and the hydrating render the stored one:
+  the layout's organization name and permissions differed from the server HTML (a hydration
+  mismatch), and the page's first queries went out for an organization the server HTML did not
+  show.
+  - libs/shared/apollo: `resolveActiveOrganization(organizations, serverActiveOrganizationId,
+    chosen = null)` no longer reads storage by default: the server's active one if still a member,
+    else `chosen` if still a member, else the first. New
+    `isActiveOrganizationAmbiguous(organizations, serverActiveOrganizationId)`: more than one
+    organization and no valid server active one, the only case in which the stored choice can
+    differ from what the server renders.
+  - New libs/web/src/lib/organization/active-organization.ts, `useActiveOrganization(organizations,
+    serverActiveOrganizationId, { enabled, sessionKey, afterSwitch, switchOrganization })`, returning
+    `{ activeOrganization, reconciling }`. The first render, on the server and in the browser, shows
+    the server's choice; when the choice is ambiguous `reconciling` is true from the first render
+    (on both sides, so they agree) and the caller holds organization-scoped content back. After
+    hydration it reads the stored organization: if it is another of the user's organizations it
+    switches to it through the shared switch (`useSwitchActiveOrganization`, so the server's active
+    organization, the cache and the header agree), runs `afterSwitch`, and only then clears
+    `reconciling`; otherwise the server's choice stands. A refused or failed switch keeps the
+    server's choice and stores it, so the screen and the header still agree. It stores what it
+    shows for `x-organization-id` while rendering (`rememberActiveOrganization`), except while
+    reconciling. It starts over when `sessionKey` (the user's id) changes or `enabled` turns false,
+    and drops a restore still in flight for the previous session, so a provider that stays mounted
+    across logout and login never carries one session's choice into the next.
+  - apps/web/app/routes/_authenticated/_layout.tsx uses it, before its early returns, with
+    `enabled: !!user`, `sessionKey: user?.id` and `afterSwitch: () => revalidator.revalidate()`, so the loaders run again
+    for the restored organization. While `reconciling` it renders the header (the server's choice),
+    a placeholder instead of `<Outlet />`, and neither `SubscriptionProvider` nor
+    `SubscriptionStatusBanner` (their queries are organization-scoped).
+  - `AuthProvider` uses it too (`afterSwitch` refetches active queries; `isLoading` includes
+    `reconciling`) and no longer stores in an effect.
+  - No cookie is added: the server keeps rendering from Me alone.
+  For each app shape:
+  - No `User.activeOrganizationId` on the API (the browser alone chooses; part 3 told you to call
+    `resolveActiveOrganization(organizations, null)` so the stored choice won): that call now gives
+    the first. Use `useActiveOrganization(organizations, null, { switchOrganization: async id => {
+    storeActiveOrganizationId(id); return id }, afterSwitch })`, with an `afterSwitch` that
+    revalidates or refetches; never reload there. A server render of a user with several
+    organizations then always shows the content area pending until hydration; that is expected for
+    this shape.
+  - No `x-organization-id` header: nothing is stored, so there is nothing to restore. Keep
+    `resolveActiveOrganization(organizations, user.activeOrganizationId)`; only the signature change
+    applies (drop any third argument).
+  - A render that passes the stored id explicitly (`resolveActiveOrganization(orgs, id,
+    getStoredActiveOrganizationId())`): that is the mismatch. Use the hook in the shell instead, and
+    keep inner pages on two arguments (they render after the shell settled, and read the server's
+    active organization, which the switch updated).
+  - Several shells: only the outermost signed-in one uses the hook and gates; inner ones keep
+    `resolveActiveOrganization` with two arguments.
+  - No signed-in layout: call the hook wherever the signed-in user and their organizations are
+    first known, and gate the organization-scoped part of the tree on `reconciling` there.
+  - A shell rendered only in the browser (no SSR for it): apply it anyway; it also stops the first
+    queries going out for the first organization before the stored one is restored.
+  Verification: `pnpm exec nx test web --skip-nx-cache`
+  (apps/web/tests/routes/active-organization.spec.tsx "the active organization across a server
+  render and hydration": no hydration error and a first client render equal to the server HTML,
+  then the UI and the next request use the stored organization; a refused switch keeps the
+  server's choice); `pnpm exec nx test web-components --skip-nx-cache` ("restores a stored
+  organization the server does not know", "starts over after logout"); `pnpm exec nx test apollo --skip-nx-cache` ("is never
+  read by resolveActiveOrganization").
+
 why: >
   The 2026.11.7 fleet rollout found these: a recovery gap on fragment URLs (issue 113), a re-checked
   user that never updated, a shell that showed the first organization while its requests went to
   the stored one, a picker that assumed a bare localStorage id beside an existing switcher, an
   event-only error link that put up access denied over the re-check, a timeout wrapper that turned a
   cancelled request into outage evidence, template specs that assumed an HTTP-401 logout, and 35 to
-  175 mutation call sites per app whose try/catch never saw an error.
+  175 mutation call sites per app whose try/catch never saw an error. Review of the template
+  promotion found two more: a GraphQL 503 the shared classifier did not count as an outage (part 9),
+  and a hydration mismatch in part 3's resolver when the browser stored a non-first organization the
+  server did not know (part 10).
 
 affectedPaths:
   - apps/web/app/deferred-auth-recovery.tsx
@@ -235,6 +351,10 @@ affectedPaths:
   - libs/web/src/lib/contexts/auth.context.tsx
   - libs/web/src/lib/contexts/auth.context.spec.tsx
   - libs/web/src/lib/components/upgrade-modal.tsx
+  - apps/web/app/api-availability.ts
+  - apps/web/app/app.tsx
+  - apps/web/app/entry.server.tsx
+  - apps/web/app/root.tsx
   - libs/web/src/lib/modals/transfer-ownership-modal.tsx
   - libs/web-ui/src/lib/components/organization-switcher.tsx
   - libs/api/custom/src/lib/default/organization/organization.service.ts
@@ -271,6 +391,19 @@ agentHints:
     storage helpers added, or `importOriginal`.
   - >
     Part 2: a spec that counts root loader calls after a re-check sees one more (the revalidation).
+  - >
+    Part 9 changes only libs/shared/apollo; the app files listed for it (api-availability.ts,
+    app.tsx, entry.server.tsx, root.tsx) are where an app's own copies of the classifier or the
+    connectivity test usually live. Search them for `CombinedGraphQLErrors.is` and status checks
+    before deciding there is nothing to adapt, and record which shape applied.
+  - >
+    Part 10 after parts 3 and 4: it replaces part 3's stored fallback with the hook, which switches
+    through part 4's shared function. Specs that mock `@apollo/client/react` by hand and render
+    `AuthProvider` need `useApolloClient`; specs that mock `@nestled-template/web` by hand and render
+    the signed-in layout need `useActiveOrganization` (or `importOriginal`); specs that mock the
+    shared Apollo library by hand need `isActiveOrganizationAmbiguous` and
+    `getStoredActiveOrganizationId`. A layout spec that expected the stored organization on the
+    first render now sees the server's choice and a pending content area first; wait for the page.
   - >
     Part 8 is mechanical but wide. Fix the app's own sites with `errorPolicy: 'none'` per call, add
     a test for at least one (the API answers the mutation with a GraphQL error; the page shows the
