@@ -5,7 +5,7 @@ import { RequireOwner, useGlobalCtx } from '@nestled-template/web'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { formTheme } from '@nestled-template/shared/styles'
-import { apolloLoader } from '@nestled-template/shared/apollo'
+import { apolloLoader, resolveActiveOrganization } from '@nestled-template/shared/apollo'
 import {
   MyOrganizations,
   MyOrganizationsWithMembers,
@@ -29,9 +29,6 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
 })
 
 type OrgLogo = NonNullable<MyOrganizationsQuery['myOrganizations'][number]['logo']>
-type UserWithActiveOrganization = {
-  activeOrganizationId?: string | null
-}
 type Permission = { subject?: string | null; action?: string | null }
 
 type OrganizationQueryName = 'myOrganizations' | 'myOrganizationsWithMembers'
@@ -107,22 +104,25 @@ export default function OrganizationSettings() {
   const { data } = useReadQuery(loaderData.myOrganizationsQueryRef)
   const { activeOrganizationMember, user } = useGlobalCtx()
   const organizations = data?.myOrganizations || []
-  const userWithActiveOrganization = user as UserWithActiveOrganization | null | undefined
-  const activeOrganization =
-    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
-    organizations[0] ||
-    null
+  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
   const [formError, setFormError] = useState<string | null>(null)
   const [formSuccess, setFormSuccess] = useState<string | null>(null)
   const [logoMessage, setLogoMessage] = useState<{
     type: 'success' | 'error'
     text: string
   } | null>(null)
-  const [updateOrganization] = useMutation<UserUpdateOrganizationMutation>(UserUpdateOrganization)
-  const [uploadOrganizationLogo] =
-    useMutation<UploadOrganizationLogoMutation>(UploadOrganizationLogo)
-  const [removeOrganizationLogo] =
-    useMutation<RemoveOrganizationLogoMutation>(RemoveOrganizationLogo)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [updateOrganization] = useMutation<UserUpdateOrganizationMutation>(UserUpdateOrganization, {
+    errorPolicy: 'none',
+  })
+  const [uploadOrganizationLogo] = useMutation<UploadOrganizationLogoMutation>(
+    UploadOrganizationLogo,
+    { errorPolicy: 'none' },
+  )
+  const [removeOrganizationLogo] = useMutation<RemoveOrganizationLogoMutation>(
+    RemoveOrganizationLogo,
+    { errorPolicy: 'none' },
+  )
   const revalidator = useRevalidator()
   const client = useApolloClient()
   const canUpdateOrganization = hasPermission(

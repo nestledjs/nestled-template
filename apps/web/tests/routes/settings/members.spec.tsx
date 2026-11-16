@@ -190,6 +190,26 @@ describe('MembersSettings', () => {
     })
   })
 
+  it('manages the active organization, not the first one listed', async () => {
+    const other = { id: 'org-0', name: 'Listed first', members: [] }
+    mockUseReadQuery.mockImplementation((queryRef: any) => {
+      if (queryRef.query === 'orgs') return { data: { myOrganizations: [other, organization] } }
+      return { data: { me: { id: 'user-current', activeOrganizationId: 'org-1' } } }
+    })
+    renderRoute()
+
+    fireEvent.click(screen.getByRole('button', { name: /Invite Member/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Submit Invite Form/i }))
+
+    await waitFor(() => expect(mutationMocks.invite).toHaveBeenCalled())
+    expect(mutationMocks.invite.mock.calls[0][0].variables.input.organizationId).toBe('org-1')
+    expect(
+      mockUseQuery.mock.calls.every(
+        ([, options]: any[]) => options?.variables?.organizationId !== 'org-0',
+      ),
+    ).toBe(true)
+  })
+
   function renderRoute() {
     const Router = createTestRouter([{ path: '/settings/members', Component: MembersSettings }])
     return render(<Router initialEntries={['/settings/members']} />)

@@ -15,8 +15,13 @@ export default function VerifyEmailPage() {
   const [params] = useSearchParams()
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [message, setMessage] = useState<string>('Verifying your email...')
-  const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail)
-  const [verifyEmailChangeMutation] = useMutation<VerifyEmailChangeMutation>(VerifyEmailChange)
+  // Throw on a GraphQL error so the .catch below sees it (the client default is 'all').
+  const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail, {
+    errorPolicy: 'none',
+  })
+  const [verifyEmailChangeMutation] = useMutation<VerifyEmailChangeMutation>(VerifyEmailChange, {
+    errorPolicy: 'none',
+  })
 
   // A link without a token fails at once: derived while rendering, with no request to wait for.
   const missingToken = !params.get('token')

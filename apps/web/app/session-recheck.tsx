@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useApolloClient } from '@apollo/client/react'
 import { Me, type MeQuery } from '@nestled-template/shared/sdk'
-import { classifyApiFailure, isApiOutageSignalled } from '@nestled-template/shared/apollo'
+import {
+  classifyApiFailure,
+  isApiOutageSignalled,
+  SKIP_AUTH_ERROR_REPORT_CONTEXT,
+} from '@nestled-template/shared/apollo'
 import { retryDelayMs } from './api-availability'
 import { isOrganizationContextRequired } from './organization-required'
 
@@ -62,9 +66,17 @@ export function sessionRecheckOutcome(
  * client-side navigation into the signed-in area, since the root loader does not run again on
  * those. Log out only on a real 401 (`rejected`).
  *
- * The request skips the cache (`no-cache`), so it is always a fresh answer, and goes through the
- * app's Apollo client, so its error link judges it like any other request. `loaderOutage` (the
- * root loader's outage flag) is read when each answer arrives, so a 401 while it stands is retried.
+ * The request skips the cache (`no-cache`), so it is always a fresh answer. It goes through the
+ * app's Apollo client but tells its error link to take no action on the answer
+ * (`SKIP_AUTH_ERROR_REPORT_CONTEXT`): this hook decides the outcome itself, and an error link that
+ * reacts to a 401 or 403 (a logout, or an event that puts up access denied) would otherwise act
+ * first, on an answer this hook may judge differently (a 401 during an outage is retried here).
+ *
+ * `loaderOutage` (the root loader's outage flag) is read when each answer arrives, so a 401 while
+ * it stands is retried.
+ *
+ * The user it returns is a snapshot (`no-cache`): the layout that asked brings the live, cached Me
+ * back once this recovers (see the signed-in layout), so later edits to the user show.
  */
 export function useSessionRecheck(needed: boolean, loaderOutage = false): SessionRecheck {
   const client = useApolloClient()
@@ -102,10 +114,17 @@ export function useSessionRecheck(needed: boolean, loaderOutage = false): Sessio
         attemptRef.current += 1
       }
     }
-    client.query<MeQuery>({ query: Me, fetchPolicy: 'no-cache', errorPolicy: 'none' }).then(
-      result => settle({ user: result.data?.me ?? null }),
-      error => settle({ error }),
-    )
+    client
+      .query<MeQuery>({
+        query: Me,
+        fetchPolicy: 'no-cache',
+        errorPolicy: 'none',
+        context: SKIP_AUTH_ERROR_REPORT_CONTEXT,
+      })
+      .then(
+        result => settle({ user: result.data?.me ?? null }),
+        error => settle({ error }),
+      )
   }, [client])
 
   useLayoutEffect(() => {

@@ -34,8 +34,10 @@ export default function TransferOwnershipModal({
   const { data: organizationsData, loading } = useQuery<MyOrganizationsWithMembersQuery>(
     MyOrganizationsWithMembers,
   )
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
   const [transferOwnershipMutation] = useMutation<TransferOrganizationOwnershipMutation>(
     TransferOrganizationOwnership,
+    { errorPolicy: 'none' },
   )
 
   const currentUserId = meData?.me?.id

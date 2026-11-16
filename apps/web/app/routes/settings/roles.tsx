@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useState } from 'react'
 import {
   CheckIcon,
   LockClosedIcon,
@@ -10,6 +10,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useMutation, useQuery } from '@apollo/client/react'
 import { RequirePermission, useGlobalCtx } from '@nestled-template/web'
+import { resolveActiveOrganization } from '@nestled-template/shared/apollo'
 import {
   MyOrganizationsWithMembers,
   OrganizationRoles,
@@ -200,20 +201,15 @@ export default function OrganizationRolesSettings() {
     MyOrganizationsWithMembers,
   )
   const organizations = organizationData?.myOrganizations ?? []
-  const activeOrganizationId = (user as { activeOrganizationId?: string | null } | null)
-    ?.activeOrganizationId
-  const activeOrganization =
-    organizations.find(organization => organization.id === activeOrganizationId) ?? organizations[0]
+  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
   const activeMember = activeOrganization?.members?.find(member => member.userId === user?.id)
   const { data, loading, refetch } = useQuery<OrganizationRolesQuery>(OrganizationRoles, {
     variables: { organizationId: activeOrganization?.id ?? '' },
     skip: !activeOrganization?.id,
   })
   const roles = data?.organizationRoles ?? []
-  const delegatablePermissions = useMemo(
-    () => (activeMember?.role?.permissions ?? []) as Permission[],
-    [activeMember],
-  )
+  // No manual useMemo: the React Compiler memoizes this, and could not preserve a manual one.
+  const delegatablePermissions = (activeMember?.role?.permissions ?? []) as Permission[]
   const canCreate = delegatablePermissions.some(
     permission => permission.subject === 'role' && permission.action === 'create',
   )
@@ -224,9 +220,10 @@ export default function OrganizationRolesSettings() {
     permission => permission.subject === 'role' && permission.action === 'delete',
   )
 
-  const [createRole] = useMutation(UserCreateOrganizationRole)
-  const [updateRole] = useMutation(UserUpdateOrganizationRole)
-  const [deleteRole] = useMutation(UserDeleteOrganizationRole)
+  // Throw on a GraphQL error so `run`'s catch sees it (the client default is 'all').
+  const [createRole] = useMutation(UserCreateOrganizationRole, { errorPolicy: 'none' })
+  const [updateRole] = useMutation(UserUpdateOrganizationRole, { errorPolicy: 'none' })
+  const [deleteRole] = useMutation(UserDeleteOrganizationRole, { errorPolicy: 'none' })
 
   const run = async (operation: () => Promise<void>, success: string) => {
     setBusy(true)

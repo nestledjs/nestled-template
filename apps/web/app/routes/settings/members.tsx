@@ -16,7 +16,7 @@ import { RequirePermission } from '@nestled-template/web'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { formTheme } from '@nestled-template/shared/styles'
-import { apolloLoader } from '@nestled-template/shared/apollo'
+import { apolloLoader, resolveActiveOrganization } from '@nestled-template/shared/apollo'
 import {
   Me,
   type MeQuery,
@@ -209,8 +209,9 @@ export default function MembersSettings() {
   const { data: orgData } = useReadQuery(loaderData.myOrganizationsQueryRef)
   const { data: meData } = useReadQuery(loaderData.meQueryRef)
   const organizations = orgData?.myOrganizations || []
-  const activeOrganization = organizations[0] || null
   const user = meData?.me
+  // The organization the shell shows and the requests are sent for, never simply the first.
+  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
   const activeOrganizationMember =
     activeOrganization?.members?.find(member => member.userId === user?.id) || null
   const [showInviteForm, setShowInviteForm] = useState(false)
@@ -224,18 +225,25 @@ export default function MembersSettings() {
     onConfirm: () => void
   } | null>(null)
 
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
   const [inviteMember] = useMutation<CreateOrganizationInvitationMutation>(
     CreateOrganizationInvitation,
+    { errorPolicy: 'none' },
   )
   const [resendInvitation] = useMutation<ResendOrganizationInvitationMutation>(
     ResendOrganizationInvitation,
+    { errorPolicy: 'none' },
   )
   const [cancelInvitation] = useMutation<CancelOrganizationInvitationMutation>(
     CancelOrganizationInvitation,
+    { errorPolicy: 'none' },
   )
-  const [removeMember] = useMutation<RemoveOrganizationMemberMutation>(RemoveOrganizationMember)
+  const [removeMember] = useMutation<RemoveOrganizationMemberMutation>(RemoveOrganizationMember, {
+    errorPolicy: 'none',
+  })
   const [updateMemberRole] = useMutation<UpdateOrganizationMemberRoleMutation>(
     UpdateOrganizationMemberRole,
+    { errorPolicy: 'none' },
   )
 
   const { data, loading, error, refetch } = useQuery<UserOrganizationMembersQuery>(
@@ -363,6 +371,8 @@ export default function MembersSettings() {
   }
 
   async function handleRemoveMember(userId: string, memberName: string) {
+    if (!activeOrganization) return
+    const organizationId = activeOrganization.id
     setConfirmModal({
       isOpen: true,
       title: 'Remove Member',
@@ -376,7 +386,7 @@ export default function MembersSettings() {
           await removeMember({
             variables: {
               input: {
-                organizationId: activeOrganization.id,
+                organizationId,
                 userId: userId,
               },
             },

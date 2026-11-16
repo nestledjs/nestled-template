@@ -1,0 +1,278 @@
+id: 2026-11-16-session-org-consistency
+title: >-
+  Make the browser's session re-check and organization switching consistent: recover fragment URLs,
+  keep a re-checked user live, one active organization for the UI, the header and the server, one
+  switch function, a way to silence the error link, cancellation through timeout wrappers, specs
+  that do not assume an HTTP-401 logout, and mutations that throw on a refusal
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  [2026-11-14-session-recovery-gaps, 2026-11-14-api-auth-error-codes, 2026-11-16-ssr-signout-outage]
+
+intent: >
+  Follow-up to 2026-11-14-session-recovery-gaps (the root error boundary's `DeferredAuthRecovery`
+  and the signed-in layout's `useSessionRecheck`) and 2026-11-14-api-auth-error-codes (the
+  organization picker). Apply those first. The session rule is unchanged: log a user out only when
+  the API has definitely rejected the session (a real HTTP 401, or a GraphQL error whose
+  `extensions.code` is `UNAUTHENTICATED`) with no outage evidence; outage evidence outranks a 401;
+  message text never decides; anything else keeps the session. Eight parts. No package changes and
+  no change to package.json, nx.json or tsconfig.base.json. The Me fragment gains a field, so the
+  SDK is regenerated (`pnpm sdk`).
+
+
+  Behaviour changes, plainly: (a) a deferred 401 on a URL with a `#fragment` now recovers by itself
+  like any other URL (part 1); (b) after the layout's re-check signs a user back in, the root loader
+  runs once more, so the shell's user follows later edits (part 2); (c) the shell, the settings pages
+  and the next request now agree on one active organization, which is the server's active one when
+  the user is still a member of it, not the first in the list; the browser stores it for
+  `x-organization-id` as soon as the shell renders, and forgets it on logout (part 3); (d) the
+  picker, `AuthProvider` and any header switcher switch through one function that throws on a
+  refusal (part 4); (e) about fifty mutations in the template that used to report success when the
+  API refused them now show their error (part 8). Nothing logs out more often than before.
+
+
+  1. Deferred-auth recovery on a URL with a fragment (issue 113 on nestled-dev-template).
+  apps/web/app/deferred-auth-recovery.tsx revalidates the route with a navigation to the same
+  pathname, search and hash. With a non-empty hash React Router takes that for a hash-only change
+  and runs no loader, so the failed query never got a fresh answer and the recovering screen stayed
+  up after the API came back. When the location has a hash it now calls `router.revalidate()` first
+  and navigates to the same URL once that settles (the navigation is still what resets the error
+  boundary), but only if the location key is unchanged and no navigation is in progress, so a user
+  who left meanwhile, or a loader's redirect, is not taken back; without a hash nothing changes. An app that revalidates with `useRevalidator()` instead
+  has no such gap, but check that its error boundary resets after a revalidation that finishes
+  quickly.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("recovers a URL with a #fragment too").
+
+
+  2. The re-checked user is a snapshot. `useSessionRecheck` asks Me with `fetchPolicy: 'no-cache'`
+  (it must get a fresh answer), so the user it returns never updates: after a recovery the shell
+  kept showing it, and a profile edit or an organization switch did not show until a full load.
+  apps/web/app/routes/_authenticated/_layout.tsx now, once the re-check recovers with a user and the
+  context still has none, calls `useRevalidator().revalidate()` once (guarded per recovered user, so
+  a root loader that still brings no Me cannot loop). The root loader preloads Me again, App reads it
+  from the cache, and the layout takes the user from the context from then on. Keep rendering the
+  re-checked user meanwhile.
+  - An app that resolves Me in the root loader with `makeClient().query` (no query ref): revalidating
+    still brings a fresh user; if the shell keeps the user in its own state, set it from the new
+    loader data.
+  - An app with no signed-in layout (the re-check lives in a `requireUser`/`useSession` helper or a
+    `SessionProvider`): do the revalidation where the re-checked user is handed out, once per
+    recovery.
+  - An app whose Me lives in a store (jotai, a React context with `setUser`): write the re-checked
+    user into that store instead of revalidating, and make sure the store follows cache updates.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("after recovering, takes the user from a
+  live Me query, so later changes show", "revalidates the root loader once per recovery").
+
+
+  3. One active organization for the UI, the stored header, the server and the request. Four gaps:
+  the `AuthUserDetails` fragment (the Me query) had no `activeOrganizationId`, so every place that
+  looked it up found nothing and showed `organizations[0]`; a shell restored by the re-check therefore
+  showed the first organization while requests went to the stored one; nothing stored the active
+  organization the re-check learned; and the shell never stored what it showed.
+  - libs/shared/sdk/src/graphql/auth/auth-fragments.graphql: `activeOrganizationId` added to
+    `AuthUserDetails`; regenerate the SDK (`pnpm sdk`). The `UserWithActiveOrganization` casts in
+    the layout and settings pages go away.
+  - libs/shared/apollo/src/lib/apollo.ts exports `ACTIVE_ORGANIZATION_STORAGE_KEY`,
+    `getStoredActiveOrganizationId()` and `storeActiveOrganizationId(id | null)` (the auth link
+    reads the header through them; both are no-ops on the server and with storage blocked), and
+    `resolveActiveOrganization(organizations, serverActiveOrganizationId, stored?)`: the server's
+    active organization if the user is still a member, else the stored one if still a member, else
+    the first, else null. `rememberActiveOrganization(id)` stores it when it differs.
+  - apps/web/app/routes/_authenticated/_layout.tsx resolves with `user.activeOrganizationId` (from
+    the context or the re-check, so the re-check's answer is stored too) and calls
+    `rememberActiveOrganization` while rendering, before its children's queries start: the
+    organization on screen is the one the next request is sent for. A layout effect is too late
+    for queries that start during render.
+  - apps/web/app/routes/settings/_settings-access.ts, settings/organization.tsx,
+    settings/members.tsx (which managed the first organization's members, invitations and roles)
+    and settings/roles.tsx use `resolveActiveOrganization` instead of their own `organizations[0]`
+    fallbacks; `AuthProvider` (libs/web/src/lib/contexts/auth.context.tsx) does too, and stores
+    through `rememberActiveOrganization` / `storeActiveOrganizationId(null)` on logout.
+  - apps/web/app/routes/logout.tsx forgets the stored organization, so the next user's first
+    requests are not sent for it.
+  - API: libs/api/custom/src/lib/default/organization/organization.service.ts
+    `switchActiveOrganization` already wrote the new active organization to the auth cache
+    (`setUserActiveOrganization`); it now also drops the cached user (`invalidateUser`), which would
+    still carry the old `activeOrganizationId`. A refused switch touches neither.
+  For each app shape:
+  - No `User.activeOrganizationId` on the API (the organization is chosen by the browser alone and
+    sent as the header): call `resolveActiveOrganization(organizations, null)`, so the stored choice
+    wins over the first; keep `rememberActiveOrganization` in the shell. Do not add the field to the
+    fragment.
+  - No `x-organization-id` header (the API uses the user's active organization only): skip the
+    storage calls; the shell resolves with the user's `activeOrganizationId`, which is then what
+    every request is answered for. The fragment change still matters.
+  - Several shells or layouts showing an organization: each uses `resolveActiveOrganization`; only
+    the outermost signed-in one needs `rememberActiveOrganization`.
+  - An app with a Redis user cache of its own: invalidate it on a switch, as the API part does.
+  - No signed-in layout: do the resolve-and-remember wherever the signed-in user and their
+    organizations are first known (a session helper, the root loader's consumer).
+  Verification: `pnpm exec nx test web --skip-nx-cache` (apps/web/tests/routes/active-organization.spec.tsx:
+  after a recovery, with nothing stored, with no server organization, and after a picker choice and
+  the reload, the organization shown and the next request's `x-organization-id` are the same and
+  are not the first); `pnpm exec nx test apollo --skip-nx-cache` ("the stored active
+  organization"); `pnpm exec nx test api-custom --skip-nx-cache` ("updates the auth cache").
+
+
+  4. One way to switch. New libs/web/src/lib/organization/switch-active-organization.ts exports
+  `useSwitchActiveOrganization()`: a function that runs `switchActiveOrganization` with
+  `errorPolicy: 'none'` (so a refusal throws, whatever the client's default), then stores the id now
+  active for the header, and resolves with it. The caller reloads. The organization picker
+  (apps/web/app/organization-required.tsx, which assumed a bare localStorage id) and `AuthProvider`
+  call it; `OrganizationSwitcher` (libs/web-ui) documents that its `onSwitchOrganization` should be
+  it, and reloads only after it resolves.
+  - An app with a header switcher or a switch mutation of its own: make that the shared function
+    (mutation with `errorPolicy: 'none'`, then store, then return) and route the picker through it,
+    rather than adding a second switch.
+  - An app with no switch mutation (the choice is the browser's): keep a store-and-reload function,
+    `(id) => { storeActiveOrganizationId(id); location.reload() }`, in one shared module, and have the
+    picker and every switcher call it.
+  Verification: `pnpm exec nx test web-components --skip-nx-cache` ("useSwitchActiveOrganization",
+  "switches through the one shared switch"); `pnpm exec nx test web --skip-nx-cache`
+  (organization-required, active-organization).
+
+
+  5. A way to silence the error link for a request whose caller decides. libs/shared/apollo exports
+  `SKIP_AUTH_ERROR_REPORT_CONTEXT` (`{ skipAuthErrorReport: true }`). A request that passes it as
+  `context` gets no action from the error link for a 401, an UNAUTHENTICATED, a 403 or
+  ORGANIZATION_CONTEXT_REQUIRED (no logout, no deferred 401, no access-forbidden or
+  organization-required event); it still logs, and a request that never reached the API is still
+  reported as a connectivity failure. `useSessionRecheck` passes it: the re-check judges its answer
+  itself (a 401 during an outage is retried there, a real one goes to /force-logout).
+  - An app whose error link only dispatches an event (an access-denied screen, say): this is the part
+    that matters. Without it the re-check's own 401 or 403 reached that event's handler and took the
+    screen before the re-check could decide. Check `operation.getContext().skipAuthErrorReport` in
+    that link and return before dispatching.
+  - An app with its own error link: honour the same context key, and export the constant from the
+    shared Apollo library rather than a local copy.
+  Verification: `pnpm exec nx test apollo --skip-nx-cache` ("SKIP_AUTH_ERROR_REPORT_CONTEXT");
+  `pnpm exec nx test web --skip-nx-cache` ("asks the error link to take no action on the re-check").
+
+
+  6. Cancellation through fetch-timeout wrappers. 2026-11-14-session-recovery-gaps part 6 covered
+  hand-written links but not a `fetch` wrapper that adds a timeout. A downstream project had a real
+  bug there: its `fetchWithTimeout` built its own `AbortController` and passed that signal to `fetch`
+  in place of the one Apollo passes in `init.signal`, so cancelling a request did not abort it; the
+  request ran on until the timeout, which was then reported as a connectivity failure and held
+  outage evidence (deferring real 401s meanwhile). The template's link chain has no such wrapper, so
+  there is no code change here. In an app that has one:
+  - Combine the caller's signal with the timeout, never replace it: abort your controller when
+    `init.signal` aborts (and at once if it already has), or use `AbortSignal.any([init.signal,
+    AbortSignal.timeout(ms)])` where available.
+  - Keep the abort connected until the body has been read, not only until `fetch` resolves: Apollo
+    reads the body after the headers arrive, and a cancel then must still abort it.
+  - A cancellation by the caller must surface as an `AbortError` (no outage); only the timeout
+    itself is a connectivity failure. Clear the timer and the listener when the request settles.
+  - Test it: cancel an in-flight request through the link chain and assert the fetch was aborted
+    and `isApiOutageSignalled()` is false afterwards.
+
+
+  7. Specs no longer assume an error link that logs out on an HTTP 401. Several apps sign out only on
+  UNAUTHENTICATED, never on an HTTP 401, so a template spec whose logout came from the link's HTTP-401
+  branch failed there. New apps/web/tests/helpers/api-rejection.ts has `UNAUTHENTICATED_RESULT` and
+  `unauthenticatedResponse()` (the API's own answer to a rejected session: HTTP 200, code
+  UNAUTHENTICATED, `originalError.statusCode` 401) and `httpError(status)` (a `ServerError` built
+  from a real `Response`). The recovery spec's logout now uses the API's answer, and the
+  authenticated-layout spec runs each logout case for both the API's answer and a real HTTP 401.
+  An app whose layout or boundary does not sign out on an HTTP 401 drops the `'an HTTP 401'` rows;
+  the UNAUTHENTICATED rows must pass unchanged.
+
+
+  8. Mutations that throw on a refusal. `makeClient` sets `defaultOptions.mutate.errorPolicy` to
+  `'all'`. Under it Apollo Client 4 resolves `mutate()` with `{ data, error }` for every error, a
+  GraphQL refusal, an HTTP error or no response alike (core/QueryManager.js `mutate()`); only
+  `'none'` rejects. A call site whose only error handling is `try { await mutate() } catch` therefore
+  never sees the error and runs its success path ("Saved", a redirect, a closed modal) on a refusal
+  or an outage. The default is unchanged (a fleet-wide behaviour change is the owner's call); the
+  template's own call sites that relied on a throw now pass `errorPolicy: 'none'` (53 hook and
+  `client.mutate` calls across the public auth pages, accept-invitation, pricing, the admin billing
+  and access-control pages, every settings page, and libs/web's upgrade and transfer-ownership
+  modals). Sites that read `result.error`, or use `onError`/`onCompleted`, are left as they are.
+  How to find them in an app:
+  - List every mutation call without an `errorPolicy` of its own:
+    `grep -rnE --include='*.ts' --include='*.tsx' --exclude='*.spec.*' --exclude-dir=generated
+    --exclude-dir=__admin --exclude-dir=node_modules 'useMutation|\.mutate\(' apps libs`, then drop
+    those whose call (often several lines) passes `errorPolicy`.
+  - For each, find where its executor is awaited. Fix it (`errorPolicy: 'none'` on the hook or the
+    call) if the result's `error` is not read and a `try/catch` or `.catch` is the error handling,
+    including a catch in a caller (a shared `run(fn)` helper). Leave it if it reads `result.error`,
+    has `onError`, or ignores failure on purpose (logout).
+  - Do not add `'none'` to code that reads `result.error`: under `'none'` it rejects instead and that
+    branch never runs. Packages with their own handling (@nestledjs/data-browser reads
+    `result.error`) need nothing.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (members.error-policy,
+  TransferOwnershipModal.error-policy: a refusal shows its error, not the success message).
+
+why: >
+  The 2026.11.7 fleet rollout found these: a recovery gap on fragment URLs (issue 113), a re-checked
+  user that never updated, a shell that showed the first organization while its requests went to
+  the stored one, a picker that assumed a bare localStorage id beside an existing switcher, an
+  event-only error link that put up access denied over the re-check, a timeout wrapper that turned a
+  cancelled request into outage evidence, template specs that assumed an HTTP-401 logout, and 35 to
+  175 mutation call sites per app whose try/catch never saw an error.
+
+affectedPaths:
+  - apps/web/app/deferred-auth-recovery.tsx
+  - apps/web/app/session-recheck.tsx
+  - apps/web/app/organization-required.tsx
+  - apps/web/app/routes/_authenticated/_layout.tsx
+  - apps/web/app/routes/logout.tsx
+  - apps/web/app/routes/settings/**
+  - apps/web/app/routes/_public/**
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/app/routes/pricing.tsx
+  - apps/web/app/routes/admin/billing/_index.tsx
+  - apps/web/app/routes/admin/access-control/_index.tsx
+  - apps/web/tests/**
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - libs/shared/sdk/src/graphql/auth/auth-fragments.graphql
+  - libs/shared/sdk/src/generated/graphql.ts
+  - libs/web/src/index.ts
+  - libs/web/src/lib/organization/**
+  - libs/web/src/lib/contexts/auth.context.tsx
+  - libs/web/src/lib/contexts/auth.context.spec.tsx
+  - libs/web/src/lib/components/upgrade-modal.tsx
+  - libs/web/src/lib/modals/transfer-ownership-modal.tsx
+  - libs/web-ui/src/lib/components/organization-switcher.tsx
+  - libs/api/custom/src/lib/default/organization/organization.service.ts
+  - libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm sdk
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web-components --skip-nx-cache
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Apply the parts separately; they share files but not logic. Parts 1, 2 and 5 build on
+    2026-11-14-session-recovery-gaps (`DeferredAuthRecovery`, `useSessionRecheck`); parts 3 and 4 on
+    2026-11-14-api-auth-error-codes (the picker). An app that marked either of those
+    not-applicable marks the matching parts not-applicable too, with the same reason.
+  - >
+    Part 3 before part 4: the shared switch stores through `storeActiveOrganizationId`, and the
+    shell's resolution is what makes a switch show. Read the app's API first: does it read
+    `x-organization-id`, and does `User` have `activeOrganizationId`? The part 3 bullets say what to
+    do for each answer; record which in the report.
+  - >
+    Part 3, tests: mocks of `@nestled-template/web` that list exports by hand (no `importOriginal`)
+    keep working, since the resolver lives in the shared Apollo library; a spec that mocks the shared
+    Apollo library by hand needs `resolveActiveOrganization`, `rememberActiveOrganization` and the
+    storage helpers added, or `importOriginal`.
+  - >
+    Part 2: a spec that counts root loader calls after a re-check sees one more (the revalidation).
+  - >
+    Part 8 is mechanical but wide. Fix the app's own sites with `errorPolicy: 'none'` per call, add
+    a test for at least one (the API answers the mutation with a GraphQL error; the page shows the
+    error, not the success state; build the test client with the app's `makeClient` defaults so it
+    behaves as in the app), and report the count. Do not change the client default.

@@ -30,7 +30,8 @@ export const OUTAGE_EVIDENCE_RECHECK_MS = 1000
  * in-flight retry still holding some is waited for: its end is announced by
  * `APOLLO_DEFERRED_AUTH_FAILURE_EVENT`), it revalidates the route with a navigation to the same
  * URL: every active loader runs again, the error boundary resets on the new location, and the
- * route renders again with fresh queries. A fresh answer is data (the route recovers, with no reload) or a 401
+ * route renders again with fresh queries. A URL with a `#fragment` is revalidated first, since a
+ * same-URL navigation there is a hash-only change that runs no loader. A fresh answer is data (the route recovers, with no reload) or a 401
  * with no outage, which the error link and this boundary log out as usual.
  *
  * Rendered outside a data router (tests that render the boundary bare), it reloads the page
@@ -63,11 +64,22 @@ export function DeferredAuthRecovery({
       // the same, and the new location is what resets the error boundary. React Router resets it
       // after a revalidation only if it rendered the revalidation's loading state, which a fast
       // answer can skip, leaving the error screen up over a route that would now render.
-      const { pathname, search, hash } = dataRouter.router.state.location
-      void dataRouter.router.navigate(
-        { pathname, search, hash },
-        { replace: true, preventScrollReset: true },
-      )
+      const { router } = dataRouter
+      const { pathname, search, hash, key } = router.state.location
+      const resetToSameUrl = () =>
+        router.navigate({ pathname, search, hash }, { replace: true, preventScrollReset: true })
+      if (hash) {
+        // With a fragment, React Router takes a navigation to the same URL for a hash-only change
+        // and runs no loader, so the failed query would never get a fresh answer. Run the loaders
+        // first; the navigation after it still resets the boundary, onto the fresh data. Only if
+        // the user is still there: a navigation away (or a loader's redirect) meanwhile wins.
+        void router.revalidate().then(() => {
+          const { location, navigation } = router.state
+          if (location.key === key && navigation.state === 'idle') void resetToSameUrl()
+        })
+      } else {
+        void resetToSameUrl()
+      }
     } else {
       reloadForRecovery()
     }

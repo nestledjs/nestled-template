@@ -28,8 +28,9 @@ export default function AdminBillingOverview() {
     variables: { input: { take: 5 } },
   })
 
-  const [syncProducts] = useMutation(AdminSyncStripeProducts)
-  const [syncPrices] = useMutation(AdminSyncStripePrices)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [syncProducts] = useMutation(AdminSyncStripeProducts, { errorPolicy: 'none' })
+  const [syncPrices] = useMutation(AdminSyncStripePrices, { errorPolicy: 'none' })
 
   const handleSync = async () => {
     setSyncing(true)

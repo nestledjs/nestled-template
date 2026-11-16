@@ -1,12 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react'
-import { useQuery, useMutation } from '@apollo/client/react'
+import { useQuery } from '@apollo/client/react'
+import {
+  rememberActiveOrganization,
+  resolveActiveOrganization,
+  storeActiveOrganizationId,
+} from '@nestled-template/shared/apollo'
 import {
   MyOrganizationsWithMembers,
-  SwitchActiveOrganization,
   type MyOrganizationsWithMembersQuery,
-  type SwitchActiveOrganizationMutation,
   type User,
 } from '@nestled-template/shared/sdk'
+import { useSwitchActiveOrganization } from '../organization/switch-active-organization'
 
 type OrganizationContextItem = MyOrganizationsWithMembersQuery['myOrganizations'][number]
 type OrganizationMemberContextItem = NonNullable<OrganizationContextItem['members']>[number]
@@ -89,12 +93,11 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     skip: !user?.id,
   })
 
-  const [switchOrgMutation] =
-    useMutation<SwitchActiveOrganizationMutation>(SwitchActiveOrganization)
+  const switchActiveOrganization = useSwitchActiveOrganization()
 
   const organizations = orgsData?.myOrganizations || []
   const activeOrganization = user
-    ? organizations.find(org => org.id === user.activeOrganizationId) || organizations[0] || null
+    ? resolveActiveOrganization(organizations, user.activeOrganizationId)
     : null
 
   // Find the current user's membership in the active organization
@@ -112,10 +115,8 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     setUser(null)
     setIsEmulating(false)
     setOriginalUser(null)
-    // Clear organization context from localStorage
-    if (globalThis.window !== undefined) {
-      localStorage.removeItem('activeOrganizationId')
-    }
+    // Forget the organization the requests were sent for
+    storeActiveOrganizationId(null)
     // The actual logout mutation should be called from the logout page
     // This just clears the local state
   }
@@ -124,18 +125,9 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     if (!user) return
 
     try {
-      const { data } = await switchOrgMutation({
-        variables: {
-          input: { organizationId },
-        },
-      })
-
-      if (data?.switchActiveOrganization) {
-        setUser({
-          ...user,
-          activeOrganizationId: data.switchActiveOrganization.activeOrganizationId,
-        })
-      }
+      // The shared switch: the API, then the stored id for the header. It throws on a refusal.
+      const activeOrganizationId = await switchActiveOrganization(organizationId)
+      setUser({ ...user, activeOrganizationId })
     } catch (error) {
       console.error('Failed to switch organization:', error)
       throw error
@@ -146,17 +138,10 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     await refetchOrgs()
   }
 
-  // Sync activeOrganizationId to localStorage for Apollo client X-Organization-ID header
+  // Requests are sent for the organization shown (`x-organization-id`), so the two never disagree
   useEffect(() => {
-    if (globalThis.window === undefined) return
-
-    const orgId = user?.activeOrganizationId || activeOrganization?.id
-    if (orgId) {
-      localStorage.setItem('activeOrganizationId', orgId)
-    } else {
-      localStorage.removeItem('activeOrganizationId')
-    }
-  }, [user, activeOrganization])
+    rememberActiveOrganization(activeOrganization?.id)
+  }, [activeOrganization])
 
   const value = useMemo<AuthContextType>(
     () => ({

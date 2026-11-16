@@ -3,27 +3,25 @@ import { act, render, screen } from '@testing-library/react'
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
-import {
-  ApolloClient,
-  ApolloLink,
-  gql,
-  InMemoryCache,
-  Observable,
-  ServerError,
-} from '@apollo/client'
+import { ApolloClient, ApolloLink, gql, InMemoryCache, Observable } from '@apollo/client'
 import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
 import { GlobalContextProvider } from '@nestled-template/web'
-import { clearApiOutage, signalApiOutage } from '@nestled-template/shared/apollo'
+import {
+  clearApiOutage,
+  signalApiOutage,
+  SKIP_AUTH_ERROR_REPORT_CONTEXT,
+} from '@nestled-template/shared/apollo'
 import { sessionRecheckOutcome } from '../../app/session-recheck'
 import { App } from '../../app/app'
 import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
 import { CONFIRM_DELAYS_MS, retryDelayMs } from '../../app/api-availability'
 import { SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
 import { NO_ORGANIZATIONS_TITLE } from '../../app/organization-required'
+import { httpError, UNAUTHENTICATED_RESULT } from '../helpers/api-rejection'
 
-// The layout's chrome is not under test; only what it does with no user is.
+// The layout's chrome is not under test, beyond the user's name it shows.
 vi.mock('@nestled-template/web-ui', () => ({
-  WebUiHeader: () => null,
+  WebUiHeader: ({ userName }: { userName?: string }) => <p>Header user: {userName}</p>,
   WebUiFooter: () => null,
 }))
 vi.mock('@nestled-template/web', async importOriginal => ({
@@ -37,6 +35,7 @@ const ME = gql`
   query Me {
     me {
       id
+      firstName
     }
   }
 `
@@ -50,9 +49,22 @@ type Respond = () => Observable<ApolloLink.Result>
 const fails = (error: Error) => () => new Observable<ApolloLink.Result>(o => o.error(error))
 const signedIn = () =>
   new Observable<ApolloLink.Result>(o => {
-    o.next({ data: { me: { __typename: 'User', id: 'user-1' } } })
+    o.next({ data: { me: { __typename: 'User', id: 'user-1', firstName: 'Ada' } } })
     o.complete()
   })
+// A rejected session, both ways it can arrive: the API's own answer (HTTP 200, UNAUTHENTICATED),
+// which every app signs out on, and a real HTTP 401 response.
+const rejections: Array<[string, Respond]> = [
+  [
+    'the API’s UNAUTHENTICATED answer',
+    () =>
+      new Observable<ApolloLink.Result>(o => {
+        o.next(UNAUTHENTICATED_RESULT as never)
+        o.complete()
+      }),
+  ],
+  ['an HTTP 401', () => new Observable<ApolloLink.Result>(o => o.error(httpError(401)))],
+]
 const noOrganizations = () =>
   new Observable<ApolloLink.Result>(o => {
     o.next({ data: { myOrganizations: [] } })
@@ -67,8 +79,9 @@ async function renderMembersPage(
     rootFlagsOutage = false,
   }: {
     // False: the root loader returns no Me query, as after a Me preload on a public route that
-    // failed for a reason other than the API (the cookie is kept), or with no preload at all.
-    rootPreloadsMe?: boolean
+    // failed for a reason other than the API (the cookie is kept), or with no preload at all. A
+    // function decides per call (1 for the first).
+    rootPreloadsMe?: boolean | ((call: number) => boolean)
     initialPath?: string
     // The root loader returns its outage flag (`serviceUnavailable`) and the root renders the
     // routes anyway, as in an app whose root does not put up the outage screen for it.
@@ -76,10 +89,12 @@ async function renderMembersPage(
   } = {},
 ) {
   let meRequests = 0
+  const meContexts: Array<Record<string, unknown>> = []
   const link = new ApolloLink(operation => {
     if (operation.operationName !== 'Me') return noOrganizations()
     const respond = meResponses[Math.min(meRequests, meResponses.length - 1)]
     meRequests += 1
+    meContexts.push(operation.getContext())
     return respond()
   })
   const client = new ApolloClient({ link, cache: new InMemoryCache() })
@@ -93,7 +108,9 @@ async function renderMembersPage(
         loader: async () => {
           rootLoaderCalls += 1
           if (rootFlagsOutage) return { serviceUnavailable: true }
-          if (!rootPreloadsMe) return {}
+          const preloads =
+            typeof rootPreloadsMe === 'function' ? rootPreloadsMe(rootLoaderCalls) : rootPreloadsMe
+          if (!preloads) return {}
           const meQueryRef = preload(ME)
           await preload.toPromise(meQueryRef).catch(() => undefined)
           return { meQueryRef }
@@ -132,7 +149,13 @@ async function renderMembersPage(
       </ApolloProvider>,
     )
   })
-  return { router, rootLoaderCalls: () => rootLoaderCalls, meRequests: () => meRequests }
+  return {
+    client,
+    router,
+    rootLoaderCalls: () => rootLoaderCalls,
+    meRequests: () => meRequests,
+    meContexts,
+  }
 }
 
 async function advance(ms: number) {
@@ -173,13 +196,9 @@ describe('authenticated layout when the Me query fails', () => {
     expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
   })
 
-  it('still sends a 401 through /force-logout', async () => {
+  it.each(rejections)('still sends %s through /force-logout', async (_label, rejected) => {
     fetchMock.mockResolvedValue(new Response('12.3', { status: 200 }))
-    const unauthorized = new ServerError('Response not successful', {
-      response: new Response(null, { status: 401 }),
-      bodyText: '',
-    })
-    const app = await renderMembersPage([fails(unauthorized)])
+    const app = await renderMembersPage([rejected])
     await advance(CONFIRM_WINDOW_MS + retryDelayMs(3))
 
     expect(app.router.state.location.pathname).toBe('/force-logout')
@@ -191,16 +210,8 @@ describe('authenticated layout when the Me query fails', () => {
 })
 
 describe('authenticated layout with no user', () => {
-  const unauthorized = () =>
-    new ServerError('Response not successful', {
-      response: new Response(null, { status: 401 }),
-      bodyText: '',
-    })
-  const serverError = () =>
-    new ServerError('Response not successful', {
-      response: new Response(null, { status: 500 }),
-      bodyText: '',
-    })
+  const unauthorized = () => httpError(401)
+  const serverError = () => httpError(500)
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -224,6 +235,47 @@ describe('authenticated layout with no user', () => {
     expect(screen.getByText('Members page')).toBeInTheDocument()
     expect(screen.queryByText('Force logout page')).not.toBeInTheDocument()
     expect(app.router.state.location.pathname).toBe('/members')
+  })
+
+  it('after recovering, takes the user from a live Me query, so later changes show', async () => {
+    // The root loader brought no Me the first time; once revalidated, it does.
+    const app = await renderMembersPage([signedIn], { rootPreloadsMe: call => call > 1 })
+    await advance(0)
+
+    expect(screen.getByText('Header user: Ada')).toBeInTheDocument()
+    expect(app.rootLoaderCalls()).toBe(2)
+
+    // A profile edit updates the cached user; the re-check's own answer was a snapshot.
+    await act(async () => {
+      app.client.cache.writeQuery({
+        query: ME,
+        data: { me: { __typename: 'User', id: 'user-1', firstName: 'Grace' } },
+      })
+    })
+    await advance(0)
+
+    expect(screen.getByText('Header user: Grace')).toBeInTheDocument()
+    expect(app.router.state.location.pathname).toBe('/members')
+  })
+
+  it('asks the error link to take no action on the re-check, which decides by itself', async () => {
+    // An error link that only dispatches an event (an access-denied screen, say) would otherwise
+    // act on the re-check's 401 or 403 before the re-check had judged it.
+    const app = await renderMembersPage([rejections[0][1]], { rootPreloadsMe: false })
+    await advance(0)
+
+    expect(app.meContexts).toHaveLength(1)
+    expect(app.meContexts[0]).toMatchObject(SKIP_AUTH_ERROR_REPORT_CONTEXT)
+    expect(app.router.state.location.pathname).toBe('/force-logout')
+  })
+
+  it('revalidates the root loader once per recovery, not in a loop', async () => {
+    const app = await renderMembersPage([signedIn], { rootPreloadsMe: false })
+    await advance(retryDelayMs(0) + retryDelayMs(1))
+
+    expect(app.rootLoaderCalls()).toBe(2)
+    expect(app.meRequests()).toBe(1)
+    expect(screen.getByText('Members page')).toBeInTheDocument()
   })
 
   it('shows the organization picker, with no logout and no retry loop, when Me again gets ORGANIZATION_CONTEXT_REQUIRED', async () => {
@@ -256,8 +308,8 @@ describe('authenticated layout with no user', () => {
     expect(app.router.state.location.pathname).toBe('/members')
   })
 
-  it('logs out when Me again gets a real 401 with no outage', async () => {
-    const app = await renderMembersPage([fails(unauthorized())], { rootPreloadsMe: false })
+  it.each(rejections)('logs out when Me again gets %s with no outage', async (_label, rejected) => {
+    const app = await renderMembersPage([rejected], { rootPreloadsMe: false })
     await advance(0)
 
     expect(app.meRequests()).toBe(1)
@@ -345,14 +397,15 @@ describe('authenticated layout with no user', () => {
     it('runs Me again on the private route and keeps the user signed in', async () => {
       const app = await navigateToMembers([signedIn])
 
-      expect(app.rootLoaderCalls()).toBe(1)
+      // The re-check, then one revalidation of the root loader for a live Me (here it brings none).
+      expect(app.rootLoaderCalls()).toBe(2)
       expect(app.meRequests()).toBe(1)
       expect(screen.getByText('Members page')).toBeInTheDocument()
       expect(app.router.state.location.pathname).toBe('/members')
     })
 
-    it('logs out only when that Me gets a real 401', async () => {
-      const app = await navigateToMembers([fails(unauthorized())])
+    it.each(rejections)('logs out only when that Me gets %s', async (_label, rejected) => {
+      const app = await navigateToMembers([rejected])
 
       expect(app.meRequests()).toBe(1)
       expect(app.router.state.location.pathname).toBe('/force-logout')

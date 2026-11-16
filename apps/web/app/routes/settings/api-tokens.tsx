@@ -36,12 +36,14 @@ export default function ApiTokensSettings() {
   const [newToken, setNewToken] = useState<{ token: string; name: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
   const [generateApiToken, { loading: generating }] = useMutation<
     GenerateApiTokenMutation,
     GenerateApiTokenMutationVariables
-  >(GenerateApiToken)
+  >(GenerateApiToken, { errorPolicy: 'none' })
   const [revokeApiToken] = useMutation<RevokeApiTokenMutation, RevokeApiTokenMutationVariables>(
     RevokeApiToken,
+    { errorPolicy: 'none' },
   )
 
   const personalTokens = tokens.filter(token => !token.organizationId)

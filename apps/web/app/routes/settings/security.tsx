@@ -75,12 +75,20 @@ export default function SecuritySettings() {
   const [disablePassword, setDisablePassword] = useState('')
   const [backupCodes, setBackupCodes] = useState<string[]>([])
 
-  const [changePassword] = useMutation<ChangePasswordMutation>(ChangePassword)
-  const [invalidateSession] = useMutation<InvalidateSessionMutation>(InvalidateSession)
-  const [invalidateAllSessions] = useMutation<InvalidateAllSessionsMutation>(InvalidateAllSessions)
-  const [setup2FA] = useMutation<Setup2FaMutation>(Setup2Fa)
-  const [enable2FA] = useMutation<Enable2FaMutation>(Enable2Fa)
-  const [disable2FA] = useMutation<Disable2FaMutation>(Disable2Fa)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [changePassword] = useMutation<ChangePasswordMutation>(ChangePassword, {
+    errorPolicy: 'none',
+  })
+  const [invalidateSession] = useMutation<InvalidateSessionMutation>(InvalidateSession, {
+    errorPolicy: 'none',
+  })
+  const [invalidateAllSessions] = useMutation<InvalidateAllSessionsMutation>(
+    InvalidateAllSessions,
+    { errorPolicy: 'none' },
+  )
+  const [setup2FA] = useMutation<Setup2FaMutation>(Setup2Fa, { errorPolicy: 'none' })
+  const [enable2FA] = useMutation<Enable2FaMutation>(Enable2Fa, { errorPolicy: 'none' })
+  const [disable2FA] = useMutation<Disable2FaMutation>(Disable2Fa, { errorPolicy: 'none' })
 
   const showSuccess = (message: string) => {
     setFormSuccess(message)

@@ -700,6 +700,46 @@ describe('OrganizationService', () => {
         ForbiddenException,
       )
     })
+    it('updates the auth cache: the new active organization, and no stale cached user', async () => {
+      const authCache = {
+        isEnabled: jest.fn().mockReturnValue(true),
+        setUserActiveOrganization: jest.fn().mockResolvedValue(undefined),
+        invalidateUser: jest.fn().mockResolvedValue(undefined),
+      }
+      const cached = new OrganizationService(
+        data as never,
+        {} as never,
+        {} as never,
+        authCache as never,
+      )
+      data.organizationMember.findFirst.mockResolvedValue({ id: 'member-123' } as any)
+      data.user.update.mockResolvedValue({ id: 'user-123', activeOrganizationId: 'org-456' } as any)
+
+      await cached.switchActiveOrganization('user-123', { organizationId: 'org-456' })
+
+      expect(authCache.setUserActiveOrganization).toHaveBeenCalledWith('user-123', 'org-456')
+      expect(authCache.invalidateUser).toHaveBeenCalledWith('user-123')
+    })
+    it('leaves the auth cache alone when the switch is refused', async () => {
+      const authCache = {
+        isEnabled: jest.fn().mockReturnValue(true),
+        setUserActiveOrganization: jest.fn(),
+        invalidateUser: jest.fn(),
+      }
+      const cached = new OrganizationService(
+        data as never,
+        {} as never,
+        {} as never,
+        authCache as never,
+      )
+      data.organizationMember.findFirst.mockResolvedValue(null)
+
+      await expect(
+        cached.switchActiveOrganization('user-123', { organizationId: 'org-456' }),
+      ).rejects.toThrow(ForbiddenException)
+      expect(authCache.setUserActiveOrganization).not.toHaveBeenCalled()
+      expect(authCache.invalidateUser).not.toHaveBeenCalled()
+    })
   })
   describe('getUserOrganizations', () => {
     it('should return all organizations for user', async () => {

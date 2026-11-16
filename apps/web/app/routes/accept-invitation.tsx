@@ -109,10 +109,12 @@ export default function AcceptInvitation() {
     skip: !token,
   })
 
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
   const [acceptInvitation] = useMutation<AcceptOrganizationInvitationMutation>(
     AcceptOrganizationInvitation,
+    { errorPolicy: 'none' },
   )
-  const [login] = useMutation<LoginMutation>(Login)
+  const [login] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
   const [registerWithInvitation] =
     useMutation<RegisterWithInvitationMutation>(RegisterWithInvitation)
 

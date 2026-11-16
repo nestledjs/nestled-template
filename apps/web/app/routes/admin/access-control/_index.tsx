@@ -59,8 +59,11 @@ export default function PlatformAccessControlPage() {
           'The platform user search returned no result.',
         )
       },
+      // Each mutation throws on a GraphQL error, so the console shows the API's reason rather than
+      // a generic "not created" (the client default is 'all').
       async createRole(input) {
         const { data } = await client.mutate({
+          errorPolicy: 'none',
           mutation: CreatePlatformAccessRole,
           variables: { input },
         })
@@ -71,6 +74,7 @@ export default function PlatformAccessControlPage() {
       },
       async updateRole(input) {
         const { data } = await client.mutate({
+          errorPolicy: 'none',
           mutation: UpdatePlatformAccessRole,
           variables: { input },
         })
@@ -81,6 +85,7 @@ export default function PlatformAccessControlPage() {
       },
       async deleteRole(roleId) {
         const { data } = await client.mutate({
+          errorPolicy: 'none',
           mutation: DeletePlatformAccessRole,
           variables: { roleId },
         })
@@ -88,6 +93,7 @@ export default function PlatformAccessControlPage() {
       },
       async assignRole(roleId, userId) {
         const { data } = await client.mutate({
+          errorPolicy: 'none',
           mutation: AssignPlatformAccessRole,
           variables: { input: { roleId, userId } },
         })
@@ -98,6 +104,7 @@ export default function PlatformAccessControlPage() {
       },
       async revokeRole(roleId, userId) {
         const { data } = await client.mutate({
+          errorPolicy: 'none',
           mutation: RevokePlatformAccessRole,
           variables: { input: { roleId, userId } },
         })

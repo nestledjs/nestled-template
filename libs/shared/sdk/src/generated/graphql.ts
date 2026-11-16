@@ -9252,6 +9252,7 @@ export type UserTokenDetailsFragment = {
     updatedAt: any
     isEmulating?: boolean | null
     originalAdminId?: string | null
+    activeOrganizationId?: string | null
     emails?: Array<{
       __typename?: 'Email'
       id: string
@@ -9302,6 +9303,7 @@ export type AuthUserDetailsFragment = {
   updatedAt: any
   isEmulating?: boolean | null
   originalAdminId?: string | null
+  activeOrganizationId?: string | null
   emails?: Array<{
     __typename?: 'Email'
     id: string
@@ -9362,6 +9364,7 @@ export type LoginMutation = {
       updatedAt: any
       isEmulating?: boolean | null
       originalAdminId?: string | null
+      activeOrganizationId?: string | null
       emails?: Array<{
         __typename?: 'Email'
         id: string
@@ -9424,6 +9427,7 @@ export type RegisterMutation = {
       updatedAt: any
       isEmulating?: boolean | null
       originalAdminId?: string | null
+      activeOrganizationId?: string | null
       emails?: Array<{
         __typename?: 'Email'
         id: string
@@ -9486,6 +9490,7 @@ export type RegisterWithInvitationMutation = {
       updatedAt: any
       isEmulating?: boolean | null
       originalAdminId?: string | null
+      activeOrganizationId?: string | null
       emails?: Array<{
         __typename?: 'Email'
         id: string
@@ -9553,6 +9558,7 @@ export type ResetPasswordMutation = {
     updatedAt: any
     isEmulating?: boolean | null
     originalAdminId?: string | null
+    activeOrganizationId?: string | null
     emails?: Array<{
       __typename?: 'Email'
       id: string
@@ -9609,6 +9615,7 @@ export type VerifyEmailMutation = {
     updatedAt: any
     isEmulating?: boolean | null
     originalAdminId?: string | null
+    activeOrganizationId?: string | null
     emails?: Array<{
       __typename?: 'Email'
       id: string
@@ -9687,6 +9694,7 @@ export type EmulateUserMutation = {
       updatedAt: any
       isEmulating?: boolean | null
       originalAdminId?: string | null
+      activeOrganizationId?: string | null
       emails?: Array<{
         __typename?: 'Email'
         id: string
@@ -9747,6 +9755,7 @@ export type EndEmulationMutation = {
       updatedAt: any
       isEmulating?: boolean | null
       originalAdminId?: string | null
+      activeOrganizationId?: string | null
       emails?: Array<{
         __typename?: 'Email'
         id: string
@@ -9810,6 +9819,7 @@ export type VerifyEmailChangeMutation = {
     updatedAt: any
     isEmulating?: boolean | null
     originalAdminId?: string | null
+    activeOrganizationId?: string | null
     emails?: Array<{
       __typename?: 'Email'
       id: string
@@ -9895,6 +9905,7 @@ export type MeQuery = {
     updatedAt: any
     isEmulating?: boolean | null
     originalAdminId?: string | null
+    activeOrganizationId?: string | null
     emails?: Array<{
       __typename?: 'Email'
       id: string
@@ -10026,6 +10037,7 @@ export type Complete2FaLoginMutation = {
       updatedAt: any
       isEmulating?: boolean | null
       originalAdminId?: string | null
+      activeOrganizationId?: string | null
       emails?: Array<{
         __typename?: 'Email'
         id: string
@@ -13409,6 +13421,7 @@ export const AuthUserDetailsFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -13516,6 +13529,7 @@ export const UserTokenDetailsFragmentDoc = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -27116,6 +27130,7 @@ export const Login = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -27260,6 +27275,7 @@ export const Register = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -27407,6 +27423,7 @@ export const RegisterWithInvitation = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -27581,6 +27598,7 @@ export const ResetPassword = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -27702,6 +27720,7 @@ export const VerifyEmail = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -27912,6 +27931,7 @@ export const EmulateUser = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -28039,6 +28059,7 @@ export const EndEmulation = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -28196,6 +28217,7 @@ export const VerifyEmailChange = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -28458,6 +28480,7 @@ export const Me = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },
@@ -28827,6 +28850,7 @@ export const Complete2FaLogin = {
           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
+          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
           {
             kind: 'Field',
             name: { kind: 'Name', value: 'emails' },

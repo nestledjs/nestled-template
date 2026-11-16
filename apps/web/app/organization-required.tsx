@@ -1,14 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { CombinedGraphQLErrors } from '@apollo/client'
-import { useMutation, useQuery } from '@apollo/client/react'
+import { useQuery } from '@apollo/client/react'
 import { ORGANIZATION_CONTEXT_REQUIRED_CODE } from '@nestled-template/shared/apollo'
-import {
-  MyOrganizations,
-  SwitchActiveOrganization,
-  type MyOrganizationsQuery,
-  type SwitchActiveOrganizationMutation,
-  type SwitchActiveOrganizationMutationVariables,
-} from '@nestled-template/shared/sdk'
+import { MyOrganizations, type MyOrganizationsQuery } from '@nestled-template/shared/sdk'
+import { useSwitchActiveOrganization } from '@nestled-template/web'
 import { isRouteErrorResponse, Link } from 'react-router'
 
 type ErrorWithGraphQLErrors = {
@@ -53,20 +48,6 @@ export function isOrganizationContextRequired(error: unknown): boolean {
   return !!errors?.some?.(e => e?.extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE)
 }
 
-/**
- * Makes `organizationId` the active organization for this browser and reloads, so every query runs
- * again under it. The Apollo client sends the stored id as `X-Organization-ID`, which the API reads
- * before the user's active organization, so a stale stored id would keep the old refusal.
- */
-function activateAndReload(organizationId: string): void {
-  try {
-    localStorage.setItem('activeOrganizationId', organizationId)
-  } catch {
-    // Storage blocked: the user's active organization, just switched on the API, still applies.
-  }
-  globalThis.location.reload()
-}
-
 function Panel({
   eyebrow,
   title,
@@ -91,22 +72,17 @@ const buttonClass =
 /**
  * Shown when a page needs an organization and the account has none active, or is no longer a member
  * of the one it had. The session is kept throughout. It lists the user's organizations; choosing one
- * makes it active (`switchActiveOrganization`) and reloads. With none, it says so and offers a
- * normal sign-out.
+ * makes it active through the app's one switch (`useSwitchActiveOrganization`: the API, then the
+ * stored id the client sends as `X-Organization-ID`) and reloads, so every query runs again under
+ * it. With none, it says so and offers a normal sign-out.
  */
 export function OrganizationRequired() {
   const organizations = useQuery<MyOrganizationsQuery>(MyOrganizations, {
     fetchPolicy: 'network-only',
   })
-  const [switchOrganization] = useMutation<
-    SwitchActiveOrganizationMutation,
-    SwitchActiveOrganizationMutationVariables
-  >(SwitchActiveOrganization, {
-    // The app client's default is `errorPolicy: 'all'`, under which the API refusing the switch (a
-    // GraphQL error) resolves instead of throwing. This must throw, so the catch below shows the
-    // failure and the refused id is never stored or reloaded into.
-    errorPolicy: 'none',
-  })
+  // Throws when the API refuses the switch, with nothing stored, so the catch below shows the
+  // failure and the refused id is never reloaded into.
+  const switchOrganization = useSwitchActiveOrganization()
   const [switchingTo, setSwitchingTo] = useState<string | null>(null)
   const [switchFailed, setSwitchFailed] = useState(false)
 
@@ -114,13 +90,13 @@ export function OrganizationRequired() {
     setSwitchFailed(false)
     setSwitchingTo(organizationId)
     try {
-      await switchOrganization({ variables: { input: { organizationId } } })
+      await switchOrganization(organizationId)
     } catch {
       setSwitchingTo(null)
       setSwitchFailed(true)
       return
     }
-    activateAndReload(organizationId)
+    globalThis.location.reload()
   }
 
   if (organizations.loading && !organizations.data) {
