@@ -22,6 +22,15 @@ export interface ActiveOrganizationOptions {
    */
   afterSwitch?: () => unknown
   /**
+   * Called once a stored organization was restored for the session still current, with the id now
+   * active and the `sessionKey` it was restored for, as content is let through. A caller whose
+   * user lives in its own state (`AuthProvider`, a re-checked snapshot of Me) sets that user's
+   * `activeOrganizationId` to it there, for that user only, so `user.activeOrganizationId` and
+   * `activeOrganization.id` agree: a cache write and a refetch cannot reach such a user. Never
+   * called for a refused, failed or superseded restore.
+   */
+  onRestored?: (organizationId: string, sessionKey: string) => void
+  /**
    * Makes the stored organization active and resolves with the id now active; it must reject on a
    * refusal. Defaults to the shared switch (`useSwitchActiveOrganization`). An app whose API has no
    * switch mutation passes one that only stores the id, without reloading. It is handed
@@ -96,8 +105,10 @@ export function useActiveOrganization<T extends { id: string }>(
   if (enabled && !reconciling) rememberActiveOrganization(activeOrganization?.id)
 
   const afterSwitchRef = useRef(options.afterSwitch)
+  const onRestoredRef = useRef(options.onRestored)
   useLayoutEffect(() => {
     afterSwitchRef.current = options.afterSwitch
+    onRestoredRef.current = options.onRestored
   })
   // The session a restore was started for, and the session now; a restore whose session is gone by
   // the time it finishes is dropped.
@@ -161,10 +172,39 @@ export function useActiveOrganization<T extends { id: string }>(
         }
       }
       if (!stillCurrent()) return
+      if (restored && sessionKey !== null) onRestoredRef.current?.(restored, sessionKey)
       setChosen(restored)
       setSwitching(false)
     })()
   }, [pending, organizations, sessionKey, switchActiveOrganization])
 
   return { activeOrganization, reconciling }
+}
+
+/** An organization restored for a user (`onRestored`), kept by a caller whose user is a snapshot. */
+export interface RestoredOrganization {
+  userId: string
+  organizationId: string
+}
+
+/**
+ * `user` with `restored` applied as its `activeOrganizationId`, for a user `useActiveOrganization`
+ * cannot update itself (a no-cache snapshot of Me), so `user.activeOrganizationId` and the shown
+ * organization agree after a restore. Applied only for the user it was restored for, while that
+ * user's own active organization is missing or not one of `organizations` (one the server knows
+ * wins), and while the restored one still is (a later list without it falls back as
+ * `resolveActiveOrganization` does, and so does the user). Otherwise `user` unchanged.
+ */
+export function withRestoredOrganization<
+  U extends { id: string; activeOrganizationId?: string | null },
+>(
+  user: U | null,
+  organizations: readonly { id: string }[],
+  restored: RestoredOrganization | null,
+): U | null {
+  if (!user || restored?.userId !== user.id) return user
+  const isMember = (id: string | null | undefined) =>
+    organizations.some(organization => organization.id === id)
+  if (isMember(user.activeOrganizationId) || !isMember(restored.organizationId)) return user
+  return { ...user, activeOrganizationId: restored.organizationId }
 }

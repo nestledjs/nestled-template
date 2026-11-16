@@ -40,8 +40,9 @@ intent: >
   after hydration through the shared switch, instead of rendering the stored one straight away
   (part 10; this replaces part 3's "else the stored one" step); (h) a switch whose answer arrives
   after a logout, a change of user or the unmount of the component that started it is dropped:
-  nothing is stored, cached or refreshed, and it rejects with `OrganizationSwitchSupersededError`
-  (part 11). Nothing logs out more often than before.
+  nothing is stored, cached or refreshed, and it rejects with `OrganizationSwitchSupersededError`;
+  a restore that succeeds sets the restored organization on the exposed user too, so
+  `user.activeOrganizationId` and `activeOrganization.id` agree (part 11). Nothing logs out more often than before.
 
 
   1. Deferred-auth recovery on a URL with a fragment (issue 113 on nestled-dev-template).
@@ -346,6 +347,19 @@ intent: >
   - `AuthProvider.switchOrganization` passes `isCurrent` (the signed-in user is still the one it
     started for), updates the user from the current state and only for that user, and rethrows a
     superseded error without logging it, so a switcher that reloads after it does not reload.
+  - A successful restore now reaches the user too. `AuthProvider`'s `user` is its own React state
+    and the layout's re-checked user is a no-cache snapshot of Me; neither follows the switch's
+    cache write or a refetch, so after a restore `user.activeOrganizationId` stayed null (or stale)
+    while `activeOrganization.id`, the API and storage had moved on. `useActiveOrganization` takes
+    `onRestored(organizationId, sessionKey)`, called only for a restore whose session is still
+    current, as content is let through (never for a refused, failed or superseded one).
+    `AuthProvider` sets the restored id on its user there, for that user only (the same guard as
+    the explicit switch). apps/web/app/routes/_authenticated/_layout.tsx keeps the restored id per
+    user and applies it with the new `withRestoredOrganization(user, organizations, restored)`
+    (libs/web) to the user it hands its pages: only for that user, only while their own
+    `activeOrganizationId` is missing or not one of their organizations (a live Me, which the cache
+    write already updated, always wins), and only while the restored organization is still in the
+    list (otherwise the user falls back as the shown organization does).
   - The picker (apps/web/app/organization-required.tsx) neither reloads nor shows its failure
     message for a superseded switch. `OrganizationSwitcher` already reloads only when the switch
     resolves; its doc now says the switch must reject for a dropped answer too.
@@ -363,12 +377,18 @@ intent: >
     `AuthProvider` does.
   - A caller that treats any rejection as a failure to show: check `isOrganizationSwitchSuperseded`
     and stay quiet for it.
+  - Any user that does not come from a live Apollo query (a provider's own state, a jotai store, a
+    snapshot from a no-cache re-check, a user resolved once in the root loader): pass `onRestored`
+    and set the restored id on it, guarded by the user id. A user read from a live Me query needs
+    nothing (the cache write updates it); check that the Me document selects `id` and
+    `activeOrganizationId` so it is normalized onto the same `User` entry.
   Verification: `pnpm exec nx test web-components --skip-nx-cache`
   (libs/web/src/lib/organization/active-organization.spec.tsx "a switch answered after its session
   ended": logout, user change and unmount while the restore is pending, and
-  `AuthProvider.switchOrganization` answered after logout); `pnpm exec nx test web --skip-nx-cache`
+  `AuthProvider.switchOrganization` answered after logout, and a current restore after which
+  `user.activeOrganizationId` equals `activeOrganization.id`); `pnpm exec nx test web --skip-nx-cache`
   (organization-required "stores nothing and does not reload when the switch is answered after a
-  logout"); `pnpm exec nx test apollo --skip-nx-cache` ("ends the organization session when
+  logout"; active-organization "the re-checked user follows the restore"); `pnpm exec nx test apollo --skip-nx-cache` ("ends the organization session when
   forgotten").
 
 why: >
@@ -471,4 +491,5 @@ agentHints:
     the shared Apollo library by hand need `activeOrganizationSession`. To check the fix, hold the
     switch's answer, log out (or change user, or unmount), release it, and assert storage, the
     Apollo cache and the next request's `x-organization-id`; before the fix storage holds the old
-    organization.
+    organization. After a current restore, also assert that the user the app exposes has
+    `activeOrganizationId` equal to the shown organization's id; before the fix it is null.

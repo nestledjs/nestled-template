@@ -186,6 +186,7 @@ describe('AuthProvider', () => {
     // First render: what a server render shows too (the first), still loading.
     expect(result.current.activeOrganization?.id).toBe('org-1')
     await waitFor(() => expect(result.current.activeOrganization?.id).toBe('org-2'))
+    expect(result.current.user?.activeOrganizationId).toBe('org-2')
     expect(result.current.isLoading).toBe(false)
     expect(switchOrg).toHaveBeenCalledWith({ variables: { input: { organizationId: 'org-2' } } })
     expect(refetchQueries).toHaveBeenCalledWith({ include: 'active' })

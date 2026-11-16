@@ -8,6 +8,7 @@ import { gql } from '@apollo/client'
 import { ApolloProvider, createQueryPreloader, useQuery } from '@apollo/client/react'
 import { makeClient } from '@nestled-template/shared/apollo'
 import { Me } from '@nestled-template/shared/sdk'
+import { useGlobalCtx } from '@nestled-template/web'
 import { App } from '../../app/app'
 import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
 import { OrganizationRequired } from '../../app/organization-required'
@@ -121,7 +122,17 @@ function fakeApi(initialActiveOrganizationId: string | null) {
 
 function OrganizationPage() {
   const { data } = useQuery<{ organizationData: string }>(ORGANIZATION_DATA)
-  return <p>Page: {data?.organizationData ?? 'loading'}</p>
+  const { user, activeOrganization } = useGlobalCtx()
+  return (
+    <>
+      <p>Page: {data?.organizationData ?? 'loading'}</p>
+      {/* The two organization ids the shell hands its pages, which must agree. */}
+      <p>
+        User active organization: {user?.activeOrganizationId ?? 'none'}; shown:{' '}
+        {activeOrganization?.id ?? 'none'}
+      </p>
+    </>
+  )
 }
 
 /**
@@ -281,6 +292,8 @@ describe('the active organization across a server render and hydration', () => {
     expect(api.activeOrganizationId).toBe('org-2')
     expect(pageRequestOrganization(api)).toBe('org-2')
     expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
+    // The user the shell hands its pages follows the restore: Me's own active organization.
+    expect(screen.getByText('User active organization: org-2; shown: org-2')).toBeInTheDocument()
   })
 
   it('keeps the server’s choice, and stores it, when the switch to the stored one is refused', async () => {
@@ -359,6 +372,23 @@ describe('the active organization: what the shell shows and what the requests ar
 
     expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
     expect(pageRequestOrganization(api)).toBe('org-2')
+    expect(screen.getByText('User active organization: org-2; shown: org-2')).toBeInTheDocument()
+  })
+
+  it('after a recovery with no server organization, the re-checked user follows the restore', async () => {
+    // The re-checked user is a snapshot (no-cache); the restore still has to reach it.
+    localStorage.setItem('activeOrganizationId', 'org-2')
+    const api = fakeApi(null)
+
+    await renderShell({ rootPreloadsMe: false })
+
+    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
+    expect(pageRequestOrganization(api)).toBe('org-2')
+    // Not a matter of time: the root loader here never brings a Me, so the snapshot stays.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    expect(screen.getByText('User active organization: org-2; shown: org-2')).toBeInTheDocument()
   })
 
   it('after a picker choice and the reload, shows and sends the chosen organization', async () => {
