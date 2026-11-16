@@ -536,6 +536,29 @@ describe('refetchFailedQueries', () => {
     expect(healthy.refetch).not.toHaveBeenCalled()
   })
 
+  it('refetches a query the API answered with a GraphQL 503, not a plain INTERNAL_SERVER_ERROR', () => {
+    const graphQL503 = query(
+      new CombinedGraphQLErrors({
+        errors: [
+          {
+            message: 'API token validation is temporarily unavailable',
+            extensions: { code: 'INTERNAL_SERVER_ERROR', status: 503 },
+          },
+        ],
+      }),
+    )
+    const graphQL500 = query(
+      new CombinedGraphQLErrors({
+        errors: [{ message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } }],
+      }),
+    )
+    const client = { getObservableQueries: () => new Set([graphQL503, graphQL500]) }
+
+    expect(refetchFailedQueries(client as never)).toBe(1)
+    expect(graphQL503.refetch).toHaveBeenCalledTimes(1)
+    expect(graphQL500.refetch).not.toHaveBeenCalled()
+  })
+
   it('refetches 401s only when told an outage let them pass', () => {
     const unauthorized = query(
       new ServerError('Response not successful', {

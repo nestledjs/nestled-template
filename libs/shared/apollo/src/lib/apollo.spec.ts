@@ -19,12 +19,14 @@ import {
   createOutageRetryLink,
   getStoredActiveOrganizationId,
   isApiOutageSignalled,
+  isActiveOrganizationAmbiguous,
   isAuthFailureDeferred,
   isOrganizationContextRequiredError,
   isQueryOperation,
   isRetryableConnectivityError,
   makeClient,
   ORGANIZATION_CONTEXT_REQUIRED_CODE,
+  resolveActiveOrganization,
   signalApiOutage,
   SKIP_AUTH_ERROR_REPORT_CONTEXT,
   storeActiveOrganizationId,
@@ -42,6 +44,49 @@ import {
 function jwtWithIssuedAt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
   return `header.${payload}.signature`
+}
+
+/**
+ * The API's answer when it cannot complete a request (a `ServiceUnavailableException`, thrown when
+ * the API-token lookup fails): HTTP 200, `INTERNAL_SERVER_ERROR` with `extensions.status: 503`, as
+ * libs/api/utils' formatApiError spec shows over the real pipeline.
+ */
+const GRAPHQL_503_ERROR = {
+  message: 'API token validation is temporarily unavailable',
+  extensions: {
+    code: 'INTERNAL_SERVER_ERROR',
+    status: 503,
+    originalError: {
+      message: 'API token validation is temporarily unavailable',
+      error: 'Service Unavailable',
+      statusCode: 503,
+    },
+  },
+}
+
+function graphQL503(): CombinedGraphQLErrors {
+  return new CombinedGraphQLErrors({ errors: [GRAPHQL_503_ERROR] })
+}
+
+/** An INTERNAL_SERVER_ERROR with `extensions.status` and/or the original exception's status. */
+function graphQLWithStatus(
+  status: number | undefined,
+  originalStatus?: number,
+): CombinedGraphQLErrors {
+  return new CombinedGraphQLErrors({
+    errors: [
+      {
+        message: 'Something failed',
+        extensions: {
+          code: 'INTERNAL_SERVER_ERROR',
+          ...(status === undefined ? {} : { status }),
+          ...(originalStatus === undefined
+            ? {}
+            : { originalError: { statusCode: originalStatus } }),
+        },
+      },
+    ],
+  })
 }
 
 // The base64url decoder these tests rely on lives in @nestled-template/shared/utils and is tested
@@ -353,6 +398,74 @@ describe('makeClient', () => {
     expect(reports()).toHaveLength(1)
   })
 
+  describe('a GraphQL 503 (HTTP 200, INTERNAL_SERVER_ERROR, extensions.status 503)', () => {
+    const graphQLAnswer = (errors: unknown[]) =>
+      new Response(JSON.stringify({ data: null, errors }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    const query = gql`
+      query Ping {
+        ping
+      }
+    `
+
+    afterEach(() => {
+      takeDeferredAuthFailure()
+    })
+
+    it('is reported as an outage, and a plain INTERNAL_SERVER_ERROR is not', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
+      const reports = () =>
+        dispatchEvent.mock.calls.filter(
+          ([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT,
+        )
+
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          graphQLAnswer([
+            { message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } },
+          ]),
+        )
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+      expect(reports()).toHaveLength(0)
+
+      globalThis.fetch = vi.fn().mockResolvedValue(graphQLAnswer([GRAPHQL_503_ERROR]))
+      const { error } = await makeClient(undefined, {
+        apiUrl: 'https://api.example.com/graphql',
+      }).query({ query })
+      expect(reports()).toHaveLength(1)
+      // And the failed query is one the app refetches once the API answers.
+      expect(isRetryableConnectivityError(error)).toBe(true)
+    })
+
+    it('keeps the session over an UNAUTHENTICATED error in the same answer', async () => {
+      vi.spyOn(console, 'log').mockImplementation(() => undefined)
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const testWindow = {
+        location: { pathname: '/members', search: '', hash: '', href: '' },
+        dispatchEvent: vi.fn(),
+      }
+      vi.stubGlobal('window', testWindow)
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          graphQLAnswer([
+            { message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } },
+            GRAPHQL_503_ERROR,
+          ]),
+        )
+
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
+
+      expect(testWindow.location.href).toBe('')
+      // Let pass like any 401 during an outage: refetched for a fresh answer once it clears.
+      expect(takeDeferredAuthFailure()).toBe(true)
+    })
+  })
+
   it('redirects through logout when a transport response is unauthorized', async () => {
     const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -488,6 +601,30 @@ describe('makeClient', () => {
 
       await run(ME)
       expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
+    })
+
+    it('counts the retry of a query answered with a GraphQL 503 as outage evidence', async () => {
+      let answerRetry: () => void = () => undefined
+      const { testWindow, run } = setUp([
+        () => Promise.resolve(json(200, { data: null, errors: [GRAPHQL_503_ERROR] })),
+        () =>
+          new Promise<Response>(resolve => {
+            answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
+          }),
+      ])
+      await run(FLAKY)
+
+      const retry = run(FLAKY)
+      await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
+      await run(ME)
+
+      // The concurrent 401 is kept, as it is beside a proxy's 503.
+      expect(testWindow.location.href).toBe('')
+      expect(takeDeferredAuthFailure()).toBe(true)
+
+      answerRetry()
+      await retry
+      expect(isApiOutageSignalled()).toBe(false)
     })
 
     it('announces the end of the evidence when a 401 was let pass meanwhile', async () => {
@@ -1035,6 +1172,8 @@ describe('isRetryableConnectivityError', () => {
     ['a proxy 502', serverError(502)],
     ['a proxy 503', serverError(503)],
     ['a proxy 504', serverError(504)],
+    ['a GraphQL 503 (the API could not complete a lookup)', graphQL503()],
+    ['a GraphQL error whose original exception was a 502', graphQLWithStatus(undefined, 502)],
   ])('retries %s', (_label, error) => {
     expect(isRetryableConnectivityError(error)).toBe(true)
   })
@@ -1049,6 +1188,8 @@ describe('isRetryableConnectivityError', () => {
       new TypeError("Cannot read properties of undefined (reading 'id')"),
     ],
     ['a GraphQL error', new CombinedGraphQLErrors({ errors: [{ message: 'Failed to fetch' }] })],
+    ['a plain INTERNAL_SERVER_ERROR (a 500)', graphQLWithStatus(500)],
+    ['an INTERNAL_SERVER_ERROR with no status', graphQLWithStatus(undefined)],
     ['a non-error value', 'Failed to fetch'],
     ['undefined', undefined],
   ])('does not retry %s', (_label, error) => {
@@ -1077,6 +1218,24 @@ describe('classifyApiFailure', () => {
     ['a proxy 502', serverError(502), 'unavailable'],
     ['a proxy 503', serverError(503), 'unavailable'],
     ['a proxy 504', serverError(504), 'unavailable'],
+    ['a GraphQL 503', graphQL503(), 'unavailable'],
+    [
+      'a GraphQL error whose original exception was a 504',
+      graphQLWithStatus(undefined, 504),
+      'unavailable',
+    ],
+    [
+      'a GraphQL 503 beside an UNAUTHENTICATED error in the same answer',
+      new CombinedGraphQLErrors({
+        errors: [
+          { message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } },
+          GRAPHQL_503_ERROR,
+        ],
+      }),
+      'unavailable',
+    ],
+    ['a plain INTERNAL_SERVER_ERROR (a 500)', graphQLWithStatus(500), 'other'],
+    ['an INTERNAL_SERVER_ERROR with no status', graphQLWithStatus(undefined), 'other'],
     ['an HTTP 403', serverError(403), 'other'],
     ['an HTTP 500', serverError(500), 'other'],
     [
@@ -1232,6 +1391,59 @@ describe('apolloLoader failure record', () => {
       // A 401 in one loader and an outage in another: the request is an outage, not a sign-out.
       expect(ssrApiFailureCause({ root: unavailable, child: rejected })).toBe('unavailable')
       expect(ssrApiFailureCause({ root: rejected, child: unavailable })).toBe('unavailable')
+    } finally {
+      globalThis.fetch = originalFetch
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('records a GraphQL 503 beside a concurrent 401 as an outage, and a plain 500 as other', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const originalFetch = globalThis.fetch
+    const me = gql`
+      query Me {
+        me {
+          id
+        }
+      }
+    `
+    const settings = gql`
+      query Settings {
+        settings {
+          id
+        }
+      }
+    `
+    const answer = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      })
+    const operationName = (init?: RequestInit) =>
+      (JSON.parse(String(init?.body ?? '{}')) as { operationName?: string }).operationName
+    const load = async () =>
+      apolloLoader()(async ({ preloadQuery }) => {
+        const meRef = preloadQuery(me)
+        const settingsRef = preloadQuery(settings)
+        await new Promise(resolve => setTimeout(resolve, 20))
+        return { meRef, settingsRef }
+      })(loaderArgs())
+    try {
+      globalThis.fetch = vi.fn(async (_input: unknown, init?: RequestInit) =>
+        operationName(init) === 'Me'
+          ? answer(401, { message: 'Unauthorized' })
+          : answer(200, { data: null, errors: [GRAPHQL_503_ERROR] }),
+      ) as typeof fetch
+      expect(ssrApiFailureCause({ root: await load() })).toBe('unavailable')
+
+      globalThis.fetch = vi.fn(async () =>
+        answer(200, {
+          data: null,
+          errors: [{ message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } }],
+        }),
+      ) as typeof fetch
+      expect(ssrApiFailureCause({ root: await load() })).toBe('other')
     } finally {
       globalThis.fetch = originalFetch
       vi.restoreAllMocks()
@@ -1581,6 +1793,30 @@ describe('the stored active organization', () => {
     expect(getStoredActiveOrganizationId()).toBeNull()
     await client.query({ query: ping, fetchPolicy: 'no-cache' })
     expect(fetchMock.mock.calls[1][1].headers['x-organization-id']).toBeUndefined()
+  })
+
+  it('is never read by resolveActiveOrganization, which a server render could not match', () => {
+    const organizations = [{ id: 'org-1' }, { id: 'org-2' }, { id: 'org-3' }]
+    storeActiveOrganizationId('org-2')
+
+    // Server-visible inputs only: the server's active one, else the first.
+    expect(resolveActiveOrganization(organizations, 'org-3')?.id).toBe('org-3')
+    expect(resolveActiveOrganization(organizations, null)?.id).toBe('org-1')
+    expect(resolveActiveOrganization(organizations, 'gone')?.id).toBe('org-1')
+    // A choice settled after hydration is passed in, and the server's active one still wins.
+    expect(resolveActiveOrganization(organizations, null, 'org-2')?.id).toBe('org-2')
+    expect(resolveActiveOrganization(organizations, 'org-3', 'org-2')?.id).toBe('org-3')
+    expect(resolveActiveOrganization(organizations, null, 'gone')?.id).toBe('org-1')
+    expect(resolveActiveOrganization([], null)).toBeNull()
+  })
+
+  it('leaves the organization open only with several and no server active one of them', () => {
+    const two = [{ id: 'org-1' }, { id: 'org-2' }]
+    expect(isActiveOrganizationAmbiguous(two, null)).toBe(true)
+    expect(isActiveOrganizationAmbiguous(two, 'gone')).toBe(true)
+    expect(isActiveOrganizationAmbiguous(two, 'org-2')).toBe(false)
+    expect(isActiveOrganizationAmbiguous([{ id: 'org-1' }], null)).toBe(false)
+    expect(isActiveOrganizationAmbiguous([], undefined)).toBe(false)
   })
 
   it('never throws when storage is blocked', () => {

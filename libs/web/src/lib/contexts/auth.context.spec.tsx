@@ -11,10 +11,12 @@ import {
 
 const useQuery = vi.fn()
 const useMutation = vi.fn()
+const refetchQueries = vi.fn()
 
 vi.mock('@apollo/client/react', () => ({
   useQuery: (...args: unknown[]) => useQuery(...args),
   useMutation: (...args: unknown[]) => useMutation(...args),
+  useApolloClient: () => ({ refetchQueries }),
 }))
 
 vi.mock('@nestled-template/shared/sdk', () => ({
@@ -158,6 +160,61 @@ describe('AuthProvider', () => {
     expect(result.current.canDelete).toBe(true)
     expect(result.current.canDoAny).toBe(true)
     expect(result.current.canDoAll).toBe(true)
+  })
+
+  it('restores a stored organization the server does not know after rendering, through the switch', async () => {
+    const second = { id: 'org-2', name: 'Second Org', members: [member] }
+    useQuery.mockReturnValue({
+      data: { myOrganizations: [organization, second] },
+      loading: false,
+      refetch: vi.fn(),
+    })
+    const switchOrg = vi.fn().mockResolvedValue({
+      data: { switchActiveOrganization: { activeOrganizationId: 'org-2' } },
+    })
+    useMutation.mockReturnValue([switchOrg])
+    localStorage.setItem('activeOrganizationId', 'org-2')
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: wrapper({ id: 'user-1', activeOrganizationId: null }),
+    })
+
+    // First render: what a server render shows too (the first), still loading.
+    expect(result.current.activeOrganization?.id).toBe('org-1')
+    await waitFor(() => expect(result.current.activeOrganization?.id).toBe('org-2'))
+    expect(result.current.isLoading).toBe(false)
+    expect(switchOrg).toHaveBeenCalledWith({ variables: { input: { organizationId: 'org-2' } } })
+    expect(refetchQueries).toHaveBeenCalledWith({ include: 'active' })
+    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
+  })
+
+  it('starts over after logout: a choice restored for one session is not carried into the next', async () => {
+    const second = { id: 'org-2', name: 'Second Org', members: [member] }
+    useQuery.mockReturnValue({
+      data: { myOrganizations: [organization, second] },
+      loading: false,
+      refetch: vi.fn(),
+    })
+    const switchOrg = vi.fn().mockResolvedValue({
+      data: { switchActiveOrganization: { activeOrganizationId: 'org-2' } },
+    })
+    useMutation.mockReturnValue([switchOrg])
+    localStorage.setItem('activeOrganizationId', 'org-2')
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: wrapper({ id: 'user-1', activeOrganizationId: null }),
+    })
+    await waitFor(() => expect(result.current.activeOrganization?.id).toBe('org-2'))
+
+    act(() => result.current.logout())
+    expect(localStorage.getItem('activeOrganizationId')).toBeNull()
+    act(() => result.current.login({ id: 'user-1', activeOrganizationId: null } as any))
+
+    // Nothing stored any more: the server's choice, the first, with no switch.
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.activeOrganization?.id).toBe('org-1')
+    expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
+    expect(switchOrg).toHaveBeenCalledTimes(1)
   })
 
   it('throws when auth hooks are used outside the provider', () => {

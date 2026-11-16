@@ -1,16 +1,13 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react'
-import { useQuery } from '@apollo/client/react'
-import {
-  rememberActiveOrganization,
-  resolveActiveOrganization,
-  storeActiveOrganizationId,
-} from '@nestled-template/shared/apollo'
+import React, { createContext, useContext, useState, useMemo, ReactNode } from 'react'
+import { useApolloClient, useQuery } from '@apollo/client/react'
+import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 import {
   MyOrganizationsWithMembers,
   type MyOrganizationsWithMembersQuery,
   type User,
 } from '@nestled-template/shared/sdk'
 import { useSwitchActiveOrganization } from '../organization/switch-active-organization'
+import { useActiveOrganization } from '../organization/active-organization'
 
 type OrganizationContextItem = MyOrganizationsWithMembersQuery['myOrganizations'][number]
 type OrganizationMemberContextItem = NonNullable<OrganizationContextItem['members']>[number]
@@ -95,17 +92,27 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
   const switchActiveOrganization = useSwitchActiveOrganization()
 
+  const client = useApolloClient()
   const organizations = orgsData?.myOrganizations || []
-  const activeOrganization = user
-    ? resolveActiveOrganization(organizations, user.activeOrganizationId)
-    : null
+  // The server's active organization, else the first, the same on the server and in the
+  // hydrating render; a choice this browser stored is restored after hydration, and stored for
+  // `x-organization-id` while rendering (`useActiveOrganization`).
+  const { activeOrganization, reconciling } = useActiveOrganization(
+    organizations,
+    user?.activeOrganizationId,
+    {
+      enabled: !!user,
+      sessionKey: user?.id,
+      afterSwitch: () => client.refetchQueries({ include: 'active' }),
+    },
+  )
 
   // Find the current user's membership in the active organization
   const activeOrganizationMember =
     activeOrganization?.members?.find(member => member.userId === user?.id) || null
 
   const isAuthenticated = !!user?.id
-  const isLoading = orgsLoading
+  const isLoading = orgsLoading || reconciling
 
   const login = (newUser: AuthUser) => {
     setUser(newUser)
@@ -137,11 +144,6 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   const refreshOrganizations = async () => {
     await refetchOrgs()
   }
-
-  // Requests are sent for the organization shown (`x-organization-id`), so the two never disagree
-  useEffect(() => {
-    rememberActiveOrganization(activeOrganization?.id)
-  }, [activeOrganization])
 
   const value = useMemo<AuthContextType>(
     () => ({

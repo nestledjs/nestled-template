@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { hydrateRoot, type Root } from 'react-dom/client'
+import { renderToString } from 'react-dom/server'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -47,6 +49,7 @@ function fakeApi(initialActiveOrganizationId: string | null) {
   const api = {
     activeOrganizationId: initialActiveOrganizationId,
     organizationHeaders: [] as Array<{ operation: string; organization: string | undefined }>,
+    refuseSwitch: false,
   }
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), {
@@ -90,6 +93,12 @@ function fakeApi(initialActiveOrganizationId: string | null) {
         case 'myOrganizationsWithMembers':
           return json({ data: { myOrganizations: ORGANIZATIONS } })
         case 'switchActiveOrganization':
+          if (api.refuseSwitch) {
+            return json({
+              data: null,
+              errors: [{ message: 'No', extensions: { code: 'FORBIDDEN' } }],
+            })
+          }
           api.activeOrganizationId = variables.input.organizationId
           return json({
             data: {
@@ -168,6 +177,144 @@ function pageRequestOrganization(api: ReturnType<typeof fakeApi>) {
   return api.organizationHeaders.find(request => request.operation === 'OrganizationData')
     ?.organization
 }
+
+/**
+ * A signed-in reload: the server renders the shell to HTML (it cannot see this browser's storage),
+ * then the browser, which has `stored` in storage, hydrates it. Both render from the same loader
+ * data, as the streamed query refs give them. Returns the hydration errors React reported.
+ */
+// Hydrated roots, unmounted after each test: Testing Library's cleanup does not know about them.
+const hydratedRoots: Root[] = []
+
+async function reloadAndHydrate(stored: string | null) {
+  const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+  const preload = createQueryPreloader(client)
+  const meQueryRef = preload(Me)
+  const myOrganizationsQueryRef = preload(MY_ORGANIZATIONS_WITH_MEMBERS)
+  await preload.toPromise(meQueryRef)
+  await preload.toPromise(myOrganizationsQueryRef)
+  const routes = [
+    {
+      id: 'root',
+      path: '/',
+      loader: () => ({ meQueryRef }),
+      element: <App />,
+      children: [
+        {
+          id: 'members',
+          path: 'members',
+          loader: () => ({ myOrganizationsQueryRef }),
+          element: <AuthenticatedLayout />,
+          children: [{ index: true, element: <OrganizationPage /> }],
+        },
+      ],
+    },
+  ]
+  const hydrationData = {
+    loaderData: { root: { meQueryRef }, members: { myOrganizationsQueryRef } },
+  }
+  const tree = () => (
+    <ApolloProvider client={client}>
+      <RouterProvider
+        router={createMemoryRouter(routes, { initialEntries: ['/members'], hydrationData })}
+      />
+    </ApolloProvider>
+  )
+
+  localStorage.clear()
+  const container = document.createElement('div')
+  container.innerHTML = renderToString(tree())
+  document.body.appendChild(container)
+  const serverHtml = container.innerHTML
+  const serverText = container.textContent ?? ''
+
+  if (stored) localStorage.setItem('activeOrganizationId', stored)
+  const hydrationErrors: unknown[] = []
+  let firstClientHtml = ''
+  await act(async () => {
+    hydratedRoots.push(
+      hydrateRoot(container, tree(), {
+        onRecoverableError: error => hydrationErrors.push(error),
+      }),
+    )
+    // What the hydrating render committed, before anything after hydration ran.
+    firstClientHtml = container.innerHTML
+  })
+  return { serverHtml, serverText, firstClientHtml, hydrationErrors }
+}
+
+describe('the active organization across a server render and hydration', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    act(() => {
+      for (const root of hydratedRoots.splice(0)) root.unmount()
+    })
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    localStorage.clear()
+    document.body.innerHTML = ''
+  })
+
+  it('hydrates with the server’s choice, then restores the stored organization through the switch', async () => {
+    // No active organization on the server; this browser chose the second one.
+    const api = fakeApi(null)
+
+    const { serverHtml, serverText, firstClientHtml, hydrationErrors } =
+      await reloadAndHydrate('org-2')
+
+    // The server could only pick the first, and hydration agreed with it.
+    expect(serverText).toContain('Shown organization: First Org')
+    expect(hydrationErrors).toEqual([])
+    expect(firstClientHtml).toBe(serverHtml)
+
+    // After hydration: the stored choice is made active on the server, and the screen and the next
+    // request follow it. No page request went out for the first organization meanwhile.
+    await act(async () => {
+      await vi.waitFor(() => expect(screen.getByText('Page: data for org-2')).toBeInTheDocument())
+    })
+    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
+    expect(api.activeOrganizationId).toBe('org-2')
+    expect(pageRequestOrganization(api)).toBe('org-2')
+    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
+  })
+
+  it('keeps the server’s choice, and stores it, when the switch to the stored one is refused', async () => {
+    const api = fakeApi(null)
+    api.refuseSwitch = true
+
+    const { hydrationErrors } = await reloadAndHydrate('org-2')
+
+    expect(hydrationErrors).toEqual([])
+    await act(async () => {
+      await vi.waitFor(() => expect(screen.getByText('Page: data for org-1')).toBeInTheDocument())
+    })
+    expect(screen.getByText('Shown organization: First Org')).toBeInTheDocument()
+    expect(pageRequestOrganization(api)).toBe('org-1')
+    expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
+  })
+
+  it('hydrates without a reconciliation when the server knows the active organization', async () => {
+    const api = fakeApi('org-2')
+
+    const { serverHtml, serverText, firstClientHtml, hydrationErrors } =
+      await reloadAndHydrate('org-1')
+
+    expect(hydrationErrors).toEqual([])
+    expect(firstClientHtml).toBe(serverHtml)
+    expect(serverText).toContain('Page: ')
+    await act(async () => {
+      await vi.waitFor(() => expect(screen.getByText('Page: data for org-2')).toBeInTheDocument())
+    })
+    expect(api.organizationHeaders.some(r => r.operation === 'switchActiveOrganization')).toBe(
+      false,
+    )
+  })
+})
 
 describe('the active organization: what the shell shows and what the requests are sent for', () => {
   beforeEach(() => {
