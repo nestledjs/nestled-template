@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApolloProvider } from '@apollo/client/react'
 import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
-import { makeClient } from '@nestled-template/shared/apollo'
+import { makeClient, storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 import {
   NO_ORGANIZATIONS_TITLE,
   ORGANIZATION_PICKER_TITLE,
@@ -27,8 +27,11 @@ function renderPicker({
   organizations = [] as Organization[],
   listFails = false,
   switchFails = false,
+  holdSwitch = false,
 } = {}) {
   const switched: string[] = []
+  // With `holdSwitch`, the switch answers only when the test calls `answerSwitch`.
+  const held = { answerSwitch: () => undefined as void }
   const link = new ApolloLink(
     operation =>
       new Observable<ApolloLink.Result>(observer => {
@@ -40,6 +43,21 @@ function renderPicker({
           }
         } else if (operation.operationName === 'switchActiveOrganization') {
           switched.push(operation.variables['input'].organizationId)
+          if (holdSwitch) {
+            held.answerSwitch = () => {
+              observer.next({
+                data: {
+                  switchActiveOrganization: {
+                    __typename: 'User',
+                    id: 'user-1',
+                    activeOrganizationId: operation.variables['input'].organizationId,
+                  },
+                },
+              })
+              observer.complete()
+            }
+            return
+          }
           if (switchFails) {
             observer.next({
               errors: [{ message: 'You are not a member of this organization' }],
@@ -74,7 +92,7 @@ function renderPicker({
       </MemoryRouter>
     </ApolloProvider>,
   )
-  return { switched }
+  return { switched, held }
 }
 
 describe('OrganizationRequired', () => {
@@ -152,6 +170,29 @@ describe('OrganizationRequired', () => {
     expect(reload).not.toHaveBeenCalled()
     expect(assign).not.toHaveBeenCalled()
     expect(localStorage.getItem('activeOrganizationId')).toBeNull()
+  })
+
+  it('stores nothing and does not reload when the switch is answered after a logout', async () => {
+    const { switched, held } = renderPicker({
+      organizations: [{ id: 'org-1', name: 'First Org' }],
+      holdSwitch: true,
+    })
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'First Org' }))
+    })
+    expect(switched).toEqual(['org-1'])
+
+    // The session ends (every logout forgets the stored organization) before the API answers.
+    storeActiveOrganizationId(null)
+    await act(async () => {
+      held.answerSwitch()
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(localStorage.getItem('activeOrganizationId')).toBeNull()
+    expect(reload).not.toHaveBeenCalled()
+    // A dropped answer is not a failed switch.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('keeps the session when the organizations cannot be loaded', async () => {

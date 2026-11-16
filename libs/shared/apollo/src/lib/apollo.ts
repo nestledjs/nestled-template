@@ -725,13 +725,32 @@ export function getStoredActiveOrganizationId(): string | null {
   }
 }
 
+// Advanced each time the stored organization is forgotten (a logout); see
+// `activeOrganizationSession`.
+let activeOrganizationSessionGeneration = 0
+
+/**
+ * The browser's current organization session: a number that changes each time the stored
+ * organization is forgotten (`storeActiveOrganizationId(null)`, which every logout calls). A switch
+ * reads it before its request and again when the answer arrives; if it changed meanwhile, the
+ * session the switch was for has ended, and the answer must not be stored, cached or acted on
+ * (`useSwitchActiveOrganization` in `@nestled-template/web`). Otherwise a late answer wrote the
+ * previous session's organization back after logout, and the next user's requests carried it.
+ */
+export function activeOrganizationSession(): number {
+  return activeOrganizationSessionGeneration
+}
+
 /**
  * Stores (or, with null, forgets) the organization the next requests are sent for. Every switch and
  * every shell that learns the active organization writes it here, so the header and the UI cannot
- * disagree. A no-op during a server render or with storage blocked.
+ * disagree. Forgetting it also ends the organization session (`activeOrganizationSession`), so a
+ * switch still in flight for it stores nothing. A no-op during a server render or with storage
+ * blocked (the session still ends).
  */
 export function storeActiveOrganizationId(organizationId: string | null): void {
   if (globalThis.window === undefined) return
+  if (!organizationId) activeOrganizationSessionGeneration += 1
   try {
     if (typeof localStorage === 'undefined') return
     if (organizationId) localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, organizationId)

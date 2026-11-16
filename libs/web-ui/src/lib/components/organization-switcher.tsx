@@ -20,7 +20,8 @@ interface OrganizationSwitcherProps {
    * Makes the organization active. Pass the app's one switch, `useSwitchActiveOrganization()` from
    * `@nestled-template/web` (the API, then the stored id the client sends as `x-organization-id`), so
    * this switcher and the organization picker cannot drift apart. It must reject when the switch is
-   * refused: the switcher reloads only after it resolves.
+   * refused, and when its answer is dropped because the session ended (a logout meanwhile): the
+   * switcher reloads only after it resolves.
    */
   readonly onSwitchOrganization: (organizationId: string) => Promise<unknown>
   readonly onCreateOrganization?: () => void
