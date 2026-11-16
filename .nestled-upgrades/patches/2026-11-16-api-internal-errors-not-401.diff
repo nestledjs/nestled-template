@@ -1,0 +1,691 @@
+diff --git a/apps/api-e2e/src/auth/auth-error-codes.spec.ts b/apps/api-e2e/src/auth/auth-error-codes.spec.ts
+index c98cec8..6cb18b7 100644
+--- a/apps/api-e2e/src/auth/auth-error-codes.spec.ts
++++ b/apps/api-e2e/src/auth/auth-error-codes.spec.ts
+@@ -1,65 +1,161 @@
+-import { describe, it, expect } from 'vitest'
++import { describe, it, expect, beforeAll } from 'vitest'
++import { existsSync, readFileSync } from 'node:fs'
++import { resolve } from 'node:path'
+ import axios from 'axios'
+-import { TestHelpers, type GraphQLResponse, type TestUser } from '../support/test-helpers'
++import {
++  buildClientSchema,
++  buildSchema,
++  getIntrospectionQuery,
++  getNamedType,
++  isLeafType,
++  isNonNullType,
++  type GraphQLSchema,
++  type IntrospectionQuery,
++} from 'graphql'
++import {
++  TestHelpers,
++  type GraphQLErrorResponse,
++  type GraphQLResponse,
++  type TestUser,
++} from '../support/test-helpers'
+ import { UserFactory } from '../support/factories/user.factory'
+ import { sql } from '../support/test-db'
+ 
+ /**
+  * Clients log a user out on a 401 or `UNAUTHENTICATED`, so the API keeps those for a missing,
+- * invalid or expired session. A signed-in request with no organization context is a 403
+- * `ORGANIZATION_CONTEXT_REQUIRED` instead: the session is fine.
++ * invalid or expired session. A signed-in request with no organization context is refused with a
++ * 403 instead (`ORGANIZATION_CONTEXT_REQUIRED`, or the app's own access-denied code): the session
++ * is fine.
++ *
++ * The spec names no operation of its own. It reads the API's schema and asks every query that
++ * needs no arguments, so it runs unchanged in an app whose operations differ from the template's.
+  */
+ 
+-const CURRENT_SUBSCRIPTION_ACTIVE = `query { currentSubscriptionActive }`
++type Headers = Record<string, string>
+ 
+-const post = (authorization: string | undefined, query: string) =>
++const post = (headers: Headers, query: string) =>
+   axios.post<GraphQLResponse<unknown>>(
+     '/graphql',
+     { query },
+     {
+-      headers: {
+-        'Content-Type': 'application/json',
+-        ...(authorization ? { Authorization: authorization } : {}),
+-      },
++      headers: { 'Content-Type': 'application/json', ...headers },
+       validateStatus: () => true,
+     },
+   )
+ 
+-const bearer = (user: TestUser) => `Bearer ${user.tokens?.accessToken}`
++const bearer = (user: TestUser): Headers => ({
++  Authorization: `Bearer ${user.tokens?.accessToken}`,
++})
++
++/** The live schema, or the SDL the API wrote at startup when introspection is off. */
++async function loadSchema(): Promise<GraphQLSchema> {
++  const introspection = await post({}, getIntrospectionQuery())
++  const data = introspection.data?.data as IntrospectionQuery | undefined
++  if (data?.__schema) return buildClientSchema(data)
++
++  const sdlPath = resolve(process.cwd(), 'api-schema.graphql')
++  if (!existsSync(sdlPath)) {
++    throw new Error(
++      'Introspection is off and api-schema.graphql was not found at the workspace root: give the spec the schema another way.',
++    )
++  }
++  return buildSchema(readFileSync(sdlPath, 'utf8'))
++}
++
++/** `{ field }` or `{ field { __typename } }` for every query whose arguments are all optional. */
++function argumentFreeQueries(schema: GraphQLSchema): string[] {
++  const fields = Object.values(schema.getQueryType()?.getFields() ?? {})
++  return fields
++    .filter(field =>
++      field.args.every(arg => !isNonNullType(arg.type) || arg.defaultValue !== undefined),
++    )
++    .map(field =>
++      isLeafType(getNamedType(field.type))
++        ? `query { ${field.name} }`
++        : `query { ${field.name} { __typename } }`,
++    )
++}
++
++const isUnauthenticated = (error: GraphQLErrorResponse) =>
++  error.extensions?.['code'] === 'UNAUTHENTICATED' ||
++  (error.extensions?.['originalError'] as { statusCode?: unknown } | undefined)?.statusCode === 401
++
++const statusCodeOf = (error: GraphQLErrorResponse) =>
++  (error.extensions?.['originalError'] as { statusCode?: unknown } | undefined)?.statusCode
++
++const BAD_BEARER: Headers = { Authorization: 'Bearer not-a-real-token' }
++
++const errorsOf = async (headers: Headers, query: string) => {
++  const response = await post(headers, query)
++  return { status: response.status, errors: response.data.errors ?? [] }
++}
+ 
+ describe('API auth error codes', () => {
+-  it('answers a bad bearer with UNAUTHENTICATED (a 401)', async () => {
+-    const response = await post('Bearer not-a-real-token', CURRENT_SUBSCRIPTION_ACTIVE)
+-    const error = response.data.errors?.[0]
++  let queries: string[]
++  // The queries a bad bearer is refused with UNAUTHENTICATED: the ones that need a session.
++  let sessionQueries: string[]
++  let badBearerRefusal: GraphQLErrorResponse | undefined
++
++  beforeAll(async () => {
++    queries = argumentFreeQueries(await loadSchema())
++    expect(queries.length).toBeGreaterThan(0)
++
++    sessionQueries = []
++    for (const query of queries) {
++      const refusal = (await errorsOf(BAD_BEARER, query)).errors.find(isUnauthenticated)
++      if (refusal) {
++        sessionQueries.push(query)
++        badBearerRefusal ??= refusal
++      }
++    }
++  })
+ 
+-    expect(error?.extensions?.['code']).toBe('UNAUTHENTICATED')
+-    expect(error?.extensions?.['originalError']).toMatchObject({ statusCode: 401 })
++  it('answers a bad bearer with UNAUTHENTICATED (a 401)', () => {
++    expect(sessionQueries.length).toBeGreaterThan(0)
++    expect(badBearerRefusal?.extensions?.['code']).toBe('UNAUTHENTICATED')
++    expect(badBearerRefusal?.extensions?.['originalError']).toMatchObject({ statusCode: 401 })
+   })
+ 
+-  it('answers a signed-in request with no organization context with a 403 ORGANIZATION_CONTEXT_REQUIRED', async () => {
++  it('never answers a signed-in request with no organization context with a 401', async () => {
+     const owner = await TestHelpers.registerUser(UserFactory.create())
+     const outsider = await TestHelpers.registerUser(UserFactory.create())
+     const ownersOrganizationId = sql(
+-      `SELECT "activeOrganizationId" FROM "User" WHERE id = :'id';`,
+-      {
+-        id: owner.id,
+-      },
++      `SELECT "organizationId" FROM "OrganizationMember" WHERE "userId" = :'id' LIMIT 1;`,
++      { id: owner.id },
+     )
++    expect(ownersOrganizationId).not.toBe('')
+ 
+-    // The outsider is signed in, but its active organization is one it does not belong to.
+-    sql(`UPDATE "User" SET "activeOrganizationId" = :'orgId' WHERE id = :'userId';`, {
+-      userId: outsider.id,
+-      orgId: ownersOrganizationId,
+-    })
++    // The outsider is signed in, but asks for an organization it does not belong to. The header is
++    // the explicit choice, so an API that repairs a stale saved organization cannot repair it away.
++    const ownOrganization = bearer(outsider)
++    const foreignOrganization = { ...ownOrganization, 'x-organization-id': ownersOrganizationId }
+ 
+-    const response = await post(bearer(outsider), CURRENT_SUBSCRIPTION_ACTIVE)
+-    const error = response.data.errors?.[0]
++    const unauthenticated: string[] = []
++    // Needs a session, answers the outsider in its own organization, and refuses it with a 403 in
++    // the foreign one: an organization-context refusal, not an admin-only or public query.
++    const refusedForTheOrganization: string[] = []
++    for (const query of sessionQueries) {
++      const foreign = await errorsOf(foreignOrganization, query)
++      if (foreign.status === 401 || foreign.errors.some(isUnauthenticated)) {
++        unauthenticated.push(query)
++      }
++      for (const error of foreign.errors) {
++        if (error.extensions?.['code'] === 'ORGANIZATION_CONTEXT_REQUIRED') {
++          expect(statusCodeOf(error), query).toBe(403)
++        }
++      }
+ 
+-    expect(error?.extensions?.['code']).toBe('ORGANIZATION_CONTEXT_REQUIRED')
+-    expect(error?.extensions?.['originalError']).toMatchObject({ statusCode: 403 })
++      const refusedWith403 =
++        foreign.errors.length > 0 && foreign.errors.every(error => statusCodeOf(error) === 403)
++      if (refusedWith403 && (await errorsOf(ownOrganization, query)).errors.length === 0) {
++        refusedForTheOrganization.push(query)
++      }
++    }
+ 
+-    // The session itself is still good.
+-    const me = await post(bearer(outsider), `query { me { id } }`)
+-    expect(me.data.errors).toBeUndefined()
++    // Nothing logs the outsider out, across every query that needs a session.
++    expect(unauthenticated).toEqual([])
++    // And the check measured an organization refusal: a query the outsider's session can run in
++    // its own organization is refused with a 403 in one it does not belong to.
++    expect(refusedForTheOrganization.length).toBeGreaterThan(0)
+   })
+ })
+diff --git a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+index a9d5a93..1549f38 100644
+--- a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
++++ b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+@@ -1,3 +1,4 @@
++import { ServiceUnavailableException } from '@nestjs/common'
+ import { ApiTokenAuthMiddleware } from './api-token-auth.middleware'
+ 
+ // The middleware runs in front of McpController (apps/api/src/app.module.ts) and is what turns an
+@@ -80,6 +81,8 @@ describe('ApiTokenAuthMiddleware', () => {
+ 
+     expect(req.user).toBeUndefined()
+     expect(next).toHaveBeenCalledTimes(1)
++    // No error: McpController answers it with its 401 `invalid_token` challenge.
++    expect(next).toHaveBeenCalledWith()
+   })
+ 
+   it('leaves the request unauthenticated when the token user no longer exists', async () => {
+@@ -168,12 +171,27 @@ describe('ApiTokenAuthMiddleware', () => {
+     })
+   })
+ 
+-  it('fails closed when validation throws', async () => {
++  // A failed lookup says nothing about the token: still no user (fail closed), but the request
++  // ends in a 503 rather than reaching McpController's 401 `invalid_token`, so the client retries
++  // instead of throwing the token away.
++  it('fails closed with a 503, not a 401, when validation throws', async () => {
+     apiTokensService.validateApiToken.mockRejectedValue(new Error('database down'))
+ 
+     const { req, next } = await run(`Bearer ${token}`)
+ 
+     expect(req.user).toBeUndefined()
+     expect(next).toHaveBeenCalledTimes(1)
++    expect(next.mock.calls[0][0]).toBeInstanceOf(ServiceUnavailableException)
++    expect((next.mock.calls[0][0] as ServiceUnavailableException).getStatus()).toBe(503)
++  })
++
++  it("fails closed with a 503 when the token's user cannot be loaded", async () => {
++    data.user.findUnique.mockRejectedValue(new Error('connection terminated'))
++
++    const { req, next } = await run(`Bearer ${token}`)
++
++    expect(req.user).toBeUndefined()
++    expect(next.mock.calls[0][0]).toBeInstanceOf(ServiceUnavailableException)
++    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+   })
+ })
+diff --git a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+index 0084b45..a07750c 100644
+--- a/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
++++ b/libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+@@ -1,4 +1,4 @@
+-import { Injectable, NestMiddleware, Logger } from '@nestjs/common'
++import { Injectable, NestMiddleware, Logger, ServiceUnavailableException } from '@nestjs/common'
+ import { Request, Response, NextFunction } from 'express'
+ import { ApiTokensService } from '../plugins/api-tokens/api-tokens.service'
+ import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
+@@ -51,7 +51,13 @@ export class ApiTokenAuthMiddleware implements NestMiddleware {
+           this.logger.warn('Invalid or expired API token provided')
+         }
+       } catch (error) {
++        // The lookup failed (the database is down, say): that says nothing about the token.
++        // Carrying on without a user would get the MCP client a 401 `invalid_token`, and it would
++        // throw away a good token and re-authorize. A 503 tells it to retry instead.
+         this.logger.error('Error validating API token', error)
++        return next(
++          new ServiceUnavailableException('API token validation is temporarily unavailable'),
++        )
+       }
+     }
+ 
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+index f6794f2..dcdf88f 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+@@ -2793,12 +2793,11 @@ describe('AuthService', () => {
+       const result = await service.isSessionValid('nonexistent-session')
+       expect(result).toBe(false)
+     })
+-    it('should return false when session validation lookup fails', async () => {
++    // "Invalid" logs the user out; a failed lookup is an outage, not an invalid session.
++    it('throws, rather than calling the session invalid, when the lookup fails', async () => {
+       mockData.userSession.findUnique.mockRejectedValue(new Error('database unavailable'))
+ 
+-      const result = await service.isSessionValid('session-123')
+-
+-      expect(result).toBe(false)
++      await expect(service.isSessionValid('session-123')).rejects.toThrow('database unavailable')
+     })
+   })
+   describe('Session Cookies', () => {
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.service.ts b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+index 5a33f8a..8f0925d 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.service.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.service.ts
+@@ -2467,16 +2467,15 @@ export class AuthService {
+     return true
+   }
+ 
++  /**
++   * Whether the session exists and has not been invalidated. A failed lookup throws rather than
++   * answering false: "invalid" would log the user out over an outage.
++   */
+   async isSessionValid(sessionId: string): Promise<boolean> {
+-    try {
+-      const session = await this.data.userSession.findUnique({
+-        where: { id: sessionId },
+-        select: { isValid: true },
+-      })
+-      return session?.isValid ?? false
+-    } catch (error) {
+-      Logger.error('Error checking session validity', error)
+-      return false
+-    }
++    const session = await this.data.userSession.findUnique({
++      where: { id: sessionId },
++      select: { isValid: true },
++    })
++    return session?.isValid ?? false
+   }
+ }
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+index d1f5208..23c1c62 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+@@ -1,3 +1,4 @@
++import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
+ import { JwtService } from '@nestjs/jwt'
+ import { JwtStrategy } from './jwt.strategy'
+ import type { Request } from 'express'
+@@ -393,3 +394,76 @@ describe('JwtStrategy inactive accounts', () => {
+     expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+   })
+ })
++
++// A failed lookup is not a bad token. Clients drop the token (or the session) on a 401, so an
++// internal failure must surface as a 503, which they treat as outage evidence. Passport hands
++// `error(err)` to AuthGuard, which throws `err`; `fail(challenge, 401)` becomes a 401.
++describe('JwtStrategy API token internal failures', () => {
++  const token = 'b'.repeat(64)
++  const req = () => ({ headers: { authorization: `Bearer ${token}` } }) as never
++  let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
++  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
++  let strategy: JwtStrategy
++  let outcome: { success: jest.Mock; fail: jest.Mock; error: jest.Mock }
++
++  beforeEach(() => {
++    process.env['JWT_SECRET'] = 'test-secret'
++    auth = {
++      validateUser: jest.fn().mockResolvedValue({ id: 'user-1', authGeneration: 1 }),
++      isTokenCurrent: jest.fn().mockResolvedValue(true),
++    }
++    apiTokensService = { validateApiToken: jest.fn(), recordTokenUse: jest.fn() }
++    strategy = new JwtStrategy(auth as never, apiTokensService as never)
++    outcome = { success: jest.fn(), fail: jest.fn(), error: jest.fn() }
++    Object.assign(strategy, outcome)
++  })
++
++  const passedError = () => outcome.error.mock.calls[0]?.[0] as unknown
++
++  it('answers a failed token lookup with a 503, not a 401', async () => {
++    apiTokensService.validateApiToken.mockRejectedValue(new Error('database unavailable'))
++
++    await strategy.authenticate(req())
++
++    expect(outcome.fail).not.toHaveBeenCalled()
++    expect(passedError()).toBeInstanceOf(ServiceUnavailableException)
++    expect((passedError() as ServiceUnavailableException).getStatus()).toBe(503)
++    expect(passedError()).not.toBeInstanceOf(UnauthorizedException)
++  })
++
++  it("answers a failed lookup of the token's user with a 503, not a 401", async () => {
++    apiTokensService.validateApiToken.mockResolvedValue({
++      userId: 'user-1',
++      tokenId: 'api-token-1',
++      organizationId: null,
++    })
++    auth.validateUser.mockRejectedValue(new Error('connection terminated'))
++
++    await strategy.authenticate(req())
++
++    expect(outcome.fail).not.toHaveBeenCalled()
++    expect(outcome.success).not.toHaveBeenCalled()
++    expect(passedError()).toBeInstanceOf(ServiceUnavailableException)
++    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
++  })
++
++  it('still answers a genuinely invalid, expired or revoked token with a 401', async () => {
++    apiTokensService.validateApiToken.mockResolvedValue(null)
++
++    await strategy.authenticate(req())
++
++    expect(outcome.error).not.toHaveBeenCalled()
++    expect(outcome.fail).toHaveBeenCalledWith({ message: 'Invalid or expired API token' }, 401)
++  })
++
++  // Session JWTs: validate() does not catch, so a failed lookup reaches passport as an error (a
++  // 500), never as the UnauthorizedException a dead session gets.
++  it('lets a failed session lookup through as an error, not an UnauthorizedException', async () => {
++    auth.validateUser.mockRejectedValue(new Error('database unavailable'))
++
++    const failure = strategy.validate({ headers: {} } as Request, { userId: 'user-1' })
++
++    await expect(failure).rejects.toThrow('database unavailable')
++    await expect(failure).rejects.not.toBeInstanceOf(UnauthorizedException)
++  })
++})
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+index fd8335a..4dfa0dc 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+@@ -1,4 +1,9 @@
+-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common'
++import {
++  Injectable,
++  Logger,
++  ServiceUnavailableException,
++  UnauthorizedException,
++} from '@nestjs/common'
+ import { PassportStrategy } from '@nestjs/passport'
+ import { Request } from 'express'
+ import { ExtractJwt, Strategy } from 'passport-jwt'
+@@ -167,8 +172,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
+ 
+         return this.success(user)
+       } catch (error) {
+-        this.logger.warn(`API token validation failed: ${(error as Error).message}`)
+-        return this.fail({ message: 'API token validation failed' }, 401)
++        // Every "this token is not good" answer above is a return, not a throw. Reaching here
++        // means the lookup itself failed (the database is down, say), which says nothing about
++        // the token: a 401 would make the client discard a good token. A 503 is what clients
++        // treat as outage evidence, so they keep the token and retry. Over GraphQL it arrives as
++        // INTERNAL_SERVER_ERROR with status 503, never UNAUTHENTICATED.
++        this.logger.error(
++          `API token validation could not complete: ${error instanceof Error ? error.message : String(error)}`,
++          error instanceof Error ? error.stack : undefined,
++        )
++        return this.error(
++          new ServiceUnavailableException('API token validation is temporarily unavailable'),
++        )
+       }
+     }
+ 
+diff --git a/libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts b/libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts
+index b5ce67f..edcbabe 100644
+--- a/libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts
++++ b/libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts
+@@ -1,7 +1,16 @@
+-import { ExecutionContext } from '@nestjs/common'
++import {
++  ExecutionContext,
++  ForbiddenException,
++  InternalServerErrorException,
++  UnauthorizedException,
++} from '@nestjs/common'
+ import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants'
+ import { GqlExecutionContext } from '@nestjs/graphql'
+-import { CtxOptionalOrganizationId } from './ctx-organization.decorator'
++import {
++  CtxOptionalOrganizationId,
++  CtxOrganization,
++  CtxOrganizationId,
++} from './ctx-organization.decorator'
+ 
+ function factoryOf(decorator: () => ParameterDecorator) {
+   class Target {
+@@ -34,3 +43,45 @@ describe('CtxOptionalOrganizationId', () => {
+     expect(read({ user: { activeOrganizationId: 'org-left' } })).toBeNull()
+   })
+ })
++
++// A GraphQL context with no request (a subscription connection, a decorator used outside GraphQL)
++// is a server bug. It must be a 500: a 401 would log the user out, and a 403
++// ORGANIZATION_CONTEXT_REQUIRED would send them to the organization picker for nothing.
++describe('organization decorators without a request', () => {
++  const readWithContext = (decorator: () => ParameterDecorator, context: object | undefined) => {
++    jest
++      .spyOn(GqlExecutionContext, 'create')
++      .mockReturnValue({ getContext: () => context } as never)
++    return () => factoryOf(decorator)(undefined, {} as ExecutionContext)
++  }
++
++  const thrownBy = (read: () => unknown): unknown => {
++    let thrown: unknown
++    try {
++      read()
++    } catch (error) {
++      thrown = error
++    }
++    return thrown
++  }
++
++  afterEach(() => jest.restoreAllMocks())
++
++  it.each([
++    ['CtxOrganization', CtxOrganization],
++    ['CtxOrganizationId', CtxOrganizationId],
++    ['CtxOptionalOrganizationId', CtxOptionalOrganizationId],
++  ])('%s answers a context with no req with a 500', (_name, decorator) => {
++    for (const context of [{}, { req: undefined }, undefined]) {
++      const thrown = thrownBy(readWithContext(decorator, context))
++      expect(thrown).toBeInstanceOf(InternalServerErrorException)
++      expect(thrown).not.toBeInstanceOf(UnauthorizedException)
++      expect(thrown).not.toBeInstanceOf(ForbiddenException)
++    }
++  })
++
++  it('still answers a request with no organization context with the 403', () => {
++    expect(readWithContext(CtxOrganizationId, { req: {} })).toThrow(ForbiddenException)
++    expect(readWithContext(CtxOrganization, { req: {} })).toThrow(ForbiddenException)
++  })
++})
+diff --git a/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts b/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+index fe6599c..62f1fdc 100644
+--- a/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
++++ b/libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+@@ -1,18 +1,39 @@
+-import { createParamDecorator, ExecutionContext } from '@nestjs/common'
++import {
++  createParamDecorator,
++  ExecutionContext,
++  InternalServerErrorException,
++} from '@nestjs/common'
+ import { GqlExecutionContext } from '@nestjs/graphql'
+ import { organizationContextRequired } from '../errors/api-error-code'
+ import { OrganizationContext } from '../types/nest-context-type'
+ 
++type RequestWithOrganizationContext = { organizationContext?: OrganizationContext }
++
++/**
++ * The request from the GraphQL context. A context without one (a subscription connection that
++ * never got a request, or a decorator used outside GraphQL) is a server bug: a 500, never a 401,
++ * which would log the user out, and never a 403, which would blame the user's organization.
++ */
++function requestFrom(ctx: ExecutionContext): RequestWithOrganizationContext {
++  const req = GqlExecutionContext.create(ctx).getContext()?.req as
++    RequestWithOrganizationContext | undefined
++  if (!req) {
++    throw new InternalServerErrorException(
++      'Organization context cannot be read: the GraphQL context has no request.',
++    )
++  }
++  return req
++}
++
+ /**
+  * Extract organization context from GraphQL request
+  * Throws a 403 `ORGANIZATION_CONTEXT_REQUIRED` if no organization context is found (no active
+  * organization, or one the user no longer belongs to). Never a 401: the session is fine, and a 401
+- * would log the user out.
++ * would log the user out. A context with no request at all is a 500 (see `requestFrom`).
+  */
+ export const CtxOrganization = createParamDecorator(
+   (data: unknown, ctx: ExecutionContext): OrganizationContext => {
+-    const gqlContext = GqlExecutionContext.create(ctx).getContext()
+-    const organizationContext = gqlContext.req.organizationContext
++    const organizationContext = requestFrom(ctx).organizationContext
+ 
+     if (!organizationContext) {
+       throw organizationContextRequired()
+@@ -26,12 +47,11 @@ export const CtxOrganization = createParamDecorator(
+  * Extract organization ID from context
+  * Throws a 403 `ORGANIZATION_CONTEXT_REQUIRED` if no organization context is found (no active
+  * organization, or one the user no longer belongs to). Never a 401: the session is fine, and a 401
+- * would log the user out.
++ * would log the user out. A context with no request at all is a 500 (see `requestFrom`).
+  */
+ export const CtxOrganizationId = createParamDecorator(
+   (data: unknown, ctx: ExecutionContext): string => {
+-    const gqlContext = GqlExecutionContext.create(ctx).getContext()
+-    const organizationContext = gqlContext.req.organizationContext
++    const organizationContext = requestFrom(ctx).organizationContext
+ 
+     if (!organizationContext) {
+       throw organizationContextRequired()
+@@ -44,11 +64,10 @@ export const CtxOrganizationId = createParamDecorator(
+ /**
+  * The organization id from the request's membership-checked context, or null when there is none
+  * (no active organization, or one the user is no longer a member of). For reads that answer "nothing"
+- * rather than refuse in that case.
++ * rather than refuse in that case. A context with no request at all is a 500 (see `requestFrom`).
+  */
+ export const CtxOptionalOrganizationId = createParamDecorator(
+   (data: unknown, ctx: ExecutionContext): string | null => {
+-    const gqlContext = GqlExecutionContext.create(ctx).getContext()
+-    return gqlContext.req.organizationContext?.organizationId ?? null
++    return requestFrom(ctx).organizationContext?.organizationId ?? null
+   },
+ )
+diff --git a/libs/api/utils/src/lib/errors/api-error-code.spec.ts b/libs/api/utils/src/lib/errors/api-error-code.spec.ts
+index ff523e7..2b7ae3d 100644
+--- a/libs/api/utils/src/lib/errors/api-error-code.spec.ts
++++ b/libs/api/utils/src/lib/errors/api-error-code.spec.ts
+@@ -1,6 +1,10 @@
+ import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo'
+ import { ApolloServer } from '@apollo/server'
+-import { INestApplication, UnauthorizedException } from '@nestjs/common'
++import {
++  INestApplication,
++  ServiceUnavailableException,
++  UnauthorizedException,
++} from '@nestjs/common'
+ import { GraphQLModule, Query, Resolver } from '@nestjs/graphql'
+ import { Test } from '@nestjs/testing'
+ import type { GraphQLFormattedError } from 'graphql'
+@@ -33,6 +37,18 @@ class ProbeResolver {
+   claimsUnauthenticated(): string {
+     throw forbiddenWithCode('UNAUTHENTICATED', 'A 403 may not mint a logout')
+   }
++
++  // An app's own code, not one of API_ERROR_CODES.
++  @Query(() => String)
++  appWorkflowRefusal(): string {
++    throw forbiddenWithCode('WORKFLOW_STEP_LOCKED', 'This step is locked until the review is done')
++  }
++
++  // What JwtStrategy throws when an API token lookup fails (the database is down, say).
++  @Query(() => String)
++  lookupUnavailable(): string {
++    throw new ServiceUnavailableException('API token validation is temporarily unavailable')
++  }
+ }
+ 
+ /**
+@@ -97,6 +113,37 @@ describe('API error codes over GraphQL', () => {
+ 
+     expect(error.extensions?.['code']).toBe('FORBIDDEN')
+   })
++
++  // formatApiError restores any upper-snake-case code a 403 was thrown with, not only the
++  // template's: an app's own codes (workflow states, plan limits, ...) reach its clients as-is.
++  it("keeps an app's own forbiddenWithCode code", async () => {
++    const error = await firstError('{ appWorkflowRefusal }')
++
++    expect(error.extensions?.['code']).toBe('WORKFLOW_STEP_LOCKED')
++    expect(error.extensions?.['originalError']).toMatchObject({ statusCode: 403 })
++    expect(error.message).toBe('This step is locked until the review is done')
++  })
++
++  // An internal failure keeps the session: Nest gives a 503 INTERNAL_SERVER_ERROR with its status,
++  // and formatApiError leaves it so.
++  it('answers an internal failure (503) without UNAUTHENTICATED', async () => {
++    const error = await firstError('{ lookupUnavailable }')
++
++    expect(error.extensions?.['code']).toBe('INTERNAL_SERVER_ERROR')
++    expect(error.extensions?.['status']).toBe(503)
++  })
++
++  it.each(['{ organizationId }', '{ organizationName }'])(
++    'answers a GraphQL context with no request (%s) with a 500, not UNAUTHENTICATED or the 403',
++    async query => {
++      const response = await server.executeOperation({ query }, { contextValue: {} })
++      if (response.body.kind !== 'single') throw new Error('expected a single result')
++      const error = response.body.singleResult.errors?.[0]
++
++      expect(error?.extensions?.['code']).toBe('INTERNAL_SERVER_ERROR')
++      expect(error?.extensions?.['status']).toBe(500)
++    },
++  )
+ })
+ 
+ describe('organizationContextRequired', () => {
+diff --git a/libs/api/utils/src/lib/errors/api-error-code.ts b/libs/api/utils/src/lib/errors/api-error-code.ts
+index 9eecdd3..b2660ee 100644
+--- a/libs/api/utils/src/lib/errors/api-error-code.ts
++++ b/libs/api/utils/src/lib/errors/api-error-code.ts
+@@ -27,7 +27,9 @@ const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/
+ 
+ /**
+  * A 403 whose GraphQL error carries `extensions.code: code` (see `formatApiError`). Over REST it is
+- * an ordinary 403 whose JSON body also has `code`.
++ * an ordinary 403 whose JSON body also has `code`. `code` need not be one of `API_ERROR_CODES`:
++ * apps throw their own (a workflow state, a plan limit, ...) and `formatApiError` keeps any of
++ * them, as long as it is upper snake case and not `UNAUTHENTICATED`.
+  */
+ export function forbiddenWithCode(code: string, message: string): ForbiddenException {
+   return new ForbiddenException({ statusCode: 403, error: 'Forbidden', message, code })
+@@ -47,9 +49,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
+ /**
+  * The GraphQL `formatError`. `@nestjs/apollo` runs first and replaces the code of every HTTP
+  * exception with the one for its status, keeping the exception's body as
+- * `extensions.originalError`. This puts back the code `forbiddenWithCode` gave the body. It never
+- * sets a code on a 401, and never sets `UNAUTHENTICATED`: only a real 401 may tell a client the
+- * session is dead.
++ * `extensions.originalError`. This puts back the code `forbiddenWithCode` gave the body: any
++ * upper-snake-case code, the app's own as well as `API_ERROR_CODES`, so an app's clients see the
++ * codes it throws. It never sets a code on a 401, and never sets `UNAUTHENTICATED`: only a real
++ * 401 may tell a client the session is dead. An internal failure (a 500 or 503) keeps Nest's
++ * `INTERNAL_SERVER_ERROR` and `extensions.status`.
+  */
+ export function formatApiError(formattedError: GraphQLFormattedError): GraphQLFormattedError {
+   const originalError = formattedError.extensions?.['originalError']
