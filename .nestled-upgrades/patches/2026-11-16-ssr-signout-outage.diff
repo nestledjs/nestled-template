@@ -1,0 +1,1596 @@
+diff --git a/apps/web/app/app.tsx b/apps/web/app/app.tsx
+index 49f80bd..9a61ad8 100644
+--- a/apps/web/app/app.tsx
++++ b/apps/web/app/app.tsx
+@@ -21,7 +21,10 @@ import {
+   APOLLO_SERVICE_UNAVAILABLE_EVENT,
+   classifyApiFailure,
+   isApiOutageSignalled,
++  isAuthFailureDeferred,
+   isRetryableConnectivityError,
++  releaseApiOutage,
++  signalApiOutage,
+   takeDeferredAuthFailure,
+ } from '@nestled-template/shared/apollo'
+ import { AccessDenied } from './access-denied'
+@@ -71,14 +74,19 @@ function isAnsweredApiFailure(error: unknown): boolean {
+ /**
+  * A Me failure that must not sign the user out, and is retried instead: a connectivity failure, an
+  * answered error other than a 401 (`isAnsweredApiFailure`), or a 401 while the app has outage
+- * evidence (`isApiOutageSignalled`). Log out only on an unambiguous 401; if the session really has
+- * expired, the retry gets a 401 with no outage and logs out then.
++ * evidence (`isApiOutageSignalled`) or the error link has let a 401 pass because of some
++ * (`isAuthFailureDeferred`), as the root error boundary judges it. The second matters because the
++ * boundary judges after the error link: an in-flight retry's evidence can end in between, and the
++ * Me 401 that arrived while it stood was then rendered as signed out. Log out only on an
++ * unambiguous 401; if the session really has expired, the retry gets a 401 with no outage and logs
++ * out then.
+  */
+ function meFailureAwaitsRecovery(error: unknown): boolean {
+   return (
+     isRetryableConnectivityError(error) ||
+     isAnsweredApiFailure(error) ||
+-    (classifyApiFailure(error) === 'unauthenticated' && isApiOutageSignalled())
++    (classifyApiFailure(error) === 'unauthenticated' &&
++      (isApiOutageSignalled() || isAuthFailureDeferred()))
+   )
+ }
+ 
+@@ -217,6 +225,18 @@ export function App() {
+   useLayoutEffect(() => {
+     loaderUnavailableRef.current = loaderServiceUnavailable
+   }, [loaderServiceUnavailable])
++  // The loader's flag is outage evidence for as long as the loader data carries it, not only while
++  // the screen is up: once the probe answers, the screen's own evidence ends but the revalidation
++  // that brings fresh loader data has not finished, and a 401 meanwhile is not proof the session is
++  // bad. Released when fresh data drops the flag (or App unmounts); a 401 the error link let pass
++  // meanwhile is then refetched (`releaseApiOutage`).
++  const loaderOutageSignalRef = useRef({})
++  useLayoutEffect(() => {
++    if (!loaderServiceUnavailable) return
++    const source = loaderOutageSignalRef.current
++    signalApiOutage(source)
++    return () => releaseApiOutage(source)
++  }, [loaderServiceUnavailable])
+   // Queries that failed during an outage, or during a blip too short to show the screen, refetch
+   // once the API answers, the browser comes back online or the tab is shown again.
+   const refetchFailedQueries = useRefetchFailedQueries()
+diff --git a/apps/web/app/entry.server.tsx b/apps/web/app/entry.server.tsx
+index df282ce..2b97f14 100644
+--- a/apps/web/app/entry.server.tsx
++++ b/apps/web/app/entry.server.tsx
+@@ -17,6 +17,8 @@ import {
+   makeClient,
+   mergeApiFailureCauses,
+   ssrApiFailureCause,
++  ssrOrganizationRequired,
++  waitForSsrApiCalls,
+   type ApiFailureCause,
+ } from '@nestled-template/shared/apollo'
+ import { ApolloProvider } from '@apollo/client/react'
+@@ -26,11 +28,35 @@ import {
+   isOrganizationContextRequired,
+   organizationRequiredResponse,
+ } from './organization-required'
++import { loaderReportsOutage } from './loader-outage'
+ 
+ disableFragmentWarnings()
+ 
+ export const streamTimeout = 5_000
+ 
++/**
++ * How long a sign-out decided during the server render waits for the request's other API calls
++ * still in flight (`waitForSsrApiCalls`) before it may clear the cookie. A loader returns its
++ * preloaded queries unawaited (the root loader's Me among them), so a fast 401 can arrive before a
++ * slower call reports a 503. A call still out after this long is no proof the session is bad: the
++ * session is kept and the recovering 503 served.
++ */
++export const SSR_API_SETTLE_MS = 3_000
++
++/**
++ * The request's recorded outage evidence and API failures from its loaders' data: the cause its
++ * preloads failed with (`ssrApiFailureCause`), plus `unavailable` when a loader's data carries the
++ * outage flag (`loaderReportsOutage`: the root loader's `serviceUnavailable`, returned when it could
++ * not even start the Me preload, so nothing went through the Apollo client to record it). The flag
++ * can only keep a session: it makes the request `unavailable`, which outranks any 401.
++ */
++export function recordedLoaderCause(
++  loaderData: Record<string, unknown> | null | undefined,
++): ApiFailureCause | undefined {
++  const flagged = Object.values(loaderData ?? {}).some(loaderReportsOutage)
++  return mergeApiFailureCauses(ssrApiFailureCause(loaderData), flagged ? 'unavailable' : undefined)
++}
++
+ /** Apollo's streamed query ref replaces a failed preload's error with this redacted one. */
+ function isRedactedApolloStreamError(error: unknown): boolean {
+   const message = (error as Error)?.message ?? ''
+@@ -59,24 +85,48 @@ function isRedactedApolloStreamError(error: unknown): boolean {
+  * - `unavailable`: any outage evidence (unreachable, 502/503/504), even alongside a 401, or a
+  *   redacted Apollo error with no recorded cause. Keep the cookie and serve the 503 recovering
+  *   screen: if the session really has expired, the first load after recovery gets a clean 401.
++ * - `organization-required`: neither of those, and the API refused a query with
++ *   `ORGANIZATION_CONTEXT_REQUIRED` (the shell error itself, or `organizationRequired`, recorded for
++ *   a preloaded query whose refusal reached the render redacted). Keep the cookie and serve the
++ *   organization picker, as `routeErrorOutcome` does for a loader.
+  * - `error`: anything else (an ordinary render error, or an API that answered with some other
+  *   error) is left to React Router's error handling, as before.
++ *
++ * `force-logout` is provisional: `handleRequest` first waits for the request's API calls still in
++ * flight (`SSR_API_SETTLE_MS`) and decides again with what they reported.
+  */
+ export function shellErrorOutcome(
+   error: unknown,
+   cause: ApiFailureCause | undefined,
+-): 'force-logout' | 'unavailable' | 'error' {
++  organizationRequired = false,
++): 'force-logout' | 'unavailable' | 'organization-required' | 'error' {
+   // Apollo's redacted stream error says nothing about the cause by itself.
+   let ownCause: ApiFailureCause | undefined
++  let refusedForOrganization = organizationRequired
+   if (!isRedactedApolloStreamError(error)) {
+     ownCause = classifyApiFailure(error)
+-    if (ownCause === 'other') return 'error'
++    // The organization refusal is an API failure like the others: it goes through the same
++    // precedence below (an outage, or a clean 401, recorded in the request still outranks it).
++    if (isOrganizationContextRequired(error)) refusedForOrganization = true
++    else if (ownCause === 'other') return 'error'
+   }
+   // Nothing known at all (a redacted error, nothing recorded): fail safe, keep the session.
+   const effectiveCause = mergeApiFailureCauses(ownCause, cause) ?? 'unavailable'
+   if (effectiveCause === 'unavailable') return 'unavailable'
+   if (effectiveCause === 'unauthenticated') return 'force-logout'
+-  return 'error'
++  return refusedForOrganization ? 'organization-required' : 'error'
++}
++
++/**
++ * The error the error page is rendered for after a shell error that is not an API failure. A
++ * component that throws a `Response` would otherwise reach the error page as a route error response
++ * with that status, and a 401 there reads, in the browser's root error boundary, as the API
++ * rejecting the session. A render's own 401 says nothing about the session, so it is passed on as a
++ * plain error (the generic error page, a 500); any other status is kept.
++ */
++export function shellErrorForErrorPage(error: unknown): unknown {
++  const status = error instanceof Response || isRouteErrorResponse(error) ? error.status : undefined
++  return status === 401 ? new Error('A render threw a 401 response') : error
+ }
+ 
+ const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+@@ -115,8 +165,8 @@ export function handleError(error: unknown, { request }: { request: Request }):
+ /**
+  * What to do when a loader threw during a document request, before anything renders. `errors` is
+  * the router context's `staticHandlerContext.errors`; `thrownCause` is what those errors were before
+- * React Router sanitized them (recorded by `handleError`); `recordedCause` the recorded cause of the
+- * request's failed preloads, as for `shellErrorOutcome`.
++ * React Router sanitized them (recorded by `handleError`); `recordedCause` the request's recorded
++ * outage evidence and preload failures (`recordedLoaderCause`), as for `shellErrorOutcome`.
+  *
+  * A loader that awaited Me (or any query) and got a 401 used to reach the root ErrorBoundary
+  * during the server render, which cannot redirect there, so the browser got a 500 "Something went
+@@ -138,6 +188,9 @@ export function handleError(error: unknown, { request }: { request: Request }):
+  *   error page the sanitized error would get.
+  * - `render`: anything else (no loader error, or one that is not an API failure) is rendered by
+  *   the root ErrorBoundary as before.
++ *
++ * `force-logout` is provisional: `handleRequest` first waits for the request's API calls still in
++ * flight (`SSR_API_SETTLE_MS`) and decides again with what they reported.
+  */
+ export function routeErrorOutcome(
+   errors: Record<string, unknown> | null | undefined,
+@@ -169,12 +222,45 @@ function unavailableResponse(): Response {
+   return new Response(null, { status: 503, statusText: 'Service Unavailable' })
+ }
+ 
+-// Requests already answered with a rejected `Response` (the recovering 503, or the organization
+-// picker's 403). React Router renders the ErrorBoundary for it by calling `handleRequest` again
+-// with that response as the route error; this marks that second render, which must go ahead and
+-// render rather than reject again (a second rejection is React Router's bare last-resort 500).
++// Requests whose first render was already decided and rejected: with a `Response` (the recovering
++// 503, or the organization picker's 403), or with the shell error itself. React Router renders the
++// ErrorBoundary for it by calling `handleRequest` again with that rejection as the route error; this
++// marks that second render, which must go ahead and render rather than decide again. Rejecting a
++// second time is React Router's bare last-resort 500; and deciding again would judge the rejection
++// as if a loader had thrown it, without the evidence the first decision had (a shell error that
++// carries a 401 status would sign the user out of a page that only failed to render).
+ const servedErrorResponse = new WeakSet<Request>()
+ 
++function rejectUnavailable(request: Request, message: string): Promise<never> {
++  console.error(message)
++  servedErrorResponse.add(request)
++  return Promise.reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
++}
++
++/**
++ * Signs out only once the request's API calls still in flight have settled
++ * (`waitForSsrApiCalls`, bounded by `SSR_API_SETTLE_MS`) and `decide`, asked again with what they
++ * reported, still says `force-logout`. Waiting can only keep the session: a call that reported an
++ * outage meanwhile, or one still out when the bound passes, serves the recovering 503 instead.
++ */
++async function signOutOnceSettled(
++  request: Request,
++  loaderData: Record<string, unknown> | null | undefined,
++  decide: () => ReturnType<typeof routeErrorOutcome> | ReturnType<typeof shellErrorOutcome>,
++): Promise<Response> {
++  const settled = await waitForSsrApiCalls(loaderData, SSR_API_SETTLE_MS)
++  if (settled && decide() === 'force-logout') {
++    console.error('[SSR] The API rejected the session — redirecting to force-logout')
++    return forceLogoutResponse(request)
++  }
++  return rejectUnavailable(
++    request,
++    settled
++      ? '[SSR] A 401 came with outage evidence once the API calls settled — serving 503'
++      : '[SSR] API calls still in flight after a 401 — keeping the session, serving 503',
++  )
++}
++
+ function forceLogoutResponse(request: Request): Response {
+   const cookieName = process.env.VITE_COOKIE_NAME || '__session'
+   const cookieDomain = process.env.VITE_COOKIE_DOMAIN
+@@ -205,24 +291,26 @@ export default function handleRequest(
+     (userAgent && isbot(userAgent)) || routerContext.isSpaMode ? 'onAllReady' : 'onShellReady'
+ 
+   const handlerContext = routerContext.staticHandlerContext
+-  const loaderOutcome = servedErrorResponse.has(request)
+-    ? 'render'
+-    : routeErrorOutcome(
+-        handlerContext?.errors,
+-        loaderErrorCauses.get(request),
+-        ssrApiFailureCause(handlerContext?.loaderData),
+-        loaderOrganizationRequired.has(request),
+-      )
++  const decideForLoaders = () =>
++    routeErrorOutcome(
++      handlerContext?.errors,
++      loaderErrorCauses.get(request),
++      recordedLoaderCause(handlerContext?.loaderData),
++      loaderOrganizationRequired.has(request),
++    )
++  const loaderOutcome = servedErrorResponse.has(request) ? 'render' : decideForLoaders()
+   if (loaderOutcome === 'force-logout') {
+-    console.error('[SSR] A loader got a 401 from the API — redirecting to force-logout')
+-    return Promise.resolve(forceLogoutResponse(request))
++    // A loader got a 401 and nothing yet points to an outage; a slower call may still report one.
++    console.error('[SSR] A loader got a 401 from the API — waiting for the other API calls')
++    return signOutOnceSettled(request, handlerContext?.loaderData, decideForLoaders)
+   }
+   if (loaderOutcome === 'unavailable') {
+     // A loader failed and the API showed signs of an outage (even if a 401 came back too). Keep
+     // the session and serve the same recovering 503 as an unavailable shell render.
+-    console.error('[SSR] A loader failed while the API was unavailable — serving 503')
+-    servedErrorResponse.add(request)
+-    return Promise.reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
++    return rejectUnavailable(
++      request,
++      '[SSR] A loader failed while the API was unavailable — serving 503',
++    )
+   }
+   if (loaderOutcome === 'organization-required') {
+     // Signed in, no active organization. Keep the session: React Router renders the root
+@@ -264,25 +352,40 @@ export default function handleRequest(
+         },
+         onShellError(error: unknown) {
+           console.error('[SSR] Shell render error:', error)
+-          const outcome = shellErrorOutcome(
+-            error,
+-            ssrApiFailureCause(routerContext.staticHandlerContext?.loaderData),
+-          )
++          const loaderData = routerContext.staticHandlerContext?.loaderData
++          const decideForShell = () =>
++            shellErrorOutcome(
++              error,
++              recordedLoaderCause(loaderData),
++              ssrOrganizationRequired(loaderData),
++            )
++          const outcome = decideForShell()
+           if (outcome === 'force-logout') {
+-            // The API rejected the session, with no sign of an outage: clear the stale cookie
+-            // instead of serving 500.
+-            console.error('[SSR] The API rejected the session — redirecting to force-logout')
+-            resolve(forceLogoutResponse(request))
++            // The API rejected the session, with no sign of an outage so far: once the request's
++            // other API calls have settled (a slower one may yet report an outage), clear the
++            // stale cookie instead of serving 500.
++            signOutOnceSettled(request, loaderData, decideForShell).then(resolve, reject)
+           } else if (outcome === 'unavailable') {
+             // The API could not be reached (even if a 401 came back too), or the cause is unknown.
+             // Keep the session: React Router renders the root ErrorBoundary for this 503, which
+             // shows the self-recovering screen and reloads once the API answers. A real 401 comes
+             // back on the client and goes through the normal 401 handling there.
+-            console.error('[SSR] API unavailable during the shell render — serving 503')
++            rejectUnavailable(
++              request,
++              '[SSR] API unavailable during the shell render — serving 503',
++            ).catch(reject)
++          } else if (outcome === 'organization-required') {
++            // A preloaded query was refused for want of an active organization: keep the session
++            // and serve the organization picker, as for a loader's refusal.
++            console.error('[SSR] A query needs an active organization — serving the picker')
+             servedErrorResponse.add(request)
+-            reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
++            reject(organizationRequiredResponse()) // NOSONAR: a Response on purpose, as above
+           } else {
+-            reject(error)
++            // React Router renders the error page for this by calling `handleRequest` again with
++            // the shell error as the route error. That render must not decide again, and the page
++            // must not carry a render's 401 to the browser as the API's (shellErrorForErrorPage).
++            servedErrorResponse.add(request)
++            reject(shellErrorForErrorPage(error))
+           }
+         },
+         onError(error: unknown) {
+diff --git a/apps/web/app/loader-outage.ts b/apps/web/app/loader-outage.ts
+new file mode 100644
+index 0000000..904e292
+--- /dev/null
++++ b/apps/web/app/loader-outage.ts
+@@ -0,0 +1,27 @@
++import { useContext } from 'react'
++import { UNSAFE_DataRouterStateContext } from 'react-router'
++
++/**
++ * Whether a loader's data says it found the API unreachable: the root loader returns
++ * `{ serviceUnavailable: true }` when it could not even start the Me preload (root.tsx). That flag
++ * is outage evidence like any other, and it outranks a 401: a later 401 in a child loader, in the
++ * signed-in layout's re-check of Me, or in the root error boundary must not sign the user out while
++ * it stands. It can only keep a session, never end one.
++ */
++export function loaderReportsOutage(data: unknown): boolean {
++  return (
++    data !== null &&
++    typeof data === 'object' &&
++    (data as { serviceUnavailable?: unknown }).serviceUnavailable === true
++  )
++}
++
++/**
++ * Whether the root route's loader data, in the browser, carries the outage flag
++ * (`loaderReportsOutage`). Read from the data router's state, so it also works in the root error
++ * boundary and returns false outside a data router instead of throwing.
++ */
++export function useRootLoaderOutage(): boolean {
++  const state = useContext(UNSAFE_DataRouterStateContext)
++  return loaderReportsOutage(state?.loaderData?.root)
++}
+diff --git a/apps/web/app/root.tsx b/apps/web/app/root.tsx
+index 902d2a4..a4dfc31 100644
+--- a/apps/web/app/root.tsx
++++ b/apps/web/app/root.tsx
+@@ -33,6 +33,7 @@ import { AccessDenied } from './access-denied'
+ import { isOrganizationContextRequired, OrganizationRequired } from './organization-required'
+ import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
+ import { DeferredAuthRecovery } from './deferred-auth-recovery'
++import { useRootLoaderOutage } from './loader-outage'
+ 
+ export const meta: MetaFunction = () => [
+   {
+@@ -233,11 +234,16 @@ function isUnauthorizedError(error: unknown, routeStatus: number | undefined): b
+ // left) would flash the error screen, or log out, before the fresh answer arrives.
+ const errorsAwaitingFreshAnswer = new WeakSet<object>()
+ 
+-function awaitsFreshAnswer(error: unknown, routeStatus: number | undefined): boolean {
++function awaitsFreshAnswer(
++  error: unknown,
++  routeStatus: number | undefined,
++  loaderOutage: boolean,
++): boolean {
+   const isObject = typeof error === 'object' && error !== null
+   if (isObject && errorsAwaitingFreshAnswer.has(error)) return true
+   const awaits =
+-    carriesApiRejection(error, routeStatus) && (isApiOutageSignalled() || isAuthFailureDeferred())
++    carriesApiRejection(error, routeStatus) &&
++    (loaderOutage || isApiOutageSignalled() || isAuthFailureDeferred())
+   if (awaits && isObject) errorsAwaitingFreshAnswer.add(error)
+   return awaits
+ }
+@@ -261,6 +267,9 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
+   const normalizedError = error instanceof Error ? error : new Error('An unexpected error occurred')
+   const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
+   const isUnauthorized = isUnauthorizedError(error, routeStatus)
++  // The root loader's own outage flag (`serviceUnavailable`) is outage evidence too. App, which
++  // otherwise turns it into a signal, has been unmounted by this error.
++  const loaderOutage = useRootLoaderOutage()
+ 
+   // Log out only on an unambiguous 401. While the app has outage evidence, or while the error link
+   // has let a 401 pass because of some, a 401 is not proof the session is bad, whoever threw it (a
+@@ -268,7 +277,7 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
+   // the session and show the self-recovering screen: once the API answers and no evidence is left
+   // it revalidates the route, which renders again with a fresh answer (data, or a clean 401 that
+   // logs out). It lives here, not in App, because the error has unmounted App.
+-  if (awaitsFreshAnswer(error, routeStatus)) {
++  if (awaitsFreshAnswer(error, routeStatus, loaderOutage)) {
+     return <DeferredAuthRecovery key={errorKey(error)} initialReason="server" />
+   }
+ 
+diff --git a/apps/web/app/routes/_authenticated/_layout.tsx b/apps/web/app/routes/_authenticated/_layout.tsx
+index e3abe24..dbc74ed 100644
+--- a/apps/web/app/routes/_authenticated/_layout.tsx
++++ b/apps/web/app/routes/_authenticated/_layout.tsx
+@@ -17,6 +17,7 @@ import { useReadQuery, type QueryRef } from '@apollo/client/react'
+ import { browserIsOffline } from '../../api-availability'
+ import { ApiUnavailableScreen } from '../../api-unavailable'
+ import { useSessionRecheck } from '../../session-recheck'
++import { useRootLoaderOutage } from '../../loader-outage'
+ import { OrganizationRequired } from '../../organization-required'
+ 
+ type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
+@@ -46,8 +47,9 @@ export default function AuthenticatedLayout() {
+   // No user is not proof of a dead session (a Me preload on a public route may have failed for
+   // another reason, and the root loader does not run again on a client-side navigation here), so
+   // Me is asked again. Only a real 401 with no outage goes through force-logout, which clears the
+-  // session cookie (and appends `expired=1`, so /login renders the form instead of looping).
+-  const recheck = useSessionRecheck(!contextUser)
++  // session cookie (and appends `expired=1`, so /login renders the form instead of looping). The
++  // root loader's outage flag counts as outage evidence: a 401 while it stands is retried.
++  const recheck = useSessionRecheck(!contextUser, useRootLoaderOutage())
+   const user = contextUser ?? (recheck.status === 'signed-in' ? recheck.user : null)
+   if (!user) {
+     if (recheck.status === 'rejected') {
+diff --git a/apps/web/app/session-recheck.tsx b/apps/web/app/session-recheck.tsx
+index eac4c19..74b78e7 100644
+--- a/apps/web/app/session-recheck.tsx
++++ b/apps/web/app/session-recheck.tsx
+@@ -30,14 +30,25 @@ export type SessionRecheck =
+ 
+ type RecheckState = Exclude<SessionRecheck, { status: 'retrying' }> | { status: 'retrying' }
+ 
+-/** How one answer to the Me re-check is judged (see `SessionRecheck`). */
+-export function sessionRecheckOutcome(answer: {
+-  user?: SessionUser | null
+-  error?: unknown
+-}): 'signed-in' | 'rejected' | 'organization-required' | 'retry' {
++/**
++ * How one answer to the Me re-check is judged (see `SessionRecheck`). `loaderOutage` is the root
++ * loader's own outage flag (`useRootLoaderOutage`), outage evidence like a signalled outage: a 401
++ * while either stands is retried, not a rejection.
++ */
++export function sessionRecheckOutcome(
++  answer: {
++    user?: SessionUser | null
++    error?: unknown
++  },
++  loaderOutage = false,
++): 'signed-in' | 'rejected' | 'organization-required' | 'retry' {
+   if (answer.error === undefined) return answer.user ? 'signed-in' : 'retry'
+   if (isOrganizationContextRequired(answer.error)) return 'organization-required'
+-  if (classifyApiFailure(answer.error) === 'unauthenticated' && !isApiOutageSignalled()) {
++  if (
++    classifyApiFailure(answer.error) === 'unauthenticated' &&
++    !loaderOutage &&
++    !isApiOutageSignalled()
++  ) {
+     return 'rejected'
+   }
+   return 'retry'
+@@ -52,10 +63,15 @@ export function sessionRecheckOutcome(answer: {
+  * those. Log out only on a real 401 (`rejected`).
+  *
+  * The request skips the cache (`no-cache`), so it is always a fresh answer, and goes through the
+- * app's Apollo client, so its error link judges it like any other request.
++ * app's Apollo client, so its error link judges it like any other request. `loaderOutage` (the
++ * root loader's outage flag) is read when each answer arrives, so a 401 while it stands is retried.
+  */
+-export function useSessionRecheck(needed: boolean): SessionRecheck {
++export function useSessionRecheck(needed: boolean, loaderOutage = false): SessionRecheck {
+   const client = useApolloClient()
++  const loaderOutageRef = useRef(loaderOutage)
++  useLayoutEffect(() => {
++    loaderOutageRef.current = loaderOutage
++  }, [loaderOutage])
+   const [state, setState] = useState<RecheckState>({ status: 'checking' })
+   const attemptRef = useRef(0)
+   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+@@ -72,7 +88,7 @@ export function useSessionRecheck(needed: boolean): SessionRecheck {
+     const settle = (answer: { user?: SessionUser | null; error?: unknown }) => {
+       // A newer check, or the layout no longer needing one, supersedes this answer.
+       if (run !== runRef.current) return
+-      const outcome = sessionRecheckOutcome(answer)
++      const outcome = sessionRecheckOutcome(answer, loaderOutageRef.current)
+       if (outcome === 'signed-in' && answer.user) {
+         attemptRef.current = 0
+         setState({ status: 'signed-in', user: answer.user })
+diff --git a/apps/web/tests/api-availability.spec.tsx b/apps/web/tests/api-availability.spec.tsx
+index 82d6e67..de8d8ea 100644
+--- a/apps/web/tests/api-availability.spec.tsx
++++ b/apps/web/tests/api-availability.spec.tsx
+@@ -384,6 +384,14 @@ describe('root error boundary for a network error', () => {
+ 
+       expect(assign).toHaveBeenCalledWith('/force-logout?return_url=%2Fmembers')
+     })
++    it("does not log out over the error page served after a render's own 401", () => {
++      // The server passes a render's 401 on as a plain error (shellErrorForErrorPage), which the
++      // browser hydrates as React Router's sanitized error.
++      const assign = renderWithAssign(new Error('Unexpected Server Error'))
++
++      expect(screen.getByText('Something went wrong')).toBeInTheDocument()
++      expect(assign).not.toHaveBeenCalled()
++    })
+   })
+ 
+   it('labels the button "Try again", not "Refresh Page"', () => {
+@@ -1135,6 +1143,7 @@ describe('signed-in user after a connectivity blip', () => {
+ 
+     afterEach(() => {
+       clearApiOutage(elsewhere)
++      takeDeferredAuthFailure()
+     })
+ 
+     it('keeps the session and retries Me once the API answers', async () => {
+@@ -1196,6 +1205,39 @@ describe('signed-in user after a connectivity blip', () => {
+       expect(app.loaderCalls()).toBe(2)
+       expect(screen.getByText('Signed out')).toBeInTheDocument()
+     })
++
++    it('keeps the session when the evidence ended before the boundary judged the 401', async () => {
++      // Me's 401 arrived while an in-flight retry held outage evidence, so the error link let it
++      // pass (`isAuthFailureDeferred`); the retry settled before the Me boundary judged the error.
++      // Judging by `isApiOutageSignalled` alone, the boundary rendered the user as signed out.
++      vi.spyOn(console, 'log').mockImplementation(() => undefined)
++      signalApiOutage(elsewhere)
++      fetchMock.mockResolvedValueOnce(
++        new Response(JSON.stringify({ message: 'Unauthorized' }), {
++          status: 401,
++          headers: { 'content-type': 'application/json' },
++        }),
++      )
++      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++        .query({ query: ME })
++        .catch(() => undefined)
++      clearApiOutage(elsewhere)
++      expect(isApiOutageSignalled()).toBe(false)
++      apiUp()
++
++      const app = await renderSignedIn([unauthorized(), signedIn])
++
++      expect(seen).not.toContain('Signed out')
++      expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++
++      await advance(CONFIRM_WINDOW_MS)
++
++      expect(app.loaderCalls()).toBe(2)
++      expect(seen).not.toContain('Signed out')
++      expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
++      // The retry took the deferred 401: a later one is judged afresh.
++      expect(takeDeferredAuthFailure()).toBe(false)
++    })
+   })
+ 
+   describe("an error thrown by the app's own code", () => {
+@@ -2181,3 +2223,127 @@ describe('Me retry backoff under cache-and-network', () => {
+     expect(app.loaderCalls()).toBe(3)
+   })
+ })
++
++describe("the root loader's outage flag in the browser", () => {
++  function BoundaryFromRoute() {
++    const error = useRouteError()
++    return <ErrorBoundary error={boundaryError(error)} />
++  }
++
++  const unauthorized = () =>
++    new ServerError('Response not successful', {
++      response: new Response(null, { status: 401 }),
++      bodyText: '',
++    })
++
++  beforeEach(() => {
++    vi.useFakeTimers()
++    fetchMock.mockReset()
++    vi.stubGlobal('fetch', fetchMock)
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.useRealTimers()
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    sessionStorage.clear()
++    takeDeferredAuthFailure()
++  })
++
++  it("keeps the session in the root error boundary for a child loader's 401", async () => {
++    // App, which otherwise turns the flag into outage evidence, is unmounted by the error; the
++    // root error boundary reads the flag itself.
++    apiDown()
++    const assign = vi.fn()
++    vi.stubGlobal('location', { ...globalThis.location, pathname: '/members', assign })
++    const router = createMemoryRouter(
++      [
++        {
++          id: 'root',
++          path: '/',
++          loader: () => ({ serviceUnavailable: true }),
++          element: <Outlet />,
++          errorElement: <BoundaryFromRoute />,
++          children: [
++            {
++              path: 'members',
++              loader: () => {
++                throw unauthorized()
++              },
++              element: <p>Members page</p>,
++            },
++          ],
++        },
++      ],
++      { initialEntries: ['/members'] },
++    )
++    await act(async () => {
++      render(<RouterProvider router={router} />)
++    })
++
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++    expect(assign).not.toHaveBeenCalled()
++  })
++
++  it('still logs out on that 401 with no flag', async () => {
++    apiDown()
++    const assign = vi.fn()
++    vi.stubGlobal('location', { ...globalThis.location, pathname: '/members', assign })
++    const router = createMemoryRouter(
++      [
++        {
++          id: 'root',
++          path: '/',
++          loader: () => ({}),
++          element: <Outlet />,
++          errorElement: <BoundaryFromRoute />,
++          children: [
++            {
++              path: 'members',
++              loader: () => {
++                throw unauthorized()
++              },
++              element: <p>Members page</p>,
++            },
++          ],
++        },
++      ],
++      { initialEntries: ['/members'] },
++    )
++    await act(async () => {
++      render(<RouterProvider router={router} />)
++    })
++
++    expect(assign).toHaveBeenCalledWith('/force-logout?return_url=%2Fmembers')
++  })
++
++  it('holds outage evidence in App until fresh loader data drops the flag', async () => {
++    // Once the probe answers, the screen's own evidence ends, but the revalidation that brings
++    // fresh loader data is still running: a 401 meanwhile must not log the user out.
++    apiDown()
++    let loaderCalls = 0
++    let releaseRetry: () => void = () => undefined
++    const retryGate = new Promise<void>(resolve => {
++      releaseRetry = resolve
++    })
++    await renderApp(async () => {
++      loaderCalls += 1
++      if (loaderCalls === 1) return { serviceUnavailable: true }
++      await retryGate
++      return {}
++    })
++    expect(isApiOutageSignalled()).toBe(true)
++
++    apiUp()
++    await advance(retryDelayMs(0))
++    expect(loaderCalls).toBe(2)
++    expect(isApiOutageSignalled()).toBe(true)
++
++    await act(async () => releaseRetry())
++    await advance(0)
++    expect(screen.getByText('Protected page')).toBeInTheDocument()
++    expect(isApiOutageSignalled()).toBe(false)
++  })
++})
+diff --git a/apps/web/tests/auth-error-navigation.spec.tsx b/apps/web/tests/auth-error-navigation.spec.tsx
+index b268850..d267b92 100644
+--- a/apps/web/tests/auth-error-navigation.spec.tsx
++++ b/apps/web/tests/auth-error-navigation.spec.tsx
+@@ -74,7 +74,11 @@ describe('authentication and authorization error navigation', () => {
+       data: null,
+     }
+ 
+-    render(<MemoryRouter>{ErrorBoundary({ error: boundaryError(routeError) })}</MemoryRouter>)
++    render(
++      <MemoryRouter>
++        <ErrorBoundary error={boundaryError(routeError)} />
++      </MemoryRouter>,
++    )
+ 
+     expect(
+       screen.getByRole('heading', { name: 'You don’t have permission to view this page' }),
+@@ -100,7 +104,9 @@ describe('authentication and authorization error navigation', () => {
+ 
+       render(
+         <ApolloProvider client={organizationsClient()}>
+-          <MemoryRouter>{ErrorBoundary({ error: boundaryError(error) })}</MemoryRouter>
++          <MemoryRouter>
++            <ErrorBoundary error={boundaryError(error)} />
++          </MemoryRouter>
+         </ApolloProvider>,
+       )
+ 
+diff --git a/apps/web/tests/entry-server-shell-error.spec.tsx b/apps/web/tests/entry-server-shell-error.spec.tsx
+index d1ffca4..a751338 100644
+--- a/apps/web/tests/entry-server-shell-error.spec.tsx
++++ b/apps/web/tests/entry-server-shell-error.spec.tsx
+@@ -1,16 +1,27 @@
+ // @vitest-environment node
++import type { ReactNode } from 'react'
+ import {
+   createRequestHandler,
++  isRouteErrorResponse,
++  type LoaderFunctionArgs,
+   Outlet,
++  useLoaderData,
+   UNSAFE_withComponentProps as withComponentProps,
+   UNSAFE_withErrorBoundaryProps as withErrorBoundaryProps,
+   type ServerBuild,
+ } from 'react-router'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
+-import { makeClient } from '@nestled-template/shared/apollo'
++import { useReadQuery, type QueryRef } from '@apollo/client/react'
++import { apolloLoader, makeClient } from '@nestled-template/shared/apollo'
+ import * as entryServer from '../app/entry.server'
+-import { routeErrorOutcome, shellErrorOutcome } from '../app/entry.server'
++import {
++  recordedLoaderCause,
++  routeErrorOutcome,
++  SSR_API_SETTLE_MS,
++  shellErrorForErrorPage,
++  shellErrorOutcome,
++} from '../app/entry.server'
+ import * as rootModule from '../app/root'
+ import { OFFLINE_TITLE, SERVER_TROUBLE_MESSAGE, SERVER_TROUBLE_TITLE } from '../app/api-unavailable'
+ import { ORGANIZATION_PICKER_TITLE } from '../app/organization-required'
+@@ -64,9 +75,19 @@ function MembersPage() {
+  * ErrorBoundary to pass them their props), or with a component that throws `rootError`. The
+  * members route gets `membersLoader` when one is given.
+  */
+-function build(rootError?: Error, membersLoader?: () => Promise<unknown>): ServerBuild {
++function build(
++  rootError?: unknown,
++  membersLoader?: (args: LoaderFunctionArgs) => unknown,
++  overrides: {
++    /** Replaces the members route's component. */
++    membersComponent?: () => ReactNode
++    /** Replaces the root loader (the real one runs by default). */
++    rootLoader?: (args: LoaderFunctionArgs) => unknown
++  } = {},
++): ServerBuild {
+   const root = {
+     ...rootModule,
++    ...(overrides.rootLoader && { loader: overrides.rootLoader }),
+     default: withComponentProps(
+       rootError
+         ? () => {
+@@ -84,7 +105,10 @@ function build(rootError?: Error, membersLoader?: () => Promise<unknown>): Serve
+         id: 'routes/members',
+         parentId: 'root',
+         path: 'members/*',
+-        module: { default: MembersPage, ...(membersLoader && { loader: membersLoader }) },
++        module: {
++          default: overrides.membersComponent ?? MembersPage,
++          ...(membersLoader && { loader: membersLoader }),
++        },
+       },
+     },
+     assets: {
+@@ -510,3 +534,245 @@ describe('shellErrorOutcome', () => {
+     expect(shellErrorOutcome(error, cause)).toBe(outcome)
+   })
+ })
++
++describe('server render sign-out decisions with the whole request in view', () => {
++  const MEMBERS_DATA = gql`
++    query MembersData {
++      membersData
++    }
++  `
++
++  type Respond = (init?: RequestInit) => Response | Promise<Response>
++
++  // Each operation's answer, by name; an answer may take a while.
++  function answer(byOperation: Record<string, Respond>) {
++    fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
++      const { operationName } = JSON.parse(String(init?.body))
++      return byOperation[operationName](init)
++    })
++  }
++  const json = (status: number, body: unknown) => () =>
++    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
++  const later =
++    (ms: number, respond: Respond): Respond =>
++    init =>
++      new Promise(resolve => setTimeout(() => resolve(respond(init)), ms))
++  const signedIn = json(200, { data: { me: { __typename: 'User', id: 'user-1' } } })
++  const unauthorized = json(401, { message: 'Unauthorized' })
++  const proxy503 = json(503, {})
++  const organizationRequired = json(200, {
++    data: null,
++    errors: [
++      {
++        message: 'Organization context required: secret detail',
++        extensions: {
++          code: 'ORGANIZATION_CONTEXT_REQUIRED',
++          originalError: { statusCode: 403, code: 'ORGANIZATION_CONTEXT_REQUIRED' },
++        },
++      },
++    ],
++  })
++
++  // A members loader that awaits its query (an app that resolves Me, or anything, in a loader).
++  const awaitsQuery = async () => {
++    await makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' }).query({
++      query: MEMBERS_DATA,
++      fetchPolicy: 'network-only',
++      errorPolicy: 'none',
++    })
++    return {}
++  }
++  // A members loader that preloads its query, as the template's settings pages do.
++  const preloadsQuery = apolloLoader()(({ preloadQuery }) => ({
++    membersRef: preloadQuery(MEMBERS_DATA),
++  }))
++  function ReadsPreloadedQuery() {
++    const { membersRef } = useLoaderData() as { membersRef: QueryRef<unknown> }
++    useReadQuery(membersRef)
++    return <p>Members data</p>
++  }
++
++  beforeEach(() => {
++    fetchMock.mockReset()
++    vi.stubGlobal('fetch', fetchMock)
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++  })
++
++  function expectRecovering503(response: Response, html: string) {
++    expect(response.status).toBe(503)
++    expect(clearsTheCookie(response)).toBe(false)
++    expect(response.headers.get('Location')).toBeNull()
++    expect(html).toContain(SERVER_TROUBLE_TITLE)
++  }
++
++  describe("a loader's 401 waits for the request's other API calls", () => {
++    it('serves the recovering 503 when the root Me preload reports a 503 after the 401', async () => {
++      // The root loader returns its Me preload unawaited; the members loader's own query is
++      // answered first. Deciding on that 401 alone signed the user out during an outage.
++      answer({ Me: later(50, proxy503), MembersData: unauthorized })
++
++      const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
++
++      expectRecovering503(response, await response.text())
++    })
++
++    it('still signs out when the other calls settle with no outage', async () => {
++      answer({ Me: later(50, signedIn), MembersData: unauthorized })
++
++      const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
++
++      expect(response.status).toBe(302)
++      expect(response.headers.get('Location')).toBe(
++        `/force-logout?return_url=${encodeURIComponent('/members/dashboard')}`,
++      )
++      expect(clearsTheCookie(response)).toBe(true)
++    })
++
++    it(
++      'keeps the session and serves 503 when a call is still out after the bound',
++      async () => {
++        // Me is answered, with no outage, only well after the bound: waiting for it would sign out.
++        answer({ Me: later(SSR_API_SETTLE_MS + 500, signedIn), MembersData: unauthorized })
++        const started = Date.now()
++
++        const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
++
++        expect(Date.now() - started).toBeGreaterThanOrEqual(SSR_API_SETTLE_MS - 50)
++        expectRecovering503(response, await response.text())
++      },
++      SSR_API_SETTLE_MS + 5_000,
++    )
++  })
++
++  describe("the shell's 401 waits too", () => {
++    it("serves the recovering 503 when Me's 401 comes before another preload's 503", async () => {
++      // Me's preload fails first and fails the shell; the members route's preload, which nothing
++      // renders, reports the outage a moment later.
++      answer({ Me: unauthorized, MembersData: later(50, proxy503) })
++
++      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
++
++      expectRecovering503(response, await response.text())
++    })
++
++    it("signs out on Me's 401 once the other preload is answered", async () => {
++      answer({ Me: unauthorized, MembersData: later(50, json(200, { data: { membersData: 1 } })) })
++
++      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
++
++      expect(response.status).toBe(302)
++      expect(clearsTheCookie(response)).toBe(true)
++    })
++  })
++
++  describe("the root loader's outage flag is outage evidence", () => {
++    // The root loader could not start the Me preload and returned its flag instead: nothing went
++    // through an Apollo client, so only the flag says the API was unreachable.
++    const rootFlagsOutage = () => ({ serviceUnavailable: true, theme: 'dark' })
++
++    it("keeps the session and serves the recovering 503 for a child loader's 401", async () => {
++      answer({ MembersData: unauthorized })
++
++      const response = await reloadSignedIn(
++        '/members/dashboard',
++        build(undefined, awaitsQuery, { rootLoader: rootFlagsOutage }),
++      )
++
++      expectRecovering503(response, await response.text())
++    })
++
++    it('counts the flag in recordedLoaderCause, and never as more than an outage', () => {
++      expect(recordedLoaderCause({ root: { serviceUnavailable: true } })).toBe('unavailable')
++      expect(recordedLoaderCause({ root: { serviceUnavailable: 'yes' } })).toBeUndefined()
++      expect(recordedLoaderCause({ root: { theme: 'dark' }, child: null })).toBeUndefined()
++      expect(recordedLoaderCause(undefined)).toBeUndefined()
++      expect(
++        routeErrorOutcome(
++          { 'routes/members': httpError(401) },
++          undefined,
++          recordedLoaderCause({ root: { serviceUnavailable: true } }),
++        ),
++      ).toBe('unavailable')
++      expect(
++        shellErrorOutcome(
++          httpError(401),
++          recordedLoaderCause({ root: { serviceUnavailable: true } }),
++        ),
++      ).toBe('unavailable')
++    })
++  })
++
++  describe('a preloaded query refused with ORGANIZATION_CONTEXT_REQUIRED (#114)', () => {
++    it('serves the organization picker (403, cookie kept), not a 500', async () => {
++      answer({ Me: signedIn, MembersData: organizationRequired })
++
++      const response = await reloadSignedIn(
++        '/members/dashboard',
++        build(undefined, preloadsQuery, { membersComponent: ReadsPreloadedQuery }),
++      )
++      const html = await response.text()
++
++      expect(response.status).toBe(403)
++      expect(clearsTheCookie(response)).toBe(false)
++      expect(response.headers.get('Location')).toBeNull()
++      expect(html).toContain(ORGANIZATION_PICKER_TITLE)
++      expect(html).not.toContain('Unexpected Server Error')
++    })
++
++    it('decides the picker only when nothing outranks it', () => {
++      const redacted = new Error('Error from event stream. Redacted for security concerns.')
++      expect(shellErrorOutcome(redacted, 'other', true)).toBe('organization-required')
++      expect(shellErrorOutcome(redacted, 'other', false)).toBe('error')
++      expect(shellErrorOutcome(redacted, 'unavailable', true)).toBe('unavailable')
++      expect(shellErrorOutcome(redacted, 'unauthenticated', true)).toBe('force-logout')
++      expect(shellErrorOutcome(new Error('A render bug'), undefined, true)).toBe('error')
++      // The refusal as the shell error itself goes through the same precedence.
++      const refusal = new CombinedGraphQLErrors({
++        data: null,
++        errors: [{ message: 'x', extensions: { code: 'ORGANIZATION_CONTEXT_REQUIRED' } }],
++      })
++      expect(shellErrorOutcome(refusal, undefined)).toBe('organization-required')
++      expect(shellErrorOutcome(refusal, 'other')).toBe('organization-required')
++      expect(shellErrorOutcome(refusal, 'unavailable')).toBe('unavailable')
++      expect(shellErrorOutcome(refusal, 'unauthenticated')).toBe('force-logout')
++    })
++  })
++
++  describe('the second render after a shell error', () => {
++    it('renders the error page and does not decide again', async () => {
++      // A shell error that carries a 401 status but is not an API failure the shell recognises.
++      // React Router renders the error page by calling handleRequest again with it as the route
++      // error, where the loader check used to read it as a loader's 401 and sign the user out.
++      graphqlAnswers(200, { data: { me: { __typename: 'User', id: 'user-1' } } })
++
++      const response = await reloadSignedIn(
++        '/members/dashboard',
++        build(new Response(null, { status: 401, statusText: 'Unauthorized' })),
++      )
++
++      expect(response.headers.get('Location')).toBeNull()
++      expect(clearsTheCookie(response)).toBe(false)
++      // Nor does the page carry a 401 route error to the browser, whose root error boundary would
++      // read it as the API rejecting the session and go to /force-logout after hydration.
++      expect(response.status).toBe(500)
++      expect(await response.text()).not.toMatch(/ErrorResponse[^\]]*401/)
++    })
++
++    it('passes a render 401 on as a plain error, and keeps every other status', () => {
++      const thrown401 = shellErrorForErrorPage(new Response(null, { status: 401 }))
++      expect(thrown401).toBeInstanceOf(Error)
++      expect(isRouteErrorResponse(thrown401)).toBe(false)
++      const notFound = new Response(null, { status: 404 })
++      expect(shellErrorForErrorPage(notFound)).toBe(notFound)
++      const bug = new Error('A render bug')
++      expect(shellErrorForErrorPage(bug)).toBe(bug)
++    })
++  })
++})
+diff --git a/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx b/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+index 22cd3f9..fd6c7c7 100644
+--- a/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
++++ b/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+@@ -1,6 +1,6 @@
+ import type { ReactNode } from 'react'
+ import { act, render, screen } from '@testing-library/react'
+-import { createMemoryRouter, RouterProvider } from 'react-router'
++import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
+ import {
+@@ -12,7 +12,9 @@ import {
+   ServerError,
+ } from '@apollo/client'
+ import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
++import { GlobalContextProvider } from '@nestled-template/web'
+ import { clearApiOutage, signalApiOutage } from '@nestled-template/shared/apollo'
++import { sessionRecheckOutcome } from '../../app/session-recheck'
+ import { App } from '../../app/app'
+ import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
+ import { CONFIRM_DELAYS_MS, retryDelayMs } from '../../app/api-availability'
+@@ -62,11 +64,15 @@ async function renderMembersPage(
+   {
+     rootPreloadsMe = true,
+     initialPath = '/members',
++    rootFlagsOutage = false,
+   }: {
+     // False: the root loader returns no Me query, as after a Me preload on a public route that
+     // failed for a reason other than the API (the cookie is kept), or with no preload at all.
+     rootPreloadsMe?: boolean
+     initialPath?: string
++    // The root loader returns its outage flag (`serviceUnavailable`) and the root renders the
++    // routes anyway, as in an app whose root does not put up the outage screen for it.
++    rootFlagsOutage?: boolean
+   } = {},
+ ) {
+   let meRequests = 0
+@@ -82,15 +88,23 @@ async function renderMembersPage(
+   const router = createMemoryRouter(
+     [
+       {
++        id: 'root',
+         path: '/',
+         loader: async () => {
+           rootLoaderCalls += 1
++          if (rootFlagsOutage) return { serviceUnavailable: true }
+           if (!rootPreloadsMe) return {}
+           const meQueryRef = preload(ME)
+           await preload.toPromise(meQueryRef).catch(() => undefined)
+           return { meQueryRef }
+         },
+-        element: <App />,
++        element: rootFlagsOutage ? (
++          <GlobalContextProvider user={null}>
++            <Outlet />
++          </GlobalContextProvider>
++        ) : (
++          <App />
++        ),
+         children: [
+           { index: true, element: <p>Public home</p> },
+           {
+@@ -288,6 +302,30 @@ describe('authenticated layout with no user', () => {
+     }
+   })
+ 
++  it("keeps the session on a 401 while the root loader's outage flag stands", async () => {
++    // Nothing signals an outage in the browser here: only the root loader's flag says the API was
++    // unreachable, and it outranks the re-check's 401.
++    const app = await renderMembersPage([fails(unauthorized()), signedIn], {
++      rootFlagsOutage: true,
++    })
++    await advance(0)
++
++    expect(app.meRequests()).toBe(1)
++    expect(app.router.state.location.pathname).toBe('/members')
++    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
++
++    await advance(retryDelayMs(0))
++    expect(app.meRequests()).toBe(2)
++    expect(screen.getByText('Members page')).toBeInTheDocument()
++  })
++
++  it("judges the re-check's 401 as a rejection only with no loader outage flag", () => {
++    const error = unauthorized()
++    expect(sessionRecheckOutcome({ error })).toBe('rejected')
++    expect(sessionRecheckOutcome({ error }, false)).toBe('rejected')
++    expect(sessionRecheckOutcome({ error }, true)).toBe('retry')
++  })
++
+   describe('after a public route whose Me preload failed, with the cookie kept', () => {
+     // The root loader does not run again on a client-side navigation into the signed-in area, so
+     // the user stays null there unless the layout asks Me itself.
+diff --git a/libs/shared/apollo/src/lib/apollo-loader.ts b/libs/shared/apollo/src/lib/apollo-loader.ts
+index 2b7e6fb..6c3e311 100644
+--- a/libs/shared/apollo/src/lib/apollo-loader.ts
++++ b/libs/shared/apollo/src/lib/apollo-loader.ts
+@@ -1,5 +1,5 @@
+ import { createApolloLoaderHandler } from '@apollo/client-integration-react-router'
+-import { makeClient, type ApiFailureCause } from './apollo'
++import { isOrganizationContextRequiredError, makeClient, type ApiFailureCause } from './apollo'
+ 
+ /**
+  * What the API answered when a loader's preloaded query failed during a server render.
+@@ -13,6 +13,12 @@ import { makeClient, type ApiFailureCause } from './apollo'
+  */
+ interface SsrApiFailureRecord {
+   cause?: ApiFailureCause
++  /** A query was refused with `ORGANIZATION_CONTEXT_REQUIRED` (by code; nothing else is kept). */
++  organizationRequired?: boolean
++  /** Operations this loader's client started that have not settled yet. */
++  pending: number
++  /** Called each time `pending` returns to 0 (see `waitForSsrApiCalls`). */
++  idle: Set<() => void>
+ }
+ 
+ // Loader data -> its request's record. A side table rather than a property on the data, so frozen
+@@ -42,8 +48,17 @@ export function mergeApiFailureCauses(
+   return CAUSE_RANK[b] > CAUSE_RANK[a] ? b : a
+ }
+ 
+-function recordFailure(record: SsrApiFailureRecord, cause: ApiFailureCause) {
++function recordFailure(record: SsrApiFailureRecord, cause: ApiFailureCause, error: unknown) {
+   record.cause = mergeApiFailureCauses(record.cause, cause)
++  if (isOrganizationContextRequiredError(error)) record.organizationRequired = true
++}
++
++function trackOperation(record: SsrApiFailureRecord): () => void {
++  record.pending += 1
++  return () => {
++    record.pending -= 1
++    if (record.pending === 0) for (const notify of record.idle) notify()
++  }
+ }
+ 
+ // Keyed by the request the loader receives (React Router hands each loader its own copy).
+@@ -52,7 +67,7 @@ const recordsByRequest = new WeakMap<Request, SsrApiFailureRecord>()
+ function recordFor(request: Request): SsrApiFailureRecord {
+   let record = recordsByRequest.get(request)
+   if (!record) {
+-    record = {}
++    record = { pending: 0, idle: new Set() }
+     recordsByRequest.set(request, record)
+   }
+   return record
+@@ -70,7 +85,8 @@ function attachRecord<T>(data: T, record: SsrApiFailureRecord): T {
+ const handler = createApolloLoaderHandler(req =>
+   makeClient(req, {
+     apiUrl: `${process.env.VITE_API_URL || 'http://localhost:3000'}/graphql`,
+-    onApiFailure: cause => recordFailure(recordFor(req), cause),
++    onApiFailure: (cause, error) => recordFailure(recordFor(req), cause, error),
++    onOperationStart: () => trackOperation(recordFor(req)),
+   }),
+ )
+ 
+@@ -93,10 +109,54 @@ export function ssrApiFailureCause(
+   loaderData: Record<string, unknown> | null | undefined,
+ ): ApiFailureCause | undefined {
+   let cause: ApiFailureCause | undefined
++  for (const record of recordsOf(loaderData)) cause = mergeApiFailureCauses(cause, record.cause)
++  return cause
++}
++
++function recordsOf(loaderData: Record<string, unknown> | null | undefined): SsrApiFailureRecord[] {
++  const records: SsrApiFailureRecord[] = []
+   for (const data of Object.values(loaderData ?? {})) {
+-    if (data !== null && typeof data === 'object') {
+-      cause = mergeApiFailureCauses(cause, recordsByData.get(data)?.cause)
+-    }
++    const record = data !== null && typeof data === 'object' ? recordsByData.get(data) : undefined
++    if (record) records.push(record)
+   }
+-  return cause
++  return records
++}
++
++/**
++ * Whether a loader's preloaded query was refused with `ORGANIZATION_CONTEXT_REQUIRED` during this
++ * server render (from the loader data in the router context, as `ssrApiFailureCause`). The refusal
++ * reaches the render as Apollo's redacted stream error, which has lost the code.
++ */
++export function ssrOrganizationRequired(
++  loaderData: Record<string, unknown> | null | undefined,
++): boolean {
++  return recordsOf(loaderData).some(record => record.organizationRequired)
++}
++
++/**
++ * Waits until every API call the request's loaders started through `apolloLoader` has settled, so
++ * its failure, if any, is in `ssrApiFailureCause`. A loader returns its preloaded query refs
++ * without awaiting them (the root loader's Me among them), so a faster call can fail first:
++ * deciding a sign-out on its 401 then would miss a slower call's 503. Resolves true once all have
++ * settled (at once when none is in flight), false when `timeoutMs` passes first, which is no proof
++ * the session is bad: the caller then keeps it.
++ */
++export function waitForSsrApiCalls(
++  loaderData: Record<string, unknown> | null | undefined,
++  timeoutMs: number,
++): Promise<boolean> {
++  const records = recordsOf(loaderData).filter(record => record.pending > 0)
++  if (records.length === 0) return Promise.resolve(true)
++  return new Promise(resolve => {
++    const finish = (settled: boolean) => {
++      clearTimeout(timer)
++      for (const record of records) record.idle.delete(check)
++      resolve(settled)
++    }
++    const check = () => {
++      if (records.every(record => record.pending === 0)) finish(true)
++    }
++    const timer = setTimeout(() => finish(false), timeoutMs)
++    for (const record of records) record.idle.add(check)
++  })
+ }
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index 7789a68..44323f9 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -21,13 +21,20 @@ import {
+   isAuthFailureDeferred,
+   isQueryOperation,
+   isRetryableConnectivityError,
++  isOrganizationContextRequiredError,
+   makeClient,
+   ORGANIZATION_CONTEXT_REQUIRED_CODE,
+   signalApiOutage,
+   subscriptionRetryDelayMs,
+   takeDeferredAuthFailure,
+ } from './apollo'
+-import { apolloLoader, mergeApiFailureCauses, ssrApiFailureCause } from './apollo-loader'
++import {
++  apolloLoader,
++  mergeApiFailureCauses,
++  ssrApiFailureCause,
++  ssrOrganizationRequired,
++  waitForSsrApiCalls,
++} from './apollo-loader'
+ 
+ function jwtWithIssuedAt(iat: number): string {
+   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
+@@ -1121,7 +1128,11 @@ describe('classifyApiFailure', () => {
+       }
+     `
+     const causes: string[] = []
+-    const onApiFailure = (cause: string) => causes.push(cause)
++    const errors: unknown[] = []
++    const onApiFailure = (cause: string, error: unknown) => {
++      causes.push(cause)
++      errors.push(error)
++    }
+     const originalFetch = globalThis.fetch
+     try {
+       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+@@ -1142,6 +1153,9 @@ describe('classifyApiFailure', () => {
+       vi.restoreAllMocks()
+     }
+     expect(causes).toEqual(['unavailable', 'unauthenticated'])
++    // And the error itself, for what the cause does not say (an organization refusal's code).
++    expect(errors).toHaveLength(2)
++    expect(classifyApiFailure(errors[1])).toBe('unauthenticated')
+   })
+ })
+ 
+@@ -1281,3 +1295,156 @@ describe('mergeApiFailureCauses', () => {
+     expect(mergeApiFailureCauses(a, b)).toBe(merged)
+   })
+ })
++
++describe('apolloLoader in-flight calls and organization refusals', () => {
++  const query = gql`
++    query Settings {
++      settings {
++        id
++      }
++    }
++  `
++  function loaderArgs() {
++    return {
++      request: new Request('https://app.example.com/members'),
++      params: {},
++      context: {},
++    } as never
++  }
++  const originalFetch = globalThis.fetch
++
++  beforeEach(() => {
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    globalThis.fetch = originalFetch
++    vi.restoreAllMocks()
++  })
++
++  it('waits for a preload still in flight, then finds its cause', async () => {
++    let answer: (response: Response) => void = () => undefined
++    globalThis.fetch = vi.fn(
++      () => new Promise<Response>(resolve => (answer = resolve)),
++    ) as typeof fetch
++    const data = apolloLoader()(({ preloadQuery }) => ({ ref: preloadQuery(query) }))(loaderArgs())
++    await new Promise(resolve => setTimeout(resolve, 0))
++
++    let settled: boolean | undefined
++    const waiting = waitForSsrApiCalls({ root: data }, 5_000).then(result => (settled = result))
++    await new Promise(resolve => setTimeout(resolve, 10))
++    expect(settled).toBeUndefined()
++    expect(ssrApiFailureCause({ root: data })).toBeUndefined()
++
++    answer(new Response('{}', { status: 503, headers: { 'content-type': 'application/json' } }))
++    await waiting
++    expect(settled).toBe(true)
++    expect(ssrApiFailureCause({ root: data })).toBe('unavailable')
++  })
++
++  it('gives up after the bound, saying the calls have not settled', async () => {
++    globalThis.fetch = vi.fn(() => new Promise<Response>(() => undefined)) as typeof fetch
++    const data = apolloLoader()(({ preloadQuery }) => ({ ref: preloadQuery(query) }))(loaderArgs())
++    await new Promise(resolve => setTimeout(resolve, 0))
++
++    expect(await waitForSsrApiCalls({ root: data }, 20)).toBe(false)
++  })
++
++  it('resolves at once when nothing is in flight', async () => {
++    expect(await waitForSsrApiCalls(undefined, 5_000)).toBe(true)
++    expect(await waitForSsrApiCalls({ root: null, child: { theme: 'dark' } }, 5_000)).toBe(true)
++  })
++
++  it('records an ORGANIZATION_CONTEXT_REQUIRED refusal by code, and nothing else', async () => {
++    globalThis.fetch = vi.fn(async () =>
++      Response.json({
++        data: null,
++        errors: [
++          {
++            message: 'Organization context required: secret detail',
++            extensions: { code: ORGANIZATION_CONTEXT_REQUIRED_CODE },
++          },
++        ],
++      }),
++    ) as typeof fetch
++    const refused = await apolloLoader()(async ({ preloadQuery }) => {
++      const ref = preloadQuery(query)
++      await new Promise(resolve => setTimeout(resolve, 20))
++      return { ref }
++    })(loaderArgs())
++    expect(ssrOrganizationRequired({ root: refused })).toBe(true)
++    expect(ssrApiFailureCause({ root: refused })).toBe('other')
++
++    globalThis.fetch = vi.fn(async () =>
++      Response.json({ data: null, errors: [{ message: 'boom' }] }),
++    ) as typeof fetch
++    const failed = await apolloLoader()(async ({ preloadQuery }) => {
++      const ref = preloadQuery(query)
++      await new Promise(resolve => setTimeout(resolve, 20))
++      return { ref }
++    })(loaderArgs())
++    expect(ssrOrganizationRequired({ root: failed })).toBe(false)
++    expect(ssrOrganizationRequired({ root: failed, child: refused })).toBe(true)
++  })
++
++  it('isOrganizationContextRequiredError matches the code only', () => {
++    const withCode = (code: string, message = 'x') =>
++      new CombinedGraphQLErrors({ data: null, errors: [{ message, extensions: { code } }] })
++    expect(isOrganizationContextRequiredError(withCode(ORGANIZATION_CONTEXT_REQUIRED_CODE))).toBe(
++      true,
++    )
++    expect(isOrganizationContextRequiredError(withCode('FORBIDDEN', 'organization required'))).toBe(
++      false,
++    )
++    expect(isOrganizationContextRequiredError(new Error(ORGANIZATION_CONTEXT_REQUIRED_CODE))).toBe(
++      false,
++    )
++  })
++})
++
++describe('releaseApiOutage', () => {
++  afterEach(() => {
++    vi.restoreAllMocks()
++  })
++
++  it('announces a 401 let pass during the evidence once the last evidence is released', async () => {
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    // A fresh copy of the module: other tests in this file can leave a retry's evidence behind.
++    vi.resetModules()
++    const apollo = await import('./apollo')
++    const loaderFlag = {}
++    const other = {}
++    apollo.signalApiOutage(loaderFlag)
++    apollo.signalApiOutage(other)
++    const originalFetch = globalThis.fetch
++    try {
++      globalThis.fetch = vi.fn().mockResolvedValue(
++        new Response(JSON.stringify({ message: 'Unauthorized' }), {
++          status: 401,
++          headers: { 'content-type': 'application/json' },
++        }),
++      )
++      await apollo
++        .makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++        .query({ query: gql('query Data { data }') })
++        .catch(() => undefined)
++    } finally {
++      globalThis.fetch = originalFetch
++    }
++    expect(apollo.isAuthFailureDeferred()).toBe(true)
++    const announced = vi.fn()
++    window.addEventListener(apollo.APOLLO_DEFERRED_AUTH_FAILURE_EVENT, announced)
++    try {
++      apollo.releaseApiOutage(loaderFlag)
++      expect(announced).not.toHaveBeenCalled()
++      apollo.releaseApiOutage(other)
++      expect(announced).toHaveBeenCalledTimes(1)
++      expect(apollo.isApiOutageSignalled()).toBe(false)
++    } finally {
++      window.removeEventListener(apollo.APOLLO_DEFERRED_AUTH_FAILURE_EVENT, announced)
++      apollo.takeDeferredAuthFailure()
++    }
++  })
++})
+diff --git a/libs/shared/apollo/src/lib/apollo.ts b/libs/shared/apollo/src/lib/apollo.ts
+index 3db1d8e..ea949f5 100644
+--- a/libs/shared/apollo/src/lib/apollo.ts
++++ b/libs/shared/apollo/src/lib/apollo.ts
+@@ -82,10 +82,18 @@ export type ClientOptions = {
+   platform?: 'web' | 'native'
+   environment?: 'development' | 'staging' | 'production'
+   /**
+-   * Told what each failed operation failed with (`classifyApiFailure`). The server render uses it
+-   * to recover the real cause of a failed preload, which the streamed query ref redacts.
++   * Told what each failed operation failed with (`classifyApiFailure`), and the error itself. The
++   * server render uses it to recover the real cause of a failed preload, which the streamed query
++   * ref redacts.
+    */
+-  onApiFailure?: (cause: ApiFailureCause) => void
++  onApiFailure?: (cause: ApiFailureCause, error: unknown) => void
++  /**
++   * Called when an operation starts; the function it returns is called once when that operation
++   * settles (answered, failed or cancelled). The server render uses it to wait, bounded, for a
++   * request's calls still in flight before it decides a sign-out (apollo-loader.ts,
++   * `waitForSsrApiCalls`).
++   */
++  onOperationStart?: () => () => void
+ }
+ 
+ /**
+@@ -202,6 +210,17 @@ function isAuthenticationError(extensions?: { code?: unknown }): boolean {
+  */
+ export const ORGANIZATION_CONTEXT_REQUIRED_CODE = 'ORGANIZATION_CONTEXT_REQUIRED'
+ 
++/**
++ * Whether an Apollo error is the API's `ORGANIZATION_CONTEXT_REQUIRED` refusal (by code only). The
++ * server render records it for a preloaded query, whose error reaches the render redacted.
++ */
++export function isOrganizationContextRequiredError(error: unknown): boolean {
++  return (
++    CombinedGraphQLErrors.is(error) &&
++    error.errors.some(({ extensions }) => extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE)
++  )
++}
++
+ /**
+  * A permission refusal, shown as access denied: `FORBIDDEN`, or any other code the API gave a 403
+  * (`forbiddenWithCode` keeps the code and the 403 in `originalError.statusCode`), except
+@@ -343,8 +362,15 @@ const CANCELLED = Symbol('cancelled')
+  */
+ export const APOLLO_DEFERRED_AUTH_FAILURE_EVENT = 'apollo-deferred-auth-failure'
+ 
+-function releaseRetryEvidence(evidence: object): void {
+-  clearApiOutage(evidence)
++/**
++ * Withdraws `source`'s outage evidence, like `clearApiOutage`, and when that was the last evidence
++ * held while the error link has let a 401 pass (`isAuthFailureDeferred`), dispatches
++ * `APOLLO_DEFERRED_AUTH_FAILURE_EVENT` so the app refetches the queries holding it for a fresh
++ * answer. For evidence whose end nothing else announces (an in-flight retry, a loader's outage
++ * flag), where `clearApiOutage` alone would leave such a 401 waiting.
++ */
++export function releaseApiOutage(source: object): void {
++  clearApiOutage(source)
+   if (isApiOutageSignalled() || !authFailureDeferred || globalThis.window === undefined) return
+   globalThis.window.dispatchEvent(new CustomEvent(APOLLO_DEFERRED_AUTH_FAILURE_EVENT))
+ }
+@@ -394,7 +420,7 @@ export function createOutageRetryLink(
+         settled = true
+         if (isRetryableConnectivityError(error)) unreachableOperations.add(key)
+         else if (error !== CANCELLED) unreachableOperations.delete(key)
+-        if (retrying) releaseRetryEvidence(evidence)
++        if (retrying) releaseApiOutage(evidence)
+       }
+       const subscription = forward(operation).subscribe({
+         // An answer (an HTTP 200 carrying an UNAUTHENTICATED error among them) settles the attempt
+@@ -449,9 +475,47 @@ export function classifyApiFailure(error: unknown): ApiFailureCause {
+   return 'other'
+ }
+ 
+-function createErrorLink(onApiFailure?: (cause: ApiFailureCause) => void): ApolloLink {
++/**
++ * Tells `onStart` when each operation starts, and calls the function it returns once that operation
++ * settles: its first error, its completion, or its cancellation. Placed at the top of the chain, so
++ * an operation counts as settled only after the error link below has seen (and reported) its
++ * failure. See `ClientOptions.onOperationStart`.
++ */
++export function createOperationTrackingLink(onStart: () => () => void): ApolloLink {
++  return new ApolloLink(
++    (operation, forward) =>
++      new Observable(observer => {
++        const markSettled = onStart()
++        let settled = false
++        const settle = () => {
++          if (settled) return
++          settled = true
++          markSettled()
++        }
++        const subscription = forward(operation).subscribe({
++          next: result => observer.next(result),
++          error: error => {
++            settle()
++            observer.error(error)
++          },
++          complete: () => {
++            settle()
++            observer.complete()
++          },
++        })
++        return () => {
++          subscription.unsubscribe()
++          settle()
++        }
++      }),
++  )
++}
++
++function createErrorLink(
++  onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
++): ApolloLink {
+   return new ErrorLink(({ error, operation }) => {
+-    onApiFailure?.(classifyApiFailure(error))
++    onApiFailure?.(classifyApiFailure(error), error)
+ 
+     if (CombinedGraphQLErrors.is(error)) {
+       for (const { message, path, extensions } of error.errors) {
+@@ -646,7 +710,8 @@ function createLinkChain(
+   uri: string,
+   token: string | null,
+   isDev: boolean,
+-  onApiFailure?: (cause: ApiFailureCause) => void,
++  onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
++  onOperationStart?: () => () => void,
+ ): ApolloLink {
+   const wsUri = uri.replace(/^http/, 'ws')
+   const uploadLink = new UploadHttpLink({
+@@ -670,6 +735,7 @@ function createLinkChain(
+       )
+ 
+   const links = [
++    ...(onOperationStart ? [createOperationTrackingLink(onOperationStart)] : []),
+     createErrorLink(onApiFailure),
+     createOutageRetryLink(),
+     ...(isDev ? [createLogLink()] : []),
+@@ -698,7 +764,7 @@ export function makeClient(request?: Request, options?: ClientOptions) {
+   const token = resolveAuthToken(request, options)
+   const isDev = options?.environment === 'development'
+ 
+-  const link = createLinkChain(uri, token, isDev, options?.onApiFailure)
++  const link = createLinkChain(uri, token, isDev, options?.onApiFailure, options?.onOperationStart)
+ 
+   return new ApolloClient({
+     link,

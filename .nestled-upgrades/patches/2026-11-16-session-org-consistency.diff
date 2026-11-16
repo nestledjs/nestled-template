@@ -1,0 +1,4465 @@
+diff --git a/apps/web/app/deferred-auth-recovery.tsx b/apps/web/app/deferred-auth-recovery.tsx
+index 1e460d4..4a32983 100644
+--- a/apps/web/app/deferred-auth-recovery.tsx
++++ b/apps/web/app/deferred-auth-recovery.tsx
+@@ -30,7 +30,8 @@ export const OUTAGE_EVIDENCE_RECHECK_MS = 1000
+  * in-flight retry still holding some is waited for: its end is announced by
+  * `APOLLO_DEFERRED_AUTH_FAILURE_EVENT`), it revalidates the route with a navigation to the same
+  * URL: every active loader runs again, the error boundary resets on the new location, and the
+- * route renders again with fresh queries. A fresh answer is data (the route recovers, with no reload) or a 401
++ * route renders again with fresh queries. A URL with a `#fragment` is revalidated first, since a
++ * same-URL navigation there is a hash-only change that runs no loader. A fresh answer is data (the route recovers, with no reload) or a 401
+  * with no outage, which the error link and this boundary log out as usual.
+  *
+  * Rendered outside a data router (tests that render the boundary bare), it reloads the page
+@@ -63,11 +64,22 @@ export function DeferredAuthRecovery({
+       // the same, and the new location is what resets the error boundary. React Router resets it
+       // after a revalidation only if it rendered the revalidation's loading state, which a fast
+       // answer can skip, leaving the error screen up over a route that would now render.
+-      const { pathname, search, hash } = dataRouter.router.state.location
+-      void dataRouter.router.navigate(
+-        { pathname, search, hash },
+-        { replace: true, preventScrollReset: true },
+-      )
++      const { router } = dataRouter
++      const { pathname, search, hash, key } = router.state.location
++      const resetToSameUrl = () =>
++        router.navigate({ pathname, search, hash }, { replace: true, preventScrollReset: true })
++      if (hash) {
++        // With a fragment, React Router takes a navigation to the same URL for a hash-only change
++        // and runs no loader, so the failed query would never get a fresh answer. Run the loaders
++        // first; the navigation after it still resets the boundary, onto the fresh data. Only if
++        // the user is still there: a navigation away (or a loader's redirect) meanwhile wins.
++        void router.revalidate().then(() => {
++          const { location, navigation } = router.state
++          if (location.key === key && navigation.state === 'idle') void resetToSameUrl()
++        })
++      } else {
++        void resetToSameUrl()
++      }
+     } else {
+       reloadForRecovery()
+     }
+diff --git a/apps/web/app/routes/_public/forgot-password.tsx b/apps/web/app/routes/_public/forgot-password.tsx
+index f865300..ca039be 100644
+--- a/apps/web/app/routes/_public/forgot-password.tsx
++++ b/apps/web/app/routes/_public/forgot-password.tsx
+@@ -20,7 +20,11 @@ export default function ForgotPasswordPage() {
+   // A Turnstile token is single-use, so a failed attempt must remount the widget for a fresh
+   // challenge — otherwise the retry fails the captcha instead of surfacing the real error.
+   const [captchaKey, setCaptchaKey] = useState(0)
+-  const [forgotPasswordMutation, { loading }] = useMutation<ForgotPasswordMutation>(ForgotPassword)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [forgotPasswordMutation, { loading }] = useMutation<ForgotPasswordMutation>(
++    ForgotPassword,
++    { errorPolicy: 'none' },
++  )
+   const captchaRequired = Boolean(turnstileSiteKey())
+ 
+   async function handleForgotPassword(input: ForgotPasswordInput) {
+diff --git a/apps/web/app/routes/_public/login.tsx b/apps/web/app/routes/_public/login.tsx
+index fd89a6c..8378cb1 100644
+--- a/apps/web/app/routes/_public/login.tsx
++++ b/apps/web/app/routes/_public/login.tsx
+@@ -114,8 +114,11 @@ export default function LoginPage() {
+   // through the same open-redirect guard.
+   const redirectUrl = safeReturnUrl(searchParams.get('return_url') ?? searchParams.get('redirect'))
+ 
+-  const [loginMutation] = useMutation<LoginMutation>(Login)
+-  const [complete2FALoginMutation] = useMutation<Complete2FaLoginMutation>(Complete2FaLogin)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [loginMutation] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
++  const [complete2FALoginMutation] = useMutation<Complete2FaLoginMutation>(Complete2FaLogin, {
++    errorPolicy: 'none',
++  })
+ 
+   async function processLogin(input: LoginInput) {
+     console.log('Login Clicked')
+diff --git a/apps/web/app/routes/_public/register.tsx b/apps/web/app/routes/_public/register.tsx
+index b8b0b9a..7abf24a 100644
+--- a/apps/web/app/routes/_public/register.tsx
++++ b/apps/web/app/routes/_public/register.tsx
+@@ -19,7 +19,10 @@ export default function RegisterPage() {
+   // every failed attempt — including the common "email already in use" — burns it, and without a
+   // reset the retry would fail the captcha instead of showing the real error.
+   const [captchaKey, setCaptchaKey] = useState(0)
+-  const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register, {
++    errorPolicy: 'none',
++  })
+   const captchaRequired = Boolean(turnstileSiteKey())
+ 
+   function failRegistration(message: string) {
+diff --git a/apps/web/app/routes/_public/resend-verification.tsx b/apps/web/app/routes/_public/resend-verification.tsx
+index dfa9498..44ea50c 100644
+--- a/apps/web/app/routes/_public/resend-verification.tsx
++++ b/apps/web/app/routes/_public/resend-verification.tsx
+@@ -19,8 +19,11 @@ export default function ResendVerification() {
+   // Bumping this remounts the widget for a fresh challenge — a Turnstile token is single-use, so any
+   // failed/retried resend must not reuse a spent token. See register.tsx for the same pattern.
+   const [captchaKey, setCaptchaKey] = useState(0)
+-  const [resendMutation, { loading }] =
+-    useMutation<ResendVerificationEmailMutation>(ResendVerificationEmail)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [resendMutation, { loading }] = useMutation<ResendVerificationEmailMutation>(
++    ResendVerificationEmail,
++    { errorPolicy: 'none' },
++  )
+   const captchaRequired = Boolean(turnstileSiteKey())
+ 
+   function resetCaptcha() {
+diff --git a/apps/web/app/routes/_public/reset-password.tsx b/apps/web/app/routes/_public/reset-password.tsx
+index 3ad2c01..2cccb6b 100644
+--- a/apps/web/app/routes/_public/reset-password.tsx
++++ b/apps/web/app/routes/_public/reset-password.tsx
+@@ -18,7 +18,10 @@ export default function ResetPasswordPage() {
+     type: 'success' | 'error'
+     text: string
+   } | null>(null)
+-  const [resetPasswordMutation, { loading }] = useMutation<ResetPasswordMutation>(ResetPassword)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [resetPasswordMutation, { loading }] = useMutation<ResetPasswordMutation>(ResetPassword, {
++    errorPolicy: 'none',
++  })
+   const token = params.get('token') || ''
+ 
+   // A link without a token can't reset anything: say so until the form reports something else.
+diff --git a/apps/web/app/routes/_public/verify-email.tsx b/apps/web/app/routes/_public/verify-email.tsx
+index 5fa1ea5..760026c 100644
+--- a/apps/web/app/routes/_public/verify-email.tsx
++++ b/apps/web/app/routes/_public/verify-email.tsx
+@@ -15,8 +15,13 @@ export default function VerifyEmailPage() {
+   const [params] = useSearchParams()
+   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
+   const [message, setMessage] = useState<string>('Verifying your email...')
+-  const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail)
+-  const [verifyEmailChangeMutation] = useMutation<VerifyEmailChangeMutation>(VerifyEmailChange)
++  // Throw on a GraphQL error so the .catch below sees it (the client default is 'all').
++  const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail, {
++    errorPolicy: 'none',
++  })
++  const [verifyEmailChangeMutation] = useMutation<VerifyEmailChangeMutation>(VerifyEmailChange, {
++    errorPolicy: 'none',
++  })
+ 
+   // A link without a token fails at once: derived while rendering, with no request to wait for.
+   const missingToken = !params.get('token')
+diff --git a/apps/web/app/routes/accept-invitation.tsx b/apps/web/app/routes/accept-invitation.tsx
+index 7bfd248..9ea22ca 100644
+--- a/apps/web/app/routes/accept-invitation.tsx
++++ b/apps/web/app/routes/accept-invitation.tsx
+@@ -109,10 +109,12 @@ export default function AcceptInvitation() {
+     skip: !token,
+   })
+ 
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+   const [acceptInvitation] = useMutation<AcceptOrganizationInvitationMutation>(
+     AcceptOrganizationInvitation,
++    { errorPolicy: 'none' },
+   )
+-  const [login] = useMutation<LoginMutation>(Login)
++  const [login] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
+   const [registerWithInvitation] =
+     useMutation<RegisterWithInvitationMutation>(RegisterWithInvitation)
+ 
+diff --git a/apps/web/app/routes/admin/access-control/_index.tsx b/apps/web/app/routes/admin/access-control/_index.tsx
+index 28440f2..a3a0dba 100644
+--- a/apps/web/app/routes/admin/access-control/_index.tsx
++++ b/apps/web/app/routes/admin/access-control/_index.tsx
+@@ -59,8 +59,11 @@ export default function PlatformAccessControlPage() {
+           'The platform user search returned no result.',
+         )
+       },
++      // Each mutation throws on a GraphQL error, so the console shows the API's reason rather than
++      // a generic "not created" (the client default is 'all').
+       async createRole(input) {
+         const { data } = await client.mutate({
++          errorPolicy: 'none',
+           mutation: CreatePlatformAccessRole,
+           variables: { input },
+         })
+@@ -71,6 +74,7 @@ export default function PlatformAccessControlPage() {
+       },
+       async updateRole(input) {
+         const { data } = await client.mutate({
++          errorPolicy: 'none',
+           mutation: UpdatePlatformAccessRole,
+           variables: { input },
+         })
+@@ -81,6 +85,7 @@ export default function PlatformAccessControlPage() {
+       },
+       async deleteRole(roleId) {
+         const { data } = await client.mutate({
++          errorPolicy: 'none',
+           mutation: DeletePlatformAccessRole,
+           variables: { roleId },
+         })
+@@ -88,6 +93,7 @@ export default function PlatformAccessControlPage() {
+       },
+       async assignRole(roleId, userId) {
+         const { data } = await client.mutate({
++          errorPolicy: 'none',
+           mutation: AssignPlatformAccessRole,
+           variables: { input: { roleId, userId } },
+         })
+@@ -98,6 +104,7 @@ export default function PlatformAccessControlPage() {
+       },
+       async revokeRole(roleId, userId) {
+         const { data } = await client.mutate({
++          errorPolicy: 'none',
+           mutation: RevokePlatformAccessRole,
+           variables: { input: { roleId, userId } },
+         })
+diff --git a/apps/web/app/routes/admin/billing/_index.tsx b/apps/web/app/routes/admin/billing/_index.tsx
+index fb7f9a3..576e066 100644
+--- a/apps/web/app/routes/admin/billing/_index.tsx
++++ b/apps/web/app/routes/admin/billing/_index.tsx
+@@ -28,8 +28,9 @@ export default function AdminBillingOverview() {
+     variables: { input: { take: 5 } },
+   })
+ 
+-  const [syncProducts] = useMutation(AdminSyncStripeProducts)
+-  const [syncPrices] = useMutation(AdminSyncStripePrices)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [syncProducts] = useMutation(AdminSyncStripeProducts, { errorPolicy: 'none' })
++  const [syncPrices] = useMutation(AdminSyncStripePrices, { errorPolicy: 'none' })
+ 
+   const handleSync = async () => {
+     setSyncing(true)
+diff --git a/apps/web/app/routes/logout.tsx b/apps/web/app/routes/logout.tsx
+index 2aa3faf..ee1b99a 100644
+--- a/apps/web/app/routes/logout.tsx
++++ b/apps/web/app/routes/logout.tsx
+@@ -4,6 +4,7 @@ import Cookies from 'js-cookie'
+ import { useEffect } from 'react'
+ import { useNavigate, useSearchParams } from 'react-router'
+ import { WebUiLoading } from '@nestled-template/web-ui'
++import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ 
+ const LOGOUT_MUTATION = gql`
+   mutation Logout {
+@@ -46,6 +47,9 @@ export default function LogoutRoute() {
+         console.warn('[logout] apollo.clearStore failed (continuing):', (e as Error)?.message)
+       }
+ 
++      // The next user's requests must not be sent for this user's organization (x-organization-id)
++      storeActiveOrganizationId(null)
++
+       // Navigate to login with optional return URL
+       const loginPath = returnUrl ? `/login?return_url=${encodeURIComponent(returnUrl)}` : '/login'
+       navigate(loginPath, { replace: true })
+diff --git a/apps/web/app/routes/pricing.tsx b/apps/web/app/routes/pricing.tsx
+index fc57511..9254d3d 100644
+--- a/apps/web/app/routes/pricing.tsx
++++ b/apps/web/app/routes/pricing.tsx
+@@ -19,8 +19,9 @@ export default function PricingPage() {
+   const { user } = useGlobalCtx()
+   const { plan: currentPlan } = useSubscription()
+   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+   const [createCheckoutSession, { loading: checkoutLoading }] =
+-    useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession)
++    useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession, { errorPolicy: 'none' })
+ 
+   const plans = data?.plans || []
+ 
+diff --git a/apps/web/app/routes/settings/_settings-access.ts b/apps/web/app/routes/settings/_settings-access.ts
+index 36f2d36..810ff12 100644
+--- a/apps/web/app/routes/settings/_settings-access.ts
++++ b/apps/web/app/routes/settings/_settings-access.ts
+@@ -1,5 +1,6 @@
+ import { useQuery } from '@apollo/client/react'
+ import { useGlobalCtx } from '@nestled-template/web'
++import { resolveActiveOrganization } from '@nestled-template/shared/apollo'
+ import {
+   MyOrganizationsWithMembers,
+   type MeQuery,
+@@ -13,10 +14,6 @@ import {
+  * their own content on the same answer, so a tab never leads to a page that turns its user away.
+  */
+ 
+-type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
+-  activeOrganizationId?: string | null
+-}
+-
+ export type SettingsOrganization = MyOrganizationsWithMembersQuery['myOrganizations'][number]
+ 
+ export type SettingsOrganizationMember = NonNullable<
+@@ -27,11 +24,7 @@ export function useSettingsOrganization() {
+   const { user } = useGlobalCtx()
+   const { data, loading } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers)
+   const organizations = data?.myOrganizations || []
+-  const userWithActiveOrganization: UserWithActiveOrganization | null | undefined = user
+-  const activeOrganization =
+-    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
+-    organizations[0] ||
+-    null
++  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
+   const activeOrganizationMember =
+     activeOrganization?.members?.find(member => member.userId === user?.id) || null
+ 
+diff --git a/apps/web/app/routes/settings/_shared-sections.tsx b/apps/web/app/routes/settings/_shared-sections.tsx
+index ce7b977..30045c5 100644
+--- a/apps/web/app/routes/settings/_shared-sections.tsx
++++ b/apps/web/app/routes/settings/_shared-sections.tsx
+@@ -153,7 +153,10 @@ export function TransferOwnershipSection() {
+ export function DangerZoneSection() {
+   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+   const [deleteConfirmText, setDeleteConfirmText] = useState('')
+-  const [deleteAccountMutation] = useMutation<DeleteUserAccountMutation>(DeleteUserAccount)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [deleteAccountMutation] = useMutation<DeleteUserAccountMutation>(DeleteUserAccount, {
++    errorPolicy: 'none',
++  })
+ 
+   const handleDeleteAccount = async () => {
+     if (deleteConfirmText !== 'DELETE') {
+diff --git a/apps/web/app/routes/settings/account.tsx b/apps/web/app/routes/settings/account.tsx
+index 31f5ce8..cca38b5 100644
+--- a/apps/web/app/routes/settings/account.tsx
++++ b/apps/web/app/routes/settings/account.tsx
+@@ -27,8 +27,11 @@ export default function AccountSettings() {
+   // session rather than accepting one, so it cannot be pointed at anyone else. The public
+   // resendVerificationEmail requires a Turnstile token and would reject this call outright on a
+   // deployment with Turnstile enabled.
+-  const [resendMyVerificationEmail] =
+-    useMutation<ResendMyVerificationEmailMutation>(ResendMyVerificationEmail)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [resendMyVerificationEmail] = useMutation<ResendMyVerificationEmailMutation>(
++    ResendMyVerificationEmail,
++    { errorPolicy: 'none' },
++  )
+ 
+   const handleResendVerificationEmail = async () => {
+     const primaryEmail = user?.emails?.find(e => e.primary)?.email
+diff --git a/apps/web/app/routes/settings/ai.tsx b/apps/web/app/routes/settings/ai.tsx
+index 8fc63c6..3d82b3a 100644
+--- a/apps/web/app/routes/settings/ai.tsx
++++ b/apps/web/app/routes/settings/ai.tsx
+@@ -37,12 +37,14 @@ export default function AiSettingsPage() {
+   const [newToken, setNewToken] = useState<{ token: string; name: string } | null>(null)
+   const [error, setError] = useState<string | null>(null)
+ 
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+   const [generateApiToken, { loading: generating }] = useMutation<
+     GenerateApiTokenMutation,
+     GenerateApiTokenMutationVariables
+-  >(GenerateApiToken)
++  >(GenerateApiToken, { errorPolicy: 'none' })
+   const [revokeApiToken] = useMutation<RevokeApiTokenMutation, RevokeApiTokenMutationVariables>(
+     RevokeApiToken,
++    { errorPolicy: 'none' },
+   )
+ 
+   const canManageAi =
+diff --git a/apps/web/app/routes/settings/api-tokens.tsx b/apps/web/app/routes/settings/api-tokens.tsx
+index 039f2ed..b0d313c 100644
+--- a/apps/web/app/routes/settings/api-tokens.tsx
++++ b/apps/web/app/routes/settings/api-tokens.tsx
+@@ -36,12 +36,14 @@ export default function ApiTokensSettings() {
+   const [newToken, setNewToken] = useState<{ token: string; name: string } | null>(null)
+   const [error, setError] = useState<string | null>(null)
+ 
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+   const [generateApiToken, { loading: generating }] = useMutation<
+     GenerateApiTokenMutation,
+     GenerateApiTokenMutationVariables
+-  >(GenerateApiToken)
++  >(GenerateApiToken, { errorPolicy: 'none' })
+   const [revokeApiToken] = useMutation<RevokeApiTokenMutation, RevokeApiTokenMutationVariables>(
+     RevokeApiToken,
++    { errorPolicy: 'none' },
+   )
+ 
+   const personalTokens = tokens.filter(token => !token.organizationId)
+diff --git a/apps/web/app/routes/settings/billing.tsx b/apps/web/app/routes/settings/billing.tsx
+index de17dbb..971866e 100644
+--- a/apps/web/app/routes/settings/billing.tsx
++++ b/apps/web/app/routes/settings/billing.tsx
+@@ -63,8 +63,13 @@ export default function BillingSettings() {
+     trialEndsAt,
+   } = useSubscription()
+ 
+-  const [createPortalSession] = useMutation<CreatePortalSessionMutation>(CreatePortalSession)
+-  const [cancelSubscription] = useMutation<CancelSubscriptionMutation>(CancelSubscription)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [createPortalSession] = useMutation<CreatePortalSessionMutation>(CreatePortalSession, {
++    errorPolicy: 'none',
++  })
++  const [cancelSubscription] = useMutation<CancelSubscriptionMutation>(CancelSubscription, {
++    errorPolicy: 'none',
++  })
+ 
+   // Get usage limits
+   const memberCount =
+diff --git a/apps/web/app/routes/settings/members.tsx b/apps/web/app/routes/settings/members.tsx
+index 61ded53..2330188 100644
+--- a/apps/web/app/routes/settings/members.tsx
++++ b/apps/web/app/routes/settings/members.tsx
+@@ -16,7 +16,7 @@ import { RequirePermission } from '@nestled-template/web'
+ import { Form } from '@nestledjs/forms'
+ import { FormFieldClass } from '@nestledjs/forms-core'
+ import { formTheme } from '@nestled-template/shared/styles'
+-import { apolloLoader } from '@nestled-template/shared/apollo'
++import { apolloLoader, resolveActiveOrganization } from '@nestled-template/shared/apollo'
+ import {
+   Me,
+   type MeQuery,
+@@ -209,8 +209,9 @@ export default function MembersSettings() {
+   const { data: orgData } = useReadQuery(loaderData.myOrganizationsQueryRef)
+   const { data: meData } = useReadQuery(loaderData.meQueryRef)
+   const organizations = orgData?.myOrganizations || []
+-  const activeOrganization = organizations[0] || null
+   const user = meData?.me
++  // The organization the shell shows and the requests are sent for, never simply the first.
++  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
+   const activeOrganizationMember =
+     activeOrganization?.members?.find(member => member.userId === user?.id) || null
+   const [showInviteForm, setShowInviteForm] = useState(false)
+@@ -224,18 +225,25 @@ export default function MembersSettings() {
+     onConfirm: () => void
+   } | null>(null)
+ 
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+   const [inviteMember] = useMutation<CreateOrganizationInvitationMutation>(
+     CreateOrganizationInvitation,
++    { errorPolicy: 'none' },
+   )
+   const [resendInvitation] = useMutation<ResendOrganizationInvitationMutation>(
+     ResendOrganizationInvitation,
++    { errorPolicy: 'none' },
+   )
+   const [cancelInvitation] = useMutation<CancelOrganizationInvitationMutation>(
+     CancelOrganizationInvitation,
++    { errorPolicy: 'none' },
+   )
+-  const [removeMember] = useMutation<RemoveOrganizationMemberMutation>(RemoveOrganizationMember)
++  const [removeMember] = useMutation<RemoveOrganizationMemberMutation>(RemoveOrganizationMember, {
++    errorPolicy: 'none',
++  })
+   const [updateMemberRole] = useMutation<UpdateOrganizationMemberRoleMutation>(
+     UpdateOrganizationMemberRole,
++    { errorPolicy: 'none' },
+   )
+ 
+   const { data, loading, error, refetch } = useQuery<UserOrganizationMembersQuery>(
+@@ -363,6 +371,8 @@ export default function MembersSettings() {
+   }
+ 
+   async function handleRemoveMember(userId: string, memberName: string) {
++    if (!activeOrganization) return
++    const organizationId = activeOrganization.id
+     setConfirmModal({
+       isOpen: true,
+       title: 'Remove Member',
+@@ -376,7 +386,7 @@ export default function MembersSettings() {
+           await removeMember({
+             variables: {
+               input: {
+-                organizationId: activeOrganization.id,
++                organizationId,
+                 userId: userId,
+               },
+             },
+diff --git a/apps/web/app/routes/settings/notifications.tsx b/apps/web/app/routes/settings/notifications.tsx
+index 512d755..57783be 100644
+--- a/apps/web/app/routes/settings/notifications.tsx
++++ b/apps/web/app/routes/settings/notifications.tsx
+@@ -129,8 +129,15 @@ export default function NotificationsSettings() {
+   const [formSuccess, setFormSuccess] = useState<string | null>(null)
+   const [formError, setFormError] = useState<string | null>(null)
+ 
+-  const [createPreference] = useMutation<UserCreateUserPreferenceMutation>(UserCreateUserPreference)
+-  const [updatePreference] = useMutation<UserUpdateUserPreferenceMutation>(UserUpdateUserPreference)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [createPreference] = useMutation<UserCreateUserPreferenceMutation>(
++    UserCreateUserPreference,
++    { errorPolicy: 'none' },
++  )
++  const [updatePreference] = useMutation<UserUpdateUserPreferenceMutation>(
++    UserUpdateUserPreference,
++    { errorPolicy: 'none' },
++  )
+ 
+   const showSuccess = (message: string) => {
+     setFormSuccess(message)
+diff --git a/apps/web/app/routes/settings/organization.tsx b/apps/web/app/routes/settings/organization.tsx
+index 54067b2..60ef14e 100644
+--- a/apps/web/app/routes/settings/organization.tsx
++++ b/apps/web/app/routes/settings/organization.tsx
+@@ -5,7 +5,7 @@ import { RequireOwner, useGlobalCtx } from '@nestled-template/web'
+ import { Form } from '@nestledjs/forms'
+ import { FormFieldClass } from '@nestledjs/forms-core'
+ import { formTheme } from '@nestled-template/shared/styles'
+-import { apolloLoader } from '@nestled-template/shared/apollo'
++import { apolloLoader, resolveActiveOrganization } from '@nestled-template/shared/apollo'
+ import {
+   MyOrganizations,
+   MyOrganizationsWithMembers,
+@@ -29,9 +29,6 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
+ })
+ 
+ type OrgLogo = NonNullable<MyOrganizationsQuery['myOrganizations'][number]['logo']>
+-type UserWithActiveOrganization = {
+-  activeOrganizationId?: string | null
+-}
+ type Permission = { subject?: string | null; action?: string | null }
+ 
+ type OrganizationQueryName = 'myOrganizations' | 'myOrganizationsWithMembers'
+@@ -107,22 +104,25 @@ export default function OrganizationSettings() {
+   const { data } = useReadQuery(loaderData.myOrganizationsQueryRef)
+   const { activeOrganizationMember, user } = useGlobalCtx()
+   const organizations = data?.myOrganizations || []
+-  const userWithActiveOrganization = user as UserWithActiveOrganization | null | undefined
+-  const activeOrganization =
+-    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
+-    organizations[0] ||
+-    null
++  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
+   const [formError, setFormError] = useState<string | null>(null)
+   const [formSuccess, setFormSuccess] = useState<string | null>(null)
+   const [logoMessage, setLogoMessage] = useState<{
+     type: 'success' | 'error'
+     text: string
+   } | null>(null)
+-  const [updateOrganization] = useMutation<UserUpdateOrganizationMutation>(UserUpdateOrganization)
+-  const [uploadOrganizationLogo] =
+-    useMutation<UploadOrganizationLogoMutation>(UploadOrganizationLogo)
+-  const [removeOrganizationLogo] =
+-    useMutation<RemoveOrganizationLogoMutation>(RemoveOrganizationLogo)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [updateOrganization] = useMutation<UserUpdateOrganizationMutation>(UserUpdateOrganization, {
++    errorPolicy: 'none',
++  })
++  const [uploadOrganizationLogo] = useMutation<UploadOrganizationLogoMutation>(
++    UploadOrganizationLogo,
++    { errorPolicy: 'none' },
++  )
++  const [removeOrganizationLogo] = useMutation<RemoveOrganizationLogoMutation>(
++    RemoveOrganizationLogo,
++    { errorPolicy: 'none' },
++  )
+   const revalidator = useRevalidator()
+   const client = useApolloClient()
+   const canUpdateOrganization = hasPermission(
+diff --git a/apps/web/app/routes/settings/profile.tsx b/apps/web/app/routes/settings/profile.tsx
+index 9295457..fbf0b15 100644
+--- a/apps/web/app/routes/settings/profile.tsx
++++ b/apps/web/app/routes/settings/profile.tsx
+@@ -166,12 +166,21 @@ export default function ProfileSettings() {
+   const user = data?.me
+   const client = useApolloClient()
+ 
+-  const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile)
+-  const [changeEmail] = useMutation<ChangeEmailMutation>(ChangeEmail)
+-  const [resendVerificationEmail] =
+-    useMutation<ResendVerificationEmailMutation>(ResendVerificationEmail)
+-  const [uploadUserAvatar] = useMutation<UploadUserAvatarMutation>(UploadUserAvatar)
+-  const [removeUserAvatar] = useMutation<RemoveUserAvatarMutation>(RemoveUserAvatar)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile, {
++    errorPolicy: 'none',
++  })
++  const [changeEmail] = useMutation<ChangeEmailMutation>(ChangeEmail, { errorPolicy: 'none' })
++  const [resendVerificationEmail] = useMutation<ResendVerificationEmailMutation>(
++    ResendVerificationEmail,
++    { errorPolicy: 'none' },
++  )
++  const [uploadUserAvatar] = useMutation<UploadUserAvatarMutation>(UploadUserAvatar, {
++    errorPolicy: 'none',
++  })
++  const [removeUserAvatar] = useMutation<RemoveUserAvatarMutation>(RemoveUserAvatar, {
++    errorPolicy: 'none',
++  })
+ 
+   const [isResendingEmail, setIsResendingEmail] = useState(false)
+   const [emailResendSuccess, setEmailResendSuccess] = useState(false)
+diff --git a/apps/web/app/routes/settings/roles.tsx b/apps/web/app/routes/settings/roles.tsx
+index 2b671b6..979e34e 100644
+--- a/apps/web/app/routes/settings/roles.tsx
++++ b/apps/web/app/routes/settings/roles.tsx
+@@ -1,4 +1,4 @@
+-import { FormEvent, useMemo, useState } from 'react'
++import { FormEvent, useState } from 'react'
+ import {
+   CheckIcon,
+   LockClosedIcon,
+@@ -10,6 +10,7 @@ import {
+ } from '@heroicons/react/24/outline'
+ import { useMutation, useQuery } from '@apollo/client/react'
+ import { RequirePermission, useGlobalCtx } from '@nestled-template/web'
++import { resolveActiveOrganization } from '@nestled-template/shared/apollo'
+ import {
+   MyOrganizationsWithMembers,
+   OrganizationRoles,
+@@ -200,20 +201,15 @@ export default function OrganizationRolesSettings() {
+     MyOrganizationsWithMembers,
+   )
+   const organizations = organizationData?.myOrganizations ?? []
+-  const activeOrganizationId = (user as { activeOrganizationId?: string | null } | null)
+-    ?.activeOrganizationId
+-  const activeOrganization =
+-    organizations.find(organization => organization.id === activeOrganizationId) ?? organizations[0]
++  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
+   const activeMember = activeOrganization?.members?.find(member => member.userId === user?.id)
+   const { data, loading, refetch } = useQuery<OrganizationRolesQuery>(OrganizationRoles, {
+     variables: { organizationId: activeOrganization?.id ?? '' },
+     skip: !activeOrganization?.id,
+   })
+   const roles = data?.organizationRoles ?? []
+-  const delegatablePermissions = useMemo(
+-    () => (activeMember?.role?.permissions ?? []) as Permission[],
+-    [activeMember],
+-  )
++  // No manual useMemo: the React Compiler memoizes this, and could not preserve a manual one.
++  const delegatablePermissions = (activeMember?.role?.permissions ?? []) as Permission[]
+   const canCreate = delegatablePermissions.some(
+     permission => permission.subject === 'role' && permission.action === 'create',
+   )
+@@ -224,9 +220,10 @@ export default function OrganizationRolesSettings() {
+     permission => permission.subject === 'role' && permission.action === 'delete',
+   )
+ 
+-  const [createRole] = useMutation(UserCreateOrganizationRole)
+-  const [updateRole] = useMutation(UserUpdateOrganizationRole)
+-  const [deleteRole] = useMutation(UserDeleteOrganizationRole)
++  // Throw on a GraphQL error so `run`'s catch sees it (the client default is 'all').
++  const [createRole] = useMutation(UserCreateOrganizationRole, { errorPolicy: 'none' })
++  const [updateRole] = useMutation(UserUpdateOrganizationRole, { errorPolicy: 'none' })
++  const [deleteRole] = useMutation(UserDeleteOrganizationRole, { errorPolicy: 'none' })
+ 
+   const run = async (operation: () => Promise<void>, success: string) => {
+     setBusy(true)
+diff --git a/apps/web/app/routes/settings/security.tsx b/apps/web/app/routes/settings/security.tsx
+index dc06376..bbf195b 100644
+--- a/apps/web/app/routes/settings/security.tsx
++++ b/apps/web/app/routes/settings/security.tsx
+@@ -75,12 +75,20 @@ export default function SecuritySettings() {
+   const [disablePassword, setDisablePassword] = useState('')
+   const [backupCodes, setBackupCodes] = useState<string[]>([])
+ 
+-  const [changePassword] = useMutation<ChangePasswordMutation>(ChangePassword)
+-  const [invalidateSession] = useMutation<InvalidateSessionMutation>(InvalidateSession)
+-  const [invalidateAllSessions] = useMutation<InvalidateAllSessionsMutation>(InvalidateAllSessions)
+-  const [setup2FA] = useMutation<Setup2FaMutation>(Setup2Fa)
+-  const [enable2FA] = useMutation<Enable2FaMutation>(Enable2Fa)
+-  const [disable2FA] = useMutation<Disable2FaMutation>(Disable2Fa)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [changePassword] = useMutation<ChangePasswordMutation>(ChangePassword, {
++    errorPolicy: 'none',
++  })
++  const [invalidateSession] = useMutation<InvalidateSessionMutation>(InvalidateSession, {
++    errorPolicy: 'none',
++  })
++  const [invalidateAllSessions] = useMutation<InvalidateAllSessionsMutation>(
++    InvalidateAllSessions,
++    { errorPolicy: 'none' },
++  )
++  const [setup2FA] = useMutation<Setup2FaMutation>(Setup2Fa, { errorPolicy: 'none' })
++  const [enable2FA] = useMutation<Enable2FaMutation>(Enable2Fa, { errorPolicy: 'none' })
++  const [disable2FA] = useMutation<Disable2FaMutation>(Disable2Fa, { errorPolicy: 'none' })
+ 
+   const showSuccess = (message: string) => {
+     setFormSuccess(message)
+diff --git a/apps/web/app/session-recheck.tsx b/apps/web/app/session-recheck.tsx
+index 74b78e7..8850555 100644
+--- a/apps/web/app/session-recheck.tsx
++++ b/apps/web/app/session-recheck.tsx
+@@ -1,7 +1,11 @@
+ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+ import { useApolloClient } from '@apollo/client/react'
+ import { Me, type MeQuery } from '@nestled-template/shared/sdk'
+-import { classifyApiFailure, isApiOutageSignalled } from '@nestled-template/shared/apollo'
++import {
++  classifyApiFailure,
++  isApiOutageSignalled,
++  SKIP_AUTH_ERROR_REPORT_CONTEXT,
++} from '@nestled-template/shared/apollo'
+ import { retryDelayMs } from './api-availability'
+ import { isOrganizationContextRequired } from './organization-required'
+ 
+@@ -62,9 +66,17 @@ export function sessionRecheckOutcome(
+  * client-side navigation into the signed-in area, since the root loader does not run again on
+  * those. Log out only on a real 401 (`rejected`).
+  *
+- * The request skips the cache (`no-cache`), so it is always a fresh answer, and goes through the
+- * app's Apollo client, so its error link judges it like any other request. `loaderOutage` (the
+- * root loader's outage flag) is read when each answer arrives, so a 401 while it stands is retried.
++ * The request skips the cache (`no-cache`), so it is always a fresh answer. It goes through the
++ * app's Apollo client but tells its error link to take no action on the answer
++ * (`SKIP_AUTH_ERROR_REPORT_CONTEXT`): this hook decides the outcome itself, and an error link that
++ * reacts to a 401 or 403 (a logout, or an event that puts up access denied) would otherwise act
++ * first, on an answer this hook may judge differently (a 401 during an outage is retried here).
++ *
++ * `loaderOutage` (the root loader's outage flag) is read when each answer arrives, so a 401 while
++ * it stands is retried.
++ *
++ * The user it returns is a snapshot (`no-cache`): the layout that asked brings the live, cached Me
++ * back once this recovers (see the signed-in layout), so later edits to the user show.
+  */
+ export function useSessionRecheck(needed: boolean, loaderOutage = false): SessionRecheck {
+   const client = useApolloClient()
+@@ -102,10 +114,17 @@ export function useSessionRecheck(needed: boolean, loaderOutage = false): Sessio
+         attemptRef.current += 1
+       }
+     }
+-    client.query<MeQuery>({ query: Me, fetchPolicy: 'no-cache', errorPolicy: 'none' }).then(
+-      result => settle({ user: result.data?.me ?? null }),
+-      error => settle({ error }),
+-    )
++    client
++      .query<MeQuery>({
++        query: Me,
++        fetchPolicy: 'no-cache',
++        errorPolicy: 'none',
++        context: SKIP_AUTH_ERROR_REPORT_CONTEXT,
++      })
++      .then(
++        result => settle({ user: result.data?.me ?? null }),
++        error => settle({ error }),
++      )
+   }, [client])
+ 
+   useLayoutEffect(() => {
+diff --git a/apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx b/apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx
+new file mode 100644
+index 0000000..3f594e2
+--- /dev/null
++++ b/apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx
+@@ -0,0 +1,121 @@
++import React from 'react'
++import { render, screen, waitFor } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
++import { ApolloProvider } from '@apollo/client/react'
++import { makeClient } from '@nestled-template/shared/apollo'
++import { Me } from '@nestled-template/shared/sdk'
++import { TransferOwnershipModal } from '@nestled-template/web'
++
++// Only the queries are stubbed: the transfer runs through a real `useMutation` on a client with the
++// app's defaults, so a GraphQL refusal behaves here as it does in the app.
++const mockUseQuery = vi.fn()
++vi.mock('@apollo/client/react', async importOriginal => {
++  const actual = await importOriginal<typeof import('@apollo/client/react')>()
++  return { ...actual, useQuery: (...args: unknown[]) => mockUseQuery(...args) }
++})
++
++function closestSelect(element: HTMLElement): HTMLSelectElement {
++  const select = element.closest('select')
++  if (!(select instanceof HTMLSelectElement)) {
++    throw new TypeError('Expected element to be inside a select')
++  }
++  return select
++}
++
++const currentUser = { id: 'user-1', firstName: 'John', lastName: 'Doe' }
++const organizations = [
++  {
++    id: 'org-1',
++    name: 'Acme Corp',
++    members: [
++      { id: 'member-1', role: { name: 'Owner' }, user: currentUser },
++      {
++        id: 'member-2',
++        role: { name: 'Admin' },
++        user: { id: 'user-2', firstName: 'Jane', lastName: 'Smith' },
++      },
++    ],
++  },
++]
++
++function renderModal(result: ApolloLink.Result) {
++  const link = new ApolloLink(
++    () =>
++      new Observable<ApolloLink.Result>(observer => {
++        observer.next(result)
++        observer.complete()
++      }),
++  )
++  // `makeClient` sets `errorPolicy: 'all'` for mutations; the modal must still treat a refusal as
++  // a failure.
++  const client = new ApolloClient({
++    link,
++    cache: new InMemoryCache(),
++    defaultOptions: makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' })
++      .defaultOptions,
++  })
++  const onClose = vi.fn()
++  const onSuccess = vi.fn()
++  render(
++    <ApolloProvider client={client}>
++      <TransferOwnershipModal isOpen onClose={onClose} onSuccess={onSuccess} />
++    </ApolloProvider>,
++  )
++  return { onClose, onSuccess }
++}
++
++async function submitTransfer() {
++  const user = userEvent.setup()
++  await user.selectOptions(closestSelect(screen.getByText('Choose an organization...')), 'org-1')
++  await user.selectOptions(closestSelect(await screen.findByText('Choose new owner...')), 'user-2')
++  await user.type(await screen.findByPlaceholderText('Type TRANSFER to confirm'), 'TRANSFER')
++  await user.click(screen.getByRole('button', { name: 'Transfer Ownership' }))
++}
++
++describe('TransferOwnershipModal under the app client error policy', () => {
++  const alert = vi.fn()
++
++  beforeEach(() => {
++    alert.mockReset()
++    vi.stubGlobal('alert', alert)
++    mockUseQuery.mockImplementation((query: unknown) =>
++      query === Me
++        ? { data: { me: currentUser }, loading: false }
++        : { data: { myOrganizations: organizations }, loading: false },
++    )
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++  })
++
++  it('reports the failure and stays open when the API refuses the transfer', async () => {
++    const { onClose, onSuccess } = renderModal({
++      data: null,
++      errors: [{ message: 'Nope', extensions: { code: 'BAD_USER_INPUT' } }],
++    } as never)
++
++    await submitTransfer()
++
++    await waitFor(() => expect(alert).toHaveBeenCalledWith('Failed to transfer ownership: Nope'))
++    expect(alert).not.toHaveBeenCalledWith('Organization ownership transferred successfully!')
++    expect(onSuccess).not.toHaveBeenCalled()
++    expect(onClose).not.toHaveBeenCalled()
++  })
++
++  it('reports success and closes when the API accepts the transfer', async () => {
++    const { onClose, onSuccess } = renderModal({
++      data: { transferOrganizationOwnership: true },
++    })
++
++    await submitTransfer()
++
++    await waitFor(() =>
++      expect(alert).toHaveBeenCalledWith('Organization ownership transferred successfully!'),
++    )
++    expect(onSuccess).toHaveBeenCalledTimes(1)
++    expect(onClose).toHaveBeenCalledTimes(1)
++  })
++})
+diff --git a/apps/web/tests/helpers/api-rejection.ts b/apps/web/tests/helpers/api-rejection.ts
+new file mode 100644
+index 0000000..4c9bdfa
+--- /dev/null
++++ b/apps/web/tests/helpers/api-rejection.ts
+@@ -0,0 +1,39 @@
++import { ServerError } from '@apollo/client'
++
++/**
++ * How the API really answers a request whose session it rejects: HTTP 200 with a GraphQL error
++ * whose `extensions.code` is `UNAUTHENTICATED` (Nest maps every `UnauthorizedException` to it, and
++ * keeps the 401 in `originalError.statusCode`). Specs that end in a logout use this, not an HTTP
++ * 401: every app's error link signs out on UNAUTHENTICATED, but several never do on an HTTP 401.
++ */
++export const UNAUTHENTICATED_RESULT = {
++  data: null,
++  errors: [
++    {
++      message: 'Unauthorized',
++      extensions: {
++        code: 'UNAUTHENTICATED',
++        originalError: { statusCode: 401, message: 'Unauthorized' },
++      },
++    },
++  ],
++}
++
++/** `UNAUTHENTICATED_RESULT` as the API's HTTP response, for a spec that stubs `fetch`. */
++export function unauthenticatedResponse(): Response {
++  return new Response(JSON.stringify(UNAUTHENTICATED_RESULT), {
++    status: 200,
++    headers: { 'content-type': 'application/json' },
++  })
++}
++
++/**
++ * The error Apollo raises for an HTTP error status, built from a real `Response` (never a
++ * hand-set `statusCode`), for a spec about a real HTTP 401, 502 or 503.
++ */
++export function httpError(status: number): ServerError {
++  return new ServerError('Response not successful', {
++    response: new Response(null, { status }),
++    bodyText: '',
++  })
++}
+diff --git a/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx b/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+index fd6c7c7..737b49b 100644
+--- a/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
++++ b/apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+@@ -3,27 +3,25 @@ import { act, render, screen } from '@testing-library/react'
+ import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
+-import {
+-  ApolloClient,
+-  ApolloLink,
+-  gql,
+-  InMemoryCache,
+-  Observable,
+-  ServerError,
+-} from '@apollo/client'
++import { ApolloClient, ApolloLink, gql, InMemoryCache, Observable } from '@apollo/client'
+ import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
+ import { GlobalContextProvider } from '@nestled-template/web'
+-import { clearApiOutage, signalApiOutage } from '@nestled-template/shared/apollo'
++import {
++  clearApiOutage,
++  signalApiOutage,
++  SKIP_AUTH_ERROR_REPORT_CONTEXT,
++} from '@nestled-template/shared/apollo'
+ import { sessionRecheckOutcome } from '../../app/session-recheck'
+ import { App } from '../../app/app'
+ import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
+ import { CONFIRM_DELAYS_MS, retryDelayMs } from '../../app/api-availability'
+ import { SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
+ import { NO_ORGANIZATIONS_TITLE } from '../../app/organization-required'
++import { httpError, UNAUTHENTICATED_RESULT } from '../helpers/api-rejection'
+ 
+-// The layout's chrome is not under test; only what it does with no user is.
++// The layout's chrome is not under test, beyond the user's name it shows.
+ vi.mock('@nestled-template/web-ui', () => ({
+-  WebUiHeader: () => null,
++  WebUiHeader: ({ userName }: { userName?: string }) => <p>Header user: {userName}</p>,
+   WebUiFooter: () => null,
+ }))
+ vi.mock('@nestled-template/web', async importOriginal => ({
+@@ -37,6 +35,7 @@ const ME = gql`
+   query Me {
+     me {
+       id
++      firstName
+     }
+   }
+ `
+@@ -50,9 +49,22 @@ type Respond = () => Observable<ApolloLink.Result>
+ const fails = (error: Error) => () => new Observable<ApolloLink.Result>(o => o.error(error))
+ const signedIn = () =>
+   new Observable<ApolloLink.Result>(o => {
+-    o.next({ data: { me: { __typename: 'User', id: 'user-1' } } })
++    o.next({ data: { me: { __typename: 'User', id: 'user-1', firstName: 'Ada' } } })
+     o.complete()
+   })
++// A rejected session, both ways it can arrive: the API's own answer (HTTP 200, UNAUTHENTICATED),
++// which every app signs out on, and a real HTTP 401 response.
++const rejections: Array<[string, Respond]> = [
++  [
++    'the API’s UNAUTHENTICATED answer',
++    () =>
++      new Observable<ApolloLink.Result>(o => {
++        o.next(UNAUTHENTICATED_RESULT as never)
++        o.complete()
++      }),
++  ],
++  ['an HTTP 401', () => new Observable<ApolloLink.Result>(o => o.error(httpError(401)))],
++]
+ const noOrganizations = () =>
+   new Observable<ApolloLink.Result>(o => {
+     o.next({ data: { myOrganizations: [] } })
+@@ -67,8 +79,9 @@ async function renderMembersPage(
+     rootFlagsOutage = false,
+   }: {
+     // False: the root loader returns no Me query, as after a Me preload on a public route that
+-    // failed for a reason other than the API (the cookie is kept), or with no preload at all.
+-    rootPreloadsMe?: boolean
++    // failed for a reason other than the API (the cookie is kept), or with no preload at all. A
++    // function decides per call (1 for the first).
++    rootPreloadsMe?: boolean | ((call: number) => boolean)
+     initialPath?: string
+     // The root loader returns its outage flag (`serviceUnavailable`) and the root renders the
+     // routes anyway, as in an app whose root does not put up the outage screen for it.
+@@ -76,10 +89,12 @@ async function renderMembersPage(
+   } = {},
+ ) {
+   let meRequests = 0
++  const meContexts: Array<Record<string, unknown>> = []
+   const link = new ApolloLink(operation => {
+     if (operation.operationName !== 'Me') return noOrganizations()
+     const respond = meResponses[Math.min(meRequests, meResponses.length - 1)]
+     meRequests += 1
++    meContexts.push(operation.getContext())
+     return respond()
+   })
+   const client = new ApolloClient({ link, cache: new InMemoryCache() })
+@@ -93,7 +108,9 @@ async function renderMembersPage(
+         loader: async () => {
+           rootLoaderCalls += 1
+           if (rootFlagsOutage) return { serviceUnavailable: true }
+-          if (!rootPreloadsMe) return {}
++          const preloads =
++            typeof rootPreloadsMe === 'function' ? rootPreloadsMe(rootLoaderCalls) : rootPreloadsMe
++          if (!preloads) return {}
+           const meQueryRef = preload(ME)
+           await preload.toPromise(meQueryRef).catch(() => undefined)
+           return { meQueryRef }
+@@ -132,7 +149,13 @@ async function renderMembersPage(
+       </ApolloProvider>,
+     )
+   })
+-  return { router, rootLoaderCalls: () => rootLoaderCalls, meRequests: () => meRequests }
++  return {
++    client,
++    router,
++    rootLoaderCalls: () => rootLoaderCalls,
++    meRequests: () => meRequests,
++    meContexts,
++  }
+ }
+ 
+ async function advance(ms: number) {
+@@ -173,13 +196,9 @@ describe('authenticated layout when the Me query fails', () => {
+     expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+   })
+ 
+-  it('still sends a 401 through /force-logout', async () => {
++  it.each(rejections)('still sends %s through /force-logout', async (_label, rejected) => {
+     fetchMock.mockResolvedValue(new Response('12.3', { status: 200 }))
+-    const unauthorized = new ServerError('Response not successful', {
+-      response: new Response(null, { status: 401 }),
+-      bodyText: '',
+-    })
+-    const app = await renderMembersPage([fails(unauthorized)])
++    const app = await renderMembersPage([rejected])
+     await advance(CONFIRM_WINDOW_MS + retryDelayMs(3))
+ 
+     expect(app.router.state.location.pathname).toBe('/force-logout')
+@@ -191,16 +210,8 @@ describe('authenticated layout when the Me query fails', () => {
+ })
+ 
+ describe('authenticated layout with no user', () => {
+-  const unauthorized = () =>
+-    new ServerError('Response not successful', {
+-      response: new Response(null, { status: 401 }),
+-      bodyText: '',
+-    })
+-  const serverError = () =>
+-    new ServerError('Response not successful', {
+-      response: new Response(null, { status: 500 }),
+-      bodyText: '',
+-    })
++  const unauthorized = () => httpError(401)
++  const serverError = () => httpError(500)
+ 
+   beforeEach(() => {
+     vi.useFakeTimers()
+@@ -226,6 +237,47 @@ describe('authenticated layout with no user', () => {
+     expect(app.router.state.location.pathname).toBe('/members')
+   })
+ 
++  it('after recovering, takes the user from a live Me query, so later changes show', async () => {
++    // The root loader brought no Me the first time; once revalidated, it does.
++    const app = await renderMembersPage([signedIn], { rootPreloadsMe: call => call > 1 })
++    await advance(0)
++
++    expect(screen.getByText('Header user: Ada')).toBeInTheDocument()
++    expect(app.rootLoaderCalls()).toBe(2)
++
++    // A profile edit updates the cached user; the re-check's own answer was a snapshot.
++    await act(async () => {
++      app.client.cache.writeQuery({
++        query: ME,
++        data: { me: { __typename: 'User', id: 'user-1', firstName: 'Grace' } },
++      })
++    })
++    await advance(0)
++
++    expect(screen.getByText('Header user: Grace')).toBeInTheDocument()
++    expect(app.router.state.location.pathname).toBe('/members')
++  })
++
++  it('asks the error link to take no action on the re-check, which decides by itself', async () => {
++    // An error link that only dispatches an event (an access-denied screen, say) would otherwise
++    // act on the re-check's 401 or 403 before the re-check had judged it.
++    const app = await renderMembersPage([rejections[0][1]], { rootPreloadsMe: false })
++    await advance(0)
++
++    expect(app.meContexts).toHaveLength(1)
++    expect(app.meContexts[0]).toMatchObject(SKIP_AUTH_ERROR_REPORT_CONTEXT)
++    expect(app.router.state.location.pathname).toBe('/force-logout')
++  })
++
++  it('revalidates the root loader once per recovery, not in a loop', async () => {
++    const app = await renderMembersPage([signedIn], { rootPreloadsMe: false })
++    await advance(retryDelayMs(0) + retryDelayMs(1))
++
++    expect(app.rootLoaderCalls()).toBe(2)
++    expect(app.meRequests()).toBe(1)
++    expect(screen.getByText('Members page')).toBeInTheDocument()
++  })
++
+   it('shows the organization picker, with no logout and no retry loop, when Me again gets ORGANIZATION_CONTEXT_REQUIRED', async () => {
+     const organizationRequired = () =>
+       new Observable<ApolloLink.Result>(o => {
+@@ -256,8 +308,8 @@ describe('authenticated layout with no user', () => {
+     expect(app.router.state.location.pathname).toBe('/members')
+   })
+ 
+-  it('logs out when Me again gets a real 401 with no outage', async () => {
+-    const app = await renderMembersPage([fails(unauthorized())], { rootPreloadsMe: false })
++  it.each(rejections)('logs out when Me again gets %s with no outage', async (_label, rejected) => {
++    const app = await renderMembersPage([rejected], { rootPreloadsMe: false })
+     await advance(0)
+ 
+     expect(app.meRequests()).toBe(1)
+@@ -345,14 +397,15 @@ describe('authenticated layout with no user', () => {
+     it('runs Me again on the private route and keeps the user signed in', async () => {
+       const app = await navigateToMembers([signedIn])
+ 
+-      expect(app.rootLoaderCalls()).toBe(1)
++      // The re-check, then one revalidation of the root loader for a live Me (here it brings none).
++      expect(app.rootLoaderCalls()).toBe(2)
+       expect(app.meRequests()).toBe(1)
+       expect(screen.getByText('Members page')).toBeInTheDocument()
+       expect(app.router.state.location.pathname).toBe('/members')
+     })
+ 
+-    it('logs out only when that Me gets a real 401', async () => {
+-      const app = await navigateToMembers([fails(unauthorized())])
++    it.each(rejections)('logs out only when that Me gets %s', async (_label, rejected) => {
++      const app = await navigateToMembers([rejected])
+ 
+       expect(app.meRequests()).toBe(1)
+       expect(app.router.state.location.pathname).toBe('/force-logout')
+diff --git a/apps/web/tests/routes/logout.spec.tsx b/apps/web/tests/routes/logout.spec.tsx
+index 212a5bf..59e24f6 100644
+--- a/apps/web/tests/routes/logout.spec.tsx
++++ b/apps/web/tests/routes/logout.spec.tsx
+@@ -91,6 +91,17 @@ describe('Logout Route', () => {
+   })
+ 
+   describe('Logout Flow', () => {
++    it('forgets the stored active organization, so the next user is not sent it', async () => {
++      localStorage.setItem('activeOrganizationId', 'org-2')
++      mockApolloClient.mutate.mockResolvedValue({ data: { logout: true } })
++      mockApolloClient.clearStore.mockResolvedValue([])
++
++      renderLogout()
++
++      await waitFor(() => expect(mockNavigate).toHaveBeenCalled())
++      expect(localStorage.getItem('activeOrganizationId')).toBeNull()
++    })
++
+     it('should call logout mutation', async () => {
+       mockApolloClient.mutate.mockResolvedValue({ data: { logout: true } })
+       mockApolloClient.clearStore.mockResolvedValue([])
+diff --git a/apps/web/tests/routes/settings/members.error-policy.spec.tsx b/apps/web/tests/routes/settings/members.error-policy.spec.tsx
+new file mode 100644
+index 0000000..e205d8d
+--- /dev/null
++++ b/apps/web/tests/routes/settings/members.error-policy.spec.tsx
+@@ -0,0 +1,124 @@
++import React from 'react'
++import { fireEvent, render, screen } from '@testing-library/react'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
++import { ApolloProvider } from '@apollo/client/react'
++import { makeClient } from '@nestled-template/shared/apollo'
++import { OrganizationInvitations, OrganizationRoles } from '@nestled-template/shared/sdk'
++import { createTestRouter } from '../../helpers/createTestRouter'
++import MembersSettings from '../../../app/routes/settings/members'
++
++// Only the reads are stubbed: the invitation runs through a real `useMutation` on a client with
++// the app's defaults, so a GraphQL refusal behaves here as it does in the app.
++const mockUseReadQuery = vi.fn()
++const mockUseQuery = vi.fn()
++vi.mock('@apollo/client/react', async importOriginal => {
++  const actual = await importOriginal<typeof import('@apollo/client/react')>()
++  return {
++    ...actual,
++    useReadQuery: (...args: unknown[]) => mockUseReadQuery(...args),
++    useQuery: (...args: unknown[]) => mockUseQuery(...args),
++  }
++})
++
++vi.mock('react-router', async importOriginal => {
++  const actual = await importOriginal<typeof import('react-router')>()
++  return {
++    ...actual,
++    useLoaderData: () => ({ myOrganizationsQueryRef: 'orgs', meQueryRef: 'me' }),
++  }
++})
++
++vi.mock('@nestled-template/web', () => ({
++  RequirePermission: ({ children, fallback }: any) =>
++    children === null || children === undefined ? fallback : <>{children}</>,
++}))
++
++vi.mock('@nestledjs/forms', () => ({
++  Form: ({ submit }: any) => (
++    <button
++      type="button"
++      onClick={() => submit({ email: 'new@example.com', roleId: 'role-member' })}
++    >
++      Submit Invite Form
++    </button>
++  ),
++}))
++
++const organization = {
++  id: 'org-1',
++  name: 'Acme',
++  members: [{ id: 'member-current', userId: 'user-current', role: { name: 'Owner' } }],
++}
++const roles = [
++  { id: 'role-owner', name: 'Owner', description: null, permissions: [] },
++  { id: 'role-member', name: 'Member', description: null, permissions: [] },
++]
++
++function renderMembers(result: ApolloLink.Result) {
++  const link = new ApolloLink(
++    () =>
++      new Observable<ApolloLink.Result>(observer => {
++        observer.next(result)
++        observer.complete()
++      }),
++  )
++  // `makeClient` sets `errorPolicy: 'all'` for mutations; the page must still treat a refusal as a
++  // failure.
++  const client = new ApolloClient({
++    link,
++    cache: new InMemoryCache(),
++    defaultOptions: makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' })
++      .defaultOptions,
++  })
++  const Router = createTestRouter([{ path: '/settings/members', Component: MembersSettings }])
++  render(
++    <ApolloProvider client={client}>
++      <Router initialEntries={['/settings/members']} />
++    </ApolloProvider>,
++  )
++}
++
++describe('MembersSettings under the app client error policy', () => {
++  const refetch = vi.fn()
++
++  beforeEach(() => {
++    refetch.mockReset()
++    mockUseReadQuery.mockImplementation((queryRef: unknown) =>
++      queryRef === 'orgs'
++        ? { data: { myOrganizations: [organization] } }
++        : { data: { me: { id: 'user-current' } } },
++    )
++    mockUseQuery.mockImplementation((query: unknown) => {
++      if (query === OrganizationRoles) return { data: { organizationRoles: roles } }
++      if (query === OrganizationInvitations) {
++        return { data: { organizationInvitations: [] }, loading: false, refetch }
++      }
++      return { data: { userOrganizationMembers: [] }, loading: false, error: null, refetch }
++    })
++  })
++
++  it('shows the API refusal, not the success message, when an invitation is refused', async () => {
++    renderMembers({
++      data: null,
++      errors: [{ message: 'Nope', extensions: { code: 'BAD_USER_INPUT' } }],
++    } as never)
++
++    fireEvent.click(screen.getByRole('button', { name: /Invite Member/i }))
++    fireEvent.click(screen.getByRole('button', { name: /Submit Invite Form/i }))
++
++    expect(await screen.findByText('Nope')).toBeInTheDocument()
++    expect(screen.queryByText('Invitation sent successfully!')).not.toBeInTheDocument()
++    expect(refetch).not.toHaveBeenCalled()
++  })
++
++  it('shows the success message when the invitation is accepted', async () => {
++    renderMembers({ data: { createOrganizationInvitation: true } })
++
++    fireEvent.click(screen.getByRole('button', { name: /Invite Member/i }))
++    fireEvent.click(screen.getByRole('button', { name: /Submit Invite Form/i }))
++
++    expect(await screen.findByText('Invitation sent successfully!')).toBeInTheDocument()
++    expect(screen.queryByText('Nope')).not.toBeInTheDocument()
++  })
++})
+diff --git a/apps/web/tests/routes/settings/members.spec.tsx b/apps/web/tests/routes/settings/members.spec.tsx
+index f798774..1ffbe85 100644
+--- a/apps/web/tests/routes/settings/members.spec.tsx
++++ b/apps/web/tests/routes/settings/members.spec.tsx
+@@ -190,6 +190,26 @@ describe('MembersSettings', () => {
+     })
+   })
+ 
++  it('manages the active organization, not the first one listed', async () => {
++    const other = { id: 'org-0', name: 'Listed first', members: [] }
++    mockUseReadQuery.mockImplementation((queryRef: any) => {
++      if (queryRef.query === 'orgs') return { data: { myOrganizations: [other, organization] } }
++      return { data: { me: { id: 'user-current', activeOrganizationId: 'org-1' } } }
++    })
++    renderRoute()
++
++    fireEvent.click(screen.getByRole('button', { name: /Invite Member/i }))
++    fireEvent.click(screen.getByRole('button', { name: /Submit Invite Form/i }))
++
++    await waitFor(() => expect(mutationMocks.invite).toHaveBeenCalled())
++    expect(mutationMocks.invite.mock.calls[0][0].variables.input.organizationId).toBe('org-1')
++    expect(
++      mockUseQuery.mock.calls.every(
++        ([, options]: any[]) => options?.variables?.organizationId !== 'org-0',
++      ),
++    ).toBe(true)
++  })
++
+   function renderRoute() {
+     const Router = createTestRouter([{ path: '/settings/members', Component: MembersSettings }])
+     return render(<Router initialEntries={['/settings/members']} />)
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+index 1e6e657..11ced58 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.spec.ts
+@@ -700,6 +700,46 @@ describe('OrganizationService', () => {
+         ForbiddenException,
+       )
+     })
++    it('updates the auth cache: the new active organization, and no stale cached user', async () => {
++      const authCache = {
++        isEnabled: jest.fn().mockReturnValue(true),
++        setUserActiveOrganization: jest.fn().mockResolvedValue(undefined),
++        invalidateUser: jest.fn().mockResolvedValue(undefined),
++      }
++      const cached = new OrganizationService(
++        data as never,
++        {} as never,
++        {} as never,
++        authCache as never,
++      )
++      data.organizationMember.findFirst.mockResolvedValue({ id: 'member-123' } as any)
++      data.user.update.mockResolvedValue({ id: 'user-123', activeOrganizationId: 'org-456' } as any)
++
++      await cached.switchActiveOrganization('user-123', { organizationId: 'org-456' })
++
++      expect(authCache.setUserActiveOrganization).toHaveBeenCalledWith('user-123', 'org-456')
++      expect(authCache.invalidateUser).toHaveBeenCalledWith('user-123')
++    })
++    it('leaves the auth cache alone when the switch is refused', async () => {
++      const authCache = {
++        isEnabled: jest.fn().mockReturnValue(true),
++        setUserActiveOrganization: jest.fn(),
++        invalidateUser: jest.fn(),
++      }
++      const cached = new OrganizationService(
++        data as never,
++        {} as never,
++        {} as never,
++        authCache as never,
++      )
++      data.organizationMember.findFirst.mockResolvedValue(null)
++
++      await expect(
++        cached.switchActiveOrganization('user-123', { organizationId: 'org-456' }),
++      ).rejects.toThrow(ForbiddenException)
++      expect(authCache.setUserActiveOrganization).not.toHaveBeenCalled()
++      expect(authCache.invalidateUser).not.toHaveBeenCalled()
++    })
+   })
+   describe('getUserOrganizations', () => {
+     it('should return all organizations for user', async () => {
+diff --git a/libs/api/custom/src/lib/default/organization/organization.service.ts b/libs/api/custom/src/lib/default/organization/organization.service.ts
+index 1b278f9..25e7c5b 100644
+--- a/libs/api/custom/src/lib/default/organization/organization.service.ts
++++ b/libs/api/custom/src/lib/default/organization/organization.service.ts
+@@ -1061,9 +1061,11 @@ export class OrganizationService {
+       },
+     })
+ 
+-    // Update cache with new active organization
++    // The auth cache must follow the switch: requests with no x-organization-id header resolve the
++    // organization from it, and a cached user would still carry the old activeOrganizationId.
+     if (this.authCache?.isEnabled()) {
+       await this.authCache.setUserActiveOrganization(userId, input.organizationId)
++      await this.authCache.invalidateUser(userId)
+     }
+ 
+     Logger.log(`User ${userId} switched to organization ${input.organizationId}`)
+diff --git a/libs/shared/sdk/src/generated/graphql.ts b/libs/shared/sdk/src/generated/graphql.ts
+index 403af7e..e1a500b 100644
+--- a/libs/shared/sdk/src/generated/graphql.ts
++++ b/libs/shared/sdk/src/generated/graphql.ts
+@@ -9252,6 +9252,7 @@ export type UserTokenDetailsFragment = {
+     updatedAt: any
+     isEmulating?: boolean | null
+     originalAdminId?: string | null
++    activeOrganizationId?: string | null
+     emails?: Array<{
+       __typename?: 'Email'
+       id: string
+@@ -9302,6 +9303,7 @@ export type AuthUserDetailsFragment = {
+   updatedAt: any
+   isEmulating?: boolean | null
+   originalAdminId?: string | null
++  activeOrganizationId?: string | null
+   emails?: Array<{
+     __typename?: 'Email'
+     id: string
+@@ -9362,6 +9364,7 @@ export type LoginMutation = {
+       updatedAt: any
+       isEmulating?: boolean | null
+       originalAdminId?: string | null
++      activeOrganizationId?: string | null
+       emails?: Array<{
+         __typename?: 'Email'
+         id: string
+@@ -9424,6 +9427,7 @@ export type RegisterMutation = {
+       updatedAt: any
+       isEmulating?: boolean | null
+       originalAdminId?: string | null
++      activeOrganizationId?: string | null
+       emails?: Array<{
+         __typename?: 'Email'
+         id: string
+@@ -9486,6 +9490,7 @@ export type RegisterWithInvitationMutation = {
+       updatedAt: any
+       isEmulating?: boolean | null
+       originalAdminId?: string | null
++      activeOrganizationId?: string | null
+       emails?: Array<{
+         __typename?: 'Email'
+         id: string
+@@ -9553,6 +9558,7 @@ export type ResetPasswordMutation = {
+     updatedAt: any
+     isEmulating?: boolean | null
+     originalAdminId?: string | null
++    activeOrganizationId?: string | null
+     emails?: Array<{
+       __typename?: 'Email'
+       id: string
+@@ -9609,6 +9615,7 @@ export type VerifyEmailMutation = {
+     updatedAt: any
+     isEmulating?: boolean | null
+     originalAdminId?: string | null
++    activeOrganizationId?: string | null
+     emails?: Array<{
+       __typename?: 'Email'
+       id: string
+@@ -9687,6 +9694,7 @@ export type EmulateUserMutation = {
+       updatedAt: any
+       isEmulating?: boolean | null
+       originalAdminId?: string | null
++      activeOrganizationId?: string | null
+       emails?: Array<{
+         __typename?: 'Email'
+         id: string
+@@ -9747,6 +9755,7 @@ export type EndEmulationMutation = {
+       updatedAt: any
+       isEmulating?: boolean | null
+       originalAdminId?: string | null
++      activeOrganizationId?: string | null
+       emails?: Array<{
+         __typename?: 'Email'
+         id: string
+@@ -9810,6 +9819,7 @@ export type VerifyEmailChangeMutation = {
+     updatedAt: any
+     isEmulating?: boolean | null
+     originalAdminId?: string | null
++    activeOrganizationId?: string | null
+     emails?: Array<{
+       __typename?: 'Email'
+       id: string
+@@ -9895,6 +9905,7 @@ export type MeQuery = {
+     updatedAt: any
+     isEmulating?: boolean | null
+     originalAdminId?: string | null
++    activeOrganizationId?: string | null
+     emails?: Array<{
+       __typename?: 'Email'
+       id: string
+@@ -10026,6 +10037,7 @@ export type Complete2FaLoginMutation = {
+       updatedAt: any
+       isEmulating?: boolean | null
+       originalAdminId?: string | null
++      activeOrganizationId?: string | null
+       emails?: Array<{
+         __typename?: 'Email'
+         id: string
+@@ -13409,6 +13421,7 @@ export const AuthUserDetailsFragmentDoc = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -13516,6 +13529,7 @@ export const UserTokenDetailsFragmentDoc = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -27116,6 +27130,7 @@ export const Login = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -27260,6 +27275,7 @@ export const Register = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -27407,6 +27423,7 @@ export const RegisterWithInvitation = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -27581,6 +27598,7 @@ export const ResetPassword = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -27702,6 +27720,7 @@ export const VerifyEmail = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -27912,6 +27931,7 @@ export const EmulateUser = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -28039,6 +28059,7 @@ export const EndEmulation = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -28196,6 +28217,7 @@ export const VerifyEmailChange = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -28458,6 +28480,7 @@ export const Me = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+@@ -28827,6 +28850,7 @@ export const Complete2FaLogin = {
+           { kind: 'Field', name: { kind: 'Name', value: 'updatedAt' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'isEmulating' } },
+           { kind: 'Field', name: { kind: 'Name', value: 'originalAdminId' } },
++          { kind: 'Field', name: { kind: 'Name', value: 'activeOrganizationId' } },
+           {
+             kind: 'Field',
+             name: { kind: 'Name', value: 'emails' },
+diff --git a/libs/shared/sdk/src/graphql/auth/auth-fragments.graphql b/libs/shared/sdk/src/graphql/auth/auth-fragments.graphql
+index 92e0518..8082474 100644
+--- a/libs/shared/sdk/src/graphql/auth/auth-fragments.graphql
++++ b/libs/shared/sdk/src/graphql/auth/auth-fragments.graphql
+@@ -20,6 +20,7 @@ fragment AuthUserDetails on User {
+   updatedAt
+   isEmulating
+   originalAdminId
++  activeOrganizationId
+   emails {
+     id
+     email
+diff --git a/libs/web/src/index.ts b/libs/web/src/index.ts
+index 297c21c..56423fb 100644
+--- a/libs/web/src/index.ts
++++ b/libs/web/src/index.ts
+@@ -3,3 +3,4 @@ export * from './lib/contexts'
+ export * from './lib/hooks'
+ export * from './lib/layouts'
+ export * from './lib/modals'
++export * from './lib/organization'
+diff --git a/libs/web/src/lib/components/upgrade-modal.tsx b/libs/web/src/lib/components/upgrade-modal.tsx
+index c0bd84d..8f75347 100644
+--- a/libs/web/src/lib/components/upgrade-modal.tsx
++++ b/libs/web/src/lib/components/upgrade-modal.tsx
+@@ -37,8 +37,11 @@ interface UpgradeModalProps {
+ export function UpgradeModal({ isOpen, onClose, feature, reason }: UpgradeModalProps) {
+   const { plan: currentPlan } = useSubscription()
+   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
+-  const [createCheckout, { loading: checkoutLoading }] =
+-    useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession)
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  const [createCheckout, { loading: checkoutLoading }] = useMutation<CreateCheckoutSessionMutation>(
++    CreateCheckoutSession,
++    { errorPolicy: 'none' },
++  )
+ 
+   const plans = data?.plans || []
+ 
+diff --git a/libs/web/src/lib/modals/transfer-ownership-modal.tsx b/libs/web/src/lib/modals/transfer-ownership-modal.tsx
+index 5b5837d..de42e15 100644
+--- a/libs/web/src/lib/modals/transfer-ownership-modal.tsx
++++ b/libs/web/src/lib/modals/transfer-ownership-modal.tsx
+@@ -34,8 +34,10 @@ export default function TransferOwnershipModal({
+   const { data: organizationsData, loading } = useQuery<MyOrganizationsWithMembersQuery>(
+     MyOrganizationsWithMembers,
+   )
++  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+   const [transferOwnershipMutation] = useMutation<TransferOrganizationOwnershipMutation>(
+     TransferOrganizationOwnership,
++    { errorPolicy: 'none' },
+   )
+ 
+   const currentUserId = meData?.me?.id
+diff --git a/libs/web/src/lib/organization/switch-active-organization.spec.tsx b/libs/web/src/lib/organization/switch-active-organization.spec.tsx
+new file mode 100644
+index 0000000..7a94172
+--- /dev/null
++++ b/libs/web/src/lib/organization/switch-active-organization.spec.tsx
+@@ -0,0 +1,72 @@
++import React from 'react'
++import { act, renderHook } from '@testing-library/react'
++import { afterEach, describe, expect, it } from 'vitest'
++import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
++import { ApolloProvider } from '@apollo/client/react'
++import { useSwitchActiveOrganization } from './switch-active-organization'
++
++function renderSwitch(refuse: boolean) {
++  const requested: string[] = []
++  const link = new ApolloLink(
++    operation =>
++      new Observable<ApolloLink.Result>(observer => {
++        const { organizationId } = operation.variables['input'] as { organizationId: string }
++        requested.push(organizationId)
++        observer.next(
++          refuse
++            ? ({ data: null, errors: [{ message: 'Not a member' }] } as never)
++            : {
++                data: {
++                  switchActiveOrganization: {
++                    __typename: 'User',
++                    id: 'user-1',
++                    activeOrganizationId: organizationId,
++                  },
++                },
++              },
++        )
++        observer.complete()
++      }),
++  )
++  // The app client's default (`makeClient`), under which a refusal resolves unless told otherwise.
++  const client = new ApolloClient({
++    link,
++    cache: new InMemoryCache(),
++    defaultOptions: { mutate: { errorPolicy: 'all' } },
++  })
++  const wrapper = ({ children }: { children: React.ReactNode }) => (
++    <ApolloProvider client={client}>{children}</ApolloProvider>
++  )
++  const { result } = renderHook(() => useSwitchActiveOrganization(), { wrapper })
++  return { switchOrganization: result.current, requested }
++}
++
++describe('useSwitchActiveOrganization', () => {
++  afterEach(() => {
++    localStorage.clear()
++  })
++
++  it('switches on the API, then stores the id the requests are sent for', async () => {
++    const { switchOrganization, requested } = renderSwitch(false)
++
++    let active: string | undefined
++    await act(async () => {
++      active = await switchOrganization('org-2')
++    })
++
++    expect(requested).toEqual(['org-2'])
++    expect(active).toBe('org-2')
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
++  })
++
++  it('throws when the API refuses the switch, with nothing stored', async () => {
++    localStorage.setItem('activeOrganizationId', 'org-1')
++    const { switchOrganization } = renderSwitch(true)
++
++    await act(async () => {
++      await expect(switchOrganization('org-2')).rejects.toThrow('Not a member')
++    })
++
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
++  })
++})
+diff --git a/apps/web/app/organization-required.tsx b/apps/web/app/organization-required.tsx
+index 66f1275..c2afd98 100644
+--- a/apps/web/app/organization-required.tsx
++++ b/apps/web/app/organization-required.tsx
+@@ -1,14 +1,9 @@
+ import { useState, type ReactNode } from 'react'
+ import { CombinedGraphQLErrors } from '@apollo/client'
+-import { useMutation, useQuery } from '@apollo/client/react'
++import { useQuery } from '@apollo/client/react'
+ import { ORGANIZATION_CONTEXT_REQUIRED_CODE } from '@nestled-template/shared/apollo'
+-import {
+-  MyOrganizations,
+-  SwitchActiveOrganization,
+-  type MyOrganizationsQuery,
+-  type SwitchActiveOrganizationMutation,
+-  type SwitchActiveOrganizationMutationVariables,
+-} from '@nestled-template/shared/sdk'
++import { MyOrganizations, type MyOrganizationsQuery } from '@nestled-template/shared/sdk'
++import { isOrganizationSwitchSuperseded, useSwitchActiveOrganization } from '@nestled-template/web'
+ import { isRouteErrorResponse, Link } from 'react-router'
+ 
+ type ErrorWithGraphQLErrors = {
+@@ -53,20 +48,6 @@ export function isOrganizationContextRequired(error: unknown): boolean {
+   return !!errors?.some?.(e => e?.extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE)
+ }
+ 
+-/**
+- * Makes `organizationId` the active organization for this browser and reloads, so every query runs
+- * again under it. The Apollo client sends the stored id as `X-Organization-ID`, which the API reads
+- * before the user's active organization, so a stale stored id would keep the old refusal.
+- */
+-function activateAndReload(organizationId: string): void {
+-  try {
+-    localStorage.setItem('activeOrganizationId', organizationId)
+-  } catch {
+-    // Storage blocked: the user's active organization, just switched on the API, still applies.
+-  }
+-  globalThis.location.reload()
+-}
+-
+ function Panel({
+   eyebrow,
+   title,
+@@ -91,22 +72,17 @@ const buttonClass =
+ /**
+  * Shown when a page needs an organization and the account has none active, or is no longer a member
+  * of the one it had. The session is kept throughout. It lists the user's organizations; choosing one
+- * makes it active (`switchActiveOrganization`) and reloads. With none, it says so and offers a
+- * normal sign-out.
++ * makes it active through the app's one switch (`useSwitchActiveOrganization`: the API, then the
++ * stored id the client sends as `X-Organization-ID`) and reloads, so every query runs again under
++ * it. With none, it says so and offers a normal sign-out.
+  */
+ export function OrganizationRequired() {
+   const organizations = useQuery<MyOrganizationsQuery>(MyOrganizations, {
+     fetchPolicy: 'network-only',
+   })
+-  const [switchOrganization] = useMutation<
+-    SwitchActiveOrganizationMutation,
+-    SwitchActiveOrganizationMutationVariables
+-  >(SwitchActiveOrganization, {
+-    // The app client's default is `errorPolicy: 'all'`, under which the API refusing the switch (a
+-    // GraphQL error) resolves instead of throwing. This must throw, so the catch below shows the
+-    // failure and the refused id is never stored or reloaded into.
+-    errorPolicy: 'none',
+-  })
++  // Throws when the API refuses the switch, with nothing stored, so the catch below shows the
++  // failure and the refused id is never reloaded into.
++  const switchOrganization = useSwitchActiveOrganization()
+   const [switchingTo, setSwitchingTo] = useState<string | null>(null)
+   const [switchFailed, setSwitchFailed] = useState(false)
+ 
+@@ -114,13 +90,15 @@ export function OrganizationRequired() {
+     setSwitchFailed(false)
+     setSwitchingTo(organizationId)
+     try {
+-      await switchOrganization({ variables: { input: { organizationId } } })
+-    } catch {
++      await switchOrganization(organizationId)
++    } catch (error) {
+       setSwitchingTo(null)
+-      setSwitchFailed(true)
++      // Answered after the session ended (a logout, or the picker left): nothing was stored, and
++      // there is nothing to report or reload into.
++      if (!isOrganizationSwitchSuperseded(error)) setSwitchFailed(true)
+       return
+     }
+-    activateAndReload(organizationId)
++    globalThis.location.reload()
+   }
+ 
+   if (organizations.loading && !organizations.data) {
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index 44323f9..133e1e8 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -11,20 +11,26 @@ import {
+ import { RetryLink } from '@apollo/client/link/retry'
+ import {
+   APOLLO_ACCESS_FORBIDDEN_EVENT,
+-  APOLLO_ORGANIZATION_REQUIRED_EVENT,
+   APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
++  APOLLO_ORGANIZATION_REQUIRED_EVENT,
+   APOLLO_SERVICE_UNAVAILABLE_EVENT,
++  activeOrganizationSession,
+   classifyApiFailure,
+   clearApiOutage,
+   createOutageRetryLink,
++  getStoredActiveOrganizationId,
+   isApiOutageSignalled,
++  isActiveOrganizationAmbiguous,
+   isAuthFailureDeferred,
++  isOrganizationContextRequiredError,
+   isQueryOperation,
+   isRetryableConnectivityError,
+-  isOrganizationContextRequiredError,
+   makeClient,
+   ORGANIZATION_CONTEXT_REQUIRED_CODE,
++  resolveActiveOrganization,
+   signalApiOutage,
++  SKIP_AUTH_ERROR_REPORT_CONTEXT,
++  storeActiveOrganizationId,
+   subscriptionRetryDelayMs,
+   takeDeferredAuthFailure,
+ } from './apollo'
+@@ -41,6 +47,49 @@ function jwtWithIssuedAt(iat: number): string {
+   return `header.${payload}.signature`
+ }
+ 
++/**
++ * The API's answer when it cannot complete a request (a `ServiceUnavailableException`, thrown when
++ * the API-token lookup fails): HTTP 200, `INTERNAL_SERVER_ERROR` with `extensions.status: 503`, as
++ * libs/api/utils' formatApiError spec shows over the real pipeline.
++ */
++const GRAPHQL_503_ERROR = {
++  message: 'API token validation is temporarily unavailable',
++  extensions: {
++    code: 'INTERNAL_SERVER_ERROR',
++    status: 503,
++    originalError: {
++      message: 'API token validation is temporarily unavailable',
++      error: 'Service Unavailable',
++      statusCode: 503,
++    },
++  },
++}
++
++function graphQL503(): CombinedGraphQLErrors {
++  return new CombinedGraphQLErrors({ errors: [GRAPHQL_503_ERROR] })
++}
++
++/** An INTERNAL_SERVER_ERROR with `extensions.status` and/or the original exception's status. */
++function graphQLWithStatus(
++  status: number | undefined,
++  originalStatus?: number,
++): CombinedGraphQLErrors {
++  return new CombinedGraphQLErrors({
++    errors: [
++      {
++        message: 'Something failed',
++        extensions: {
++          code: 'INTERNAL_SERVER_ERROR',
++          ...(status === undefined ? {} : { status }),
++          ...(originalStatus === undefined
++            ? {}
++            : { originalError: { statusCode: originalStatus } }),
++        },
++      },
++    ],
++  })
++}
++
+ // The base64url decoder these tests rely on lives in @nestled-template/shared/utils and is tested
+ // there, next to the cookie picker that shares it.
+ 
+@@ -350,6 +399,74 @@ describe('makeClient', () => {
+     expect(reports()).toHaveLength(1)
+   })
+ 
++  describe('a GraphQL 503 (HTTP 200, INTERNAL_SERVER_ERROR, extensions.status 503)', () => {
++    const graphQLAnswer = (errors: unknown[]) =>
++      new Response(JSON.stringify({ data: null, errors }), {
++        status: 200,
++        headers: { 'content-type': 'application/json' },
++      })
++    const query = gql`
++      query Ping {
++        ping
++      }
++    `
++
++    afterEach(() => {
++      takeDeferredAuthFailure()
++    })
++
++    it('is reported as an outage, and a plain INTERNAL_SERVER_ERROR is not', async () => {
++      vi.spyOn(console, 'error').mockImplementation(() => undefined)
++      const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
++      const reports = () =>
++        dispatchEvent.mock.calls.filter(
++          ([event]) => event.type === APOLLO_SERVICE_UNAVAILABLE_EVENT,
++        )
++
++      globalThis.fetch = vi
++        .fn()
++        .mockResolvedValue(
++          graphQLAnswer([
++            { message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } },
++          ]),
++        )
++      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
++      expect(reports()).toHaveLength(0)
++
++      globalThis.fetch = vi.fn().mockResolvedValue(graphQLAnswer([GRAPHQL_503_ERROR]))
++      const { error } = await makeClient(undefined, {
++        apiUrl: 'https://api.example.com/graphql',
++      }).query({ query })
++      expect(reports()).toHaveLength(1)
++      // And the failed query is one the app refetches once the API answers.
++      expect(isRetryableConnectivityError(error)).toBe(true)
++    })
++
++    it('keeps the session over an UNAUTHENTICATED error in the same answer', async () => {
++      vi.spyOn(console, 'log').mockImplementation(() => undefined)
++      vi.spyOn(console, 'error').mockImplementation(() => undefined)
++      const testWindow = {
++        location: { pathname: '/members', search: '', hash: '', href: '' },
++        dispatchEvent: vi.fn(),
++      }
++      vi.stubGlobal('window', testWindow)
++      globalThis.fetch = vi
++        .fn()
++        .mockResolvedValue(
++          graphQLAnswer([
++            { message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } },
++            GRAPHQL_503_ERROR,
++          ]),
++        )
++
++      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
++
++      expect(testWindow.location.href).toBe('')
++      // Let pass like any 401 during an outage: refetched for a fresh answer once it clears.
++      expect(takeDeferredAuthFailure()).toBe(true)
++    })
++  })
++
+   it('redirects through logout when a transport response is unauthorized', async () => {
+     const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+@@ -487,6 +604,30 @@ describe('makeClient', () => {
+       expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
+     })
+ 
++    it('counts the retry of a query answered with a GraphQL 503 as outage evidence', async () => {
++      let answerRetry: () => void = () => undefined
++      const { testWindow, run } = setUp([
++        () => Promise.resolve(json(200, { data: null, errors: [GRAPHQL_503_ERROR] })),
++        () =>
++          new Promise<Response>(resolve => {
++            answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
++          }),
++      ])
++      await run(FLAKY)
++
++      const retry = run(FLAKY)
++      await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
++      await run(ME)
++
++      // The concurrent 401 is kept, as it is beside a proxy's 503.
++      expect(testWindow.location.href).toBe('')
++      expect(takeDeferredAuthFailure()).toBe(true)
++
++      answerRetry()
++      await retry
++      expect(isApiOutageSignalled()).toBe(false)
++    })
++
+     it('announces the end of the evidence when a 401 was let pass meanwhile', async () => {
+       let answerRetry: () => void = () => undefined
+       const { testWindow, run } = setUp([
+@@ -1032,6 +1173,8 @@ describe('isRetryableConnectivityError', () => {
+     ['a proxy 502', serverError(502)],
+     ['a proxy 503', serverError(503)],
+     ['a proxy 504', serverError(504)],
++    ['a GraphQL 503 (the API could not complete a lookup)', graphQL503()],
++    ['a GraphQL error whose original exception was a 502', graphQLWithStatus(undefined, 502)],
+   ])('retries %s', (_label, error) => {
+     expect(isRetryableConnectivityError(error)).toBe(true)
+   })
+@@ -1046,6 +1189,8 @@ describe('isRetryableConnectivityError', () => {
+       new TypeError("Cannot read properties of undefined (reading 'id')"),
+     ],
+     ['a GraphQL error', new CombinedGraphQLErrors({ errors: [{ message: 'Failed to fetch' }] })],
++    ['a plain INTERNAL_SERVER_ERROR (a 500)', graphQLWithStatus(500)],
++    ['an INTERNAL_SERVER_ERROR with no status', graphQLWithStatus(undefined)],
+     ['a non-error value', 'Failed to fetch'],
+     ['undefined', undefined],
+   ])('does not retry %s', (_label, error) => {
+@@ -1074,6 +1219,24 @@ describe('classifyApiFailure', () => {
+     ['a proxy 502', serverError(502), 'unavailable'],
+     ['a proxy 503', serverError(503), 'unavailable'],
+     ['a proxy 504', serverError(504), 'unavailable'],
++    ['a GraphQL 503', graphQL503(), 'unavailable'],
++    [
++      'a GraphQL error whose original exception was a 504',
++      graphQLWithStatus(undefined, 504),
++      'unavailable',
++    ],
++    [
++      'a GraphQL 503 beside an UNAUTHENTICATED error in the same answer',
++      new CombinedGraphQLErrors({
++        errors: [
++          { message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } },
++          GRAPHQL_503_ERROR,
++        ],
++      }),
++      'unavailable',
++    ],
++    ['a plain INTERNAL_SERVER_ERROR (a 500)', graphQLWithStatus(500), 'other'],
++    ['an INTERNAL_SERVER_ERROR with no status', graphQLWithStatus(undefined), 'other'],
+     ['an HTTP 403', serverError(403), 'other'],
+     ['an HTTP 500', serverError(500), 'other'],
+     [
+@@ -1235,6 +1398,59 @@ describe('apolloLoader failure record', () => {
+     }
+   })
+ 
++  it('records a GraphQL 503 beside a concurrent 401 as an outage, and a plain 500 as other', async () => {
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++    const originalFetch = globalThis.fetch
++    const me = gql`
++      query Me {
++        me {
++          id
++        }
++      }
++    `
++    const settings = gql`
++      query Settings {
++        settings {
++          id
++        }
++      }
++    `
++    const answer = (status: number, body: unknown) =>
++      new Response(JSON.stringify(body), {
++        status,
++        headers: { 'content-type': 'application/json' },
++      })
++    const operationName = (init?: RequestInit) =>
++      (JSON.parse(String(init?.body ?? '{}')) as { operationName?: string }).operationName
++    const load = async () =>
++      apolloLoader()(async ({ preloadQuery }) => {
++        const meRef = preloadQuery(me)
++        const settingsRef = preloadQuery(settings)
++        await new Promise(resolve => setTimeout(resolve, 20))
++        return { meRef, settingsRef }
++      })(loaderArgs())
++    try {
++      globalThis.fetch = vi.fn(async (_input: unknown, init?: RequestInit) =>
++        operationName(init) === 'Me'
++          ? answer(401, { message: 'Unauthorized' })
++          : answer(200, { data: null, errors: [GRAPHQL_503_ERROR] }),
++      ) as typeof fetch
++      expect(ssrApiFailureCause({ root: await load() })).toBe('unavailable')
++
++      globalThis.fetch = vi.fn(async () =>
++        answer(200, {
++          data: null,
++          errors: [{ message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } }],
++        }),
++      ) as typeof fetch
++      expect(ssrApiFailureCause({ root: await load() })).toBe('other')
++    } finally {
++      globalThis.fetch = originalFetch
++      vi.restoreAllMocks()
++    }
++  })
++
+   it('records a 401 and an outage in the same loader as an outage, in either order', async () => {
+     vi.spyOn(console, 'error').mockImplementation(() => undefined)
+     vi.spyOn(console, 'log').mockImplementation(() => undefined)
+@@ -1448,3 +1664,191 @@ describe('releaseApiOutage', () => {
+     }
+   })
+ })
++
++describe('SKIP_AUTH_ERROR_REPORT_CONTEXT', () => {
++  const query = gql`
++    query Me {
++      me {
++        id
++      }
++    }
++  `
++  const json = (status: number, body: unknown) =>
++    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
++  const coded = (code: string, statusCode: number) => () =>
++    json(200, {
++      data: null,
++      errors: [{ message: 'Refused', extensions: { code, originalError: { statusCode } } }],
++    })
++  const answers: Array<[string, () => Response]> = [
++    ['UNAUTHENTICATED', coded('UNAUTHENTICATED', 401)],
++    ['an HTTP 401', () => json(401, { message: 'Unauthorized' })],
++    ['FORBIDDEN', coded('FORBIDDEN', 403)],
++    ['an HTTP 403', () => json(403, { message: 'Forbidden' })],
++    [ORGANIZATION_CONTEXT_REQUIRED_CODE, coded(ORGANIZATION_CONTEXT_REQUIRED_CODE, 403)],
++  ]
++  let testWindow: {
++    location: { pathname: string; search: string; hash: string; href: string }
++    dispatchEvent: ReturnType<typeof vi.fn>
++  }
++
++  // A fresh copy of the module: earlier tests in this file can leave a retry's outage evidence
++  // behind, and with it every 401 here would be deferred instead of acted on.
++  let apollo: typeof import('./apollo')
++  beforeEach(async () => {
++    vi.resetModules()
++    apollo = await import('./apollo')
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++    testWindow = {
++      location: { pathname: '/members', search: '', hash: '', href: '' },
++      dispatchEvent: vi.fn(),
++    }
++    vi.stubGlobal('window', testWindow)
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    takeDeferredAuthFailure()
++  })
++
++  async function run(answer: () => Response, context?: Record<string, unknown>) {
++    vi.stubGlobal(
++      'fetch',
++      vi.fn().mockImplementation(async () => answer()),
++    )
++    await apollo
++      .makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++      .query({ query, fetchPolicy: 'no-cache', errorPolicy: 'none', context })
++      .catch(() => undefined)
++  }
++
++  it.each(answers)('takes no action on %s for a request that asks so', async (_label, answer) => {
++    await run(answer, apollo.SKIP_AUTH_ERROR_REPORT_CONTEXT)
++
++    expect(testWindow.location.href).toBe('')
++    expect(testWindow.dispatchEvent).not.toHaveBeenCalled()
++  })
++
++  it.each(answers)('still acts on %s for any other request', async (_label, answer) => {
++    await run(answer)
++
++    const acted = testWindow.location.href !== '' || testWindow.dispatchEvent.mock.calls.length > 0
++    expect(acted).toBe(true)
++  })
++
++  it('records no deferred 401 for it during an outage, since its caller decides', async () => {
++    const outage = {}
++    apollo.signalApiOutage(outage)
++    try {
++      await run(coded('UNAUTHENTICATED', 401), apollo.SKIP_AUTH_ERROR_REPORT_CONTEXT)
++      expect(apollo.isAuthFailureDeferred()).toBe(false)
++    } finally {
++      apollo.clearApiOutage(outage)
++    }
++  })
++
++  it('still reports a request that never reached the API', async () => {
++    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
++    await apollo
++      .makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++      .query({ query, context: apollo.SKIP_AUTH_ERROR_REPORT_CONTEXT })
++      .catch(() => undefined)
++
++    expect(testWindow.dispatchEvent).toHaveBeenCalledWith(
++      expect.objectContaining({ type: apollo.APOLLO_SERVICE_UNAVAILABLE_EVENT }),
++    )
++  })
++})
++
++describe('the stored active organization', () => {
++  afterEach(() => {
++    vi.restoreAllMocks()
++    vi.unstubAllGlobals()
++    localStorage.clear()
++  })
++
++  it('ends the organization session when forgotten (a logout), not when another is stored', () => {
++    const before = activeOrganizationSession()
++    storeActiveOrganizationId('org-1')
++    storeActiveOrganizationId('org-2')
++    expect(activeOrganizationSession()).toBe(before)
++
++    storeActiveOrganizationId(null)
++    expect(activeOrganizationSession()).not.toBe(before)
++  })
++
++  it('is what the next request sends as x-organization-id, and forgetting it drops the header', async () => {
++    const fetchMock = vi.fn().mockImplementation(
++      async () =>
++        new Response(JSON.stringify({ data: { ping: 'pong' } }), {
++          status: 200,
++          headers: { 'content-type': 'application/json' },
++        }),
++    )
++    vi.stubGlobal('fetch', fetchMock)
++    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++    const ping = gql`
++      query Ping {
++        ping
++      }
++    `
++
++    storeActiveOrganizationId('org-2')
++    expect(getStoredActiveOrganizationId()).toBe('org-2')
++    await client.query({ query: ping, fetchPolicy: 'no-cache' })
++    expect(fetchMock.mock.calls[0][1].headers['x-organization-id']).toBe('org-2')
++
++    storeActiveOrganizationId(null)
++    expect(getStoredActiveOrganizationId()).toBeNull()
++    await client.query({ query: ping, fetchPolicy: 'no-cache' })
++    expect(fetchMock.mock.calls[1][1].headers['x-organization-id']).toBeUndefined()
++  })
++
++  it('is never read by resolveActiveOrganization, which a server render could not match', () => {
++    const organizations = [{ id: 'org-1' }, { id: 'org-2' }, { id: 'org-3' }]
++    storeActiveOrganizationId('org-2')
++
++    // Server-visible inputs only: the server's active one, else the first.
++    expect(resolveActiveOrganization(organizations, 'org-3')?.id).toBe('org-3')
++    expect(resolveActiveOrganization(organizations, null)?.id).toBe('org-1')
++    expect(resolveActiveOrganization(organizations, 'gone')?.id).toBe('org-1')
++    // A choice settled after hydration is passed in, and the server's active one still wins.
++    expect(resolveActiveOrganization(organizations, null, 'org-2')?.id).toBe('org-2')
++    expect(resolveActiveOrganization(organizations, 'org-3', 'org-2')?.id).toBe('org-3')
++    expect(resolveActiveOrganization(organizations, null, 'gone')?.id).toBe('org-1')
++    expect(resolveActiveOrganization([], null)).toBeNull()
++  })
++
++  it('leaves the organization open only with several and no server active one of them', () => {
++    const two = [{ id: 'org-1' }, { id: 'org-2' }]
++    expect(isActiveOrganizationAmbiguous(two, null)).toBe(true)
++    expect(isActiveOrganizationAmbiguous(two, 'gone')).toBe(true)
++    expect(isActiveOrganizationAmbiguous(two, 'org-2')).toBe(false)
++    expect(isActiveOrganizationAmbiguous([{ id: 'org-1' }], null)).toBe(false)
++    expect(isActiveOrganizationAmbiguous([], undefined)).toBe(false)
++  })
++
++  it('never throws when storage is blocked', () => {
++    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
++      throw new DOMException('blocked', 'SecurityError')
++    })
++    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
++      throw new DOMException('blocked', 'SecurityError')
++    })
++
++    expect(getStoredActiveOrganizationId()).toBeNull()
++    expect(() => storeActiveOrganizationId('org-2')).not.toThrow()
++  })
++
++  it('never throws when reading localStorage itself throws', () => {
++    vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
++      throw new DOMException('blocked', 'SecurityError')
++    })
++
++    expect(getStoredActiveOrganizationId()).toBeNull()
++    expect(() => storeActiveOrganizationId('org-2')).not.toThrow()
++    expect(() => storeActiveOrganizationId(null)).not.toThrow()
++  })
++})
+diff --git a/libs/shared/apollo/src/lib/apollo.ts b/libs/shared/apollo/src/lib/apollo.ts
+index ea949f5..4863818 100644
+--- a/libs/shared/apollo/src/lib/apollo.ts
++++ b/libs/shared/apollo/src/lib/apollo.ts
+@@ -317,8 +317,12 @@ export function isAuthFailureDeferred(): boolean {
+   return authFailureDeferred
+ }
+ 
+-function handleAuthenticationError(): void {
+-  if (isApiOutageSignalled()) {
++/**
++ * `outage`: the same answer carried outage evidence of its own (a GraphQL 502/503/504 beside the
++ * UNAUTHENTICATED error), which nothing has signalled yet; the 401 is let pass as during any outage.
++ */
++function handleAuthenticationError(outage = false): void {
++  if (outage || isApiOutageSignalled()) {
+     authFailureDeferred = true
+     console.log('[Apollo] Authentication error during an API outage, keeping the session for now')
+     return
+@@ -352,6 +356,7 @@ function operationKey(operation: ApolloLink.Operation): string {
+ }
+ 
+ const CANCELLED = Symbol('cancelled')
++const GATEWAY_UNAVAILABLE_ANSWER = Symbol('gateway-unavailable-answer')
+ 
+ /**
+  * Dispatched on `window` when the last outage evidence an in-flight retry held is withdrawn
+@@ -418,15 +423,19 @@ export function createOutageRetryLink(
+       const settle = (error?: unknown) => {
+         if (settled) return
+         settled = true
+-        if (isRetryableConnectivityError(error)) unreachableOperations.add(key)
+-        else if (error !== CANCELLED) unreachableOperations.delete(key)
++        if (error === GATEWAY_UNAVAILABLE_ANSWER || isRetryableConnectivityError(error)) {
++          unreachableOperations.add(key)
++        } else if (error !== CANCELLED) unreachableOperations.delete(key)
+         if (retrying) releaseApiOutage(evidence)
+       }
+       const subscription = forward(operation).subscribe({
+         // An answer (an HTTP 200 carrying an UNAUTHENTICATED error among them) settles the attempt
+-        // before the error link above judges it, so a clean rejection is not deferred.
++        // before the error link above judges it, so a clean rejection is not deferred. An answer
++        // carrying a 502/503/504 of its own counts as unreachable, like a proxy's.
+         next: result => {
+-          settle()
++          settle(
++            hasGatewayUnavailableStatus(result.errors) ? GATEWAY_UNAVAILABLE_ANSWER : undefined,
++          )
+           observer.next(result)
+         },
+         error: error => {
+@@ -463,9 +472,14 @@ function errorFromUnknown(value: unknown): Error {
+   }
+ }
+ 
+-/** Classifies an Apollo link error; see `ApiFailureCause`. */
++/**
++ * Classifies an Apollo link error; see `ApiFailureCause`. A GraphQL answer that carries a 502, 503
++ * or 504 (`isGatewayUnavailableGraphQLError`) is `unavailable` even when another error in it is
++ * UNAUTHENTICATED: outage evidence outranks a 401.
++ */
+ export function classifyApiFailure(error: unknown): ApiFailureCause {
+   if (CombinedGraphQLErrors.is(error)) {
++    if (isGatewayUnavailableGraphQLError(error)) return 'unavailable'
+     return error.errors.some(({ extensions }) => isAuthenticationError(extensions))
+       ? 'unauthenticated'
+       : 'other'
+@@ -475,6 +489,35 @@ export function classifyApiFailure(error: unknown): ApiFailureCause {
+   return 'other'
+ }
+ 
++/**
++ * The operation context for a request whose caller judges its own authentication and permission
++ * errors: pass it as `context` and the error link takes no action for that request (no logout, no
++ * deferred 401, no access-forbidden or organization-required event); it still logs. The signed-in
++ * layout's Me re-check (apps/web/app/session-recheck.tsx) uses it, since it decides the outcome
++ * itself. Apps whose error link only dispatches an event need it most: without it the re-check's
++ * own 401 or 403 reached that event's handler (an access-denied screen, say) before the re-check
++ * could decide. An app with its own error link checks `operation.getContext().skipAuthErrorReport`.
++ */
++export const SKIP_AUTH_ERROR_REPORT_CONTEXT = { skipAuthErrorReport: true } as const
++
++function skipsAuthErrorReport(operation: ApolloLink.Operation): boolean {
++  return operation.getContext().skipAuthErrorReport === true
++}
++
++function reportGraphQLError(
++  extensions: { code?: unknown; originalError?: unknown } | undefined,
++  operation: ApolloLink.Operation,
++  outage: boolean,
++): void {
++  if (isAuthenticationError(extensions)) {
++    handleAuthenticationError(outage)
++  } else if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) {
++    handleOrganizationRequired(operation)
++  } else if (isForbiddenError(extensions)) {
++    handleAuthorizationError(operation)
++  }
++}
++
+ /**
+  * Tells `onStart` when each operation starts, and calls the function it returns once that operation
+  * settles: its first error, its completion, or its cancellation. Placed at the top of the chain, so
+@@ -516,18 +559,17 @@ function createErrorLink(
+ ): ApolloLink {
+   return new ErrorLink(({ error, operation }) => {
+     onApiFailure?.(classifyApiFailure(error), error)
++    const report = !skipsAuthErrorReport(operation)
+ 
+     if (CombinedGraphQLErrors.is(error)) {
++      // The API answered, but with a 502/503/504 (a failed lookup it could not complete): outage
++      // evidence, reported like a proxy's, and it keeps the session over a 401 in the same answer.
++      const outage = isGatewayUnavailableGraphQLError(error)
++      if (outage) dispatchServiceUnavailableEvent(error, operation)
+       for (const { message, path, extensions } of error.errors) {
+         console.error(`[GraphQL error]: Message: ${message}, Path: ${path}`)
+ 
+-        if (isAuthenticationError(extensions)) {
+-          handleAuthenticationError()
+-        } else if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) {
+-          handleOrganizationRequired(operation)
+-        } else if (isForbiddenError(extensions)) {
+-          handleAuthorizationError(operation)
+-        }
++        if (report) reportGraphQLError(extensions, operation, outage)
+ 
+         logDevelopmentExtensions(extensions)
+       }
+@@ -536,21 +578,24 @@ function createErrorLink(
+     if (!CombinedGraphQLErrors.is(error)) {
+       const networkError = errorFromUnknown(error)
+       console.error(`[Apollo Error Link] Network error for operation: ${operation.operationName}`)
+-      handleNetworkError(networkError, operation)
++      handleNetworkError(networkError, operation, report)
+     }
+   })
+ }
+ 
+-function handleNetworkError(networkError: Error, operation: ApolloLink.Operation): void {
++function handleNetworkError(
++  networkError: Error,
++  operation: ApolloLink.Operation,
++  report: boolean,
++): void {
+   console.error(`[Network error]: ${networkError}`)
+ 
+   const statusCode = networkErrorStatus(networkError)
+-  if (statusCode === 401) {
+-    handleAuthenticationError()
+-    return
+-  }
+-  if (statusCode === 403) {
+-    handleAuthorizationError(operation)
++  if (statusCode === 401 || statusCode === 403) {
++    // The caller judges these itself when it asked to (SKIP_AUTH_ERROR_REPORT_CONTEXT).
++    if (!report) return
++    if (statusCode === 401) handleAuthenticationError()
++    else handleAuthorizationError(operation)
+     return
+   }
+ 
+@@ -570,6 +615,40 @@ function networkErrorStatus(networkError: Error): number | undefined {
+ 
+ const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+ 
++type GraphQLErrorExtensions = { status?: unknown; originalError?: unknown }
++
++/**
++ * The HTTP status a GraphQL error was thrown with: `extensions.status`, which Nest sets for an
++ * internal failure (a `ServiceUnavailableException` arrives as `INTERNAL_SERVER_ERROR` with
++ * `status: 503`, in an HTTP 200), else the original exception's `statusCode`.
++ */
++function graphQLErrorStatus(extensions: GraphQLErrorExtensions | undefined): number | undefined {
++  if (typeof extensions?.status === 'number') return extensions.status
++  const originalError = extensions?.originalError as { statusCode?: unknown } | null | undefined
++  return typeof originalError?.statusCode === 'number' ? originalError.statusCode : undefined
++}
++
++function hasGatewayUnavailableStatus(
++  errors: readonly { extensions?: GraphQLErrorExtensions }[] | undefined,
++): boolean {
++  return !!errors?.some(({ extensions }) => {
++    const status = graphQLErrorStatus(extensions)
++    return status !== undefined && GATEWAY_UNAVAILABLE_STATUSES.has(status)
++  })
++}
++
++/**
++ * A GraphQL answer in which the API says it could not complete the request: an error whose status
++ * (`extensions.status`, or the original exception's `statusCode`) is 502, 503 or 504. The API
++ * throws a 503 when a lookup it needs fails (the API-token lookup in `JwtStrategy`, say). It is
++ * outage evidence exactly as a proxy's 502/503/504 is (`isRetryableConnectivityError`): it is
++ * reported, retried once the API answers, and it outranks a 401. A plain `INTERNAL_SERVER_ERROR`
++ * (a 500, or no status) is not.
++ */
++export function isGatewayUnavailableGraphQLError(error: unknown): boolean {
++  return CombinedGraphQLErrors.is(error) && hasGatewayUnavailableStatus(error.errors)
++}
++
+ /**
+  * A request that never got an HTTP response, or got a proxy's 502/503/504 while the API restarts:
+  * the only failures worth retrying, because the same request may well succeed once the API is
+@@ -577,14 +656,15 @@ const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+  * containing "fetch" or "event stream", so one unrelated failure was enough to report the API as
+  * down. An error that carries any other HTTP status is an answered request and does not count
+  * (401 and 403 included: retrying them only fails again), and neither does a `TypeError` thrown by
+- * application code, nor a GraphQL error.
++ * application code, nor a GraphQL error, except one that carries a 502/503/504 of its own
++ * (`isGatewayUnavailableGraphQLError`): the API answered that it could not complete the request.
+  *
+  * The error link uses this to decide when to report an outage, and the web app uses it to decide
+  * which failed queries to refetch once connectivity returns, so the two cannot drift apart.
+  */
+ export function isRetryableConnectivityError(error: unknown): boolean {
+   if (!(error instanceof Error)) return false
+-  if (CombinedGraphQLErrors.is(error)) return false
++  if (CombinedGraphQLErrors.is(error)) return isGatewayUnavailableGraphQLError(error)
+ 
+   const status = networkErrorStatus(error)
+   if (typeof status === 'number' && status > 0) return GATEWAY_UNAVAILABLE_STATUSES.has(status)
+@@ -625,12 +705,118 @@ function dispatchServiceUnavailableEvent(
+   )
+ }
+ 
+-function getActiveOrganizationId(): string | null {
+-  // Only available in browser environment
+-  if (globalThis.window === undefined || typeof localStorage === 'undefined') {
++/** Where the browser keeps its active organization, sent on every request as `x-organization-id`. */
++export const ACTIVE_ORGANIZATION_STORAGE_KEY = 'activeOrganizationId'
++
++/**
++ * The organization this browser's requests are sent for (`x-organization-id`), or null: none is
++ * stored, storage is blocked, or this is a server render (which never sends the header). The API
++ * reads the header before the user's own `activeOrganizationId`, so this is the organization the
++ * next request is answered for.
++ */
++export function getStoredActiveOrganizationId(): string | null {
++  if (globalThis.window === undefined) return null
++  // Inside the try: where storage is blocked, reading `localStorage` itself throws.
++  try {
++    if (typeof localStorage === 'undefined') return null
++    return localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)
++  } catch {
+     return null
+   }
+-  return localStorage.getItem('activeOrganizationId')
++}
++
++// Advanced each time the stored organization is forgotten (a logout); see
++// `activeOrganizationSession`.
++let activeOrganizationSessionGeneration = 0
++
++/**
++ * The browser's current organization session: a number that changes each time the stored
++ * organization is forgotten (`storeActiveOrganizationId(null)`, which every logout calls). A switch
++ * reads it before its request and again when the answer arrives; if it changed meanwhile, the
++ * session the switch was for has ended, and the answer must not be stored, cached or acted on
++ * (`useSwitchActiveOrganization` in `@nestled-template/web`). Otherwise a late answer wrote the
++ * previous session's organization back after logout, and the next user's requests carried it.
++ */
++export function activeOrganizationSession(): number {
++  return activeOrganizationSessionGeneration
++}
++
++/**
++ * Stores (or, with null, forgets) the organization the next requests are sent for. Every switch and
++ * every shell that learns the active organization writes it here, so the header and the UI cannot
++ * disagree. Forgetting it also ends the organization session (`activeOrganizationSession`), so a
++ * switch still in flight for it stores nothing. A no-op during a server render or with storage
++ * blocked (the session still ends).
++ */
++export function storeActiveOrganizationId(organizationId: string | null): void {
++  if (globalThis.window === undefined) return
++  if (!organizationId) activeOrganizationSessionGeneration += 1
++  try {
++    if (typeof localStorage === 'undefined') return
++    if (organizationId) localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, organizationId)
++    else localStorage.removeItem(ACTIVE_ORGANIZATION_STORAGE_KEY)
++  } catch {
++    // Storage blocked: requests fall back to the user's active organization on the API.
++  }
++}
++
++/**
++ * The organization a signed-in shell shows, from the user's organizations:
++ * 1. the server's active organization (`User.activeOrganizationId`, from Me), when the user is
++ *    still a member of it;
++ * 2. else `chosenOrganizationId`, when still a member: the organization this browser chose, once
++ *    a reconciliation after hydration has settled it (`useActiveOrganization` in
++ *    `@nestled-template/web`);
++ * 3. else the first; null with no organizations.
++ *
++ * It never reads browser storage by itself: a server render cannot see it, so a stored choice
++ * picked here while rendering made the hydrating render differ from the server's HTML (another
++ * organization's name and permissions). Pass only what both renders know; a stored choice is
++ * applied after hydration (see `isActiveOrganizationAmbiguous`).
++ *
++ * Whatever it returns must also be what the requests are sent for: a shell stores it
++ * (`rememberActiveOrganization`) so the `x-organization-id` header, the server's answer and the UI
++ * cannot disagree. Every place that shows or acts on "the active organization" uses this, never
++ * `organizations[0]` on its own: that showed the first organization while requests went to the
++ * stored one.
++ */
++export function resolveActiveOrganization<T extends { id: string }>(
++  organizations: readonly T[],
++  serverActiveOrganizationId: string | null | undefined,
++  chosenOrganizationId: string | null = null,
++): T | null {
++  const member = (id: string | null | undefined) =>
++    id ? organizations.find(organization => organization.id === id) : undefined
++  return (
++    member(serverActiveOrganizationId) ?? member(chosenOrganizationId) ?? organizations[0] ?? null
++  )
++}
++
++/**
++ * Whether the server's own information leaves the active organization open: the user has more
++ * than one organization and the server's active one (`User.activeOrganizationId`) is missing or no
++ * longer theirs. The server renders the first then, but this browser may have stored another
++ * (`getStoredActiveOrganizationId`). A shell renders organization-scoped content only once that is
++ * settled after hydration, on both sides the same way, so the server HTML and the first browser
++ * render agree and no query is sent for an organization the screen does not show.
++ */
++export function isActiveOrganizationAmbiguous(
++  organizations: readonly { id: string }[],
++  serverActiveOrganizationId: string | null | undefined,
++): boolean {
++  if (organizations.length < 2) return false
++  return !organizations.some(organization => organization.id === serverActiveOrganizationId)
++}
++
++/**
++ * Stores `organizationId` as the organization the next requests are sent for, when it is not stored
++ * already. A shell calls it with what it shows (`resolveActiveOrganization`) while rendering, before
++ * its children's queries start, so they are sent for the organization on screen. Null stores
++ * nothing: a user with no organization keeps whatever the API decides.
++ */
++export function rememberActiveOrganization(organizationId: string | null | undefined): void {
++  if (!organizationId || getStoredActiveOrganizationId() === organizationId) return
++  storeActiveOrganizationId(organizationId)
+ }
+ 
+ function createAuthLink(token: string | null): ApolloLink {
+@@ -643,7 +829,7 @@ function createAuthLink(token: string | null): ApolloLink {
+     }
+ 
+     // Add organization context header for multi-tenant isolation
+-    const activeOrgId = getActiveOrganizationId()
++    const activeOrgId = getStoredActiveOrganizationId()
+     if (activeOrgId) {
+       newHeaders['x-organization-id'] = activeOrgId
+     }
+diff --git a/libs/web-ui/src/lib/components/organization-switcher.tsx b/libs/web-ui/src/lib/components/organization-switcher.tsx
+index ff4ad73..2550386 100644
+--- a/libs/web-ui/src/lib/components/organization-switcher.tsx
++++ b/libs/web-ui/src/lib/components/organization-switcher.tsx
+@@ -16,7 +16,14 @@ interface Organization {
+ interface OrganizationSwitcherProps {
+   readonly organizations: Organization[]
+   readonly activeOrganization: Organization | null
+-  readonly onSwitchOrganization: (organizationId: string) => Promise<void>
++  /**
++   * Makes the organization active. Pass the app's one switch, `useSwitchActiveOrganization()` from
++   * `@nestled-template/web` (the API, then the stored id the client sends as `x-organization-id`), so
++   * this switcher and the organization picker cannot drift apart. It must reject when the switch is
++   * refused, and when its answer is dropped because the session ended (a logout meanwhile): the
++   * switcher reloads only after it resolves.
++   */
++  readonly onSwitchOrganization: (organizationId: string) => Promise<unknown>
+   readonly onCreateOrganization?: () => void
+   readonly className?: string
+ }
+diff --git a/libs/web/src/lib/organization/switch-active-organization.ts b/libs/web/src/lib/organization/switch-active-organization.ts
+new file mode 100644
+index 0000000..3edcfff
+--- /dev/null
++++ b/libs/web/src/lib/organization/switch-active-organization.ts
+@@ -0,0 +1,96 @@
++import { useCallback, useEffect, useRef } from 'react'
++import { useApolloClient, useMutation } from '@apollo/client/react'
++import {
++  activeOrganizationSession,
++  storeActiveOrganizationId,
++} from '@nestled-template/shared/apollo'
++import {
++  SwitchActiveOrganization,
++  type SwitchActiveOrganizationMutation,
++  type SwitchActiveOrganizationMutationVariables,
++} from '@nestled-template/shared/sdk'
++
++export interface SwitchActiveOrganizationOptions {
++  /**
++   * Whether the caller's session is still the one the switch was started for (the same signed-in
++   * user, say). Checked when the API answers; false drops the answer like a logout does.
++   */
++  isCurrent?: () => boolean
++}
++
++/** Makes an organization active; see `useSwitchActiveOrganization`. */
++export type ActiveOrganizationSwitch = (
++  organizationId: string,
++  options?: SwitchActiveOrganizationOptions,
++) => Promise<string>
++
++/**
++ * Thrown by the shared switch when its answer arrives for a session that has ended: a logout
++ * (`storeActiveOrganizationId(null)`), a change of user (`isCurrent`), or the component that
++ * started it unmounted. Nothing was stored or cached. Not a failure to show: the caller drops it
++ * (`isOrganizationSwitchSuperseded`) and does not reload or refresh.
++ */
++export class OrganizationSwitchSupersededError extends Error {
++  constructor() {
++    super('The organization switch finished after its session ended; it was dropped')
++    this.name = 'OrganizationSwitchSupersededError'
++  }
++}
++
++export function isOrganizationSwitchSuperseded(
++  error: unknown,
++): error is OrganizationSwitchSupersededError {
++  return error instanceof OrganizationSwitchSupersededError
++}
++
++/**
++ * The one way to switch the active organization: the organization picker, a header switcher and
++ * `AuthProvider` all call the function this returns. It makes `organizationId` the user's active
++ * organization on the API (`switchActiveOrganization`, which also updates the API's auth cache),
++ * then writes the answer to the Apollo cache and stores it for the `x-organization-id` header, and
++ * resolves with the id now active. The caller reloads (or refetches) so every query runs again
++ * under it.
++ *
++ * It throws when the API refuses the switch, with nothing stored: the mutation runs with
++ * `errorPolicy: 'none'`, since under the app client's default (`'all'`) a refusal resolves instead
++ * and the refused id would be stored and reloaded into.
++ *
++ * An answer that arrives after its session ended (a logout, a change of user the caller reports
++ * through `isCurrent`, or this component unmounted) is dropped: nothing is cached or stored, and it
++ * throws `OrganizationSwitchSupersededError`. The mutation runs with `fetchPolicy: 'no-cache'` so
++ * Apollo does not write the answer itself before that check.
++ */
++export function useSwitchActiveOrganization(): ActiveOrganizationSwitch {
++  const client = useApolloClient()
++  const [switchOrganization] = useMutation<
++    SwitchActiveOrganizationMutation,
++    SwitchActiveOrganizationMutationVariables
++  >(SwitchActiveOrganization, { errorPolicy: 'none', fetchPolicy: 'no-cache' })
++
++  const mountedRef = useRef(true)
++  useEffect(() => {
++    mountedRef.current = true
++    return () => {
++      mountedRef.current = false
++    }
++  }, [])
++
++  return useCallback(
++    async (organizationId: string, options: SwitchActiveOrganizationOptions = {}) => {
++      const session = activeOrganizationSession()
++      const variables = { input: { organizationId } }
++      const { data } = await switchOrganization({ variables })
++      const current =
++        mountedRef.current &&
++        activeOrganizationSession() === session &&
++        (options.isCurrent?.() ?? true)
++      if (!current) throw new OrganizationSwitchSupersededError()
++      if (data) client.cache.writeQuery({ query: SwitchActiveOrganization, variables, data })
++      const activeOrganizationId =
++        data?.switchActiveOrganization?.activeOrganizationId ?? organizationId
++      storeActiveOrganizationId(activeOrganizationId)
++      return activeOrganizationId
++    },
++    [client, switchOrganization],
++  )
++}
+diff --git a/apps/web/app/routes/_authenticated/_layout.tsx b/apps/web/app/routes/_authenticated/_layout.tsx
+index dbc74ed..93d3e73 100644
+--- a/apps/web/app/routes/_authenticated/_layout.tsx
++++ b/apps/web/app/routes/_authenticated/_layout.tsx
+@@ -1,7 +1,11 @@
+-import { Navigate, Outlet, useLoaderData, useLocation } from 'react-router'
++import { useEffect, useMemo, useRef, useState } from 'react'
++import { Navigate, Outlet, useLoaderData, useLocation, useRevalidator } from 'react-router'
+ import {
+   GlobalContextProvider,
++  useActiveOrganization,
+   useGlobalCtx,
++  withRestoredOrganization,
++  type RestoredOrganization,
+   SubscriptionProvider,
+   SubscriptionStatusBanner,
+   EmulationBanner,
+@@ -10,7 +14,6 @@ import { WebUiFooter, WebUiHeader } from '@nestled-template/web-ui'
+ import { apolloLoader } from '@nestled-template/shared/apollo'
+ import {
+   MyOrganizationsWithMembers,
+-  type MeQuery,
+   type MyOrganizationsWithMembersQuery,
+ } from '@nestled-template/shared/sdk'
+ import { useReadQuery, type QueryRef } from '@apollo/client/react'
+@@ -20,10 +23,6 @@ import { useSessionRecheck } from '../../session-recheck'
+ import { useRootLoaderOutage } from '../../loader-outage'
+ import { OrganizationRequired } from '../../organization-required'
+ 
+-type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
+-  activeOrganizationId?: string | null
+-}
+-
+ export const loader = apolloLoader()(({ preloadQuery }) => {
+   const myOrganizationsQueryRef = preloadQuery<MyOrganizationsWithMembersQuery>(
+     MyOrganizationsWithMembers,
+@@ -50,7 +49,48 @@ export default function AuthenticatedLayout() {
+   // session cookie (and appends `expired=1`, so /login renders the form instead of looping). The
+   // root loader's outage flag counts as outage evidence: a 401 while it stands is retried.
+   const recheck = useSessionRecheck(!contextUser, useRootLoaderOutage())
+-  const user = contextUser ?? (recheck.status === 'signed-in' ? recheck.user : null)
++  const sessionUser = contextUser ?? (recheck.status === 'signed-in' ? recheck.user : null)
++
++  // The re-checked user is a snapshot (the re-check skips the cache), so once it recovers, run the
++  // root loader again for a Me query of its own: the user then comes from the cache like any other
++  // query and follows later changes (a profile edit, an organization switch). Once per recovery;
++  // if the loader still brings no Me, the snapshot stays.
++  const revalidator = useRevalidator()
++  const recoveredUserRef = useRef<unknown>(null)
++  const recheckedUser = !contextUser && recheck.status === 'signed-in' ? recheck.user : null
++  useEffect(() => {
++    if (!recheckedUser || recoveredUserRef.current === recheckedUser) return
++    recoveredUserRef.current = recheckedUser
++    void revalidator.revalidate()
++  }, [recheckedUser, revalidator])
++
++  // The organization shown, and every request's `x-organization-id`: the server's active one (from
++  // Me, the re-checked one included), else the first, identical in the server render and the
++  // hydrating one. A choice this browser stored is restored after hydration, through the shared
++  // switch, and the loaders run again for it; organization-scoped content waits meanwhile.
++  const organizations = orgsData?.myOrganizations || []
++  // A restored organization must reach the user the pages get too, so `user.activeOrganizationId`
++  // and `activeOrganization.id` agree. A live Me follows the switch's cache write by itself; the
++  // re-check's snapshot does not (and stays when the root loader brings no Me), so the restore is
++  // applied to it here, for the user it was restored for, and only while that user's own active
++  // organization is unknown or not theirs: one the server knows always wins.
++  const [restored, setRestored] = useState<RestoredOrganization | null>(null)
++  // Memoized: a new object on every render would re-render every consumer of the shell's context.
++  const user = useMemo(
++    () => withRestoredOrganization(sessionUser, organizations, restored),
++    [sessionUser, organizations, restored],
++  )
++  const { activeOrganization, reconciling } = useActiveOrganization(
++    organizations,
++    user?.activeOrganizationId,
++    {
++      enabled: !!user,
++      sessionKey: user?.id,
++      afterSwitch: () => revalidator.revalidate(),
++      onRestored: (organizationId, userId) => setRestored({ userId, organizationId }),
++    },
++  )
++
+   if (!user) {
+     if (recheck.status === 'rejected') {
+       const returnUrl = `${location.pathname}${location.search}`
+@@ -68,28 +108,21 @@ export default function AuthenticatedLayout() {
+     return null
+   }
+ 
+-  const organizations = orgsData?.myOrganizations || []
+-  const userWithActiveOrganization = user as UserWithActiveOrganization
+-  const activeOrganization =
+-    organizations.find(org => org.id === userWithActiveOrganization.activeOrganizationId) ||
+-    organizations[0] ||
+-    null
+   const activeOrganizationMember =
+     activeOrganization?.members?.find(member => member.userId === user?.id) || null
+ 
+   const isAdminRoute = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
+-  const primaryEmail = user.emails?.find(email => email.primary)?.email ?? user.emails?.[0]?.email
+-  const userName =
+-    `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.displayName || primaryEmail
+-  const userAvatarUrl = user.avatar?.publicUrl ?? user.avatar?.url ?? null
+-  const activeOrganizationRoleName = activeOrganizationMember?.role?.name
+-  const canViewBilling =
+-    user.isSuperAdmin ||
+-    activeOrganizationRoleName === 'Owner' ||
+-    activeOrganizationRoleName === 'Admin' ||
+-    !!activeOrganizationMember?.role?.permissions?.some(
+-      permission => permission.subject === 'billing' && permission.action === 'read',
+-    )
++  // Held back while the active organization is being reconciled: the page and the subscription
++  // queries are organization-scoped, and would be sent for an organization about to change.
++  const shell = (
++    <SignedInShell
++      user={user}
++      activeOrganizationName={activeOrganization?.name}
++      activeOrganizationMember={activeOrganizationMember}
++      isAdminRoute={isAdminRoute}
++      reconciling={reconciling}
++    />
++  )
+ 
+   return (
+     <GlobalContextProvider
+@@ -98,37 +131,81 @@ export default function AuthenticatedLayout() {
+       activeOrganization={activeOrganization}
+       activeOrganizationMember={activeOrganizationMember}
+     >
+-      <SubscriptionProvider>
+-        {isAdminRoute ? (
+-          <div className="flex min-h-screen flex-col bg-zinc-950">
+-            <EmulationBanner />
+-            <main className="flex-1">
+-              <Outlet />
+-            </main>
+-          </div>
+-        ) : (
+-          <div className="flex flex-col min-h-screen">
+-            <EmulationBanner />
+-            <WebUiHeader
+-              logo={'/logo.png'}
+-              icon={'/icon.png'}
+-              siteName={activeOrganization?.name || 'Demo Site'}
+-              navigation={[]}
+-              isAuthenticated={true}
+-              userName={userName}
+-              userEmail={primaryEmail}
+-              userAvatarUrl={userAvatarUrl}
+-              isSuperAdmin={user.isSuperAdmin}
+-              canViewBilling={canViewBilling}
+-            />
+-            <SubscriptionStatusBanner />
+-            <main className="flex-1 flex flex-col">
+-              <Outlet />
+-            </main>
+-            <WebUiFooter />
+-          </div>
+-        )}
+-      </SubscriptionProvider>
++      {reconciling ? shell : <SubscriptionProvider>{shell}</SubscriptionProvider>}
+     </GlobalContextProvider>
+   )
+ }
++
++type ShellUser = NonNullable<ReturnType<typeof useGlobalCtx>['user']>
++type ShellMember = NonNullable<
++  MyOrganizationsWithMembersQuery['myOrganizations'][number]['members']
++>[number]
++
++function canViewBilling(user: ShellUser, member: ShellMember | null): boolean {
++  const roleName = member?.role?.name
++  return (
++    !!user.isSuperAdmin ||
++    roleName === 'Owner' ||
++    roleName === 'Admin' ||
++    !!member?.role?.permissions?.some(
++      permission => permission.subject === 'billing' && permission.action === 'read',
++    )
++  )
++}
++
++/** The signed-in chrome around the page; the page is held back while `reconciling`. */
++function SignedInShell({
++  user,
++  activeOrganizationName,
++  activeOrganizationMember,
++  isAdminRoute,
++  reconciling,
++}: Readonly<{
++  user: ShellUser
++  activeOrganizationName: string | undefined
++  activeOrganizationMember: ShellMember | null
++  isAdminRoute: boolean
++  reconciling: boolean
++}>) {
++  const content = reconciling ? <ActiveOrganizationPending /> : <Outlet />
++  if (isAdminRoute) {
++    return (
++      <div className="flex min-h-screen flex-col bg-zinc-950">
++        <EmulationBanner />
++        <main className="flex-1">{content}</main>
++      </div>
++    )
++  }
++  const primaryEmail = user.emails?.find(email => email.primary)?.email ?? user.emails?.[0]?.email
++  const userName =
++    `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.displayName || primaryEmail
++  return (
++    <div className="flex flex-col min-h-screen">
++      <EmulationBanner />
++      <WebUiHeader
++        logo={'/logo.png'}
++        icon={'/icon.png'}
++        siteName={activeOrganizationName || 'Demo Site'}
++        navigation={[]}
++        isAuthenticated={true}
++        userName={userName}
++        userEmail={primaryEmail}
++        userAvatarUrl={user.avatar?.publicUrl ?? user.avatar?.url ?? null}
++        isSuperAdmin={user.isSuperAdmin}
++        canViewBilling={canViewBilling(user, activeOrganizationMember)}
++      />
++      {reconciling ? null : <SubscriptionStatusBanner />}
++      <main className="flex-1 flex flex-col">{content}</main>
++      <WebUiFooter />
++    </div>
++  )
++}
++
++/** Shown in place of the page while the active organization is being reconciled. */
++function ActiveOrganizationPending() {
++  return (
++    <div className="flex flex-1 items-center justify-center p-8" aria-busy="true">
++      <span className="sr-only">Loading your organization…</span>
++    </div>
++  )
++}
+diff --git a/apps/web/tests/routes/active-organization.spec.tsx b/apps/web/tests/routes/active-organization.spec.tsx
+new file mode 100644
+index 0000000..d0010e5
+--- /dev/null
++++ b/apps/web/tests/routes/active-organization.spec.tsx
+@@ -0,0 +1,423 @@
++import type { ReactNode } from 'react'
++import { hydrateRoot, type Root } from 'react-dom/client'
++import { renderToString } from 'react-dom/server'
++import { act, fireEvent, render, screen } from '@testing-library/react'
++import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { gql } from '@apollo/client'
++import { ApolloProvider, createQueryPreloader, useQuery } from '@apollo/client/react'
++import { makeClient } from '@nestled-template/shared/apollo'
++import { Me } from '@nestled-template/shared/sdk'
++import { useGlobalCtx } from '@nestled-template/web'
++import { App } from '../../app/app'
++import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
++import { OrganizationRequired } from '../../app/organization-required'
++
++// The header shows the organization the shell picked; nothing else of the chrome is under test.
++vi.mock('@nestled-template/web-ui', () => ({
++  WebUiHeader: ({ siteName }: { siteName: string }) => <p>Shown organization: {siteName}</p>,
++  WebUiFooter: () => null,
++}))
++vi.mock('@nestled-template/web', async importOriginal => ({
++  ...(await importOriginal<typeof import('@nestled-template/web')>()),
++  SubscriptionProvider: ({ children }: { children: ReactNode }) => children,
++  SubscriptionStatusBanner: () => null,
++  EmulationBanner: () => null,
++}))
++
++const MY_ORGANIZATIONS_WITH_MEMBERS = gql`
++  query myOrganizationsWithMembers {
++    myOrganizations {
++      id
++      name
++    }
++  }
++`
++const ORGANIZATION_DATA = gql`
++  query OrganizationData {
++    organizationData
++  }
++`
++
++// "First" is listed first on purpose: the shell used to fall back to it whatever was active.
++const ORGANIZATIONS = [
++  { __typename: 'Organization', id: 'org-1', name: 'First Org' },
++  { __typename: 'Organization', id: 'org-2', name: 'Second Org' },
++]
++
++/** A fake API: the user's active organization, and every request's x-organization-id. */
++function fakeApi(initialActiveOrganizationId: string | null) {
++  const api = {
++    activeOrganizationId: initialActiveOrganizationId,
++    organizationHeaders: [] as Array<{ operation: string; organization: string | undefined }>,
++    refuseSwitch: false,
++  }
++  const json = (body: unknown) =>
++    new Response(JSON.stringify(body), {
++      status: 200,
++      headers: { 'content-type': 'application/json' },
++    })
++  // Every field of the app's own Me document, so the root loader's cached Me is complete.
++  const me = () => ({
++    __typename: 'User',
++    id: 'user-1',
++    firstName: 'Ada',
++    lastName: null,
++    displayName: null,
++    bio: null,
++    isSuperAdmin: false,
++    emailValidated: true,
++    twoFactorEnabled: false,
++    createdAt: '2026-01-01T00:00:00.000Z',
++    updatedAt: '2026-01-01T00:00:00.000Z',
++    isEmulating: false,
++    originalAdminId: null,
++    activeOrganizationId: api.activeOrganizationId,
++    emails: [],
++    phoneNumbers: [],
++    avatar: null,
++    images: [],
++  })
++  vi.stubGlobal(
++    'fetch',
++    vi.fn(async (_url: unknown, init?: RequestInit) => {
++      const { operationName, variables } = JSON.parse(String(init?.body))
++      const headers = (init?.headers ?? {}) as Record<string, string>
++      api.organizationHeaders.push({
++        operation: operationName,
++        organization: headers['x-organization-id'],
++      })
++      switch (operationName) {
++        case 'Me':
++          return json({ data: { me: me() } })
++        case 'myOrganizations':
++        case 'myOrganizationsWithMembers':
++          return json({ data: { myOrganizations: ORGANIZATIONS } })
++        case 'switchActiveOrganization':
++          if (api.refuseSwitch) {
++            return json({
++              data: null,
++              errors: [{ message: 'No', extensions: { code: 'FORBIDDEN' } }],
++            })
++          }
++          api.activeOrganizationId = variables.input.organizationId
++          return json({
++            data: {
++              switchActiveOrganization: {
++                __typename: 'User',
++                id: 'user-1',
++                activeOrganizationId: api.activeOrganizationId,
++              },
++            },
++          })
++        case 'OrganizationData':
++          return json({ data: { organizationData: `data for ${headers['x-organization-id']}` } })
++        default:
++          throw new Error(`unexpected operation ${operationName}`)
++      }
++    }),
++  )
++  return api
++}
++
++function OrganizationPage() {
++  const { data } = useQuery<{ organizationData: string }>(ORGANIZATION_DATA)
++  const { user, activeOrganization } = useGlobalCtx()
++  return (
++    <>
++      <p>Page: {data?.organizationData ?? 'loading'}</p>
++      {/* The two organization ids the shell hands its pages, which must agree. */}
++      <p>
++        User active organization: {user?.activeOrganizationId ?? 'none'}; shown:{' '}
++        {activeOrganization?.id ?? 'none'}
++      </p>
++    </>
++  )
++}
++
++/**
++ * The signed-in shell. `rootPreloadsMe: false` is the recovery path: the root loader brings no Me
++ * (a preload that failed), so the layout's re-check finds the user.
++ */
++async function renderShell({ rootPreloadsMe }: { rootPreloadsMe: boolean }) {
++  const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++  const preload = createQueryPreloader(client)
++  const router = createMemoryRouter(
++    [
++      {
++        path: '/',
++        loader: async () => {
++          if (!rootPreloadsMe) return {}
++          const meQueryRef = preload(Me)
++          await preload.toPromise(meQueryRef)
++          return { meQueryRef }
++        },
++        element: <App />,
++        children: [
++          {
++            path: 'members',
++            loader: async () => {
++              const myOrganizationsQueryRef = preload(MY_ORGANIZATIONS_WITH_MEMBERS, {
++                fetchPolicy: 'network-only',
++              })
++              await preload.toPromise(myOrganizationsQueryRef)
++              return { myOrganizationsQueryRef }
++            },
++            element: <AuthenticatedLayout />,
++            children: [{ index: true, element: <OrganizationPage /> }],
++          },
++        ],
++      },
++    ],
++    { initialEntries: ['/members'] },
++  )
++  await act(async () => {
++    render(
++      <ApolloProvider client={client}>
++        <RouterProvider router={router} />
++      </ApolloProvider>,
++    )
++  })
++  await act(async () => {
++    await vi.waitFor(() => expect(screen.getByText(/^Page: data for/)).toBeInTheDocument())
++  })
++}
++
++/** The organization of the page's own request: the next request after the shell rendered. */
++function pageRequestOrganization(api: ReturnType<typeof fakeApi>) {
++  return api.organizationHeaders.find(request => request.operation === 'OrganizationData')
++    ?.organization
++}
++
++/**
++ * A signed-in reload: the server renders the shell to HTML (it cannot see this browser's storage),
++ * then the browser, which has `stored` in storage, hydrates it. Both render from the same loader
++ * data, as the streamed query refs give them. Returns the hydration errors React reported.
++ */
++// Hydrated roots, unmounted after each test: Testing Library's cleanup does not know about them.
++const hydratedRoots: Root[] = []
++
++async function reloadAndHydrate(stored: string | null) {
++  const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++  const preload = createQueryPreloader(client)
++  const meQueryRef = preload(Me)
++  const myOrganizationsQueryRef = preload(MY_ORGANIZATIONS_WITH_MEMBERS)
++  await preload.toPromise(meQueryRef)
++  await preload.toPromise(myOrganizationsQueryRef)
++  const routes = [
++    {
++      id: 'root',
++      path: '/',
++      loader: () => ({ meQueryRef }),
++      element: <App />,
++      children: [
++        {
++          id: 'members',
++          path: 'members',
++          loader: () => ({ myOrganizationsQueryRef }),
++          element: <AuthenticatedLayout />,
++          children: [{ index: true, element: <OrganizationPage /> }],
++        },
++      ],
++    },
++  ]
++  const hydrationData = {
++    loaderData: { root: { meQueryRef }, members: { myOrganizationsQueryRef } },
++  }
++  const tree = () => (
++    <ApolloProvider client={client}>
++      <RouterProvider
++        router={createMemoryRouter(routes, { initialEntries: ['/members'], hydrationData })}
++      />
++    </ApolloProvider>
++  )
++
++  localStorage.clear()
++  const container = document.createElement('div')
++  container.innerHTML = renderToString(tree())
++  document.body.appendChild(container)
++  const serverHtml = container.innerHTML
++  const serverText = container.textContent ?? ''
++
++  if (stored) localStorage.setItem('activeOrganizationId', stored)
++  const hydrationErrors: unknown[] = []
++  let firstClientHtml = ''
++  await act(async () => {
++    hydratedRoots.push(
++      hydrateRoot(container, tree(), {
++        onRecoverableError: error => hydrationErrors.push(error),
++      }),
++    )
++    // What the hydrating render committed, before anything after hydration ran.
++    firstClientHtml = container.innerHTML
++  })
++  return { serverHtml, serverText, firstClientHtml, hydrationErrors }
++}
++
++describe('the active organization across a server render and hydration', () => {
++  beforeEach(() => {
++    localStorage.clear()
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    act(() => {
++      for (const root of hydratedRoots.splice(0)) root.unmount()
++    })
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    localStorage.clear()
++    document.body.innerHTML = ''
++  })
++
++  it('hydrates with the server’s choice, then restores the stored organization through the switch', async () => {
++    // No active organization on the server; this browser chose the second one.
++    const api = fakeApi(null)
++
++    const { serverHtml, serverText, firstClientHtml, hydrationErrors } =
++      await reloadAndHydrate('org-2')
++
++    // The server could only pick the first, and hydration agreed with it.
++    expect(serverText).toContain('Shown organization: First Org')
++    expect(hydrationErrors).toEqual([])
++    expect(firstClientHtml).toBe(serverHtml)
++
++    // After hydration: the stored choice is made active on the server, and the screen and the next
++    // request follow it. No page request went out for the first organization meanwhile.
++    await act(async () => {
++      await vi.waitFor(() => expect(screen.getByText('Page: data for org-2')).toBeInTheDocument())
++    })
++    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
++    expect(api.activeOrganizationId).toBe('org-2')
++    expect(pageRequestOrganization(api)).toBe('org-2')
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
++    // The user the shell hands its pages follows the restore: Me's own active organization.
++    expect(screen.getByText('User active organization: org-2; shown: org-2')).toBeInTheDocument()
++  })
++
++  it('keeps the server’s choice, and stores it, when the switch to the stored one is refused', async () => {
++    const api = fakeApi(null)
++    api.refuseSwitch = true
++
++    const { hydrationErrors } = await reloadAndHydrate('org-2')
++
++    expect(hydrationErrors).toEqual([])
++    await act(async () => {
++      await vi.waitFor(() => expect(screen.getByText('Page: data for org-1')).toBeInTheDocument())
++    })
++    expect(screen.getByText('Shown organization: First Org')).toBeInTheDocument()
++    expect(pageRequestOrganization(api)).toBe('org-1')
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
++  })
++
++  it('hydrates without a reconciliation when the server knows the active organization', async () => {
++    const api = fakeApi('org-2')
++
++    const { serverHtml, serverText, firstClientHtml, hydrationErrors } =
++      await reloadAndHydrate('org-1')
++
++    expect(hydrationErrors).toEqual([])
++    expect(firstClientHtml).toBe(serverHtml)
++    expect(serverText).toContain('Page: ')
++    await act(async () => {
++      await vi.waitFor(() => expect(screen.getByText('Page: data for org-2')).toBeInTheDocument())
++    })
++    expect(api.organizationHeaders.some(r => r.operation === 'switchActiveOrganization')).toBe(
++      false,
++    )
++  })
++})
++
++describe('the active organization: what the shell shows and what the requests are sent for', () => {
++  beforeEach(() => {
++    localStorage.clear()
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    localStorage.clear()
++  })
++
++  it('after a recovery, shows and sends the active organization the re-check learned, not the first', async () => {
++    // The browser still holds the first organization; the server's active one is the second.
++    localStorage.setItem('activeOrganizationId', 'org-1')
++    const api = fakeApi('org-2')
++
++    await renderShell({ rootPreloadsMe: false })
++
++    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
++    expect(pageRequestOrganization(api)).toBe('org-2')
++    expect(screen.getByText('Page: data for org-2')).toBeInTheDocument()
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
++  })
++
++  it('with nothing stored, shows and sends the server’s active organization', async () => {
++    const api = fakeApi('org-2')
++
++    await renderShell({ rootPreloadsMe: true })
++
++    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
++    expect(pageRequestOrganization(api)).toBe('org-2')
++  })
++
++  it('with no active organization on the server, keeps the one this browser chose', async () => {
++    localStorage.setItem('activeOrganizationId', 'org-2')
++    const api = fakeApi(null)
++
++    await renderShell({ rootPreloadsMe: true })
++
++    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
++    expect(pageRequestOrganization(api)).toBe('org-2')
++    expect(screen.getByText('User active organization: org-2; shown: org-2')).toBeInTheDocument()
++  })
++
++  it('after a recovery with no server organization, the re-checked user follows the restore', async () => {
++    // The re-checked user is a snapshot (no-cache); the restore still has to reach it.
++    localStorage.setItem('activeOrganizationId', 'org-2')
++    const api = fakeApi(null)
++
++    await renderShell({ rootPreloadsMe: false })
++
++    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
++    expect(pageRequestOrganization(api)).toBe('org-2')
++    // Not a matter of time: the root loader here never brings a Me, so the snapshot stays.
++    await act(async () => {
++      await new Promise(resolve => setTimeout(resolve, 50))
++    })
++    expect(screen.getByText('User active organization: org-2; shown: org-2')).toBeInTheDocument()
++  })
++
++  it('after a picker choice and the reload, shows and sends the chosen organization', async () => {
++    const reload = vi.fn()
++    vi.stubGlobal('location', { ...globalThis.location, reload })
++    const api = fakeApi(null)
++    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++    const picker = render(
++      <ApolloProvider client={client}>
++        <MemoryRouter>
++          <OrganizationRequired />
++        </MemoryRouter>
++      </ApolloProvider>,
++    )
++    const second = await screen.findByRole('button', { name: 'Second Org' })
++    await act(async () => {
++      fireEvent.click(second)
++    })
++    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
++    // One switch: the server and the stored id both moved to the choice before the reload.
++    expect(api.activeOrganizationId).toBe('org-2')
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
++    picker.unmount()
++
++    // The reload: a fresh app, Me preloaded by the root loader.
++    api.organizationHeaders.length = 0
++    await renderShell({ rootPreloadsMe: true })
++
++    expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
++    expect(pageRequestOrganization(api)).toBe('org-2')
++  })
++})
+diff --git a/libs/web/src/lib/contexts/auth.context.spec.tsx b/libs/web/src/lib/contexts/auth.context.spec.tsx
+index 51611cf..f7f5b28 100644
+--- a/libs/web/src/lib/contexts/auth.context.spec.tsx
++++ b/libs/web/src/lib/contexts/auth.context.spec.tsx
+@@ -11,10 +11,13 @@ import {
+ 
+ const useQuery = vi.fn()
+ const useMutation = vi.fn()
++const refetchQueries = vi.fn()
++const writeQuery = vi.fn()
+ 
+ vi.mock('@apollo/client/react', () => ({
+   useQuery: (...args: unknown[]) => useQuery(...args),
+   useMutation: (...args: unknown[]) => useMutation(...args),
++  useApolloClient: () => ({ refetchQueries, cache: { writeQuery } }),
+ }))
+ 
+ vi.mock('@nestled-template/shared/sdk', () => ({
+@@ -108,6 +111,25 @@ describe('AuthProvider', () => {
+     expect(localStorage.getItem('activeOrganizationId')).toBeNull()
+   })
+ 
++  it('switches through the one shared switch, which throws on a refusal and changes nothing', async () => {
++    const refused = vi.fn().mockRejectedValue(new Error('Not a member'))
++    useMutation.mockReturnValue([refused])
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++
++    const { result } = renderHook(() => useAuth(), { wrapper: wrapper() })
++    await act(async () => {
++      await expect(result.current.switchOrganization('org-2')).rejects.toThrow('Not a member')
++    })
++
++    // The shared switch's mutation throws on a GraphQL refusal, whatever the client's default.
++    expect(useMutation).toHaveBeenCalledWith(expect.anything(), {
++      errorPolicy: 'none',
++      fetchPolicy: 'no-cache',
++    })
++    expect(result.current.user?.activeOrganizationId).toBe('org-1')
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
++  })
++
+   it('handles emulation flags and super-admin permissions', async () => {
+     const adminMember = {
+       userId: 'user-1',
+@@ -144,6 +166,62 @@ describe('AuthProvider', () => {
+     expect(result.current.canDoAll).toBe(true)
+   })
+ 
++  it('restores a stored organization the server does not know after rendering, through the switch', async () => {
++    const second = { id: 'org-2', name: 'Second Org', members: [member] }
++    useQuery.mockReturnValue({
++      data: { myOrganizations: [organization, second] },
++      loading: false,
++      refetch: vi.fn(),
++    })
++    const switchOrg = vi.fn().mockResolvedValue({
++      data: { switchActiveOrganization: { activeOrganizationId: 'org-2' } },
++    })
++    useMutation.mockReturnValue([switchOrg])
++    localStorage.setItem('activeOrganizationId', 'org-2')
++
++    const { result } = renderHook(() => useAuth(), {
++      wrapper: wrapper({ id: 'user-1', activeOrganizationId: null }),
++    })
++
++    // First render: what a server render shows too (the first), still loading.
++    expect(result.current.activeOrganization?.id).toBe('org-1')
++    await waitFor(() => expect(result.current.activeOrganization?.id).toBe('org-2'))
++    expect(result.current.user?.activeOrganizationId).toBe('org-2')
++    expect(result.current.isLoading).toBe(false)
++    expect(switchOrg).toHaveBeenCalledWith({ variables: { input: { organizationId: 'org-2' } } })
++    expect(refetchQueries).toHaveBeenCalledWith({ include: 'active' })
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
++  })
++
++  it('starts over after logout: a choice restored for one session is not carried into the next', async () => {
++    const second = { id: 'org-2', name: 'Second Org', members: [member] }
++    useQuery.mockReturnValue({
++      data: { myOrganizations: [organization, second] },
++      loading: false,
++      refetch: vi.fn(),
++    })
++    const switchOrg = vi.fn().mockResolvedValue({
++      data: { switchActiveOrganization: { activeOrganizationId: 'org-2' } },
++    })
++    useMutation.mockReturnValue([switchOrg])
++    localStorage.setItem('activeOrganizationId', 'org-2')
++
++    const { result } = renderHook(() => useAuth(), {
++      wrapper: wrapper({ id: 'user-1', activeOrganizationId: null }),
++    })
++    await waitFor(() => expect(result.current.activeOrganization?.id).toBe('org-2'))
++
++    act(() => result.current.logout())
++    expect(localStorage.getItem('activeOrganizationId')).toBeNull()
++    act(() => result.current.login({ id: 'user-1', activeOrganizationId: null } as any))
++
++    // Nothing stored any more: the server's choice, the first, with no switch.
++    await waitFor(() => expect(result.current.isLoading).toBe(false))
++    expect(result.current.activeOrganization?.id).toBe('org-1')
++    expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
++    expect(switchOrg).toHaveBeenCalledTimes(1)
++  })
++
+   it('throws when auth hooks are used outside the provider', () => {
+     const { result } = renderHook(() => {
+       try {
+diff --git a/libs/web/src/lib/contexts/auth.context.tsx b/libs/web/src/lib/contexts/auth.context.tsx
+index c3abd5a..a770e78 100644
+--- a/libs/web/src/lib/contexts/auth.context.tsx
++++ b/libs/web/src/lib/contexts/auth.context.tsx
+@@ -1,12 +1,24 @@
+-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react'
+-import { useQuery, useMutation } from '@apollo/client/react'
++import React, {
++  createContext,
++  useContext,
++  useLayoutEffect,
++  useMemo,
++  useRef,
++  useState,
++  ReactNode,
++} from 'react'
++import { useApolloClient, useQuery } from '@apollo/client/react'
++import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ import {
+   MyOrganizationsWithMembers,
+-  SwitchActiveOrganization,
+   type MyOrganizationsWithMembersQuery,
+-  type SwitchActiveOrganizationMutation,
+   type User,
+ } from '@nestled-template/shared/sdk'
++import {
++  isOrganizationSwitchSuperseded,
++  useSwitchActiveOrganization,
++} from '../organization/switch-active-organization'
++import { useActiveOrganization } from '../organization/active-organization'
+ 
+ type OrganizationContextItem = MyOrganizationsWithMembersQuery['myOrganizations'][number]
+ type OrganizationMemberContextItem = NonNullable<OrganizationContextItem['members']>[number]
+@@ -89,20 +101,41 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
+     skip: !user?.id,
+   })
+ 
+-  const [switchOrgMutation] =
+-    useMutation<SwitchActiveOrganizationMutation>(SwitchActiveOrganization)
++  const switchActiveOrganization = useSwitchActiveOrganization()
++  // Who is signed in now, for a switch whose answer arrives later: if it is someone else (or no
++  // one), the answer belongs to a session that has ended.
++  const userIdRef = useRef(user?.id)
++  useLayoutEffect(() => {
++    userIdRef.current = user?.id
++  }, [user?.id])
+ 
++  const client = useApolloClient()
+   const organizations = orgsData?.myOrganizations || []
+-  const activeOrganization = user
+-    ? organizations.find(org => org.id === user.activeOrganizationId) || organizations[0] || null
+-    : null
++  // The server's active organization, else the first, the same on the server and in the
++  // hydrating render; a choice this browser stored is restored after hydration, and stored for
++  // `x-organization-id` while rendering (`useActiveOrganization`).
++  const { activeOrganization, reconciling } = useActiveOrganization(
++    organizations,
++    user?.activeOrganizationId,
++    {
++      enabled: !!user,
++      sessionKey: user?.id,
++      afterSwitch: () => client.refetchQueries({ include: 'active' }),
++      // `user` is this provider's own state, which the restore's cache write cannot reach: set the
++      // restored organization on it, for the user it was restored for only (as a switch does).
++      onRestored: (activeOrganizationId, restoredFor) =>
++        setUser(current =>
++          current?.id === restoredFor ? { ...current, activeOrganizationId } : current,
++        ),
++    },
++  )
+ 
+   // Find the current user's membership in the active organization
+   const activeOrganizationMember =
+     activeOrganization?.members?.find(member => member.userId === user?.id) || null
+ 
+   const isAuthenticated = !!user?.id
+-  const isLoading = orgsLoading
++  const isLoading = orgsLoading || reconciling
+ 
+   const login = (newUser: AuthUser) => {
+     setUser(newUser)
+@@ -112,32 +145,31 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
+     setUser(null)
+     setIsEmulating(false)
+     setOriginalUser(null)
+-    // Clear organization context from localStorage
+-    if (globalThis.window !== undefined) {
+-      localStorage.removeItem('activeOrganizationId')
+-    }
++    // Forget the organization the requests were sent for
++    storeActiveOrganizationId(null)
+     // The actual logout mutation should be called from the logout page
+     // This just clears the local state
+   }
+ 
+   const switchOrganization = async (organizationId: string) => {
+     if (!user) return
++    const startedFor = user.id
+ 
+     try {
+-      const { data } = await switchOrgMutation({
+-        variables: {
+-          input: { organizationId },
+-        },
++      // The shared switch: the API, then the stored id for the header. It throws on a refusal, and
++      // drops an answer that arrives after a logout or for another user (nothing stored).
++      const activeOrganizationId = await switchActiveOrganization(organizationId, {
++        isCurrent: () => userIdRef.current === startedFor,
+       })
+-
+-      if (data?.switchActiveOrganization) {
+-        setUser({
+-          ...user,
+-          activeOrganizationId: data.switchActiveOrganization.activeOrganizationId,
+-        })
+-      }
++      // From the current state, not this render's `user`: only the user the switch was for.
++      setUser(current =>
++        current?.id === startedFor ? { ...current, activeOrganizationId } : current,
++      )
+     } catch (error) {
+-      console.error('Failed to switch organization:', error)
++      // A dropped answer (the session it was for has ended) is not a failure to log, but it still
++      // rejects, so a caller that reloads after the switch does not reload for it.
++      if (!isOrganizationSwitchSuperseded(error))
++        console.error('Failed to switch organization:', error)
+       throw error
+     }
+   }
+@@ -146,18 +178,6 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
+     await refetchOrgs()
+   }
+ 
+-  // Sync activeOrganizationId to localStorage for Apollo client X-Organization-ID header
+-  useEffect(() => {
+-    if (globalThis.window === undefined) return
+-
+-    const orgId = user?.activeOrganizationId || activeOrganization?.id
+-    if (orgId) {
+-      localStorage.setItem('activeOrganizationId', orgId)
+-    } else {
+-      localStorage.removeItem('activeOrganizationId')
+-    }
+-  }, [user, activeOrganization])
+-
+   const value = useMemo<AuthContextType>(
+     () => ({
+       user,
+diff --git a/apps/web/tests/api-availability.spec.tsx b/apps/web/tests/api-availability.spec.tsx
+index de8d8ea..d879736 100644
+--- a/apps/web/tests/api-availability.spec.tsx
++++ b/apps/web/tests/api-availability.spec.tsx
+@@ -58,6 +58,7 @@ import {
+   SERVER_TROUBLE_MESSAGE,
+   SERVER_TROUBLE_TITLE,
+ } from '../app/api-unavailable'
++import { unauthenticatedResponse } from './helpers/api-rejection'
+ 
+ /**
+  * The root ErrorBoundary's own `error` prop type, whatever the app declares it as (`unknown` here;
+@@ -535,6 +536,29 @@ describe('refetchFailedQueries', () => {
+     expect(healthy.refetch).not.toHaveBeenCalled()
+   })
+ 
++  it('refetches a query the API answered with a GraphQL 503, not a plain INTERNAL_SERVER_ERROR', () => {
++    const graphQL503 = query(
++      new CombinedGraphQLErrors({
++        errors: [
++          {
++            message: 'API token validation is temporarily unavailable',
++            extensions: { code: 'INTERNAL_SERVER_ERROR', status: 503 },
++          },
++        ],
++      }),
++    )
++    const graphQL500 = query(
++      new CombinedGraphQLErrors({
++        errors: [{ message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } }],
++      }),
++    )
++    const client = { getObservableQueries: () => new Set([graphQL503, graphQL500]) }
++
++    expect(refetchFailedQueries(client as never)).toBe(1)
++    expect(graphQL503.refetch).toHaveBeenCalledTimes(1)
++    expect(graphQL500.refetch).not.toHaveBeenCalled()
++  })
++
+   it('refetches 401s only when told an outage let them pass', () => {
+     const unauthorized = query(
+       new ServerError('Response not successful', {
+@@ -1536,7 +1560,10 @@ describe('root error boundary for a 401 a route threw while the app had outage e
+   `
+   const json = (status: number, body: unknown) =>
+     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+-  const unauthorized = () => json(401, { message: 'Unauthorized' })
++  // The API's own rejection (HTTP 200, UNAUTHENTICATED): the logout below must not depend on an
++  // error link that signs out on an HTTP 401, which several apps' links never do.
++  const unauthorized = unauthenticatedResponse
++  const httpUnauthorized = () => json(401, { message: 'Unauthorized' })
+   const dataOk = () => json(200, { data: { data: 'fresh' } })
+ 
+   let dataResponses: Array<() => Response> = []
+@@ -1593,7 +1620,7 @@ describe('root error boundary for a 401 a route threw while the app had outage e
+    * meanwhile the route's own query gets a 401: the error link lets it pass, the route throws it,
+    * and the root error boundary takes over from App.
+    */
+-  async function renderWhileRetryInFlight() {
++  async function renderWhileRetryInFlight(initialEntry = '/data') {
+     const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+     await client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
+     void client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
+@@ -1620,7 +1647,7 @@ describe('root error boundary for a 401 a route threw while the app had outage e
+           ],
+         },
+       ],
+-      { initialEntries: ['/data'] },
++      { initialEntries: [initialEntry] },
+     )
+     await act(async () => {
+       render(
+@@ -1632,8 +1659,11 @@ describe('root error boundary for a 401 a route threw while the app had outage e
+     return router
+   }
+ 
+-  it('shows the self-recovering screen, not the error screen', async () => {
+-    dataResponses = [unauthorized]
++  it.each([
++    ['the API’s UNAUTHENTICATED answer', unauthorized],
++    ['an HTTP 401', httpUnauthorized],
++  ])('shows the self-recovering screen for %s, not the error screen', async (_label, rejected) => {
++    dataResponses = [rejected]
+     await renderWhileRetryInFlight()
+ 
+     expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+@@ -1674,6 +1704,43 @@ describe('root error boundary for a 401 a route threw while the app had outage e
+     expect(reload).not.toHaveBeenCalled()
+   })
+ 
++  it('recovers a URL with a #fragment too, where a same-URL navigation runs no loader', async () => {
++    dataResponses = [unauthorized, dataOk]
++    const router = await renderWhileRetryInFlight('/data#details')
++
++    await advance(retryDelayMs(0))
++    await act(async () => answerRetry())
++    await advance(0)
++
++    expect(screen.getByText('Data: fresh')).toBeInTheDocument()
++    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
++    expect(router.state.location).toMatchObject({ pathname: '/data', hash: '#details' })
++    expect(reload).not.toHaveBeenCalled()
++  })
++
++  it('does not take the user back to a #fragment URL they left while it was recovering', async () => {
++    let answerData: () => void = () => undefined
++    const heldData = () =>
++      new Promise<Response>(resolve => {
++        answerData = () => resolve(dataOk())
++      }) as unknown as Response
++    dataResponses = [unauthorized, heldData]
++    const router = await renderWhileRetryInFlight('/data#details')
++
++    await advance(retryDelayMs(0))
++    await act(async () => answerRetry())
++    await advance(0)
++    // The revalidation's loader is waiting on the API; the user goes elsewhere meanwhile.
++    await act(async () => {
++      await router.navigate('/')
++    })
++    await act(async () => answerData())
++    await advance(0)
++
++    expect(router.state.location.pathname).toBe('/')
++    expect(router.state.location.hash).toBe('')
++  })
++
+   it('revalidates once the screen’s own probe recovers when the retry settled first', async () => {
+     dataResponses = [unauthorized, dataOk]
+     await renderWhileRetryInFlight()
+diff --git a/libs/web/src/lib/organization/index.ts b/libs/web/src/lib/organization/index.ts
+new file mode 100644
+index 0000000..21ef06c
+--- /dev/null
++++ b/libs/web/src/lib/organization/index.ts
+@@ -0,0 +1,2 @@
++export * from './switch-active-organization'
++export * from './active-organization'
+diff --git a/apps/web/tests/entry-server-shell-error.spec.tsx b/apps/web/tests/entry-server-shell-error.spec.tsx
+index a751338..6398679 100644
+--- a/apps/web/tests/entry-server-shell-error.spec.tsx
++++ b/apps/web/tests/entry-server-shell-error.spec.tsx
+@@ -672,6 +672,63 @@ describe('server render sign-out decisions with the whole request in view', () =
+     })
+   })
+ 
++  // What the API answers when it cannot complete a lookup (JwtStrategy's failed API-token lookup):
++  // HTTP 200, INTERNAL_SERVER_ERROR with extensions.status 503 (formatApiError's real shape).
++  const graphQL503 = json(200, {
++    data: null,
++    errors: [
++      {
++        message: 'API token validation is temporarily unavailable',
++        extensions: {
++          code: 'INTERNAL_SERVER_ERROR',
++          status: 503,
++          originalError: { statusCode: 503, error: 'Service Unavailable' },
++        },
++      },
++    ],
++  })
++  const graphQL500 = json(200, {
++    data: null,
++    errors: [{ message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 500 } }],
++  })
++
++  describe('a GraphQL 503 is outage evidence, like a proxy 503', () => {
++    it("keeps the session and serves the recovering 503 when Me's 401 comes beside a preload's GraphQL 503", async () => {
++      answer({ Me: unauthorized, MembersData: later(50, graphQL503) })
++
++      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
++
++      expectRecovering503(response, await response.text())
++    })
++
++    it("keeps the session when a loader's 401 comes beside Me's GraphQL 503", async () => {
++      answer({ Me: later(50, graphQL503), MembersData: unauthorized })
++
++      const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
++
++      expectRecovering503(response, await response.text())
++    })
++
++    it("still signs out on Me's 401 beside a plain INTERNAL_SERVER_ERROR (no 5xx gateway status)", async () => {
++      answer({ Me: unauthorized, MembersData: later(50, graphQL500) })
++
++      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
++
++      expect(response.status).toBe(302)
++      expect(clearsTheCookie(response)).toBe(true)
++    })
++
++    it('decides unavailable for a shell error that is itself a GraphQL 503, whatever was recorded', () => {
++      const shellError = new CombinedGraphQLErrors({
++        errors: [
++          { message: 'unavailable', extensions: { code: 'INTERNAL_SERVER_ERROR', status: 503 } },
++        ],
++      })
++      expect(shellErrorOutcome(shellError, 'unauthenticated')).toBe('unavailable')
++      expect(shellErrorOutcome(shellError, undefined)).toBe('unavailable')
++    })
++  })
++
+   describe("the root loader's outage flag is outage evidence", () => {
+     // The root loader could not start the Me preload and returned its flag instead: nothing went
+     // through an Apollo client, so only the flag says the API was unreachable.
+diff --git a/apps/web/tests/organization-required.spec.tsx b/apps/web/tests/organization-required.spec.tsx
+index 42e7886..810e60c 100644
+--- a/apps/web/tests/organization-required.spec.tsx
++++ b/apps/web/tests/organization-required.spec.tsx
+@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { ApolloProvider } from '@apollo/client/react'
+ import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
+-import { makeClient } from '@nestled-template/shared/apollo'
++import { makeClient, storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ import {
+   NO_ORGANIZATIONS_TITLE,
+   ORGANIZATION_PICKER_TITLE,
+@@ -27,8 +27,11 @@ function renderPicker({
+   organizations = [] as Organization[],
+   listFails = false,
+   switchFails = false,
++  holdSwitch = false,
+ } = {}) {
+   const switched: string[] = []
++  // With `holdSwitch`, the switch answers only when the test calls `answerSwitch`.
++  const held = { answerSwitch: () => undefined as void }
+   const link = new ApolloLink(
+     operation =>
+       new Observable<ApolloLink.Result>(observer => {
+@@ -40,6 +43,21 @@ function renderPicker({
+           }
+         } else if (operation.operationName === 'switchActiveOrganization') {
+           switched.push(operation.variables['input'].organizationId)
++          if (holdSwitch) {
++            held.answerSwitch = () => {
++              observer.next({
++                data: {
++                  switchActiveOrganization: {
++                    __typename: 'User',
++                    id: 'user-1',
++                    activeOrganizationId: operation.variables['input'].organizationId,
++                  },
++                },
++              })
++              observer.complete()
++            }
++            return
++          }
+           if (switchFails) {
+             observer.next({
+               errors: [{ message: 'You are not a member of this organization' }],
+@@ -74,7 +92,7 @@ function renderPicker({
+       </MemoryRouter>
+     </ApolloProvider>,
+   )
+-  return { switched }
++  return { switched, held }
+ }
+ 
+ describe('OrganizationRequired', () => {
+@@ -154,6 +172,29 @@ describe('OrganizationRequired', () => {
+     expect(localStorage.getItem('activeOrganizationId')).toBeNull()
+   })
+ 
++  it('stores nothing and does not reload when the switch is answered after a logout', async () => {
++    const { switched, held } = renderPicker({
++      organizations: [{ id: 'org-1', name: 'First Org' }],
++      holdSwitch: true,
++    })
++    await act(async () => {
++      fireEvent.click(await screen.findByRole('button', { name: 'First Org' }))
++    })
++    expect(switched).toEqual(['org-1'])
++
++    // The session ends (every logout forgets the stored organization) before the API answers.
++    storeActiveOrganizationId(null)
++    await act(async () => {
++      held.answerSwitch()
++      await new Promise(resolve => setTimeout(resolve, 0))
++    })
++
++    expect(localStorage.getItem('activeOrganizationId')).toBeNull()
++    expect(reload).not.toHaveBeenCalled()
++    // A dropped answer is not a failed switch.
++    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
++  })
++
+   it('keeps the session when the organizations cannot be loaded', async () => {
+     renderPicker({ listFails: true })
+ 
+diff --git a/libs/web/src/lib/organization/active-organization.spec.tsx b/libs/web/src/lib/organization/active-organization.spec.tsx
+new file mode 100644
+index 0000000..129a549
+--- /dev/null
++++ b/libs/web/src/lib/organization/active-organization.spec.tsx
+@@ -0,0 +1,266 @@
++import React from 'react'
++import { act, render, waitFor } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { gql } from '@apollo/client'
++import { ApolloProvider } from '@apollo/client/react'
++import { makeClient } from '@nestled-template/shared/apollo'
++import { AuthProvider, useAuth, type AuthContextType } from '../contexts/auth.context'
++import { isOrganizationSwitchSuperseded } from './switch-active-organization'
++import { withRestoredOrganization } from './active-organization'
++
++// The organizations query, cut down to what the provider reads; the switch mutation is the real one.
++vi.mock('@nestled-template/shared/sdk', async importOriginal => ({
++  ...(await importOriginal<typeof import('@nestled-template/shared/sdk')>()),
++  MyOrganizationsWithMembers: gql`
++    query myOrganizationsWithMembers {
++      myOrganizations {
++        id
++        name
++      }
++    }
++  `,
++}))
++
++const PROBE = gql`
++  query Probe {
++    probe
++  }
++`
++
++const API_URL = 'https://api.example.com/graphql'
++const STORAGE_KEY = 'activeOrganizationId'
++
++/**
++ * A fake API whose switch answers only when the test says so, and which records each request's
++ * `x-organization-id`.
++ */
++function fakeApi() {
++  const api = {
++    switchRequests: [] as string[],
++    probeHeaders: [] as Array<string | undefined>,
++    answerSwitch: () => undefined as void,
++  }
++  const json = (body: unknown) =>
++    new Response(JSON.stringify(body), {
++      status: 200,
++      headers: { 'content-type': 'application/json' },
++    })
++  vi.stubGlobal(
++    'fetch',
++    vi.fn(async (_url: unknown, init?: RequestInit) => {
++      const { operationName, variables } = JSON.parse(String(init?.body))
++      const headers = (init?.headers ?? {}) as Record<string, string>
++      switch (operationName) {
++        case 'myOrganizationsWithMembers':
++          return json({
++            data: {
++              myOrganizations: [
++                { __typename: 'Organization', id: 'org-1', name: 'First Org' },
++                { __typename: 'Organization', id: 'org-2', name: 'Second Org' },
++              ],
++            },
++          })
++        case 'switchActiveOrganization': {
++          const organizationId = variables.input.organizationId as string
++          api.switchRequests.push(organizationId)
++          // Held until the test answers it: the late response.
++          await new Promise<void>(resolve => {
++            api.answerSwitch = resolve
++          })
++          return json({
++            data: {
++              switchActiveOrganization: {
++                __typename: 'User',
++                id: 'user-1',
++                activeOrganizationId: organizationId,
++              },
++            },
++          })
++        }
++        case 'Probe':
++          api.probeHeaders.push(headers['x-organization-id'])
++          return json({ data: { probe: true } })
++        default:
++          throw new Error(`unexpected operation ${operationName}`)
++      }
++    }),
++  )
++  return api
++}
++
++/** The provider for user-1, whose server knows no active organization, so the stored one is restored. */
++function renderProvider(initialUser = { id: 'user-1', activeOrganizationId: null }) {
++  const client = makeClient(undefined, { apiUrl: API_URL })
++  const refetchQueries = vi.spyOn(client, 'refetchQueries')
++  const auth: { current: AuthContextType | null } = { current: null }
++  function Probe() {
++    auth.current = useAuth()
++    return null
++  }
++  const view = render(
++    <ApolloProvider client={client}>
++      <AuthProvider initialUser={initialUser as never}>
++        <Probe />
++      </AuthProvider>
++    </ApolloProvider>,
++  )
++  return { client, auth, refetchQueries, view }
++}
++
++/** What the Apollo cache holds for user-1 (the switch's answer, once written). */
++function cachedUser(client: ReturnType<typeof makeClient>) {
++  return (client.cache.extract() as Record<string, unknown>)['User:user-1']
++}
++
++/** The next request's `x-organization-id`, as the app client sends it. */
++async function nextRequestOrganization(
++  client: ReturnType<typeof makeClient>,
++  api: ReturnType<typeof fakeApi>,
++) {
++  await client.query({ query: PROBE, fetchPolicy: 'network-only' })
++  return api.probeHeaders[api.probeHeaders.length - 1]
++}
++
++async function answerSwitch(api: ReturnType<typeof fakeApi>) {
++  await act(async () => {
++    api.answerSwitch()
++    // Let the response travel through the link chain and the restore finish.
++    await new Promise(resolve => setTimeout(resolve, 20))
++  })
++}
++
++describe('a switch answered after its session ended', () => {
++  beforeEach(() => {
++    localStorage.clear()
++    localStorage.setItem(STORAGE_KEY, 'org-2')
++    vi.spyOn(console, 'error').mockImplementation(() => undefined)
++    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++    vi.restoreAllMocks()
++    localStorage.clear()
++  })
++
++  it('logout while the restore is pending: storage stays clear and the next request has no organization', async () => {
++    const api = fakeApi()
++    const { client, auth, refetchQueries } = renderProvider()
++    await waitFor(() => expect(api.switchRequests).toEqual(['org-2']))
++
++    act(() => auth.current?.logout())
++    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
++    await answerSwitch(api)
++
++    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
++    expect(await nextRequestOrganization(client, api)).toBeUndefined()
++    // Not cached for the ended session, and nothing refreshed for it.
++    expect(cachedUser(client)).toBeUndefined()
++    expect(refetchQueries).not.toHaveBeenCalled()
++    expect(auth.current?.user).toBeNull()
++  })
++
++  it('a user change while the restore is pending: the new user’s organization is not overwritten', async () => {
++    const api = fakeApi()
++    const { client, auth, refetchQueries } = renderProvider()
++    await waitFor(() => expect(api.switchRequests).toEqual(['org-2']))
++
++    // Another user signs in without a logout in between; the server knows their organization.
++    act(() => auth.current?.login({ id: 'user-2', activeOrganizationId: 'org-1' } as never))
++    expect(localStorage.getItem(STORAGE_KEY)).toBe('org-1')
++    const setItem = vi.spyOn(Storage.prototype, 'setItem')
++    await answerSwitch(api)
++
++    // Not even for a moment: a re-render stores the shown organization again, but requests sent
++    // before it would have gone out for the previous user's.
++    expect(setItem).not.toHaveBeenCalledWith(STORAGE_KEY, 'org-2')
++    expect(localStorage.getItem(STORAGE_KEY)).toBe('org-1')
++    expect(auth.current?.activeOrganization?.id).toBe('org-1')
++    expect(auth.current?.user?.activeOrganizationId).toBe('org-1')
++    expect(await nextRequestOrganization(client, api)).toBe('org-1')
++    expect(cachedUser(client)).toBeUndefined()
++    expect(refetchQueries).not.toHaveBeenCalled()
++  })
++
++  it('unmount while the restore is pending: nothing is written', async () => {
++    const api = fakeApi()
++    const { client, refetchQueries, view } = renderProvider()
++    await waitFor(() => expect(api.switchRequests).toEqual(['org-2']))
++
++    view.unmount()
++    const setItem = vi.spyOn(Storage.prototype, 'setItem')
++    await answerSwitch(api)
++
++    expect(setItem).not.toHaveBeenCalled()
++    expect(cachedUser(client)).toBeUndefined()
++    expect(refetchQueries).not.toHaveBeenCalled()
++  })
++
++  it('AuthProvider.switchOrganization answered after logout: no user comes back, nothing is stored', async () => {
++    const api = fakeApi()
++    localStorage.setItem(STORAGE_KEY, 'org-1')
++    const { client, auth } = renderProvider({
++      id: 'user-1',
++      activeOrganizationId: 'org-1',
++    } as never)
++    await waitFor(() => expect(auth.current?.isLoading).toBe(false))
++
++    let outcome: Promise<unknown> | undefined
++    act(() => {
++      outcome = auth.current?.switchOrganization('org-2').then(
++        () => 'resolved',
++        (error: unknown) => error,
++      )
++    })
++    await waitFor(() => expect(api.switchRequests).toEqual(['org-2']))
++    act(() => auth.current?.logout())
++    await answerSwitch(api)
++
++    expect(auth.current?.user).toBeNull()
++    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
++    // It rejects (so a switcher does not reload for it), as a dropped answer, not a failure.
++    expect(isOrganizationSwitchSuperseded(await outcome)).toBe(true)
++    expect(await nextRequestOrganization(client, api)).toBeUndefined()
++  })
++
++  it('a restore answered while its session is current is stored and cached, and the user follows it', async () => {
++    const api = fakeApi()
++    const { client, auth, refetchQueries } = renderProvider()
++    await waitFor(() => expect(api.switchRequests).toEqual(['org-2']))
++
++    await answerSwitch(api)
++
++    await waitFor(() => expect(auth.current?.activeOrganization?.id).toBe('org-2'))
++    // The provider's own user follows the restore: both organization ids it exposes agree.
++    expect(auth.current?.user?.activeOrganizationId).toBe('org-2')
++    expect(auth.current?.user?.activeOrganizationId).toBe(auth.current?.activeOrganization?.id)
++    expect(localStorage.getItem(STORAGE_KEY)).toBe('org-2')
++    expect(cachedUser(client)).toMatchObject({ activeOrganizationId: 'org-2' })
++    expect(refetchQueries).toHaveBeenCalledWith({ include: 'active' })
++  })
++})
++
++describe('withRestoredOrganization', () => {
++  const organizations = [{ id: 'org-1' }, { id: 'org-2' }]
++  const restored = { userId: 'user-1', organizationId: 'org-2' }
++
++  it('applies the restore to the user it was for while their own active organization is unknown', () => {
++    const user = { id: 'user-1', activeOrganizationId: null }
++    expect(withRestoredOrganization(user, organizations, restored)?.activeOrganizationId).toBe(
++      'org-2',
++    )
++  })
++
++  it('leaves another user, and an active organization the server knows, as they are', () => {
++    const other = { id: 'user-2', activeOrganizationId: null }
++    const known = { id: 'user-1', activeOrganizationId: 'org-1' }
++    expect(withRestoredOrganization(other, organizations, restored)).toBe(other)
++    expect(withRestoredOrganization(known, organizations, restored)).toBe(known)
++  })
++
++  it('drops the restore once the restored organization is no longer in the list', () => {
++    const user = { id: 'user-1', activeOrganizationId: null }
++    expect(withRestoredOrganization(user, [{ id: 'org-1' }, { id: 'org-3' }], restored)).toBe(user)
++  })
++})
+diff --git a/libs/web/src/lib/organization/active-organization.ts b/libs/web/src/lib/organization/active-organization.ts
+new file mode 100644
+index 0000000..ba88809
+--- /dev/null
++++ b/libs/web/src/lib/organization/active-organization.ts
+@@ -0,0 +1,210 @@
++import { useEffect, useLayoutEffect, useRef, useState } from 'react'
++import {
++  activeOrganizationSession,
++  getStoredActiveOrganizationId,
++  isActiveOrganizationAmbiguous,
++  rememberActiveOrganization,
++  resolveActiveOrganization,
++} from '@nestled-template/shared/apollo'
++import {
++  isOrganizationSwitchSuperseded,
++  useSwitchActiveOrganization,
++  type ActiveOrganizationSwitch,
++} from './switch-active-organization'
++
++export interface ActiveOrganizationOptions {
++  /** False while there is no signed-in user: nothing is resolved, stored or switched. */
++  enabled?: boolean
++  /**
++   * Runs after the stored organization was made active on the API, before organization-scoped
++   * content renders: the signed-in layout revalidates its loaders, a provider refetches its
++   * queries. Content stays gated until it settles.
++   */
++  afterSwitch?: () => unknown
++  /**
++   * Called once a stored organization was restored for the session still current, with the id now
++   * active and the `sessionKey` it was restored for, as content is let through. A caller whose
++   * user lives in its own state (`AuthProvider`, a re-checked snapshot of Me) sets that user's
++   * `activeOrganizationId` to it there, for that user only, so `user.activeOrganizationId` and
++   * `activeOrganization.id` agree: a cache write and a refetch cannot reach such a user. Never
++   * called for a refused, failed or superseded restore.
++   */
++  onRestored?: (organizationId: string, sessionKey: string) => void
++  /**
++   * Makes the stored organization active and resolves with the id now active; it must reject on a
++   * refusal. Defaults to the shared switch (`useSwitchActiveOrganization`). An app whose API has no
++   * switch mutation passes one that only stores the id, without reloading. It is handed
++   * `{ isCurrent }`: a switch that awaits anything checks it before storing, and stores nothing
++   * once it is false (the shared switch does).
++   */
++  switchOrganization?: ActiveOrganizationSwitch
++  /**
++   * Who is signed in (the user's id). A change, or `enabled` turning false, starts over: a choice
++   * restored for one session is never carried into the next, and a restore still in flight for it
++   * is dropped.
++   */
++  sessionKey?: string | null
++}
++
++export interface ActiveOrganizationState<T> {
++  /** The organization to show, and the one every request is sent for (`x-organization-id`). */
++  activeOrganization: T | null
++  /**
++   * Organization-scoped content (the page, subscription queries) must not render yet. True on the
++   * first render, on the server and in the browser alike, whenever the server's information leaves
++   * the organization open (`isActiveOrganizationAmbiguous`), and while a stored choice is being
++   * restored after hydration.
++   */
++  reconciling: boolean
++}
++
++/**
++ * The active organization of a signed-in shell, the same in the server render and the hydrating
++ * browser render.
++ *
++ * The first render uses only what the server knows: the user's `activeOrganizationId` from Me,
++ * else the first organization (`resolveActiveOrganization`). Reading the browser's stored
++ * organization while rendering made the hydrating render show another organization's name and
++ * permissions than the server HTML. When the server's information leaves the choice open, the
++ * stored one is restored after hydration instead: through the shared switch
++ * (`useSwitchActiveOrganization`), so the server's active organization, the cache and the
++ * `x-organization-id` header agree, then `afterSwitch`. Until that settles `reconciling` is true
++ * and the caller holds back organization-scoped content. If the switch fails, the server's choice
++ * stands and is stored, so the screen and the requests still agree.
++ *
++ * Whatever it shows is stored for the header while rendering (`rememberActiveOrganization`),
++ * before children's queries start, except while reconciling, when the stored choice is still to
++ * be read.
++ */
++export function useActiveOrganization<T extends { id: string }>(
++  organizations: readonly T[],
++  serverActiveOrganizationId: string | null | undefined,
++  options: ActiveOrganizationOptions = {},
++): ActiveOrganizationState<T> {
++  const enabled = options.enabled ?? true
++  const sharedSwitch = useSwitchActiveOrganization()
++  const switchActiveOrganization = options.switchOrganization ?? sharedSwitch
++  const sessionKey = enabled ? (options.sessionKey ?? '') : null
++  // undefined: not settled yet; null: settled, the server's choice stands; an id: the restored one.
++  const [chosen, setChosen] = useState<string | null | undefined>(undefined)
++  const [switching, setSwitching] = useState(false)
++  // A new session (sign-out, or another user) starts over, while rendering rather than after.
++  const [settledFor, setSettledFor] = useState(sessionKey)
++  if (settledFor !== sessionKey) {
++    setSettledFor(sessionKey)
++    setChosen(undefined)
++    setSwitching(false)
++  }
++  const ambiguous =
++    enabled && isActiveOrganizationAmbiguous(organizations, serverActiveOrganizationId)
++  const reconciling = (ambiguous && chosen === undefined) || switching
++
++  const activeOrganization = enabled
++    ? resolveActiveOrganization(organizations, serverActiveOrganizationId, chosen ?? null)
++    : null
++  if (enabled && !reconciling) rememberActiveOrganization(activeOrganization?.id)
++
++  const afterSwitchRef = useRef(options.afterSwitch)
++  const onRestoredRef = useRef(options.onRestored)
++  useLayoutEffect(() => {
++    afterSwitchRef.current = options.afterSwitch
++    onRestoredRef.current = options.onRestored
++  })
++  // The session a restore was started for, and the session now; a restore whose session is gone by
++  // the time it finishes is dropped.
++  const startedForRef = useRef<string | null | undefined>(undefined)
++  const sessionKeyRef = useRef(sessionKey)
++  useLayoutEffect(() => {
++    sessionKeyRef.current = sessionKey
++    startedForRef.current = undefined
++  }, [sessionKey])
++  // A restore still in flight when the shell unmounts is dropped too.
++  const mountedRef = useRef(true)
++  useEffect(() => {
++    mountedRef.current = true
++    return () => {
++      mountedRef.current = false
++    }
++  }, [])
++  const pending = ambiguous && chosen === undefined && settledFor === sessionKey
++
++  useEffect(() => {
++    if (!pending || startedForRef.current === sessionKey) return
++    startedForRef.current = sessionKey
++    const first = organizations[0]?.id
++    const stored = getStoredActiveOrganizationId()
++    const restore =
++      stored && stored !== first && organizations.some(organization => organization.id === stored)
++        ? stored
++        : null
++    if (!restore) {
++      // eslint-disable-next-line react-hooks/set-state-in-effect -- settles browser-only state after hydration
++      setChosen(null)
++      return
++    }
++    setSwitching(true)
++    // The session this restore is for: the same user, the same organization session (no logout
++    // since, `activeOrganizationSession`), and the shell still mounted. Once it has ended, the
++    // switch's answer is neither stored nor cached (the switch checks `isCurrent`), and nothing
++    // here refreshes or settles for it.
++    const session = activeOrganizationSession()
++    const stillCurrent = () =>
++      mountedRef.current &&
++      sessionKeyRef.current === sessionKey &&
++      activeOrganizationSession() === session
++    void (async () => {
++      let restored: string | null = null
++      try {
++        restored = await switchActiveOrganization(restore, { isCurrent: stillCurrent })
++      } catch (error) {
++        if (isOrganizationSwitchSuperseded(error)) return
++        console.error(
++          '[ActiveOrganization] Could not restore the stored organization; keeping the server’s',
++          error,
++        )
++      }
++      if (!stillCurrent()) return
++      if (restored) {
++        try {
++          await afterSwitchRef.current?.()
++        } catch (error) {
++          console.error('[ActiveOrganization] Refreshing after the switch failed', error)
++        }
++      }
++      if (!stillCurrent()) return
++      if (restored && sessionKey !== null) onRestoredRef.current?.(restored, sessionKey)
++      setChosen(restored)
++      setSwitching(false)
++    })()
++  }, [pending, organizations, sessionKey, switchActiveOrganization])
++
++  return { activeOrganization, reconciling }
++}
++
++/** An organization restored for a user (`onRestored`), kept by a caller whose user is a snapshot. */
++export interface RestoredOrganization {
++  userId: string
++  organizationId: string
++}
++
++/**
++ * `user` with `restored` applied as its `activeOrganizationId`, for a user `useActiveOrganization`
++ * cannot update itself (a no-cache snapshot of Me), so `user.activeOrganizationId` and the shown
++ * organization agree after a restore. Applied only for the user it was restored for, while that
++ * user's own active organization is missing or not one of `organizations` (one the server knows
++ * wins), and while the restored one still is (a later list without it falls back as
++ * `resolveActiveOrganization` does, and so does the user). Otherwise `user` unchanged.
++ */
++export function withRestoredOrganization<
++  U extends { id: string; activeOrganizationId?: string | null },
++>(
++  user: U | null,
++  organizations: readonly { id: string }[],
++  restored: RestoredOrganization | null,
++): U | null {
++  if (!user || restored?.userId !== user.id) return user
++  const isMember = (id: string | null | undefined) =>
++    organizations.some(organization => organization.id === id)
++  if (isMember(user.activeOrganizationId) || !isMember(restored.organizationId)) return user
++  return { ...user, activeOrganizationId: restored.organizationId }
++}
