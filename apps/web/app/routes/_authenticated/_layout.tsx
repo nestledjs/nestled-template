@@ -17,6 +17,7 @@ import { useReadQuery, type QueryRef } from '@apollo/client/react'
 import { browserIsOffline } from '../../api-availability'
 import { ApiUnavailableScreen } from '../../api-unavailable'
 import { useSessionRecheck } from '../../session-recheck'
+import { useRootLoaderOutage } from '../../loader-outage'
 import { OrganizationRequired } from '../../organization-required'
 
 type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
@@ -46,8 +47,9 @@ export default function AuthenticatedLayout() {
   // No user is not proof of a dead session (a Me preload on a public route may have failed for
   // another reason, and the root loader does not run again on a client-side navigation here), so
   // Me is asked again. Only a real 401 with no outage goes through force-logout, which clears the
-  // session cookie (and appends `expired=1`, so /login renders the form instead of looping).
-  const recheck = useSessionRecheck(!contextUser)
+  // session cookie (and appends `expired=1`, so /login renders the form instead of looping). The
+  // root loader's outage flag counts as outage evidence: a 401 while it stands is retried.
+  const recheck = useSessionRecheck(!contextUser, useRootLoaderOutage())
   const user = contextUser ?? (recheck.status === 'signed-in' ? recheck.user : null)
   if (!user) {
     if (recheck.status === 'rejected') {

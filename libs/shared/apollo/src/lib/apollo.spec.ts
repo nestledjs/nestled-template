@@ -21,13 +21,20 @@ import {
   isAuthFailureDeferred,
   isQueryOperation,
   isRetryableConnectivityError,
+  isOrganizationContextRequiredError,
   makeClient,
   ORGANIZATION_CONTEXT_REQUIRED_CODE,
   signalApiOutage,
   subscriptionRetryDelayMs,
   takeDeferredAuthFailure,
 } from './apollo'
-import { apolloLoader, mergeApiFailureCauses, ssrApiFailureCause } from './apollo-loader'
+import {
+  apolloLoader,
+  mergeApiFailureCauses,
+  ssrApiFailureCause,
+  ssrOrganizationRequired,
+  waitForSsrApiCalls,
+} from './apollo-loader'
 
 function jwtWithIssuedAt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
@@ -1121,7 +1128,11 @@ describe('classifyApiFailure', () => {
       }
     `
     const causes: string[] = []
-    const onApiFailure = (cause: string) => causes.push(cause)
+    const errors: unknown[] = []
+    const onApiFailure = (cause: string, error: unknown) => {
+      causes.push(cause)
+      errors.push(error)
+    }
     const originalFetch = globalThis.fetch
     try {
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
@@ -1142,6 +1153,9 @@ describe('classifyApiFailure', () => {
       vi.restoreAllMocks()
     }
     expect(causes).toEqual(['unavailable', 'unauthenticated'])
+    // And the error itself, for what the cause does not say (an organization refusal's code).
+    expect(errors).toHaveLength(2)
+    expect(classifyApiFailure(errors[1])).toBe('unauthenticated')
   })
 })
 
@@ -1279,5 +1293,158 @@ describe('mergeApiFailureCauses', () => {
     ['other', 'unavailable', 'unavailable'],
   ] as const)('%s + %s -> %s', (a, b, merged) => {
     expect(mergeApiFailureCauses(a, b)).toBe(merged)
+  })
+})
+
+describe('apolloLoader in-flight calls and organization refusals', () => {
+  const query = gql`
+    query Settings {
+      settings {
+        id
+      }
+    }
+  `
+  function loaderArgs() {
+    return {
+      request: new Request('https://app.example.com/members'),
+      params: {},
+      context: {},
+    } as never
+  }
+  const originalFetch = globalThis.fetch
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+  })
+
+  it('waits for a preload still in flight, then finds its cause', async () => {
+    let answer: (response: Response) => void = () => undefined
+    globalThis.fetch = vi.fn(
+      () => new Promise<Response>(resolve => (answer = resolve)),
+    ) as typeof fetch
+    const data = apolloLoader()(({ preloadQuery }) => ({ ref: preloadQuery(query) }))(loaderArgs())
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    let settled: boolean | undefined
+    const waiting = waitForSsrApiCalls({ root: data }, 5_000).then(result => (settled = result))
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(settled).toBeUndefined()
+    expect(ssrApiFailureCause({ root: data })).toBeUndefined()
+
+    answer(new Response('{}', { status: 503, headers: { 'content-type': 'application/json' } }))
+    await waiting
+    expect(settled).toBe(true)
+    expect(ssrApiFailureCause({ root: data })).toBe('unavailable')
+  })
+
+  it('gives up after the bound, saying the calls have not settled', async () => {
+    globalThis.fetch = vi.fn(() => new Promise<Response>(() => undefined)) as typeof fetch
+    const data = apolloLoader()(({ preloadQuery }) => ({ ref: preloadQuery(query) }))(loaderArgs())
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(await waitForSsrApiCalls({ root: data }, 20)).toBe(false)
+  })
+
+  it('resolves at once when nothing is in flight', async () => {
+    expect(await waitForSsrApiCalls(undefined, 5_000)).toBe(true)
+    expect(await waitForSsrApiCalls({ root: null, child: { theme: 'dark' } }, 5_000)).toBe(true)
+  })
+
+  it('records an ORGANIZATION_CONTEXT_REQUIRED refusal by code, and nothing else', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      Response.json({
+        data: null,
+        errors: [
+          {
+            message: 'Organization context required: secret detail',
+            extensions: { code: ORGANIZATION_CONTEXT_REQUIRED_CODE },
+          },
+        ],
+      }),
+    ) as typeof fetch
+    const refused = await apolloLoader()(async ({ preloadQuery }) => {
+      const ref = preloadQuery(query)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      return { ref }
+    })(loaderArgs())
+    expect(ssrOrganizationRequired({ root: refused })).toBe(true)
+    expect(ssrApiFailureCause({ root: refused })).toBe('other')
+
+    globalThis.fetch = vi.fn(async () =>
+      Response.json({ data: null, errors: [{ message: 'boom' }] }),
+    ) as typeof fetch
+    const failed = await apolloLoader()(async ({ preloadQuery }) => {
+      const ref = preloadQuery(query)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      return { ref }
+    })(loaderArgs())
+    expect(ssrOrganizationRequired({ root: failed })).toBe(false)
+    expect(ssrOrganizationRequired({ root: failed, child: refused })).toBe(true)
+  })
+
+  it('isOrganizationContextRequiredError matches the code only', () => {
+    const withCode = (code: string, message = 'x') =>
+      new CombinedGraphQLErrors({ data: null, errors: [{ message, extensions: { code } }] })
+    expect(isOrganizationContextRequiredError(withCode(ORGANIZATION_CONTEXT_REQUIRED_CODE))).toBe(
+      true,
+    )
+    expect(isOrganizationContextRequiredError(withCode('FORBIDDEN', 'organization required'))).toBe(
+      false,
+    )
+    expect(isOrganizationContextRequiredError(new Error(ORGANIZATION_CONTEXT_REQUIRED_CODE))).toBe(
+      false,
+    )
+  })
+})
+
+describe('releaseApiOutage', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('announces a 401 let pass during the evidence once the last evidence is released', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    // A fresh copy of the module: other tests in this file can leave a retry's evidence behind.
+    vi.resetModules()
+    const apollo = await import('./apollo')
+    const loaderFlag = {}
+    const other = {}
+    apollo.signalApiOutage(loaderFlag)
+    apollo.signalApiOutage(other)
+    const originalFetch = globalThis.fetch
+    try {
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      await apollo
+        .makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+        .query({ query: gql('query Data { data }') })
+        .catch(() => undefined)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+    expect(apollo.isAuthFailureDeferred()).toBe(true)
+    const announced = vi.fn()
+    window.addEventListener(apollo.APOLLO_DEFERRED_AUTH_FAILURE_EVENT, announced)
+    try {
+      apollo.releaseApiOutage(loaderFlag)
+      expect(announced).not.toHaveBeenCalled()
+      apollo.releaseApiOutage(other)
+      expect(announced).toHaveBeenCalledTimes(1)
+      expect(apollo.isApiOutageSignalled()).toBe(false)
+    } finally {
+      window.removeEventListener(apollo.APOLLO_DEFERRED_AUTH_FAILURE_EVENT, announced)
+      apollo.takeDeferredAuthFailure()
+    }
   })
 })

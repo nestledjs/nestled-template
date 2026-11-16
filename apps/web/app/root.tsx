@@ -33,6 +33,7 @@ import { AccessDenied } from './access-denied'
 import { isOrganizationContextRequired, OrganizationRequired } from './organization-required'
 import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
 import { DeferredAuthRecovery } from './deferred-auth-recovery'
+import { useRootLoaderOutage } from './loader-outage'
 
 export const meta: MetaFunction = () => [
   {
@@ -233,11 +234,16 @@ function isUnauthorizedError(error: unknown, routeStatus: number | undefined): b
 // left) would flash the error screen, or log out, before the fresh answer arrives.
 const errorsAwaitingFreshAnswer = new WeakSet<object>()
 
-function awaitsFreshAnswer(error: unknown, routeStatus: number | undefined): boolean {
+function awaitsFreshAnswer(
+  error: unknown,
+  routeStatus: number | undefined,
+  loaderOutage: boolean,
+): boolean {
   const isObject = typeof error === 'object' && error !== null
   if (isObject && errorsAwaitingFreshAnswer.has(error)) return true
   const awaits =
-    carriesApiRejection(error, routeStatus) && (isApiOutageSignalled() || isAuthFailureDeferred())
+    carriesApiRejection(error, routeStatus) &&
+    (loaderOutage || isApiOutageSignalled() || isAuthFailureDeferred())
   if (awaits && isObject) errorsAwaitingFreshAnswer.add(error)
   return awaits
 }
@@ -261,6 +267,9 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   const normalizedError = error instanceof Error ? error : new Error('An unexpected error occurred')
   const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
   const isUnauthorized = isUnauthorizedError(error, routeStatus)
+  // The root loader's own outage flag (`serviceUnavailable`) is outage evidence too. App, which
+  // otherwise turns it into a signal, has been unmounted by this error.
+  const loaderOutage = useRootLoaderOutage()
 
   // Log out only on an unambiguous 401. While the app has outage evidence, or while the error link
   // has let a 401 pass because of some, a 401 is not proof the session is bad, whoever threw it (a
@@ -268,7 +277,7 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   // the session and show the self-recovering screen: once the API answers and no evidence is left
   // it revalidates the route, which renders again with a fresh answer (data, or a clean 401 that
   // logs out). It lives here, not in App, because the error has unmounted App.
-  if (awaitsFreshAnswer(error, routeStatus)) {
+  if (awaitsFreshAnswer(error, routeStatus, loaderOutage)) {
     return <DeferredAuthRecovery key={errorKey(error)} initialReason="server" />
   }
 

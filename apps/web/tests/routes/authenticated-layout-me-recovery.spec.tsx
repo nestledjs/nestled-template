@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { act, render, screen } from '@testing-library/react'
-import { createMemoryRouter, RouterProvider } from 'react-router'
+import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
 import {
@@ -12,7 +12,9 @@ import {
   ServerError,
 } from '@apollo/client'
 import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
+import { GlobalContextProvider } from '@nestled-template/web'
 import { clearApiOutage, signalApiOutage } from '@nestled-template/shared/apollo'
+import { sessionRecheckOutcome } from '../../app/session-recheck'
 import { App } from '../../app/app'
 import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
 import { CONFIRM_DELAYS_MS, retryDelayMs } from '../../app/api-availability'
@@ -62,11 +64,15 @@ async function renderMembersPage(
   {
     rootPreloadsMe = true,
     initialPath = '/members',
+    rootFlagsOutage = false,
   }: {
     // False: the root loader returns no Me query, as after a Me preload on a public route that
     // failed for a reason other than the API (the cookie is kept), or with no preload at all.
     rootPreloadsMe?: boolean
     initialPath?: string
+    // The root loader returns its outage flag (`serviceUnavailable`) and the root renders the
+    // routes anyway, as in an app whose root does not put up the outage screen for it.
+    rootFlagsOutage?: boolean
   } = {},
 ) {
   let meRequests = 0
@@ -82,15 +88,23 @@ async function renderMembersPage(
   const router = createMemoryRouter(
     [
       {
+        id: 'root',
         path: '/',
         loader: async () => {
           rootLoaderCalls += 1
+          if (rootFlagsOutage) return { serviceUnavailable: true }
           if (!rootPreloadsMe) return {}
           const meQueryRef = preload(ME)
           await preload.toPromise(meQueryRef).catch(() => undefined)
           return { meQueryRef }
         },
-        element: <App />,
+        element: rootFlagsOutage ? (
+          <GlobalContextProvider user={null}>
+            <Outlet />
+          </GlobalContextProvider>
+        ) : (
+          <App />
+        ),
         children: [
           { index: true, element: <p>Public home</p> },
           {
@@ -286,6 +300,30 @@ describe('authenticated layout with no user', () => {
     } finally {
       clearApiOutage(outage)
     }
+  })
+
+  it("keeps the session on a 401 while the root loader's outage flag stands", async () => {
+    // Nothing signals an outage in the browser here: only the root loader's flag says the API was
+    // unreachable, and it outranks the re-check's 401.
+    const app = await renderMembersPage([fails(unauthorized()), signedIn], {
+      rootFlagsOutage: true,
+    })
+    await advance(0)
+
+    expect(app.meRequests()).toBe(1)
+    expect(app.router.state.location.pathname).toBe('/members')
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+
+    await advance(retryDelayMs(0))
+    expect(app.meRequests()).toBe(2)
+    expect(screen.getByText('Members page')).toBeInTheDocument()
+  })
+
+  it("judges the re-check's 401 as a rejection only with no loader outage flag", () => {
+    const error = unauthorized()
+    expect(sessionRecheckOutcome({ error })).toBe('rejected')
+    expect(sessionRecheckOutcome({ error }, false)).toBe('rejected')
+    expect(sessionRecheckOutcome({ error }, true)).toBe('retry')
   })
 
   describe('after a public route whose Me preload failed, with the cookie kept', () => {

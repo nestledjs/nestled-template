@@ -74,7 +74,11 @@ describe('authentication and authorization error navigation', () => {
       data: null,
     }
 
-    render(<MemoryRouter>{ErrorBoundary({ error: boundaryError(routeError) })}</MemoryRouter>)
+    render(
+      <MemoryRouter>
+        <ErrorBoundary error={boundaryError(routeError)} />
+      </MemoryRouter>,
+    )
 
     expect(
       screen.getByRole('heading', { name: 'You don’t have permission to view this page' }),
@@ -100,7 +104,9 @@ describe('authentication and authorization error navigation', () => {
 
       render(
         <ApolloProvider client={organizationsClient()}>
-          <MemoryRouter>{ErrorBoundary({ error: boundaryError(error) })}</MemoryRouter>
+          <MemoryRouter>
+            <ErrorBoundary error={boundaryError(error)} />
+          </MemoryRouter>
         </ApolloProvider>,
       )
 

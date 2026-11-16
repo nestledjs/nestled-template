@@ -17,6 +17,8 @@ import {
   makeClient,
   mergeApiFailureCauses,
   ssrApiFailureCause,
+  ssrOrganizationRequired,
+  waitForSsrApiCalls,
   type ApiFailureCause,
 } from '@nestled-template/shared/apollo'
 import { ApolloProvider } from '@apollo/client/react'
@@ -26,10 +28,34 @@ import {
   isOrganizationContextRequired,
   organizationRequiredResponse,
 } from './organization-required'
+import { loaderReportsOutage } from './loader-outage'
 
 disableFragmentWarnings()
 
 export const streamTimeout = 5_000
+
+/**
+ * How long a sign-out decided during the server render waits for the request's other API calls
+ * still in flight (`waitForSsrApiCalls`) before it may clear the cookie. A loader returns its
+ * preloaded queries unawaited (the root loader's Me among them), so a fast 401 can arrive before a
+ * slower call reports a 503. A call still out after this long is no proof the session is bad: the
+ * session is kept and the recovering 503 served.
+ */
+export const SSR_API_SETTLE_MS = 3_000
+
+/**
+ * The request's recorded outage evidence and API failures from its loaders' data: the cause its
+ * preloads failed with (`ssrApiFailureCause`), plus `unavailable` when a loader's data carries the
+ * outage flag (`loaderReportsOutage`: the root loader's `serviceUnavailable`, returned when it could
+ * not even start the Me preload, so nothing went through the Apollo client to record it). The flag
+ * can only keep a session: it makes the request `unavailable`, which outranks any 401.
+ */
+export function recordedLoaderCause(
+  loaderData: Record<string, unknown> | null | undefined,
+): ApiFailureCause | undefined {
+  const flagged = Object.values(loaderData ?? {}).some(loaderReportsOutage)
+  return mergeApiFailureCauses(ssrApiFailureCause(loaderData), flagged ? 'unavailable' : undefined)
+}
 
 /** Apollo's streamed query ref replaces a failed preload's error with this redacted one. */
 function isRedactedApolloStreamError(error: unknown): boolean {
@@ -59,24 +85,48 @@ function isRedactedApolloStreamError(error: unknown): boolean {
  * - `unavailable`: any outage evidence (unreachable, 502/503/504), even alongside a 401, or a
  *   redacted Apollo error with no recorded cause. Keep the cookie and serve the 503 recovering
  *   screen: if the session really has expired, the first load after recovery gets a clean 401.
+ * - `organization-required`: neither of those, and the API refused a query with
+ *   `ORGANIZATION_CONTEXT_REQUIRED` (the shell error itself, or `organizationRequired`, recorded for
+ *   a preloaded query whose refusal reached the render redacted). Keep the cookie and serve the
+ *   organization picker, as `routeErrorOutcome` does for a loader.
  * - `error`: anything else (an ordinary render error, or an API that answered with some other
  *   error) is left to React Router's error handling, as before.
+ *
+ * `force-logout` is provisional: `handleRequest` first waits for the request's API calls still in
+ * flight (`SSR_API_SETTLE_MS`) and decides again with what they reported.
  */
 export function shellErrorOutcome(
   error: unknown,
   cause: ApiFailureCause | undefined,
-): 'force-logout' | 'unavailable' | 'error' {
+  organizationRequired = false,
+): 'force-logout' | 'unavailable' | 'organization-required' | 'error' {
   // Apollo's redacted stream error says nothing about the cause by itself.
   let ownCause: ApiFailureCause | undefined
+  let refusedForOrganization = organizationRequired
   if (!isRedactedApolloStreamError(error)) {
     ownCause = classifyApiFailure(error)
-    if (ownCause === 'other') return 'error'
+    // The organization refusal is an API failure like the others: it goes through the same
+    // precedence below (an outage, or a clean 401, recorded in the request still outranks it).
+    if (isOrganizationContextRequired(error)) refusedForOrganization = true
+    else if (ownCause === 'other') return 'error'
   }
   // Nothing known at all (a redacted error, nothing recorded): fail safe, keep the session.
   const effectiveCause = mergeApiFailureCauses(ownCause, cause) ?? 'unavailable'
   if (effectiveCause === 'unavailable') return 'unavailable'
   if (effectiveCause === 'unauthenticated') return 'force-logout'
-  return 'error'
+  return refusedForOrganization ? 'organization-required' : 'error'
+}
+
+/**
+ * The error the error page is rendered for after a shell error that is not an API failure. A
+ * component that throws a `Response` would otherwise reach the error page as a route error response
+ * with that status, and a 401 there reads, in the browser's root error boundary, as the API
+ * rejecting the session. A render's own 401 says nothing about the session, so it is passed on as a
+ * plain error (the generic error page, a 500); any other status is kept.
+ */
+export function shellErrorForErrorPage(error: unknown): unknown {
+  const status = error instanceof Response || isRouteErrorResponse(error) ? error.status : undefined
+  return status === 401 ? new Error('A render threw a 401 response') : error
 }
 
 const GATEWAY_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
@@ -115,8 +165,8 @@ export function handleError(error: unknown, { request }: { request: Request }): 
 /**
  * What to do when a loader threw during a document request, before anything renders. `errors` is
  * the router context's `staticHandlerContext.errors`; `thrownCause` is what those errors were before
- * React Router sanitized them (recorded by `handleError`); `recordedCause` the recorded cause of the
- * request's failed preloads, as for `shellErrorOutcome`.
+ * React Router sanitized them (recorded by `handleError`); `recordedCause` the request's recorded
+ * outage evidence and preload failures (`recordedLoaderCause`), as for `shellErrorOutcome`.
  *
  * A loader that awaited Me (or any query) and got a 401 used to reach the root ErrorBoundary
  * during the server render, which cannot redirect there, so the browser got a 500 "Something went
@@ -138,6 +188,9 @@ export function handleError(error: unknown, { request }: { request: Request }): 
  *   error page the sanitized error would get.
  * - `render`: anything else (no loader error, or one that is not an API failure) is rendered by
  *   the root ErrorBoundary as before.
+ *
+ * `force-logout` is provisional: `handleRequest` first waits for the request's API calls still in
+ * flight (`SSR_API_SETTLE_MS`) and decides again with what they reported.
  */
 export function routeErrorOutcome(
   errors: Record<string, unknown> | null | undefined,
@@ -169,11 +222,44 @@ function unavailableResponse(): Response {
   return new Response(null, { status: 503, statusText: 'Service Unavailable' })
 }
 
-// Requests already answered with a rejected `Response` (the recovering 503, or the organization
-// picker's 403). React Router renders the ErrorBoundary for it by calling `handleRequest` again
-// with that response as the route error; this marks that second render, which must go ahead and
-// render rather than reject again (a second rejection is React Router's bare last-resort 500).
+// Requests whose first render was already decided and rejected: with a `Response` (the recovering
+// 503, or the organization picker's 403), or with the shell error itself. React Router renders the
+// ErrorBoundary for it by calling `handleRequest` again with that rejection as the route error; this
+// marks that second render, which must go ahead and render rather than decide again. Rejecting a
+// second time is React Router's bare last-resort 500; and deciding again would judge the rejection
+// as if a loader had thrown it, without the evidence the first decision had (a shell error that
+// carries a 401 status would sign the user out of a page that only failed to render).
 const servedErrorResponse = new WeakSet<Request>()
+
+function rejectUnavailable(request: Request, message: string): Promise<never> {
+  console.error(message)
+  servedErrorResponse.add(request)
+  return Promise.reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
+}
+
+/**
+ * Signs out only once the request's API calls still in flight have settled
+ * (`waitForSsrApiCalls`, bounded by `SSR_API_SETTLE_MS`) and `decide`, asked again with what they
+ * reported, still says `force-logout`. Waiting can only keep the session: a call that reported an
+ * outage meanwhile, or one still out when the bound passes, serves the recovering 503 instead.
+ */
+async function signOutOnceSettled(
+  request: Request,
+  loaderData: Record<string, unknown> | null | undefined,
+  decide: () => ReturnType<typeof routeErrorOutcome> | ReturnType<typeof shellErrorOutcome>,
+): Promise<Response> {
+  const settled = await waitForSsrApiCalls(loaderData, SSR_API_SETTLE_MS)
+  if (settled && decide() === 'force-logout') {
+    console.error('[SSR] The API rejected the session — redirecting to force-logout')
+    return forceLogoutResponse(request)
+  }
+  return rejectUnavailable(
+    request,
+    settled
+      ? '[SSR] A 401 came with outage evidence once the API calls settled — serving 503'
+      : '[SSR] API calls still in flight after a 401 — keeping the session, serving 503',
+  )
+}
 
 function forceLogoutResponse(request: Request): Response {
   const cookieName = process.env.VITE_COOKIE_NAME || '__session'
@@ -205,24 +291,26 @@ export default function handleRequest(
     (userAgent && isbot(userAgent)) || routerContext.isSpaMode ? 'onAllReady' : 'onShellReady'
 
   const handlerContext = routerContext.staticHandlerContext
-  const loaderOutcome = servedErrorResponse.has(request)
-    ? 'render'
-    : routeErrorOutcome(
-        handlerContext?.errors,
-        loaderErrorCauses.get(request),
-        ssrApiFailureCause(handlerContext?.loaderData),
-        loaderOrganizationRequired.has(request),
-      )
+  const decideForLoaders = () =>
+    routeErrorOutcome(
+      handlerContext?.errors,
+      loaderErrorCauses.get(request),
+      recordedLoaderCause(handlerContext?.loaderData),
+      loaderOrganizationRequired.has(request),
+    )
+  const loaderOutcome = servedErrorResponse.has(request) ? 'render' : decideForLoaders()
   if (loaderOutcome === 'force-logout') {
-    console.error('[SSR] A loader got a 401 from the API — redirecting to force-logout')
-    return Promise.resolve(forceLogoutResponse(request))
+    // A loader got a 401 and nothing yet points to an outage; a slower call may still report one.
+    console.error('[SSR] A loader got a 401 from the API — waiting for the other API calls')
+    return signOutOnceSettled(request, handlerContext?.loaderData, decideForLoaders)
   }
   if (loaderOutcome === 'unavailable') {
     // A loader failed and the API showed signs of an outage (even if a 401 came back too). Keep
     // the session and serve the same recovering 503 as an unavailable shell render.
-    console.error('[SSR] A loader failed while the API was unavailable — serving 503')
-    servedErrorResponse.add(request)
-    return Promise.reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
+    return rejectUnavailable(
+      request,
+      '[SSR] A loader failed while the API was unavailable — serving 503',
+    )
   }
   if (loaderOutcome === 'organization-required') {
     // Signed in, no active organization. Keep the session: React Router renders the root
@@ -264,25 +352,40 @@ export default function handleRequest(
         },
         onShellError(error: unknown) {
           console.error('[SSR] Shell render error:', error)
-          const outcome = shellErrorOutcome(
-            error,
-            ssrApiFailureCause(routerContext.staticHandlerContext?.loaderData),
-          )
+          const loaderData = routerContext.staticHandlerContext?.loaderData
+          const decideForShell = () =>
+            shellErrorOutcome(
+              error,
+              recordedLoaderCause(loaderData),
+              ssrOrganizationRequired(loaderData),
+            )
+          const outcome = decideForShell()
           if (outcome === 'force-logout') {
-            // The API rejected the session, with no sign of an outage: clear the stale cookie
-            // instead of serving 500.
-            console.error('[SSR] The API rejected the session — redirecting to force-logout')
-            resolve(forceLogoutResponse(request))
+            // The API rejected the session, with no sign of an outage so far: once the request's
+            // other API calls have settled (a slower one may yet report an outage), clear the
+            // stale cookie instead of serving 500.
+            signOutOnceSettled(request, loaderData, decideForShell).then(resolve, reject)
           } else if (outcome === 'unavailable') {
             // The API could not be reached (even if a 401 came back too), or the cause is unknown.
             // Keep the session: React Router renders the root ErrorBoundary for this 503, which
             // shows the self-recovering screen and reloads once the API answers. A real 401 comes
             // back on the client and goes through the normal 401 handling there.
-            console.error('[SSR] API unavailable during the shell render — serving 503')
+            rejectUnavailable(
+              request,
+              '[SSR] API unavailable during the shell render — serving 503',
+            ).catch(reject)
+          } else if (outcome === 'organization-required') {
+            // A preloaded query was refused for want of an active organization: keep the session
+            // and serve the organization picker, as for a loader's refusal.
+            console.error('[SSR] A query needs an active organization — serving the picker')
             servedErrorResponse.add(request)
-            reject(unavailableResponse()) // NOSONAR: a Response on purpose, see unavailableResponse
+            reject(organizationRequiredResponse()) // NOSONAR: a Response on purpose, as above
           } else {
-            reject(error)
+            // React Router renders the error page for this by calling `handleRequest` again with
+            // the shell error as the route error. That render must not decide again, and the page
+            // must not carry a render's 401 to the browser as the API's (shellErrorForErrorPage).
+            servedErrorResponse.add(request)
+            reject(shellErrorForErrorPage(error))
           }
         },
         onError(error: unknown) {

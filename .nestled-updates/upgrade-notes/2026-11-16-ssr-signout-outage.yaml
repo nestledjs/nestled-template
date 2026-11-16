@@ -1,0 +1,246 @@
+id: 2026-11-16-ssr-signout-outage
+title: >-
+  Decide a sign-out with the whole request in view: a server-render 401 waits for the request's
+  other API calls, the root loader's outage flag counts as outage evidence everywhere, a preloaded
+  query refused for want of an organization gets the picker, and a Me 401 or a second render can
+  no longer sign out past outage evidence
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+# Builds on the server-render and browser sign-out code those notes added.
+applyAfter: [2026-11-14-session-recovery-gaps, 2026-11-14-api-auth-error-codes]
+
+intent: >
+  Follow-up to 2026-11-14-session-recovery-gaps (parts 4 and 8) and 2026-11-14-api-auth-error-codes
+  (part 5); apply those first. The rule is unchanged: log a user out only when the API has definitely
+  rejected the session (a real HTTP 401, or a GraphQL error whose `extensions.code` is
+  `UNAUTHENTICATED`) with no outage evidence. Outage evidence outranks a 401, message text never
+  decides, and anything else keeps the session. Four parts. No package changes, and no change to
+  package.json, nx.json or tsconfig.base.json.
+
+
+  Behaviour changes, plainly: (a) a document request whose 401 would sign out now waits up to 3 s
+  for the request's other API calls still in flight; if one of them reports an outage, or one is
+  still out after 3 s, the cookie is kept and the self-recovering 503 screen is served instead of the
+  redirect to /force-logout (part 1). A real 401 with no outage still signs out, at most 3 s later.
+  (b) The root loader's `serviceUnavailable` flag now keeps the session against a 401 from a child
+  loader, the server render, the root error boundary, the signed-in layout's re-check of Me and the
+  error link (part 2). (c) A document request whose preloaded query is refused with
+  `ORGANIZATION_CONTEXT_REQUIRED` now gets the organization picker (403, cookie kept) instead of a
+  500 (part 3). (d) A Me 401 that arrived while outage evidence stood is retried instead of
+  rendering the user as signed out, and the error page after a failed shell render no longer
+  decides a sign-out a second time; a render that throws a 401 Response gets the generic error page
+  (500) instead of a 401 page the browser read as a sign-out (part 4). Nothing here logs out in a case that did not log out
+  before.
+
+
+  1. A server-render 401 waits, bounded, for the request's other API calls.
+  The root loader returns its Me preload unawaited, so a faster loader's real 401 (or the shell
+  failing on Me's own 401) was judged before a slower call reported a 503: the cookie was cleared
+  and the browser sent to /force-logout during an outage.
+  - libs/shared/apollo/src/lib/apollo.ts: `ClientOptions.onOperationStart?: () => () => void`
+    (called as each operation starts; the function it returns is called once when it settles) and
+    an exported `createOperationTrackingLink(onStart)`, which `makeClient` puts at the top of the
+    chain when the option is given, so an operation counts as settled only after the error link
+    below it has reported its failure. `onApiFailure` now also receives the error:
+    `(cause, error) => void`.
+  - libs/shared/apollo/src/lib/apollo-loader.ts: each loader's record counts its client's pending
+    operations; new `waitForSsrApiCalls(loaderData, timeoutMs): Promise<boolean>` resolves true once
+    every call the request's loaders started has settled (at once if none is in flight), false when
+    the bound passes first.
+  - apps/web/app/entry.server.tsx: `SSR_API_SETTLE_MS = 3_000`. Every `force-logout` decision is
+    now provisional: `signOutOnceSettled(request, loaderData, decide)` waits with
+    `waitForSsrApiCalls`, asks the same decision again (`routeErrorOutcome` for a loader's 401,
+    `shellErrorOutcome` for the shell's) and redirects only if it still says `force-logout`;
+    otherwise, or when the bound passed, it rejects with the recovering 503 (marking the request
+    in `servedErrorResponse`). The loader path returns that promise from `handleRequest`; the shell
+    path calls it from `onShellError` and settles the render's promise with its result.
+  Only calls made through `apolloLoader`'s clients are tracked (they are the ones whose loader data
+  carries a record). A loader that fetches with a client of its own (`makeClient().query`) is
+  waited for by React Router already, since it awaits it.
+  Affected paths: libs/shared/apollo/src/lib/apollo.ts, libs/shared/apollo/src/lib/apollo-loader.ts,
+  apps/web/app/entry.server.tsx, libs/shared/apollo/src/lib/apollo.spec.ts,
+  apps/web/tests/entry-server-shell-error.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("a loader's 401 waits for the request's
+  other API calls": a loader 401 with the root Me preload answering 503 50 ms later is a 503 with
+  the cookie kept; with Me answering data it still signs out; with Me answered only after the 3 s
+  bound it is a 503; "the shell's 401 waits too": Me's 401 before another preload's 503 is a 503,
+  and signs out once that preload is answered); `pnpm exec nx test apollo --skip-nx-cache`
+  ("apolloLoader in-flight calls and organization refusals").
+
+
+  2. The root loader's outage flag is outage evidence for every sign-out decision.
+  The template's root loader returns `{ serviceUnavailable: true }` when it cannot even start the Me
+  preload. Nothing goes through an Apollo client then, so nothing recorded the outage, and a 401
+  elsewhere in the same request, or later in the browser, was judged as if the API were healthy.
+  - New apps/web/app/loader-outage.ts: `loaderReportsOutage(data)` (the data's `serviceUnavailable`
+    is exactly `true`) and `useRootLoaderOutage()` (the root route's loader data, read from
+    `UNSAFE_DataRouterStateContext`, so it works in the root error boundary and is false outside a
+    data router).
+  - entry.server.tsx: exported `recordedLoaderCause(loaderData)` merges `ssrApiFailureCause` with
+    `unavailable` when any loader's data carries the flag; `routeErrorOutcome` and
+    `shellErrorOutcome` are now given it instead of `ssrApiFailureCause`.
+  - root.tsx `ErrorBoundary`: `awaitsFreshAnswer(error, routeStatus, loaderOutage)` counts the flag
+    (`useRootLoaderOutage()`), so a child loader's 401 while it stands shows `DeferredAuthRecovery`,
+    not /force-logout. The boundary now calls a hook, so it must be rendered as a component
+    (`<ErrorBoundary error={...} />`), not called as a function; apps/web/tests/auth-error-navigation.spec.tsx
+    is changed accordingly.
+  - session-recheck.tsx: `sessionRecheckOutcome(answer, loaderOutage = false)` and
+    `useSessionRecheck(needed, loaderOutage = false)`; a 401 while the flag stands is `retry`. The
+    signed-in layout passes `useRootLoaderOutage()`.
+  - app.tsx `App`: while its loader data carries the flag it holds outage evidence
+    (`signalApiOutage`) and releases it when fresh data drops the flag or App unmounts, with the new
+    lib export `releaseApiOutage(source)` (clears the source; if that was the last evidence and the
+    error link let a 401 pass meanwhile, dispatches `APOLLO_DEFERRED_AUTH_FAILURE_EVENT`, as an
+    in-flight retry's end already did). Before, the evidence ended when the probe answered, while
+    the revalidation that brings fresh loader data was still running.
+  Affected paths: apps/web/app/loader-outage.ts (new), apps/web/app/entry.server.tsx,
+  apps/web/app/root.tsx, apps/web/app/session-recheck.tsx,
+  apps/web/app/routes/_authenticated/_layout.tsx, apps/web/app/app.tsx,
+  libs/shared/apollo/src/lib/apollo.ts, apps/web/tests/entry-server-shell-error.spec.tsx,
+  apps/web/tests/api-availability.spec.tsx, apps/web/tests/auth-error-navigation.spec.tsx,
+  apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("the root loader's outage flag is outage
+  evidence": a child loader's 401 under the flag is a 503 with the cookie kept; "the root loader's
+  outage flag in the browser": the root boundary keeps the session for a child loader's 401 under
+  the flag and still logs out without it, and App holds evidence until fresh data drops the flag;
+  "authenticated layout with no user": the re-check's 401 under the flag retries instead of going to
+  /force-logout); `pnpm exec nx test apollo --skip-nx-cache` ("releaseApiOutage").
+
+
+  3. A preloaded query refused with ORGANIZATION_CONTEXT_REQUIRED gets the picker in the server
+  render (nestled-dev-template issue 114). 2026-11-14-api-auth-error-codes part 5 covered a loader
+  that awaits its query. A query a loader preloads (`apolloLoader` + `preloadQuery`, read with
+  `useReadQuery`, as the template's settings pages do) fails the shell with Apollo's redacted stream
+  error, and the loader's client recorded only `other`, so a signed-in user with no active
+  organization got a 500 on reload.
+  - apollo.ts: exported `isOrganizationContextRequiredError(error)` (the code only, on a
+    `CombinedGraphQLErrors`).
+  - apollo-loader.ts: the record keeps `organizationRequired` (a flag, never the error or its
+    message) from `onApiFailure`'s error; new `ssrOrganizationRequired(loaderData)`.
+  - entry.server.tsx: `shellErrorOutcome(error, cause, organizationRequired = false)` returns
+    `organization-required` when the shell error is itself that refusal or the recorded flag is set,
+    and nothing in the request outranks it (a recorded outage is still `unavailable`, a recorded
+    clean 401 still `force-logout`, whether the refusal is the shell error or recorded; a plain
+    render bug is still `error`). `onShellError` rejects with `organizationRequiredResponse()` and
+    marks the request in `servedErrorResponse`; the root ErrorBoundary already renders the picker
+    for it.
+  Affected paths: libs/shared/apollo/src/lib/apollo.ts, libs/shared/apollo/src/lib/apollo-loader.ts,
+  apps/web/app/entry.server.tsx, apps/web/tests/entry-server-shell-error.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("a preloaded query refused with
+  ORGANIZATION_CONTEXT_REQUIRED (#114)": 403 with the picker and the cookie kept, where it was a
+  500).
+
+
+  4. A Me 401 during outage evidence, and the second render after a shell error.
+  - app.tsx `meFailureAwaitsRecovery`: a Me 401 waits for recovery when
+    `isApiOutageSignalled() || isAuthFailureDeferred()`, as the root error boundary already judges
+    it. The Me boundary judges after the error link: an in-flight retry's evidence could end in
+    between, so a Me 401 the error link had let pass because of it was rendered as signed out, which
+    the signed-in layout then took toward /force-logout. Now it shows the recovering screen and Me is
+    retried once the API answers; a 401 with no evidence then signs out as usual.
+  - entry.server.tsx: `onShellError` marks the request in `servedErrorResponse` when it rejects with
+    the shell error itself (the `error` outcome), not only with a Response. React Router renders the
+    error page by calling `handleRequest` again with that error as the route error, and the loader
+    check then judged it as a loader's error, without the evidence the shell decision had: a shell
+    error carrying a 401 status (a thrown 401 Response, for one) signed the user out. The shell
+    error is also passed through new `shellErrorForErrorPage(error)` first: a render's own 401 (a
+    `Response` or route error response with status 401) becomes a plain Error, so the error page is
+    the generic one (a 500) rather than a 401 route error that the browser's root error boundary,
+    after hydration, would read as the API rejecting the session. Any other status is kept.
+  Affected paths: apps/web/app/app.tsx, apps/web/app/entry.server.tsx,
+  apps/web/tests/api-availability.spec.tsx, apps/web/tests/entry-server-shell-error.spec.tsx.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("keeps the session when the evidence ended
+  before the boundary judged the 401"; "the second render after a shell error": the generic error page,
+  status 500 with no 401 route error in the page, no Set-Cookie and no Location, where it was a 302
+  to /force-logout; "does not log out over the error page served after a render's own 401").
+
+why: >
+  Owner rule of 2026-11-11 and 2026-11-12, owner-approved for the whole fleet on 2026-11-16. The
+  2026.11.7 rollout found these in downstream projects, each also present in the template: a loader
+  401 that signed out before the root Me preload's 503 arrived (one downstream fixed it with a 3 s
+  wait), a root-loader outage flag that three downstreams had to add as evidence by hand, issue 114,
+  a Me 401 under outage evidence that fell through to a signed-out render, and a second render
+  after a shell error that re-ran the sign-out decision.
+
+affectedPaths:
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo-loader.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/app/loader-outage.ts
+  - apps/web/app/entry.server.tsx
+  - apps/web/app/root.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/session-recheck.tsx
+  - apps/web/app/routes/_authenticated/_layout.tsx
+  - apps/web/tests/entry-server-shell-error.spec.tsx
+  - apps/web/tests/api-availability.spec.tsx
+  - apps/web/tests/auth-error-navigation.spec.tsx
+  - apps/web/tests/routes/authenticated-layout-me-recovery.spec.tsx
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Keep the rule where each app makes the decision, and port the tests with the code: each test
+    named under Verification fails without its part. A project that names its sign-out outcome
+    differently (`sign-out`, `unauthenticated`), redirects somewhere other than /force-logout (say
+    `/login?expired=1`) or has no /force-logout keeps its own names and target; only the decision
+    changes.
+  - >
+    An app that resolves Me in the root loader (fetching it with its own client, often
+    `makeClient().query`, not `apolloLoader`): part 1, that Me call is awaited by React Router before
+    `handleRequest` runs, so it cannot lose the race; route the root loader's other unawaited calls
+    (and any child loader preloads) through `apolloLoader`, or give its client
+    `onOperationStart`/`onApiFailure` that write into the same record, so `waitForSsrApiCalls` sees
+    them. Part 2 matters most here: whatever flag that root loader returns on an outage (often
+    `serviceUnavailable`, sometimes a different name or shape) is what `loaderReportsOutage` must
+    recognise; if the project already has a `recordedLoaderCause` of its own, keep it and make sure
+    both `routeErrorOutcome` and `shellErrorOutcome` get it. Part 4's Me boundary change applies only
+    if a component reads Me from a query ref. If that root loader itself redirects on Me's 401, this
+    note does not change that redirect; if another loader in the same request can report an outage
+    while it does, report it rather than reworking the root loader here.
+  - >
+    An app with no signed-in layout (Me re-checked elsewhere, for example by a root
+    `shouldRevalidate` that re-runs the root loader): part 2's layout change applies to whatever
+    makes that decision; pass the root loader's flag to it, or read `useRootLoaderOutage()` there,
+    so a 401 while the flag stands is retried. If nothing re-checks Me in the browser, mark that
+    piece not-applicable and say so.
+  - >
+    An app that unmounts its routes on a failed Me (a boundary that renders an error or recovering
+    screen instead of a signed-out outlet): part 4's `meFailureAwaitsRecovery` change goes into the
+    predicate that decides between "retry Me" and "error screen", with the decision kept per failed
+    Me (as the template's `meRefsAwaitingRecovery` does); a Me 401 with no evidence keeps the app's
+    existing handling. Part 2's App signal goes into whichever component reads the root loader
+    flag and stays mounted while it is set.
+  - >
+    Part 1: if `handleRequest` in the project is `async`, or wraps the render in its own promise,
+    return `signOutOnceSettled(...)` from the loader path and settle that promise with it in the
+    shell path; do not resolve the redirect first and decide later. The 3 s bound is the value one
+    downstream proved; keep it unless the project's stream timeout is shorter, in which case use a
+    bound below it. The tests use real timers (the bound test takes about 3.5 s).
+  - >
+    Part 3: a project without an organization picker (no organizations, or no
+    `organizationRequiredResponse`) marks part 3 not-applicable; keep `isOrganizationContextRequiredError`
+    and the record field out too, or keep them unused, but do not add the picker. Part 3's new
+    `shellErrorOutcome` third argument defaults to false, so the shell decision is unchanged there.
+  - >
+    Part 4, second render: if the project's `onShellError` already marks every rejection (one
+    downstream did), part 4's entry.server change is superseded there; keep the test.
+  - >
+    The root ErrorBoundary now calls a hook (`useRootLoaderOutage`). Any test that calls
+    `ErrorBoundary({ error })` as a function must render `<ErrorBoundary error={...} />` instead, or
+    React throws "Invalid hook call".
+  - >
+    This note touches the same files as 2026-11-14-session-recovery-gaps and
+    2026-11-14-api-auth-error-codes; apply it after both. If another 2026.11.8 note touches
+    entry.server.tsx, root.tsx, app.tsx or apollo.ts, apply them in the feed's order.

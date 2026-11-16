@@ -82,10 +82,18 @@ export type ClientOptions = {
   platform?: 'web' | 'native'
   environment?: 'development' | 'staging' | 'production'
   /**
-   * Told what each failed operation failed with (`classifyApiFailure`). The server render uses it
-   * to recover the real cause of a failed preload, which the streamed query ref redacts.
+   * Told what each failed operation failed with (`classifyApiFailure`), and the error itself. The
+   * server render uses it to recover the real cause of a failed preload, which the streamed query
+   * ref redacts.
    */
-  onApiFailure?: (cause: ApiFailureCause) => void
+  onApiFailure?: (cause: ApiFailureCause, error: unknown) => void
+  /**
+   * Called when an operation starts; the function it returns is called once when that operation
+   * settles (answered, failed or cancelled). The server render uses it to wait, bounded, for a
+   * request's calls still in flight before it decides a sign-out (apollo-loader.ts,
+   * `waitForSsrApiCalls`).
+   */
+  onOperationStart?: () => () => void
 }
 
 /**
@@ -201,6 +209,17 @@ function isAuthenticationError(extensions?: { code?: unknown }): boolean {
  * the access-denied screen.
  */
 export const ORGANIZATION_CONTEXT_REQUIRED_CODE = 'ORGANIZATION_CONTEXT_REQUIRED'
+
+/**
+ * Whether an Apollo error is the API's `ORGANIZATION_CONTEXT_REQUIRED` refusal (by code only). The
+ * server render records it for a preloaded query, whose error reaches the render redacted.
+ */
+export function isOrganizationContextRequiredError(error: unknown): boolean {
+  return (
+    CombinedGraphQLErrors.is(error) &&
+    error.errors.some(({ extensions }) => extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE)
+  )
+}
 
 /**
  * A permission refusal, shown as access denied: `FORBIDDEN`, or any other code the API gave a 403
@@ -343,8 +362,15 @@ const CANCELLED = Symbol('cancelled')
  */
 export const APOLLO_DEFERRED_AUTH_FAILURE_EVENT = 'apollo-deferred-auth-failure'
 
-function releaseRetryEvidence(evidence: object): void {
-  clearApiOutage(evidence)
+/**
+ * Withdraws `source`'s outage evidence, like `clearApiOutage`, and when that was the last evidence
+ * held while the error link has let a 401 pass (`isAuthFailureDeferred`), dispatches
+ * `APOLLO_DEFERRED_AUTH_FAILURE_EVENT` so the app refetches the queries holding it for a fresh
+ * answer. For evidence whose end nothing else announces (an in-flight retry, a loader's outage
+ * flag), where `clearApiOutage` alone would leave such a 401 waiting.
+ */
+export function releaseApiOutage(source: object): void {
+  clearApiOutage(source)
   if (isApiOutageSignalled() || !authFailureDeferred || globalThis.window === undefined) return
   globalThis.window.dispatchEvent(new CustomEvent(APOLLO_DEFERRED_AUTH_FAILURE_EVENT))
 }
@@ -394,7 +420,7 @@ export function createOutageRetryLink(
         settled = true
         if (isRetryableConnectivityError(error)) unreachableOperations.add(key)
         else if (error !== CANCELLED) unreachableOperations.delete(key)
-        if (retrying) releaseRetryEvidence(evidence)
+        if (retrying) releaseApiOutage(evidence)
       }
       const subscription = forward(operation).subscribe({
         // An answer (an HTTP 200 carrying an UNAUTHENTICATED error among them) settles the attempt
@@ -449,9 +475,47 @@ export function classifyApiFailure(error: unknown): ApiFailureCause {
   return 'other'
 }
 
-function createErrorLink(onApiFailure?: (cause: ApiFailureCause) => void): ApolloLink {
+/**
+ * Tells `onStart` when each operation starts, and calls the function it returns once that operation
+ * settles: its first error, its completion, or its cancellation. Placed at the top of the chain, so
+ * an operation counts as settled only after the error link below has seen (and reported) its
+ * failure. See `ClientOptions.onOperationStart`.
+ */
+export function createOperationTrackingLink(onStart: () => () => void): ApolloLink {
+  return new ApolloLink(
+    (operation, forward) =>
+      new Observable(observer => {
+        const markSettled = onStart()
+        let settled = false
+        const settle = () => {
+          if (settled) return
+          settled = true
+          markSettled()
+        }
+        const subscription = forward(operation).subscribe({
+          next: result => observer.next(result),
+          error: error => {
+            settle()
+            observer.error(error)
+          },
+          complete: () => {
+            settle()
+            observer.complete()
+          },
+        })
+        return () => {
+          subscription.unsubscribe()
+          settle()
+        }
+      }),
+  )
+}
+
+function createErrorLink(
+  onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
+): ApolloLink {
   return new ErrorLink(({ error, operation }) => {
-    onApiFailure?.(classifyApiFailure(error))
+    onApiFailure?.(classifyApiFailure(error), error)
 
     if (CombinedGraphQLErrors.is(error)) {
       for (const { message, path, extensions } of error.errors) {
@@ -646,7 +710,8 @@ function createLinkChain(
   uri: string,
   token: string | null,
   isDev: boolean,
-  onApiFailure?: (cause: ApiFailureCause) => void,
+  onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
+  onOperationStart?: () => () => void,
 ): ApolloLink {
   const wsUri = uri.replace(/^http/, 'ws')
   const uploadLink = new UploadHttpLink({
@@ -670,6 +735,7 @@ function createLinkChain(
       )
 
   const links = [
+    ...(onOperationStart ? [createOperationTrackingLink(onOperationStart)] : []),
     createErrorLink(onApiFailure),
     createOutageRetryLink(),
     ...(isDev ? [createLogLink()] : []),
@@ -698,7 +764,7 @@ export function makeClient(request?: Request, options?: ClientOptions) {
   const token = resolveAuthToken(request, options)
   const isDev = options?.environment === 'development'
 
-  const link = createLinkChain(uri, token, isDev, options?.onApiFailure)
+  const link = createLinkChain(uri, token, isDev, options?.onApiFailure, options?.onOperationStart)
 
   return new ApolloClient({
     link,
