@@ -166,12 +166,21 @@ export default function ProfileSettings() {
   const user = data?.me
   const client = useApolloClient()
 
-  const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile)
-  const [changeEmail] = useMutation<ChangeEmailMutation>(ChangeEmail)
-  const [resendVerificationEmail] =
-    useMutation<ResendVerificationEmailMutation>(ResendVerificationEmail)
-  const [uploadUserAvatar] = useMutation<UploadUserAvatarMutation>(UploadUserAvatar)
-  const [removeUserAvatar] = useMutation<RemoveUserAvatarMutation>(RemoveUserAvatar)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile, {
+    errorPolicy: 'none',
+  })
+  const [changeEmail] = useMutation<ChangeEmailMutation>(ChangeEmail, { errorPolicy: 'none' })
+  const [resendVerificationEmail] = useMutation<ResendVerificationEmailMutation>(
+    ResendVerificationEmail,
+    { errorPolicy: 'none' },
+  )
+  const [uploadUserAvatar] = useMutation<UploadUserAvatarMutation>(UploadUserAvatar, {
+    errorPolicy: 'none',
+  })
+  const [removeUserAvatar] = useMutation<RemoveUserAvatarMutation>(RemoveUserAvatar, {
+    errorPolicy: 'none',
+  })
 
   const [isResendingEmail, setIsResendingEmail] = useState(false)
   const [emailResendSuccess, setEmailResendSuccess] = useState(false)

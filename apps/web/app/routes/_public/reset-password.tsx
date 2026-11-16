@@ -18,7 +18,10 @@ export default function ResetPasswordPage() {
     type: 'success' | 'error'
     text: string
   } | null>(null)
-  const [resetPasswordMutation, { loading }] = useMutation<ResetPasswordMutation>(ResetPassword)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [resetPasswordMutation, { loading }] = useMutation<ResetPasswordMutation>(ResetPassword, {
+    errorPolicy: 'none',
+  })
   const token = params.get('token') || ''
 
   // A link without a token can't reset anything: say so until the form reports something else.

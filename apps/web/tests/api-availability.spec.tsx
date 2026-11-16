@@ -58,6 +58,7 @@ import {
   SERVER_TROUBLE_MESSAGE,
   SERVER_TROUBLE_TITLE,
 } from '../app/api-unavailable'
+import { unauthenticatedResponse } from './helpers/api-rejection'
 
 /**
  * The root ErrorBoundary's own `error` prop type, whatever the app declares it as (`unknown` here;
@@ -1536,7 +1537,10 @@ describe('root error boundary for a 401 a route threw while the app had outage e
   `
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
-  const unauthorized = () => json(401, { message: 'Unauthorized' })
+  // The API's own rejection (HTTP 200, UNAUTHENTICATED): the logout below must not depend on an
+  // error link that signs out on an HTTP 401, which several apps' links never do.
+  const unauthorized = unauthenticatedResponse
+  const httpUnauthorized = () => json(401, { message: 'Unauthorized' })
   const dataOk = () => json(200, { data: { data: 'fresh' } })
 
   let dataResponses: Array<() => Response> = []
@@ -1593,7 +1597,7 @@ describe('root error boundary for a 401 a route threw while the app had outage e
    * meanwhile the route's own query gets a 401: the error link lets it pass, the route throws it,
    * and the root error boundary takes over from App.
    */
-  async function renderWhileRetryInFlight() {
+  async function renderWhileRetryInFlight(initialEntry = '/data') {
     const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
     await client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
     void client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
@@ -1620,7 +1624,7 @@ describe('root error boundary for a 401 a route threw while the app had outage e
           ],
         },
       ],
-      { initialEntries: ['/data'] },
+      { initialEntries: [initialEntry] },
     )
     await act(async () => {
       render(
@@ -1632,8 +1636,11 @@ describe('root error boundary for a 401 a route threw while the app had outage e
     return router
   }
 
-  it('shows the self-recovering screen, not the error screen', async () => {
-    dataResponses = [unauthorized]
+  it.each([
+    ['the API’s UNAUTHENTICATED answer', unauthorized],
+    ['an HTTP 401', httpUnauthorized],
+  ])('shows the self-recovering screen for %s, not the error screen', async (_label, rejected) => {
+    dataResponses = [rejected]
     await renderWhileRetryInFlight()
 
     expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
@@ -1672,6 +1679,43 @@ describe('root error boundary for a 401 a route threw while the app had outage e
     expect(globalThis.location.href).toBe('/logout?return_url=%2Fdata')
     expect(isApiOutageSignalled()).toBe(false)
     expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('recovers a URL with a #fragment too, where a same-URL navigation runs no loader', async () => {
+    dataResponses = [unauthorized, dataOk]
+    const router = await renderWhileRetryInFlight('/data#details')
+
+    await advance(retryDelayMs(0))
+    await act(async () => answerRetry())
+    await advance(0)
+
+    expect(screen.getByText('Data: fresh')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: SERVER_DOWN })).not.toBeInTheDocument()
+    expect(router.state.location).toMatchObject({ pathname: '/data', hash: '#details' })
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('does not take the user back to a #fragment URL they left while it was recovering', async () => {
+    let answerData: () => void = () => undefined
+    const heldData = () =>
+      new Promise<Response>(resolve => {
+        answerData = () => resolve(dataOk())
+      }) as unknown as Response
+    dataResponses = [unauthorized, heldData]
+    const router = await renderWhileRetryInFlight('/data#details')
+
+    await advance(retryDelayMs(0))
+    await act(async () => answerRetry())
+    await advance(0)
+    // The revalidation's loader is waiting on the API; the user goes elsewhere meanwhile.
+    await act(async () => {
+      await router.navigate('/')
+    })
+    await act(async () => answerData())
+    await advance(0)
+
+    expect(router.state.location.pathname).toBe('/')
+    expect(router.state.location.hash).toBe('')
   })
 
   it('revalidates once the screen’s own probe recovers when the retry settled first', async () => {

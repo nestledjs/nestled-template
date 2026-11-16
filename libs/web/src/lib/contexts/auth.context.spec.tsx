@@ -108,6 +108,22 @@ describe('AuthProvider', () => {
     expect(localStorage.getItem('activeOrganizationId')).toBeNull()
   })
 
+  it('switches through the one shared switch, which throws on a refusal and changes nothing', async () => {
+    const refused = vi.fn().mockRejectedValue(new Error('Not a member'))
+    useMutation.mockReturnValue([refused])
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const { result } = renderHook(() => useAuth(), { wrapper: wrapper() })
+    await act(async () => {
+      await expect(result.current.switchOrganization('org-2')).rejects.toThrow('Not a member')
+    })
+
+    // The shared switch's mutation throws on a GraphQL refusal, whatever the client's default.
+    expect(useMutation).toHaveBeenCalledWith(expect.anything(), { errorPolicy: 'none' })
+    expect(result.current.user?.activeOrganizationId).toBe('org-1')
+    expect(localStorage.getItem('activeOrganizationId')).toBe('org-1')
+  })
+
   it('handles emulation flags and super-admin permissions', async () => {
     const adminMember = {
       userId: 'user-1',

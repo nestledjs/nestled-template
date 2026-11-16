@@ -4,6 +4,7 @@ import Cookies from 'js-cookie'
 import { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { WebUiLoading } from '@nestled-template/web-ui'
+import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 
 const LOGOUT_MUTATION = gql`
   mutation Logout {
@@ -45,6 +46,9 @@ export default function LogoutRoute() {
       } catch (e) {
         console.warn('[logout] apollo.clearStore failed (continuing):', (e as Error)?.message)
       }
+
+      // The next user's requests must not be sent for this user's organization (x-organization-id)
+      storeActiveOrganizationId(null)
 
       // Navigate to login with optional return URL
       const loginPath = returnUrl ? `/login?return_url=${encodeURIComponent(returnUrl)}` : '/login'

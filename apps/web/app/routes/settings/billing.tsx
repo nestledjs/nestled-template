@@ -63,8 +63,13 @@ export default function BillingSettings() {
     trialEndsAt,
   } = useSubscription()
 
-  const [createPortalSession] = useMutation<CreatePortalSessionMutation>(CreatePortalSession)
-  const [cancelSubscription] = useMutation<CancelSubscriptionMutation>(CancelSubscription)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [createPortalSession] = useMutation<CreatePortalSessionMutation>(CreatePortalSession, {
+    errorPolicy: 'none',
+  })
+  const [cancelSubscription] = useMutation<CancelSubscriptionMutation>(CancelSubscription, {
+    errorPolicy: 'none',
+  })
 
   // Get usage limits
   const memberCount =

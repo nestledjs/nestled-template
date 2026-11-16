@@ -11,20 +11,23 @@ import {
 import { RetryLink } from '@apollo/client/link/retry'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
-  APOLLO_ORGANIZATION_REQUIRED_EVENT,
   APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
+  APOLLO_ORGANIZATION_REQUIRED_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   classifyApiFailure,
   clearApiOutage,
   createOutageRetryLink,
+  getStoredActiveOrganizationId,
   isApiOutageSignalled,
   isAuthFailureDeferred,
+  isOrganizationContextRequiredError,
   isQueryOperation,
   isRetryableConnectivityError,
-  isOrganizationContextRequiredError,
   makeClient,
   ORGANIZATION_CONTEXT_REQUIRED_CODE,
   signalApiOutage,
+  SKIP_AUTH_ERROR_REPORT_CONTEXT,
+  storeActiveOrganizationId,
   subscriptionRetryDelayMs,
   takeDeferredAuthFailure,
 } from './apollo'
@@ -1446,5 +1449,159 @@ describe('releaseApiOutage', () => {
       window.removeEventListener(apollo.APOLLO_DEFERRED_AUTH_FAILURE_EVENT, announced)
       apollo.takeDeferredAuthFailure()
     }
+  })
+})
+
+describe('SKIP_AUTH_ERROR_REPORT_CONTEXT', () => {
+  const query = gql`
+    query Me {
+      me {
+        id
+      }
+    }
+  `
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  const coded = (code: string, statusCode: number) => () =>
+    json(200, {
+      data: null,
+      errors: [{ message: 'Refused', extensions: { code, originalError: { statusCode } } }],
+    })
+  const answers: Array<[string, () => Response]> = [
+    ['UNAUTHENTICATED', coded('UNAUTHENTICATED', 401)],
+    ['an HTTP 401', () => json(401, { message: 'Unauthorized' })],
+    ['FORBIDDEN', coded('FORBIDDEN', 403)],
+    ['an HTTP 403', () => json(403, { message: 'Forbidden' })],
+    [ORGANIZATION_CONTEXT_REQUIRED_CODE, coded(ORGANIZATION_CONTEXT_REQUIRED_CODE, 403)],
+  ]
+  let testWindow: {
+    location: { pathname: string; search: string; hash: string; href: string }
+    dispatchEvent: ReturnType<typeof vi.fn>
+  }
+
+  // A fresh copy of the module: earlier tests in this file can leave a retry's outage evidence
+  // behind, and with it every 401 here would be deferred instead of acted on.
+  let apollo: typeof import('./apollo')
+  beforeEach(async () => {
+    vi.resetModules()
+    apollo = await import('./apollo')
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    testWindow = {
+      location: { pathname: '/members', search: '', hash: '', href: '' },
+      dispatchEvent: vi.fn(),
+    }
+    vi.stubGlobal('window', testWindow)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    takeDeferredAuthFailure()
+  })
+
+  async function run(answer: () => Response, context?: Record<string, unknown>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => answer()),
+    )
+    await apollo
+      .makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      .query({ query, fetchPolicy: 'no-cache', errorPolicy: 'none', context })
+      .catch(() => undefined)
+  }
+
+  it.each(answers)('takes no action on %s for a request that asks so', async (_label, answer) => {
+    await run(answer, apollo.SKIP_AUTH_ERROR_REPORT_CONTEXT)
+
+    expect(testWindow.location.href).toBe('')
+    expect(testWindow.dispatchEvent).not.toHaveBeenCalled()
+  })
+
+  it.each(answers)('still acts on %s for any other request', async (_label, answer) => {
+    await run(answer)
+
+    const acted = testWindow.location.href !== '' || testWindow.dispatchEvent.mock.calls.length > 0
+    expect(acted).toBe(true)
+  })
+
+  it('records no deferred 401 for it during an outage, since its caller decides', async () => {
+    const outage = {}
+    apollo.signalApiOutage(outage)
+    try {
+      await run(coded('UNAUTHENTICATED', 401), apollo.SKIP_AUTH_ERROR_REPORT_CONTEXT)
+      expect(apollo.isAuthFailureDeferred()).toBe(false)
+    } finally {
+      apollo.clearApiOutage(outage)
+    }
+  })
+
+  it('still reports a request that never reached the API', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    await apollo
+      .makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      .query({ query, context: apollo.SKIP_AUTH_ERROR_REPORT_CONTEXT })
+      .catch(() => undefined)
+
+    expect(testWindow.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: apollo.APOLLO_SERVICE_UNAVAILABLE_EVENT }),
+    )
+  })
+})
+
+describe('the stored active organization', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  it('is what the next request sends as x-organization-id, and forgetting it drops the header', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ data: { ping: 'pong' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+    const ping = gql`
+      query Ping {
+        ping
+      }
+    `
+
+    storeActiveOrganizationId('org-2')
+    expect(getStoredActiveOrganizationId()).toBe('org-2')
+    await client.query({ query: ping, fetchPolicy: 'no-cache' })
+    expect(fetchMock.mock.calls[0][1].headers['x-organization-id']).toBe('org-2')
+
+    storeActiveOrganizationId(null)
+    expect(getStoredActiveOrganizationId()).toBeNull()
+    await client.query({ query: ping, fetchPolicy: 'no-cache' })
+    expect(fetchMock.mock.calls[1][1].headers['x-organization-id']).toBeUndefined()
+  })
+
+  it('never throws when storage is blocked', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError')
+    })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError')
+    })
+
+    expect(getStoredActiveOrganizationId()).toBeNull()
+    expect(() => storeActiveOrganizationId('org-2')).not.toThrow()
+  })
+
+  it('never throws when reading localStorage itself throws', () => {
+    vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError')
+    })
+
+    expect(getStoredActiveOrganizationId()).toBeNull()
+    expect(() => storeActiveOrganizationId('org-2')).not.toThrow()
+    expect(() => storeActiveOrganizationId(null)).not.toThrow()
   })
 })

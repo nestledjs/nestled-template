@@ -19,7 +19,10 @@ export default function RegisterPage() {
   // every failed attempt — including the common "email already in use" — burns it, and without a
   // reset the retry would fail the captcha instead of showing the real error.
   const [captchaKey, setCaptchaKey] = useState(0)
-  const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register, {
+    errorPolicy: 'none',
+  })
   const captchaRequired = Boolean(turnstileSiteKey())
 
   function failRegistration(message: string) {

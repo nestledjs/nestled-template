@@ -1,5 +1,6 @@
 import { useQuery } from '@apollo/client/react'
 import { useGlobalCtx } from '@nestled-template/web'
+import { resolveActiveOrganization } from '@nestled-template/shared/apollo'
 import {
   MyOrganizationsWithMembers,
   type MeQuery,
@@ -13,10 +14,6 @@ import {
  * their own content on the same answer, so a tab never leads to a page that turns its user away.
  */
 
-type UserWithActiveOrganization = NonNullable<MeQuery['me']> & {
-  activeOrganizationId?: string | null
-}
-
 export type SettingsOrganization = MyOrganizationsWithMembersQuery['myOrganizations'][number]
 
 export type SettingsOrganizationMember = NonNullable<
@@ -27,11 +24,7 @@ export function useSettingsOrganization() {
   const { user } = useGlobalCtx()
   const { data, loading } = useQuery<MyOrganizationsWithMembersQuery>(MyOrganizationsWithMembers)
   const organizations = data?.myOrganizations || []
-  const userWithActiveOrganization: UserWithActiveOrganization | null | undefined = user
-  const activeOrganization =
-    organizations.find(org => org.id === userWithActiveOrganization?.activeOrganizationId) ||
-    organizations[0] ||
-    null
+  const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
   const activeOrganizationMember =
     activeOrganization?.members?.find(member => member.userId === user?.id) || null
 

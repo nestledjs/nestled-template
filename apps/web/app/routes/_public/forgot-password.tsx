@@ -20,7 +20,11 @@ export default function ForgotPasswordPage() {
   // A Turnstile token is single-use, so a failed attempt must remount the widget for a fresh
   // challenge — otherwise the retry fails the captcha instead of surfacing the real error.
   const [captchaKey, setCaptchaKey] = useState(0)
-  const [forgotPasswordMutation, { loading }] = useMutation<ForgotPasswordMutation>(ForgotPassword)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [forgotPasswordMutation, { loading }] = useMutation<ForgotPasswordMutation>(
+    ForgotPassword,
+    { errorPolicy: 'none' },
+  )
   const captchaRequired = Boolean(turnstileSiteKey())
 
   async function handleForgotPassword(input: ForgotPasswordInput) {

@@ -37,8 +37,11 @@ interface UpgradeModalProps {
 export function UpgradeModal({ isOpen, onClose, feature, reason }: UpgradeModalProps) {
   const { plan: currentPlan } = useSubscription()
   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
-  const [createCheckout, { loading: checkoutLoading }] =
-    useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [createCheckout, { loading: checkoutLoading }] = useMutation<CreateCheckoutSessionMutation>(
+    CreateCheckoutSession,
+    { errorPolicy: 'none' },
+  )
 
   const plans = data?.plans || []
 

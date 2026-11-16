@@ -20,6 +20,7 @@ fragment AuthUserDetails on User {
   updatedAt
   isEmulating
   originalAdminId
+  activeOrganizationId
   emails {
     id
     email

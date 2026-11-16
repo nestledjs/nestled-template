@@ -476,6 +476,34 @@ export function classifyApiFailure(error: unknown): ApiFailureCause {
 }
 
 /**
+ * The operation context for a request whose caller judges its own authentication and permission
+ * errors: pass it as `context` and the error link takes no action for that request (no logout, no
+ * deferred 401, no access-forbidden or organization-required event); it still logs. The signed-in
+ * layout's Me re-check (apps/web/app/session-recheck.tsx) uses it, since it decides the outcome
+ * itself. Apps whose error link only dispatches an event need it most: without it the re-check's
+ * own 401 or 403 reached that event's handler (an access-denied screen, say) before the re-check
+ * could decide. An app with its own error link checks `operation.getContext().skipAuthErrorReport`.
+ */
+export const SKIP_AUTH_ERROR_REPORT_CONTEXT = { skipAuthErrorReport: true } as const
+
+function skipsAuthErrorReport(operation: ApolloLink.Operation): boolean {
+  return operation.getContext().skipAuthErrorReport === true
+}
+
+function reportGraphQLError(
+  extensions: { code?: unknown; originalError?: unknown } | undefined,
+  operation: ApolloLink.Operation,
+): void {
+  if (isAuthenticationError(extensions)) {
+    handleAuthenticationError()
+  } else if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) {
+    handleOrganizationRequired(operation)
+  } else if (isForbiddenError(extensions)) {
+    handleAuthorizationError(operation)
+  }
+}
+
+/**
  * Tells `onStart` when each operation starts, and calls the function it returns once that operation
  * settles: its first error, its completion, or its cancellation. Placed at the top of the chain, so
  * an operation counts as settled only after the error link below has seen (and reported) its
@@ -516,18 +544,13 @@ function createErrorLink(
 ): ApolloLink {
   return new ErrorLink(({ error, operation }) => {
     onApiFailure?.(classifyApiFailure(error), error)
+    const report = !skipsAuthErrorReport(operation)
 
     if (CombinedGraphQLErrors.is(error)) {
       for (const { message, path, extensions } of error.errors) {
         console.error(`[GraphQL error]: Message: ${message}, Path: ${path}`)
 
-        if (isAuthenticationError(extensions)) {
-          handleAuthenticationError()
-        } else if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) {
-          handleOrganizationRequired(operation)
-        } else if (isForbiddenError(extensions)) {
-          handleAuthorizationError(operation)
-        }
+        if (report) reportGraphQLError(extensions, operation)
 
         logDevelopmentExtensions(extensions)
       }
@@ -536,21 +559,24 @@ function createErrorLink(
     if (!CombinedGraphQLErrors.is(error)) {
       const networkError = errorFromUnknown(error)
       console.error(`[Apollo Error Link] Network error for operation: ${operation.operationName}`)
-      handleNetworkError(networkError, operation)
+      handleNetworkError(networkError, operation, report)
     }
   })
 }
 
-function handleNetworkError(networkError: Error, operation: ApolloLink.Operation): void {
+function handleNetworkError(
+  networkError: Error,
+  operation: ApolloLink.Operation,
+  report: boolean,
+): void {
   console.error(`[Network error]: ${networkError}`)
 
   const statusCode = networkErrorStatus(networkError)
-  if (statusCode === 401) {
-    handleAuthenticationError()
-    return
-  }
-  if (statusCode === 403) {
-    handleAuthorizationError(operation)
+  if (statusCode === 401 || statusCode === 403) {
+    // The caller judges these itself when it asked to (SKIP_AUTH_ERROR_REPORT_CONTEXT).
+    if (!report) return
+    if (statusCode === 401) handleAuthenticationError()
+    else handleAuthorizationError(operation)
     return
   }
 
@@ -625,12 +651,76 @@ function dispatchServiceUnavailableEvent(
   )
 }
 
-function getActiveOrganizationId(): string | null {
-  // Only available in browser environment
-  if (globalThis.window === undefined || typeof localStorage === 'undefined') {
+/** Where the browser keeps its active organization, sent on every request as `x-organization-id`. */
+export const ACTIVE_ORGANIZATION_STORAGE_KEY = 'activeOrganizationId'
+
+/**
+ * The organization this browser's requests are sent for (`x-organization-id`), or null: none is
+ * stored, storage is blocked, or this is a server render (which never sends the header). The API
+ * reads the header before the user's own `activeOrganizationId`, so this is the organization the
+ * next request is answered for.
+ */
+export function getStoredActiveOrganizationId(): string | null {
+  if (globalThis.window === undefined) return null
+  // Inside the try: where storage is blocked, reading `localStorage` itself throws.
+  try {
+    if (typeof localStorage === 'undefined') return null
+    return localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)
+  } catch {
     return null
   }
-  return localStorage.getItem('activeOrganizationId')
+}
+
+/**
+ * Stores (or, with null, forgets) the organization the next requests are sent for. Every switch and
+ * every shell that learns the active organization writes it here, so the header and the UI cannot
+ * disagree. A no-op during a server render or with storage blocked.
+ */
+export function storeActiveOrganizationId(organizationId: string | null): void {
+  if (globalThis.window === undefined) return
+  try {
+    if (typeof localStorage === 'undefined') return
+    if (organizationId) localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, organizationId)
+    else localStorage.removeItem(ACTIVE_ORGANIZATION_STORAGE_KEY)
+  } catch {
+    // Storage blocked: requests fall back to the user's active organization on the API.
+  }
+}
+
+/**
+ * The organization a signed-in shell shows, from the user's organizations:
+ * 1. the server's active organization (`User.activeOrganizationId`, from Me), when the user is
+ *    still a member of it;
+ * 2. else the one this browser has stored (`getStoredActiveOrganizationId`), when still a member;
+ * 3. else the first, only when nothing else is known; null with no organizations.
+ *
+ * Whatever it returns must also be what the requests are sent for: a shell stores it
+ * (`rememberActiveOrganization`) so the `x-organization-id` header, the server's answer and the UI
+ * cannot disagree. Every place that shows or acts on "the active organization" uses this, never
+ * `organizations[0]` on its own: that showed the first organization while requests went to the
+ * stored one.
+ */
+export function resolveActiveOrganization<T extends { id: string }>(
+  organizations: readonly T[],
+  serverActiveOrganizationId: string | null | undefined,
+  storedOrganizationId: string | null = getStoredActiveOrganizationId(),
+): T | null {
+  const member = (id: string | null | undefined) =>
+    id ? organizations.find(organization => organization.id === id) : undefined
+  return (
+    member(serverActiveOrganizationId) ?? member(storedOrganizationId) ?? organizations[0] ?? null
+  )
+}
+
+/**
+ * Stores `organizationId` as the organization the next requests are sent for, when it is not stored
+ * already. A shell calls it with what it shows (`resolveActiveOrganization`) while rendering, before
+ * its children's queries start, so they are sent for the organization on screen. Null stores
+ * nothing: a user with no organization keeps whatever the API decides.
+ */
+export function rememberActiveOrganization(organizationId: string | null | undefined): void {
+  if (!organizationId || getStoredActiveOrganizationId() === organizationId) return
+  storeActiveOrganizationId(organizationId)
 }
 
 function createAuthLink(token: string | null): ApolloLink {
@@ -643,7 +733,7 @@ function createAuthLink(token: string | null): ApolloLink {
     }
 
     // Add organization context header for multi-tenant isolation
-    const activeOrgId = getActiveOrganizationId()
+    const activeOrgId = getStoredActiveOrganizationId()
     if (activeOrgId) {
       newHeaders['x-organization-id'] = activeOrgId
     }

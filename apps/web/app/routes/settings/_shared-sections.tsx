@@ -153,7 +153,10 @@ export function TransferOwnershipSection() {
 export function DangerZoneSection() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
-  const [deleteAccountMutation] = useMutation<DeleteUserAccountMutation>(DeleteUserAccount)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [deleteAccountMutation] = useMutation<DeleteUserAccountMutation>(DeleteUserAccount, {
+    errorPolicy: 'none',
+  })
 
   const handleDeleteAccount = async () => {
     if (deleteConfirmText !== 'DELETE') {

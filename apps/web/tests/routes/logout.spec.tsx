@@ -91,6 +91,17 @@ describe('Logout Route', () => {
   })
 
   describe('Logout Flow', () => {
+    it('forgets the stored active organization, so the next user is not sent it', async () => {
+      localStorage.setItem('activeOrganizationId', 'org-2')
+      mockApolloClient.mutate.mockResolvedValue({ data: { logout: true } })
+      mockApolloClient.clearStore.mockResolvedValue([])
+
+      renderLogout()
+
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalled())
+      expect(localStorage.getItem('activeOrganizationId')).toBeNull()
+    })
+
     it('should call logout mutation', async () => {
       mockApolloClient.mutate.mockResolvedValue({ data: { logout: true } })
       mockApolloClient.clearStore.mockResolvedValue([])

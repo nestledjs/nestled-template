@@ -129,8 +129,15 @@ export default function NotificationsSettings() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
 
-  const [createPreference] = useMutation<UserCreateUserPreferenceMutation>(UserCreateUserPreference)
-  const [updatePreference] = useMutation<UserUpdateUserPreferenceMutation>(UserUpdateUserPreference)
+  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  const [createPreference] = useMutation<UserCreateUserPreferenceMutation>(
+    UserCreateUserPreference,
+    { errorPolicy: 'none' },
+  )
+  const [updatePreference] = useMutation<UserUpdateUserPreferenceMutation>(
+    UserUpdateUserPreference,
+    { errorPolicy: 'none' },
+  )
 
   const showSuccess = (message: string) => {
     setFormSuccess(message)

@@ -1061,9 +1061,11 @@ export class OrganizationService {
       },
     })
 
-    // Update cache with new active organization
+    // The auth cache must follow the switch: requests with no x-organization-id header resolve the
+    // organization from it, and a cached user would still carry the old activeOrganizationId.
     if (this.authCache?.isEnabled()) {
       await this.authCache.setUserActiveOrganization(userId, input.organizationId)
+      await this.authCache.invalidateUser(userId)
     }
 
     Logger.log(`User ${userId} switched to organization ${input.organizationId}`)
