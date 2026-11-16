@@ -1,16 +1,27 @@
 // @vitest-environment node
+import type { ReactNode } from 'react'
 import {
   createRequestHandler,
+  isRouteErrorResponse,
+  type LoaderFunctionArgs,
   Outlet,
+  useLoaderData,
   UNSAFE_withComponentProps as withComponentProps,
   UNSAFE_withErrorBoundaryProps as withErrorBoundaryProps,
   type ServerBuild,
 } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
-import { makeClient } from '@nestled-template/shared/apollo'
+import { useReadQuery, type QueryRef } from '@apollo/client/react'
+import { apolloLoader, makeClient } from '@nestled-template/shared/apollo'
 import * as entryServer from '../app/entry.server'
-import { routeErrorOutcome, shellErrorOutcome } from '../app/entry.server'
+import {
+  recordedLoaderCause,
+  routeErrorOutcome,
+  SSR_API_SETTLE_MS,
+  shellErrorForErrorPage,
+  shellErrorOutcome,
+} from '../app/entry.server'
 import * as rootModule from '../app/root'
 import { OFFLINE_TITLE, SERVER_TROUBLE_MESSAGE, SERVER_TROUBLE_TITLE } from '../app/api-unavailable'
 import { ORGANIZATION_PICKER_TITLE } from '../app/organization-required'
@@ -64,9 +75,19 @@ function MembersPage() {
  * ErrorBoundary to pass them their props), or with a component that throws `rootError`. The
  * members route gets `membersLoader` when one is given.
  */
-function build(rootError?: Error, membersLoader?: () => Promise<unknown>): ServerBuild {
+function build(
+  rootError?: unknown,
+  membersLoader?: (args: LoaderFunctionArgs) => unknown,
+  overrides: {
+    /** Replaces the members route's component. */
+    membersComponent?: () => ReactNode
+    /** Replaces the root loader (the real one runs by default). */
+    rootLoader?: (args: LoaderFunctionArgs) => unknown
+  } = {},
+): ServerBuild {
   const root = {
     ...rootModule,
+    ...(overrides.rootLoader && { loader: overrides.rootLoader }),
     default: withComponentProps(
       rootError
         ? () => {
@@ -84,7 +105,10 @@ function build(rootError?: Error, membersLoader?: () => Promise<unknown>): Serve
         id: 'routes/members',
         parentId: 'root',
         path: 'members/*',
-        module: { default: MembersPage, ...(membersLoader && { loader: membersLoader }) },
+        module: {
+          default: overrides.membersComponent ?? MembersPage,
+          ...(membersLoader && { loader: membersLoader }),
+        },
       },
     },
     assets: {
@@ -508,5 +532,247 @@ describe('shellErrorOutcome', () => {
     [undefined, new Error('Request failed with status 401'), 'error'],
   ] as const)('recorded %s with %s -> %s', (cause, error, outcome) => {
     expect(shellErrorOutcome(error, cause)).toBe(outcome)
+  })
+})
+
+describe('server render sign-out decisions with the whole request in view', () => {
+  const MEMBERS_DATA = gql`
+    query MembersData {
+      membersData
+    }
+  `
+
+  type Respond = (init?: RequestInit) => Response | Promise<Response>
+
+  // Each operation's answer, by name; an answer may take a while.
+  function answer(byOperation: Record<string, Respond>) {
+    fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      const { operationName } = JSON.parse(String(init?.body))
+      return byOperation[operationName](init)
+    })
+  }
+  const json = (status: number, body: unknown) => () =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  const later =
+    (ms: number, respond: Respond): Respond =>
+    init =>
+      new Promise(resolve => setTimeout(() => resolve(respond(init)), ms))
+  const signedIn = json(200, { data: { me: { __typename: 'User', id: 'user-1' } } })
+  const unauthorized = json(401, { message: 'Unauthorized' })
+  const proxy503 = json(503, {})
+  const organizationRequired = json(200, {
+    data: null,
+    errors: [
+      {
+        message: 'Organization context required: secret detail',
+        extensions: {
+          code: 'ORGANIZATION_CONTEXT_REQUIRED',
+          originalError: { statusCode: 403, code: 'ORGANIZATION_CONTEXT_REQUIRED' },
+        },
+      },
+    ],
+  })
+
+  // A members loader that awaits its query (an app that resolves Me, or anything, in a loader).
+  const awaitsQuery = async () => {
+    await makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' }).query({
+      query: MEMBERS_DATA,
+      fetchPolicy: 'network-only',
+      errorPolicy: 'none',
+    })
+    return {}
+  }
+  // A members loader that preloads its query, as the template's settings pages do.
+  const preloadsQuery = apolloLoader()(({ preloadQuery }) => ({
+    membersRef: preloadQuery(MEMBERS_DATA),
+  }))
+  function ReadsPreloadedQuery() {
+    const { membersRef } = useLoaderData() as { membersRef: QueryRef<unknown> }
+    useReadQuery(membersRef)
+    return <p>Members data</p>
+  }
+
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function expectRecovering503(response: Response, html: string) {
+    expect(response.status).toBe(503)
+    expect(clearsTheCookie(response)).toBe(false)
+    expect(response.headers.get('Location')).toBeNull()
+    expect(html).toContain(SERVER_TROUBLE_TITLE)
+  }
+
+  describe("a loader's 401 waits for the request's other API calls", () => {
+    it('serves the recovering 503 when the root Me preload reports a 503 after the 401', async () => {
+      // The root loader returns its Me preload unawaited; the members loader's own query is
+      // answered first. Deciding on that 401 alone signed the user out during an outage.
+      answer({ Me: later(50, proxy503), MembersData: unauthorized })
+
+      const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+      expectRecovering503(response, await response.text())
+    })
+
+    it('still signs out when the other calls settle with no outage', async () => {
+      answer({ Me: later(50, signedIn), MembersData: unauthorized })
+
+      const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+      expect(response.status).toBe(302)
+      expect(response.headers.get('Location')).toBe(
+        `/force-logout?return_url=${encodeURIComponent('/members/dashboard')}`,
+      )
+      expect(clearsTheCookie(response)).toBe(true)
+    })
+
+    it(
+      'keeps the session and serves 503 when a call is still out after the bound',
+      async () => {
+        // Me is answered, with no outage, only well after the bound: waiting for it would sign out.
+        answer({ Me: later(SSR_API_SETTLE_MS + 500, signedIn), MembersData: unauthorized })
+        const started = Date.now()
+
+        const response = await reloadSignedIn('/members/dashboard', build(undefined, awaitsQuery))
+
+        expect(Date.now() - started).toBeGreaterThanOrEqual(SSR_API_SETTLE_MS - 50)
+        expectRecovering503(response, await response.text())
+      },
+      SSR_API_SETTLE_MS + 5_000,
+    )
+  })
+
+  describe("the shell's 401 waits too", () => {
+    it("serves the recovering 503 when Me's 401 comes before another preload's 503", async () => {
+      // Me's preload fails first and fails the shell; the members route's preload, which nothing
+      // renders, reports the outage a moment later.
+      answer({ Me: unauthorized, MembersData: later(50, proxy503) })
+
+      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
+
+      expectRecovering503(response, await response.text())
+    })
+
+    it("signs out on Me's 401 once the other preload is answered", async () => {
+      answer({ Me: unauthorized, MembersData: later(50, json(200, { data: { membersData: 1 } })) })
+
+      const response = await reloadSignedIn('/members/dashboard', build(undefined, preloadsQuery))
+
+      expect(response.status).toBe(302)
+      expect(clearsTheCookie(response)).toBe(true)
+    })
+  })
+
+  describe("the root loader's outage flag is outage evidence", () => {
+    // The root loader could not start the Me preload and returned its flag instead: nothing went
+    // through an Apollo client, so only the flag says the API was unreachable.
+    const rootFlagsOutage = () => ({ serviceUnavailable: true, theme: 'dark' })
+
+    it("keeps the session and serves the recovering 503 for a child loader's 401", async () => {
+      answer({ MembersData: unauthorized })
+
+      const response = await reloadSignedIn(
+        '/members/dashboard',
+        build(undefined, awaitsQuery, { rootLoader: rootFlagsOutage }),
+      )
+
+      expectRecovering503(response, await response.text())
+    })
+
+    it('counts the flag in recordedLoaderCause, and never as more than an outage', () => {
+      expect(recordedLoaderCause({ root: { serviceUnavailable: true } })).toBe('unavailable')
+      expect(recordedLoaderCause({ root: { serviceUnavailable: 'yes' } })).toBeUndefined()
+      expect(recordedLoaderCause({ root: { theme: 'dark' }, child: null })).toBeUndefined()
+      expect(recordedLoaderCause(undefined)).toBeUndefined()
+      expect(
+        routeErrorOutcome(
+          { 'routes/members': httpError(401) },
+          undefined,
+          recordedLoaderCause({ root: { serviceUnavailable: true } }),
+        ),
+      ).toBe('unavailable')
+      expect(
+        shellErrorOutcome(
+          httpError(401),
+          recordedLoaderCause({ root: { serviceUnavailable: true } }),
+        ),
+      ).toBe('unavailable')
+    })
+  })
+
+  describe('a preloaded query refused with ORGANIZATION_CONTEXT_REQUIRED (#114)', () => {
+    it('serves the organization picker (403, cookie kept), not a 500', async () => {
+      answer({ Me: signedIn, MembersData: organizationRequired })
+
+      const response = await reloadSignedIn(
+        '/members/dashboard',
+        build(undefined, preloadsQuery, { membersComponent: ReadsPreloadedQuery }),
+      )
+      const html = await response.text()
+
+      expect(response.status).toBe(403)
+      expect(clearsTheCookie(response)).toBe(false)
+      expect(response.headers.get('Location')).toBeNull()
+      expect(html).toContain(ORGANIZATION_PICKER_TITLE)
+      expect(html).not.toContain('Unexpected Server Error')
+    })
+
+    it('decides the picker only when nothing outranks it', () => {
+      const redacted = new Error('Error from event stream. Redacted for security concerns.')
+      expect(shellErrorOutcome(redacted, 'other', true)).toBe('organization-required')
+      expect(shellErrorOutcome(redacted, 'other', false)).toBe('error')
+      expect(shellErrorOutcome(redacted, 'unavailable', true)).toBe('unavailable')
+      expect(shellErrorOutcome(redacted, 'unauthenticated', true)).toBe('force-logout')
+      expect(shellErrorOutcome(new Error('A render bug'), undefined, true)).toBe('error')
+      // The refusal as the shell error itself goes through the same precedence.
+      const refusal = new CombinedGraphQLErrors({
+        data: null,
+        errors: [{ message: 'x', extensions: { code: 'ORGANIZATION_CONTEXT_REQUIRED' } }],
+      })
+      expect(shellErrorOutcome(refusal, undefined)).toBe('organization-required')
+      expect(shellErrorOutcome(refusal, 'other')).toBe('organization-required')
+      expect(shellErrorOutcome(refusal, 'unavailable')).toBe('unavailable')
+      expect(shellErrorOutcome(refusal, 'unauthenticated')).toBe('force-logout')
+    })
+  })
+
+  describe('the second render after a shell error', () => {
+    it('renders the error page and does not decide again', async () => {
+      // A shell error that carries a 401 status but is not an API failure the shell recognises.
+      // React Router renders the error page by calling handleRequest again with it as the route
+      // error, where the loader check used to read it as a loader's 401 and sign the user out.
+      graphqlAnswers(200, { data: { me: { __typename: 'User', id: 'user-1' } } })
+
+      const response = await reloadSignedIn(
+        '/members/dashboard',
+        build(new Response(null, { status: 401, statusText: 'Unauthorized' })),
+      )
+
+      expect(response.headers.get('Location')).toBeNull()
+      expect(clearsTheCookie(response)).toBe(false)
+      // Nor does the page carry a 401 route error to the browser, whose root error boundary would
+      // read it as the API rejecting the session and go to /force-logout after hydration.
+      expect(response.status).toBe(500)
+      expect(await response.text()).not.toMatch(/ErrorResponse[^\]]*401/)
+    })
+
+    it('passes a render 401 on as a plain error, and keeps every other status', () => {
+      const thrown401 = shellErrorForErrorPage(new Response(null, { status: 401 }))
+      expect(thrown401).toBeInstanceOf(Error)
+      expect(isRouteErrorResponse(thrown401)).toBe(false)
+      const notFound = new Response(null, { status: 404 })
+      expect(shellErrorForErrorPage(notFound)).toBe(notFound)
+      const bug = new Error('A render bug')
+      expect(shellErrorForErrorPage(bug)).toBe(bug)
+    })
   })
 })

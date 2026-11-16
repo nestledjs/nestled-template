@@ -21,7 +21,10 @@ import {
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
   classifyApiFailure,
   isApiOutageSignalled,
+  isAuthFailureDeferred,
   isRetryableConnectivityError,
+  releaseApiOutage,
+  signalApiOutage,
   takeDeferredAuthFailure,
 } from '@nestled-template/shared/apollo'
 import { AccessDenied } from './access-denied'
@@ -71,14 +74,19 @@ function isAnsweredApiFailure(error: unknown): boolean {
 /**
  * A Me failure that must not sign the user out, and is retried instead: a connectivity failure, an
  * answered error other than a 401 (`isAnsweredApiFailure`), or a 401 while the app has outage
- * evidence (`isApiOutageSignalled`). Log out only on an unambiguous 401; if the session really has
- * expired, the retry gets a 401 with no outage and logs out then.
+ * evidence (`isApiOutageSignalled`) or the error link has let a 401 pass because of some
+ * (`isAuthFailureDeferred`), as the root error boundary judges it. The second matters because the
+ * boundary judges after the error link: an in-flight retry's evidence can end in between, and the
+ * Me 401 that arrived while it stood was then rendered as signed out. Log out only on an
+ * unambiguous 401; if the session really has expired, the retry gets a 401 with no outage and logs
+ * out then.
  */
 function meFailureAwaitsRecovery(error: unknown): boolean {
   return (
     isRetryableConnectivityError(error) ||
     isAnsweredApiFailure(error) ||
-    (classifyApiFailure(error) === 'unauthenticated' && isApiOutageSignalled())
+    (classifyApiFailure(error) === 'unauthenticated' &&
+      (isApiOutageSignalled() || isAuthFailureDeferred()))
   )
 }
 
@@ -216,6 +224,18 @@ export function App() {
   // Written after commit, before any effect or handler reads it.
   useLayoutEffect(() => {
     loaderUnavailableRef.current = loaderServiceUnavailable
+  }, [loaderServiceUnavailable])
+  // The loader's flag is outage evidence for as long as the loader data carries it, not only while
+  // the screen is up: once the probe answers, the screen's own evidence ends but the revalidation
+  // that brings fresh loader data has not finished, and a 401 meanwhile is not proof the session is
+  // bad. Released when fresh data drops the flag (or App unmounts); a 401 the error link let pass
+  // meanwhile is then refetched (`releaseApiOutage`).
+  const loaderOutageSignalRef = useRef({})
+  useLayoutEffect(() => {
+    if (!loaderServiceUnavailable) return
+    const source = loaderOutageSignalRef.current
+    signalApiOutage(source)
+    return () => releaseApiOutage(source)
   }, [loaderServiceUnavailable])
   // Queries that failed during an outage, or during a blip too short to show the screen, refetch
   // once the API answers, the browser comes back online or the tab is shown again.

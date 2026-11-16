@@ -1,5 +1,5 @@
 import { createApolloLoaderHandler } from '@apollo/client-integration-react-router'
-import { makeClient, type ApiFailureCause } from './apollo'
+import { isOrganizationContextRequiredError, makeClient, type ApiFailureCause } from './apollo'
 
 /**
  * What the API answered when a loader's preloaded query failed during a server render.
@@ -13,6 +13,12 @@ import { makeClient, type ApiFailureCause } from './apollo'
  */
 interface SsrApiFailureRecord {
   cause?: ApiFailureCause
+  /** A query was refused with `ORGANIZATION_CONTEXT_REQUIRED` (by code; nothing else is kept). */
+  organizationRequired?: boolean
+  /** Operations this loader's client started that have not settled yet. */
+  pending: number
+  /** Called each time `pending` returns to 0 (see `waitForSsrApiCalls`). */
+  idle: Set<() => void>
 }
 
 // Loader data -> its request's record. A side table rather than a property on the data, so frozen
@@ -42,8 +48,17 @@ export function mergeApiFailureCauses(
   return CAUSE_RANK[b] > CAUSE_RANK[a] ? b : a
 }
 
-function recordFailure(record: SsrApiFailureRecord, cause: ApiFailureCause) {
+function recordFailure(record: SsrApiFailureRecord, cause: ApiFailureCause, error: unknown) {
   record.cause = mergeApiFailureCauses(record.cause, cause)
+  if (isOrganizationContextRequiredError(error)) record.organizationRequired = true
+}
+
+function trackOperation(record: SsrApiFailureRecord): () => void {
+  record.pending += 1
+  return () => {
+    record.pending -= 1
+    if (record.pending === 0) for (const notify of record.idle) notify()
+  }
 }
 
 // Keyed by the request the loader receives (React Router hands each loader its own copy).
@@ -52,7 +67,7 @@ const recordsByRequest = new WeakMap<Request, SsrApiFailureRecord>()
 function recordFor(request: Request): SsrApiFailureRecord {
   let record = recordsByRequest.get(request)
   if (!record) {
-    record = {}
+    record = { pending: 0, idle: new Set() }
     recordsByRequest.set(request, record)
   }
   return record
@@ -70,7 +85,8 @@ function attachRecord<T>(data: T, record: SsrApiFailureRecord): T {
 const handler = createApolloLoaderHandler(req =>
   makeClient(req, {
     apiUrl: `${process.env.VITE_API_URL || 'http://localhost:3000'}/graphql`,
-    onApiFailure: cause => recordFailure(recordFor(req), cause),
+    onApiFailure: (cause, error) => recordFailure(recordFor(req), cause, error),
+    onOperationStart: () => trackOperation(recordFor(req)),
   }),
 )
 
@@ -93,10 +109,54 @@ export function ssrApiFailureCause(
   loaderData: Record<string, unknown> | null | undefined,
 ): ApiFailureCause | undefined {
   let cause: ApiFailureCause | undefined
-  for (const data of Object.values(loaderData ?? {})) {
-    if (data !== null && typeof data === 'object') {
-      cause = mergeApiFailureCauses(cause, recordsByData.get(data)?.cause)
-    }
-  }
+  for (const record of recordsOf(loaderData)) cause = mergeApiFailureCauses(cause, record.cause)
   return cause
+}
+
+function recordsOf(loaderData: Record<string, unknown> | null | undefined): SsrApiFailureRecord[] {
+  const records: SsrApiFailureRecord[] = []
+  for (const data of Object.values(loaderData ?? {})) {
+    const record = data !== null && typeof data === 'object' ? recordsByData.get(data) : undefined
+    if (record) records.push(record)
+  }
+  return records
+}
+
+/**
+ * Whether a loader's preloaded query was refused with `ORGANIZATION_CONTEXT_REQUIRED` during this
+ * server render (from the loader data in the router context, as `ssrApiFailureCause`). The refusal
+ * reaches the render as Apollo's redacted stream error, which has lost the code.
+ */
+export function ssrOrganizationRequired(
+  loaderData: Record<string, unknown> | null | undefined,
+): boolean {
+  return recordsOf(loaderData).some(record => record.organizationRequired)
+}
+
+/**
+ * Waits until every API call the request's loaders started through `apolloLoader` has settled, so
+ * its failure, if any, is in `ssrApiFailureCause`. A loader returns its preloaded query refs
+ * without awaiting them (the root loader's Me among them), so a faster call can fail first:
+ * deciding a sign-out on its 401 then would miss a slower call's 503. Resolves true once all have
+ * settled (at once when none is in flight), false when `timeoutMs` passes first, which is no proof
+ * the session is bad: the caller then keeps it.
+ */
+export function waitForSsrApiCalls(
+  loaderData: Record<string, unknown> | null | undefined,
+  timeoutMs: number,
+): Promise<boolean> {
+  const records = recordsOf(loaderData).filter(record => record.pending > 0)
+  if (records.length === 0) return Promise.resolve(true)
+  return new Promise(resolve => {
+    const finish = (settled: boolean) => {
+      clearTimeout(timer)
+      for (const record of records) record.idle.delete(check)
+      resolve(settled)
+    }
+    const check = () => {
+      if (records.every(record => record.pending === 0)) finish(true)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    for (const record of records) record.idle.add(check)
+  })
 }

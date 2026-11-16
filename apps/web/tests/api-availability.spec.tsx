@@ -384,6 +384,14 @@ describe('root error boundary for a network error', () => {
 
       expect(assign).toHaveBeenCalledWith('/force-logout?return_url=%2Fmembers')
     })
+    it("does not log out over the error page served after a render's own 401", () => {
+      // The server passes a render's 401 on as a plain error (shellErrorForErrorPage), which the
+      // browser hydrates as React Router's sanitized error.
+      const assign = renderWithAssign(new Error('Unexpected Server Error'))
+
+      expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+      expect(assign).not.toHaveBeenCalled()
+    })
   })
 
   it('labels the button "Try again", not "Refresh Page"', () => {
@@ -1135,6 +1143,7 @@ describe('signed-in user after a connectivity blip', () => {
 
     afterEach(() => {
       clearApiOutage(elsewhere)
+      takeDeferredAuthFailure()
     })
 
     it('keeps the session and retries Me once the API answers', async () => {
@@ -1195,6 +1204,39 @@ describe('signed-in user after a connectivity blip', () => {
 
       expect(app.loaderCalls()).toBe(2)
       expect(screen.getByText('Signed out')).toBeInTheDocument()
+    })
+
+    it('keeps the session when the evidence ended before the boundary judged the 401', async () => {
+      // Me's 401 arrived while an in-flight retry held outage evidence, so the error link let it
+      // pass (`isAuthFailureDeferred`); the retry settled before the Me boundary judged the error.
+      // Judging by `isApiOutageSignalled` alone, the boundary rendered the user as signed out.
+      vi.spyOn(console, 'log').mockImplementation(() => undefined)
+      signalApiOutage(elsewhere)
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+        .query({ query: ME })
+        .catch(() => undefined)
+      clearApiOutage(elsewhere)
+      expect(isApiOutageSignalled()).toBe(false)
+      apiUp()
+
+      const app = await renderSignedIn([unauthorized(), signedIn])
+
+      expect(seen).not.toContain('Signed out')
+      expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+
+      await advance(CONFIRM_WINDOW_MS)
+
+      expect(app.loaderCalls()).toBe(2)
+      expect(seen).not.toContain('Signed out')
+      expect(screen.getByText('Signed in as user-1')).toBeInTheDocument()
+      // The retry took the deferred 401: a later one is judged afresh.
+      expect(takeDeferredAuthFailure()).toBe(false)
     })
   })
 
@@ -2179,5 +2221,129 @@ describe('Me retry backoff under cache-and-network', () => {
     // The queued retry no longer revalidates every loader after the recovery.
     await advance(retryDelayMs(3))
     expect(app.loaderCalls()).toBe(3)
+  })
+})
+
+describe("the root loader's outage flag in the browser", () => {
+  function BoundaryFromRoute() {
+    const error = useRouteError()
+    return <ErrorBoundary error={boundaryError(error)} />
+  }
+
+  const unauthorized = () =>
+    new ServerError('Response not successful', {
+      response: new Response(null, { status: 401 }),
+      bodyText: '',
+    })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+    takeDeferredAuthFailure()
+  })
+
+  it("keeps the session in the root error boundary for a child loader's 401", async () => {
+    // App, which otherwise turns the flag into outage evidence, is unmounted by the error; the
+    // root error boundary reads the flag itself.
+    apiDown()
+    const assign = vi.fn()
+    vi.stubGlobal('location', { ...globalThis.location, pathname: '/members', assign })
+    const router = createMemoryRouter(
+      [
+        {
+          id: 'root',
+          path: '/',
+          loader: () => ({ serviceUnavailable: true }),
+          element: <Outlet />,
+          errorElement: <BoundaryFromRoute />,
+          children: [
+            {
+              path: 'members',
+              loader: () => {
+                throw unauthorized()
+              },
+              element: <p>Members page</p>,
+            },
+          ],
+        },
+      ],
+      { initialEntries: ['/members'] },
+    )
+    await act(async () => {
+      render(<RouterProvider router={router} />)
+    })
+
+    expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('still logs out on that 401 with no flag', async () => {
+    apiDown()
+    const assign = vi.fn()
+    vi.stubGlobal('location', { ...globalThis.location, pathname: '/members', assign })
+    const router = createMemoryRouter(
+      [
+        {
+          id: 'root',
+          path: '/',
+          loader: () => ({}),
+          element: <Outlet />,
+          errorElement: <BoundaryFromRoute />,
+          children: [
+            {
+              path: 'members',
+              loader: () => {
+                throw unauthorized()
+              },
+              element: <p>Members page</p>,
+            },
+          ],
+        },
+      ],
+      { initialEntries: ['/members'] },
+    )
+    await act(async () => {
+      render(<RouterProvider router={router} />)
+    })
+
+    expect(assign).toHaveBeenCalledWith('/force-logout?return_url=%2Fmembers')
+  })
+
+  it('holds outage evidence in App until fresh loader data drops the flag', async () => {
+    // Once the probe answers, the screen's own evidence ends, but the revalidation that brings
+    // fresh loader data is still running: a 401 meanwhile must not log the user out.
+    apiDown()
+    let loaderCalls = 0
+    let releaseRetry: () => void = () => undefined
+    const retryGate = new Promise<void>(resolve => {
+      releaseRetry = resolve
+    })
+    await renderApp(async () => {
+      loaderCalls += 1
+      if (loaderCalls === 1) return { serviceUnavailable: true }
+      await retryGate
+      return {}
+    })
+    expect(isApiOutageSignalled()).toBe(true)
+
+    apiUp()
+    await advance(retryDelayMs(0))
+    expect(loaderCalls).toBe(2)
+    expect(isApiOutageSignalled()).toBe(true)
+
+    await act(async () => releaseRetry())
+    await advance(0)
+    expect(screen.getByText('Protected page')).toBeInTheDocument()
+    expect(isApiOutageSignalled()).toBe(false)
   })
 })
