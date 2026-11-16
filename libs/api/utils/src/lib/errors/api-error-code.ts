@@ -27,7 +27,9 @@ const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/
 
 /**
  * A 403 whose GraphQL error carries `extensions.code: code` (see `formatApiError`). Over REST it is
- * an ordinary 403 whose JSON body also has `code`.
+ * an ordinary 403 whose JSON body also has `code`. `code` need not be one of `API_ERROR_CODES`:
+ * apps throw their own (a workflow state, a plan limit, ...) and `formatApiError` keeps any of
+ * them, as long as it is upper snake case and not `UNAUTHENTICATED`.
  */
 export function forbiddenWithCode(code: string, message: string): ForbiddenException {
   return new ForbiddenException({ statusCode: 403, error: 'Forbidden', message, code })
@@ -47,9 +49,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * The GraphQL `formatError`. `@nestjs/apollo` runs first and replaces the code of every HTTP
  * exception with the one for its status, keeping the exception's body as
- * `extensions.originalError`. This puts back the code `forbiddenWithCode` gave the body. It never
- * sets a code on a 401, and never sets `UNAUTHENTICATED`: only a real 401 may tell a client the
- * session is dead.
+ * `extensions.originalError`. This puts back the code `forbiddenWithCode` gave the body: any
+ * upper-snake-case code, the app's own as well as `API_ERROR_CODES`, so an app's clients see the
+ * codes it throws. It never sets a code on a 401, and never sets `UNAUTHENTICATED`: only a real
+ * 401 may tell a client the session is dead. An internal failure (a 500 or 503) keeps Nest's
+ * `INTERNAL_SERVER_ERROR` and `extensions.status`.
  */
 export function formatApiError(formattedError: GraphQLFormattedError): GraphQLFormattedError {
   const originalError = formattedError.extensions?.['originalError']

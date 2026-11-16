@@ -1,0 +1,246 @@
+id: 2026-11-16-api-internal-errors-not-401
+title: >-
+  The API stops turning internal failures into 401s: a failed API-token lookup is a 503, a GraphQL
+  context with no request a 500, and the 401 audit recipe covers passport's fail(…, 401) and
+  catch blocks around token checks
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+# Builds on that note's formatApiError, organizationContextRequired, audit and e2e spec.
+applyAfter: [2026-11-14-api-auth-error-codes]
+
+intent: >
+  Follow-up to 2026-11-14-api-auth-error-codes (apply it first). Clients drop a session or an API
+  token on an HTTP 401 or a GraphQL `UNAUTHENTICATED`, so a 401 must mean "this credential is
+  missing, invalid, expired or revoked" and nothing else. A database outage, a bug or any other
+  internal failure is never a 401: it is a 503 when the request may well succeed on a retry (the
+  web's outage detection treats a 502/503/504 as outage evidence), or a 500 for a server bug.
+  Six parts. No package changes, and no change to package.json, nx.json or tsconfig.base.json.
+
+
+  1. API: a failed API-token lookup is a 503, not a 401.
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts `authenticate` wrapped the
+  API-token path (`validateApiToken`, then `validateUser`) in a try/catch whose catch answered
+  `this.fail({ message: 'API token validation failed' }, 401)`, so a database outage told every
+  API-token client its token was bad. Every "this token is not good" answer in that block is a
+  `return this.fail(…)`, not a throw (`validateApiToken` returns null for an unknown, revoked,
+  expired or stale-generation token, a disabled owner or a lost membership); the catch only ever
+  sees a failed lookup. It now logs the error with its stack and calls
+  `this.error(new ServiceUnavailableException('API token validation is temporarily
+  unavailable'))`. Passport hands `error(err)` to `AuthGuard`, which throws it, so REST callers
+  get an HTTP 503, which clients (the web's `isRetryableConnectivityError` and the server
+  render's outage check, both keyed on 502/503/504) treat as outage evidence and retry, and
+  GraphQL callers get `extensions.code: INTERNAL_SERVER_ERROR` with `extensions.status: 503`,
+  never `UNAUTHENTICATED`. 503 rather than 500 because the failure is the dependency's, and a
+  retry is the right client response. The genuine refusals are unchanged: an invalid, expired or
+  revoked token, a token bound to another resource, and a token whose user is missing or
+  inactive stay 401; an organization-scope mismatch stays 403. Session JWTs were already right:
+  `validate()` does not catch, so a failed `validateUser` / `isTokenCurrent` reaches passport as
+  an error (a 500), and a test now pins that.
+  Affected paths: libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts,
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts.
+  Verification: `pnpm exec nx test api-custom --skip-nx-cache` (jwt.strategy.spec.ts, "JwtStrategy
+  API token internal failures": a rejected `validateApiToken` and a rejected `validateUser` each
+  call `error` with a `ServiceUnavailableException` (status 503) and never `fail`; a null
+  `validateApiToken` still fails with 401; a rejected session `validateUser` rejects with the
+  database error, not an `UnauthorizedException`).
+
+
+  2. API: the other catch-all-to-401 sites. The template API was audited with part 4's recipe.
+  Changed:
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts (`ApiTokenAuthMiddleware`, in
+    front of `McpController`): its catch logged a failed `validateApiToken` or user lookup and
+    called `next()` with no user, so `McpController` answered the MCP client with a 401
+    `WWW-Authenticate: … error="invalid_token"` and the client threw away a good token and
+    re-authorized. The catch now calls `next(new ServiceUnavailableException(…))`: still no
+    user (fail closed), but a 503. An unknown, revoked, expired or resource-mismatched token and a
+    missing or inactive user still leave the request without a user, and the 401 challenge.
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts `isSessionValid`: its catch answered
+    `false` ("invalid session") for a failed lookup. Nothing in the template calls it, but a
+    caller would have logged users out over an outage. It no longer catches; the error
+    propagates.
+  Checked and left as they are (the PR lists the same):
+  - jwt.strategy.ts `validate`: invalid payload, user missing or inactive, session invalidated:
+    dead session, stays 401. `authenticate`'s API-token refusals: see part 1, stay 401.
+  - jwt.strategy.ts `createHeaderAndCookieExtractor`, libs/api/core/feature/src/lib/ws-session-token.ts
+    and auth.service.ts `verifyToken`: catch → null around `jwtService.verify` only, a synchronous
+    signature/expiry check with no I/O. Correct.
+  - libs/api/custom/src/lib/plugins/mcp/mcp.controller.ts (401 challenge with no user) and
+    mcp-oauth.controller.ts `login_required` ×2 (`getSessionFromCookie` catches only
+    `jwtService.verify`; `isSessionTokenCurrent` errors propagate as a 500): no valid credential,
+    stay 401.
+  - libs/api/utils/src/lib/guards/access-policy.guard.ts and subscription.guard.ts (no
+    `req.user`), and oauth.service.ts `unlinkOAuthAccount` ("User not found": the session's own
+    user is gone): stay 401.
+  - Ambiguous, listed and not changed: libs/api/utils/src/lib/guards/gql-auth.guard.ts swallows a
+    failed `organizationContextService.attach` (a database error included) so plain
+    authenticated operations still run; an organization-scoped field then answers 403
+    `ORGANIZATION_CONTEXT_REQUIRED` during an outage. Not a 401, so the session is kept, but the
+    user may see the organization picker instead of the outage screen. Likewise
+    auth-cache.service.ts returns null on a Redis error (read as "not cached", so the database is
+    asked instead). The graphql-ws `onConnect` throws a plain `Error` for a missing cookie (no
+    HTTP status; graphql-ws closes the socket), unchanged.
+  - No `AuthenticationError`, `res.status(401)` outside MCP, or `HttpStatus.UNAUTHORIZED` outside
+    subscription.guard.ts remains.
+  Affected paths: libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts,
+  libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts,
+  libs/api/custom/src/lib/plugins/auth/auth.service.ts,
+  libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts.
+  Verification: `pnpm exec nx test api-custom --skip-nx-cache` (api-token-auth.middleware.spec.ts:
+  a rejected `validateApiToken` and a rejected user lookup each call `next` with a
+  `ServiceUnavailableException` (503), attach no user and record no use; an unknown token calls
+  `next()` with no error; auth.service.spec.ts: `isSessionValid` rejects with the database error
+  instead of answering false).
+
+
+  3. API: organization decorators with no request are a 500.
+  libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts `CtxOrganization`,
+  `CtxOrganizationId` and `CtxOptionalOrganizationId` read `gqlContext.req.organizationContext`.
+  A GraphQL context with no `req` (a graphql-ws subscription whose context builder got no
+  request, a decorator used outside GraphQL) threw a `TypeError`, a 500 with no status. A local
+  `requestFrom(ctx)` now throws `InternalServerErrorException('Organization context cannot be
+  read: the GraphQL context has no request.')` for it: never a 401, which would log the user out,
+  and never the 403 `ORGANIZATION_CONTEXT_REQUIRED`, which would send them to the organization
+  picker for a server bug. A request with no organization context still gets the 403.
+  Affected paths: libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts,
+  libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts,
+  libs/api/utils/src/lib/errors/api-error-code.spec.ts.
+  Verification: `pnpm exec nx test api-utils --skip-nx-cache` (ctx-organization.decorator.spec.ts:
+  each of the three decorators throws `InternalServerErrorException`, neither Unauthorized nor
+  Forbidden, for a context of `{}`, `{ req: undefined }` and undefined; a request without
+  context still gets the 403; api-error-code.spec.ts: through the real Nest GraphQL pipeline, a
+  context with no `req` answers `INTERNAL_SERVER_ERROR` with `extensions.status: 500`).
+
+
+  4. Guidance: the 401 audit recipe of 2026-11-14-api-auth-error-codes part 2 missed sites. Its
+  grep (`UnauthorizedException|AuthenticationError|HttpStatus.UNAUTHORIZED|status(401)`) does not
+  find passport's `this.fail(…, 401)` (nor a bare `this.fail(challenge)`, which passport also
+  answers with a 401), a `statusCode: 401` body, a GraphQLError built with `UNAUTHENTICATED`, or a
+  catch block that turns a failed lookup into "invalid" without ever naming a 401: a `return
+  false` / `return null` read as "bad token", or a request continued without `req.user` that a
+  later check refuses with a 401. The template's own audit missed four `fail(…, 401)` lines and
+  the catch-alls fixed in parts 1 and 2. Part 2's agentHint gives the corrected recipe; projects
+  that already applied 2026-11-14 part 2 re-run it. No code in this part.
+
+
+  5. API: `formatApiError` keeps an app's own codes (documentation and a test).
+  libs/api/utils/src/lib/errors/api-error-code.ts: `formatApiError` already restored any
+  upper-snake-case code a 403 was thrown with through `forbiddenWithCode`, not only
+  `API_ERROR_CODES`; the doc comments on `forbiddenWithCode` and `formatApiError` now say so (an
+  app's workflow states, plan limits and so on reach its clients as-is), and that a 500/503 keeps
+  Nest's `INTERNAL_SERVER_ERROR` and `extensions.status`. It still never sets a code on a 401 or
+  sets `UNAUTHENTICATED`.
+  Affected paths: libs/api/utils/src/lib/errors/api-error-code.ts,
+  libs/api/utils/src/lib/errors/api-error-code.spec.ts.
+  Verification: `pnpm exec nx test api-utils --skip-nx-cache` (api-error-code.spec.ts, real Nest
+  GraphQL pipeline: `forbiddenWithCode('WORKFLOW_STEP_LOCKED', …)` answers
+  `extensions.code: WORKFLOW_STEP_LOCKED` with `originalError.statusCode` 403 and its message; a
+  `ServiceUnavailableException` answers `INTERNAL_SERVER_ERROR` with `extensions.status` 503).
+
+
+  6. API e2e: auth-error-codes.spec.ts no longer assumes the template's operations.
+  apps/api-e2e/src/auth/auth-error-codes.spec.ts queried `currentSubscriptionActive` with no
+  arguments, moved the user's saved `activeOrganizationId` with SQL (an API that repairs a stale
+  saved organization repaired it away), and expected `ORGANIZATION_CONTEXT_REQUIRED` (an
+  access-policy guard refuses first with a plain 403 `FORBIDDEN`). It now reads the schema
+  (introspection, else the `api-schema.graphql` the API writes at the workspace root) and builds
+  `query { field }` / `query { field { __typename } }` for every query whose arguments are all
+  optional. A bad bearer: the queries that need a session are the ones it gets
+  `UNAUTHENTICATED` for (with `originalError.statusCode` 401), and there must be at least one. A
+  signed-in outsider sending `x-organization-id` for another user's organization (read from
+  `OrganizationMember`): none of those queries answers 401 or `UNAUTHENTICATED`, every
+  `ORGANIZATION_CONTEXT_REQUIRED` carries 403, and at least one of them answers the outsider
+  without errors in its own organization yet refuses it with a 403 (any code) in the foreign one.
+  That control comparison keeps admin-only refusals and public queries from satisfying the check:
+  with the header ignored, the spec fails.
+  Affected paths: apps/api-e2e/src/auth/auth-error-codes.spec.ts.
+  Verification: the API e2e suite (`pnpm exec nx run api-e2e:e2e`, or CI).
+
+why: >
+  A 401 tells a client to drop the session or token. The API still gave one for failures that say
+  nothing about the credential: an API-token client lost its token (and an MCP client
+  re-authorized) whenever the database blipped, because the token lookup's catch-all answered
+  401. Downstream projects found the same catch-all pattern in their own endpoints, and the
+  2026-11-14 audit recipe could not find it: it never grepped for passport's `fail(…, 401)` or
+  read catch blocks. An outage must look like an outage (503, so clients keep the credential and
+  retry), and a server bug like a server bug (500).
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.ts
+  - libs/api/custom/src/lib/middleware/api-token-auth.middleware.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.service.spec.ts
+  - libs/api/utils/src/lib/decorators/ctx-organization.decorator.ts
+  - libs/api/utils/src/lib/decorators/ctx-organization.decorator.spec.ts
+  - libs/api/utils/src/lib/errors/api-error-code.ts
+  - libs/api/utils/src/lib/errors/api-error-code.spec.ts
+  - apps/api-e2e/src/auth/auth-error-codes.spec.ts
+
+skipIf:
+  - The project's API answers every internal failure in its authentication path (token and
+    session lookups, guards, middleware, strategies) with a 5xx, gives a 401 only for a missing,
+    invalid, expired or revoked credential, and its organization decorators null-check the
+    request.
+
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm exec nx run api-e2e:e2e
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Part 1: if the project's jwt.strategy has no API-token branch, check whatever authenticates API
+    tokens (a separate strategy, a guard, middleware) for the same catch. Keep `return this.fail(…,
+    401)` for each genuine refusal and change only the catch. In a passport strategy use
+    `this.error(err)`, not `throw` (an `authenticate` override that throws inside an async function
+    gives passport an unhandled rejection) and not `this.fail(…, 503)` (AuthGuard turns any `fail`
+    into an `UnauthorizedException`, whatever the status). Check that the project's AuthGuards do
+    not override `handleRequest` to map every `err` to `UnauthorizedException`; if one does, make
+    it rethrow `err` when there is one.
+  - >
+    Part 2, the audit recipe (it replaces 2026-11-14-api-auth-error-codes part 2's grep; re-run it
+    even if that part is applied). Over the whole API, specs excluded:
+    `grep -rnE "this\.fail\(|fail\([^)]*401|res\.status\(401\)|status\(401\)|statusCode: ?401|HttpStatus\.UNAUTHORIZED|UnauthorizedException|AuthenticationError|UNAUTHENTICATED|invalid_token|token_invalid" apps libs --include='*.ts' | grep -v '\.spec\.ts'`.
+    Then, for every file it lists and every file that checks a credential (`grep -rlnE
+    "validateApiToken|jwtService\.verify|\.verify\(|isTokenCurrent|isSession|validateUser|authenticate\("`),
+    read each `catch (` and `.catch(` and ask: can a database, network or programming error end as
+    a 401, as `false`/`null` that a caller reads as "invalid", or as a request continued without
+    `req.user` that a later check answers with a 401? Such a catch rethrows, or answers 503
+    (`ServiceUnavailableException`; `this.error(…)` in a passport strategy, `next(err)` in
+    middleware) when a retry may succeed, or 500 for a bug. A catch around a synchronous
+    signature/expiry check (`jwtService.verify`) may stay. A credential or signature failure (no
+    token, unknown, expired, revoked, bad signature, the credential's user gone or disabled) stays
+    a 401. List every site with its verdict in the PR. Anything ambiguous (a catch that both
+    covers a real refusal and an outage, a project endpoint whose client contract you cannot see,
+    such as a browser extension or mobile app keyed on its own error string) is listed, not
+    changed, and named in the report for the owner.
+  - >
+    Part 2: a catch that turns any error into 401 in a project endpoint (a translation or
+    extension "verify" route answering `token_invalid`, say) splits in two: the cases that really
+    are a missing or invalid credential keep the 401 and its body, as the client expects; the
+    catch-all goes. Keep any non-401 refusal it also served (for example "no access to this
+    feature") on a 403 with its own code, after checking what the client reads.
+  - >
+    Part 3: if the project's GraphQL context builder can leave `req` undefined (subscriptions
+    without connection params), the decorators were already throwing a TypeError; this only makes
+    it an explicit 500. If the project has its own decorators reading `gqlContext.req` (a
+    `CtxUser`, a project `CtxOrganization`), give the ones that throw on a missing value the same
+    null check; never answer a missing request with a 401 or 403.
+  - >
+    Part 5: no code change unless the project changed `formatApiError`. If it composes its own
+    `formatError`, check its codes survive: run its own `forbiddenWithCode('<ITS_CODE>', …)` through
+    the GraphQL module in a test, as api-error-code.spec.ts does.
+  - >
+    Part 6: replace the project's copy of the spec with the template's, then adapt only what this
+    project lacks: an `OrganizationMember` table under another name (change the SQL), no
+    organizations at all (drop the second test and say so), or an API that ignores
+    `x-organization-id` (move the outsider's saved organization the way the API reads it). Do not
+    pin it to a named operation again. If the outsider gets no 403 anywhere, the project does not
+    refuse a non-member's organization header: report that, it is a tenancy finding, not a test
+    to loosen.

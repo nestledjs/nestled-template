@@ -2467,16 +2467,15 @@ export class AuthService {
     return true
   }
 
+  /**
+   * Whether the session exists and has not been invalidated. A failed lookup throws rather than
+   * answering false: "invalid" would log the user out over an outage.
+   */
   async isSessionValid(sessionId: string): Promise<boolean> {
-    try {
-      const session = await this.data.userSession.findUnique({
-        where: { id: sessionId },
-        select: { isValid: true },
-      })
-      return session?.isValid ?? false
-    } catch (error) {
-      Logger.error('Error checking session validity', error)
-      return false
-    }
+    const session = await this.data.userSession.findUnique({
+      where: { id: sessionId },
+      select: { isValid: true },
+    })
+    return session?.isValid ?? false
   }
 }

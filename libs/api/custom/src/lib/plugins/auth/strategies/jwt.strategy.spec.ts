@@ -1,3 +1,4 @@
+import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { JwtStrategy } from './jwt.strategy'
 import type { Request } from 'express'
@@ -391,5 +392,78 @@ describe('JwtStrategy inactive accounts', () => {
       401,
     )
     expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+  })
+})
+
+// A failed lookup is not a bad token. Clients drop the token (or the session) on a 401, so an
+// internal failure must surface as a 503, which they treat as outage evidence. Passport hands
+// `error(err)` to AuthGuard, which throws `err`; `fail(challenge, 401)` becomes a 401.
+describe('JwtStrategy API token internal failures', () => {
+  const token = 'b'.repeat(64)
+  const req = () => ({ headers: { authorization: `Bearer ${token}` } }) as never
+  let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
+  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
+  let strategy: JwtStrategy
+  let outcome: { success: jest.Mock; fail: jest.Mock; error: jest.Mock }
+
+  beforeEach(() => {
+    process.env['JWT_SECRET'] = 'test-secret'
+    auth = {
+      validateUser: jest.fn().mockResolvedValue({ id: 'user-1', authGeneration: 1 }),
+      isTokenCurrent: jest.fn().mockResolvedValue(true),
+    }
+    apiTokensService = { validateApiToken: jest.fn(), recordTokenUse: jest.fn() }
+    strategy = new JwtStrategy(auth as never, apiTokensService as never)
+    outcome = { success: jest.fn(), fail: jest.fn(), error: jest.fn() }
+    Object.assign(strategy, outcome)
+  })
+
+  const passedError = () => outcome.error.mock.calls[0]?.[0] as unknown
+
+  it('answers a failed token lookup with a 503, not a 401', async () => {
+    apiTokensService.validateApiToken.mockRejectedValue(new Error('database unavailable'))
+
+    await strategy.authenticate(req())
+
+    expect(outcome.fail).not.toHaveBeenCalled()
+    expect(passedError()).toBeInstanceOf(ServiceUnavailableException)
+    expect((passedError() as ServiceUnavailableException).getStatus()).toBe(503)
+    expect(passedError()).not.toBeInstanceOf(UnauthorizedException)
+  })
+
+  it("answers a failed lookup of the token's user with a 503, not a 401", async () => {
+    apiTokensService.validateApiToken.mockResolvedValue({
+      userId: 'user-1',
+      tokenId: 'api-token-1',
+      organizationId: null,
+    })
+    auth.validateUser.mockRejectedValue(new Error('connection terminated'))
+
+    await strategy.authenticate(req())
+
+    expect(outcome.fail).not.toHaveBeenCalled()
+    expect(outcome.success).not.toHaveBeenCalled()
+    expect(passedError()).toBeInstanceOf(ServiceUnavailableException)
+    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+  })
+
+  it('still answers a genuinely invalid, expired or revoked token with a 401', async () => {
+    apiTokensService.validateApiToken.mockResolvedValue(null)
+
+    await strategy.authenticate(req())
+
+    expect(outcome.error).not.toHaveBeenCalled()
+    expect(outcome.fail).toHaveBeenCalledWith({ message: 'Invalid or expired API token' }, 401)
+  })
+
+  // Session JWTs: validate() does not catch, so a failed lookup reaches passport as an error (a
+  // 500), never as the UnauthorizedException a dead session gets.
+  it('lets a failed session lookup through as an error, not an UnauthorizedException', async () => {
+    auth.validateUser.mockRejectedValue(new Error('database unavailable'))
+
+    const failure = strategy.validate({ headers: {} } as Request, { userId: 'user-1' })
+
+    await expect(failure).rejects.toThrow('database unavailable')
+    await expect(failure).rejects.not.toBeInstanceOf(UnauthorizedException)
   })
 })

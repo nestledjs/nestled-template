@@ -1,3 +1,4 @@
+import { ServiceUnavailableException } from '@nestjs/common'
 import { ApiTokenAuthMiddleware } from './api-token-auth.middleware'
 
 // The middleware runs in front of McpController (apps/api/src/app.module.ts) and is what turns an
@@ -80,6 +81,8 @@ describe('ApiTokenAuthMiddleware', () => {
 
     expect(req.user).toBeUndefined()
     expect(next).toHaveBeenCalledTimes(1)
+    // No error: McpController answers it with its 401 `invalid_token` challenge.
+    expect(next).toHaveBeenCalledWith()
   })
 
   it('leaves the request unauthenticated when the token user no longer exists', async () => {
@@ -168,12 +171,27 @@ describe('ApiTokenAuthMiddleware', () => {
     })
   })
 
-  it('fails closed when validation throws', async () => {
+  // A failed lookup says nothing about the token: still no user (fail closed), but the request
+  // ends in a 503 rather than reaching McpController's 401 `invalid_token`, so the client retries
+  // instead of throwing the token away.
+  it('fails closed with a 503, not a 401, when validation throws', async () => {
     apiTokensService.validateApiToken.mockRejectedValue(new Error('database down'))
 
     const { req, next } = await run(`Bearer ${token}`)
 
     expect(req.user).toBeUndefined()
     expect(next).toHaveBeenCalledTimes(1)
+    expect(next.mock.calls[0][0]).toBeInstanceOf(ServiceUnavailableException)
+    expect((next.mock.calls[0][0] as ServiceUnavailableException).getStatus()).toBe(503)
+  })
+
+  it("fails closed with a 503 when the token's user cannot be loaded", async () => {
+    data.user.findUnique.mockRejectedValue(new Error('connection terminated'))
+
+    const { req, next } = await run(`Bearer ${token}`)
+
+    expect(req.user).toBeUndefined()
+    expect(next.mock.calls[0][0]).toBeInstanceOf(ServiceUnavailableException)
+    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
   })
 })
