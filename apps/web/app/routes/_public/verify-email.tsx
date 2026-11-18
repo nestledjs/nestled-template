@@ -15,7 +15,7 @@ export default function VerifyEmailPage() {
   const [params] = useSearchParams()
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [message, setMessage] = useState<string>('Verifying your email...')
-  // Throw on a GraphQL error so the .catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the .catch below sees it (also the client default; kept explicit).
   const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail, {
     errorPolicy: 'none',
   })

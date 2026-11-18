@@ -166,7 +166,7 @@ export default function ProfileSettings() {
   const user = data?.me
   const client = useApolloClient()
 
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile, {
     errorPolicy: 'none',
   })

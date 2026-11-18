@@ -220,7 +220,7 @@ export default function OrganizationRolesSettings() {
     permission => permission.subject === 'role' && permission.action === 'delete',
   )
 
-  // Throw on a GraphQL error so `run`'s catch sees it (the client default is 'all').
+  // Throw on a GraphQL error so `run`'s catch sees it (also the client default; kept explicit).
   const [createRole] = useMutation(UserCreateOrganizationRole, { errorPolicy: 'none' })
   const [updateRole] = useMutation(UserUpdateOrganizationRole, { errorPolicy: 'none' })
   const [deleteRole] = useMutation(UserDeleteOrganizationRole, { errorPolicy: 'none' })

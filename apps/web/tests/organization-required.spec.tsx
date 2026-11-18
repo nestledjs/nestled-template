@@ -77,8 +77,8 @@ function renderPicker({
         observer.complete()
       }),
   )
-  // The app's client defaults (`makeClient`: `errorPolicy: 'all'` for queries and mutations), so a
-  // GraphQL refusal behaves here as it does in the app: it resolves, it does not throw.
+  // The app's client defaults (`makeClient`: `errorPolicy: 'all'` for queries, `'none'` for
+  // mutations), so a GraphQL refusal behaves here as it does in the app.
   const client = new ApolloClient({
     link,
     cache: new InMemoryCache(),

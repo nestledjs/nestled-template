@@ -115,6 +115,49 @@ describe('makeClient', () => {
     localStorage.clear()
   })
 
+  describe('errorPolicy defaults', () => {
+    const refusal = () =>
+      new Response(
+        JSON.stringify({
+          data: null,
+          errors: [{ message: 'That name is taken', extensions: { code: 'BAD_USER_INPUT' } }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+
+    it('rejects a mutation the API refuses, with the API message', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      globalThis.fetch = vi.fn().mockResolvedValue(refusal())
+      const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      const mutation = gql`
+        mutation Rename {
+          rename
+        }
+      `
+
+      const outcome = client.mutate({ mutation })
+
+      await expect(outcome).rejects.toBeInstanceOf(CombinedGraphQLErrors)
+      await expect(outcome).rejects.toThrow('That name is taken')
+    })
+
+    it('still resolves a query with its GraphQL error (queries keep errorPolicy all)', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      globalThis.fetch = vi.fn().mockResolvedValue(refusal())
+      const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      const query = gql`
+        query Name {
+          name
+        }
+      `
+
+      const { error } = await client.query({ query, fetchPolicy: 'no-cache' })
+
+      expect(error).toBeInstanceOf(CombinedGraphQLErrors)
+      expect(error?.message).toContain('That name is taken')
+    })
+  })
+
   it('creates an SSR client with an explicit token and API url', () => {
     const client = makeClient(undefined, {
       token: 'token-123',
@@ -817,13 +860,16 @@ describe('makeClient', () => {
     )
     const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
 
-    await client.mutate({
-      mutation: gql`
-        mutation UpdatePrivateData {
-          updatePrivateData
-        }
-      `,
-    })
+    // The refusal goes back to the caller (it rejects under the 'none' mutation default).
+    await expect(
+      client.mutate({
+        mutation: gql`
+          mutation UpdatePrivateData {
+            updatePrivateData
+          }
+        `,
+      }),
+    ).rejects.toThrow('Forbidden')
 
     expect(forbiddenHandler).not.toHaveBeenCalled()
     globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, forbiddenHandler)

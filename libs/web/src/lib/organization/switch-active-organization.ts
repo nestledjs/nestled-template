@@ -52,8 +52,8 @@ export function isOrganizationSwitchSuperseded(
  * under it.
  *
  * It throws when the API refuses the switch, with nothing stored: the mutation runs with
- * `errorPolicy: 'none'`, since under the app client's default (`'all'`) a refusal resolves instead
- * and the refused id would be stored and reloaded into.
+ * `errorPolicy: 'none'` (also the client default, kept explicit so a client that defaults
+ * mutations to `'all'` cannot make a refusal resolve and the refused id be stored and reloaded).
  *
  * An answer that arrives after its session ended (a logout, a change of user the caller reports
  * through `isCurrent`, or this component unmounted) is dropped: nothing is cached or stored, and it

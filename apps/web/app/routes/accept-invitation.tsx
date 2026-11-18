@@ -82,13 +82,6 @@ function capitalizeSentence(message: string): string {
   return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`
 }
 
-function getMutationResultErrorMessage(result: unknown, fallback: string): string {
-  if (!result || typeof result !== 'object') return fallback
-
-  const maybeResult = result as { error?: unknown; errors?: unknown }
-  return getInvitationErrorMessage(maybeResult.error ?? maybeResult.errors ?? result, fallback)
-}
-
 export default function AcceptInvitation() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -109,14 +102,16 @@ export default function AcceptInvitation() {
     skip: !token,
   })
 
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [acceptInvitation] = useMutation<AcceptOrganizationInvitationMutation>(
     AcceptOrganizationInvitation,
     { errorPolicy: 'none' },
   )
   const [login] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
-  const [registerWithInvitation] =
-    useMutation<RegisterWithInvitationMutation>(RegisterWithInvitation)
+  const [registerWithInvitation] = useMutation<RegisterWithInvitationMutation>(
+    RegisterWithInvitation,
+    { errorPolicy: 'none' },
+  )
 
   const invitationDetails = inviteData?.getInvitationDetails
 
@@ -247,15 +242,13 @@ export default function AcceptInvitation() {
           input: buildRegisterWithInvitationInput(token, invitationDetails.email, input),
         },
       })
-      const resultErrorMessage = getMutationResultErrorMessage(result, '')
-
       if (result.data?.registerWithInvitation?.user?.id) {
         // Registration successful, redirect to members area
         setTimeout(() => {
           navigate('/members', { replace: true })
         }, 1500)
       } else {
-        setFormError(resultErrorMessage || 'Failed to create account')
+        setFormError('Failed to create account')
         setIsProcessing(false)
       }
     } catch (error) {

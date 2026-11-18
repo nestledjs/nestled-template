@@ -114,7 +114,7 @@ export default function LoginPage() {
   // through the same open-redirect guard.
   const redirectUrl = safeReturnUrl(searchParams.get('return_url') ?? searchParams.get('redirect'))
 
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [loginMutation] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
   const [complete2FALoginMutation] = useMutation<Complete2FaLoginMutation>(Complete2FaLogin, {
     errorPolicy: 'none',

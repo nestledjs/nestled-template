@@ -19,7 +19,7 @@ export default function ResendVerification() {
   // Bumping this remounts the widget for a fresh challenge — a Turnstile token is single-use, so any
   // failed/retried resend must not reuse a spent token. See register.tsx for the same pattern.
   const [captchaKey, setCaptchaKey] = useState(0)
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [resendMutation, { loading }] = useMutation<ResendVerificationEmailMutation>(
     ResendVerificationEmail,
     { errorPolicy: 'none' },

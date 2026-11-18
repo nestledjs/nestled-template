@@ -111,7 +111,7 @@ export default function OrganizationSettings() {
     type: 'success' | 'error'
     text: string
   } | null>(null)
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [updateOrganization] = useMutation<UserUpdateOrganizationMutation>(UserUpdateOrganization, {
     errorPolicy: 'none',
   })
