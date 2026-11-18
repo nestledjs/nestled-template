@@ -281,7 +281,7 @@ describe('Pricing Page', () => {
         plan: mockPlans[1],
       } as any)
 
-      const { container } = renderPricingPage()
+      renderPricingPage()
 
       // Get the badge element (not the button), which is inside a span
       const currentPlanBadge = screen.getAllByText('Current Plan').find(el => el.tagName === 'SPAN')

@@ -173,7 +173,7 @@ export function MultiUsageLimitWarning({
 
   return (
     <div className="space-y-3">
-      {trackedLimits.map(([key, data]) => (
+      {trackedLimits.map(([key]) => (
         <UsageLimitWarning
           key={key}
           limitKey={key}

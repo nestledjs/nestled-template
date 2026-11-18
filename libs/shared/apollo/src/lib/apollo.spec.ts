@@ -29,7 +29,6 @@ import {
   ORGANIZATION_CONTEXT_REQUIRED_CODE,
   resolveActiveOrganization,
   signalApiOutage,
-  SKIP_AUTH_ERROR_REPORT_CONTEXT,
   storeActiveOrganizationId,
   subscriptionRetryDelayMs,
   takeDeferredAuthFailure,

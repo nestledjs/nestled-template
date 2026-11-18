@@ -35,7 +35,7 @@ export class MockEmailProvider implements EmailProvider {
   async sendTemplate(
     to: string | string[],
     template: EmailTemplate,
-    options?: Partial<EmailOptions>,
+    _options?: Partial<EmailOptions>,
   ): Promise<EmailResult> {
     try {
       // Render the template to validate it works

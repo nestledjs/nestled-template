@@ -8,7 +8,7 @@ import AcceptInvitation, {
   buildRegisterWithInvitationInput,
   getInvitationErrorMessage,
 } from '../../app/routes/accept-invitation'
-import { GlobalContextProvider, useGlobalCtx } from '@nestled-template/web'
+import { useGlobalCtx } from '@nestled-template/web'
 
 // Mock Apollo Client
 const mockUseQuery = vi.fn()

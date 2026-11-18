@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { createTestRouter } from '../../helpers/createTestRouter'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import PublicIndex from '../../../app/routes/_public/_index'
 
 describe('Landing Page (_public/_index)', () => {
@@ -130,7 +130,7 @@ describe('Landing Page (_public/_index)', () => {
 
   describe('Responsive Layout', () => {
     it('should have responsive text sizes', () => {
-      const { container } = renderLandingPage()
+      renderLandingPage()
 
       const heading = screen.getByRole('heading', { level: 1 })
       expect(heading.className).toContain('text-4xl')

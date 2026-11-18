@@ -1,6 +1,39 @@
 import nx from '@nx/eslint-plugin'
 import { createRequire } from 'node:module'
 
+// Unused code is an error, not a warning: a warning never fails `nx run-many -t lint`, so unused
+// imports, locals and dead destructures reached CI (and Sonar) instead of failing at the desk.
+// Prefix a name with `_` to keep it deliberately (a required callback parameter, a caught error you
+// do not read, a skipped tuple element); a property dropped with a rest sibling
+// (`const { password, ...safe } = user`) is allowed. `nx.configs['flat/react']` sets its own,
+// looser level for this rule, so every React lint config spreads this after it.
+export const unusedVarsRule = {
+  files: [
+    '**/*.ts',
+    '**/*.cts',
+    '**/*.mts',
+    '**/*.tsx',
+    '**/*.js',
+    '**/*.cjs',
+    '**/*.mjs',
+    '**/*.jsx',
+  ],
+  rules: {
+    '@typescript-eslint/no-unused-vars': [
+      'error',
+      {
+        args: 'after-used',
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrors: 'all',
+        caughtErrorsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      },
+    ],
+  },
+}
+
 export default [
   ...nx.configs['flat/base'],
   ...nx.configs['flat/typescript'],
@@ -72,12 +105,12 @@ export default [
     // Override or add rules here
     rules: {},
   },
+  unusedVarsRule,
   {
     files: ['apps/web/tests/**/*.spec.ts', 'apps/web/tests/**/*.spec.tsx'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
     },
   },
 ]

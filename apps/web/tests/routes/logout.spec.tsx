@@ -2,7 +2,6 @@ import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import LogoutRoute from '../../app/routes/logout'
-import { ApolloClient } from '@apollo/client'
 import Cookies from 'js-cookie'
 import { createTestRouter } from '../helpers/createTestRouter'
 

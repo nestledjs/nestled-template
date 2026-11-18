@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test Database Management Script
-# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|ensure|url]
+# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|ensure|verify|url]
 
 set -e
 
@@ -31,7 +31,14 @@ read_env() {
 TEST_DB_PORT="${POSTGRES_TEST_PORT:-}"
 [[ -n "$TEST_DB_PORT" ]] || TEST_DB_PORT="$(read_env POSTGRES_TEST_PORT)" || exit 1
 TEST_DB_PORT="${TEST_DB_PORT:-5433}"
-TEST_DB_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test}"
+# The URL of the repo's own test database: the container `start` brings up on POSTGRES_TEST_PORT.
+# Any other URL names a database you chose, on a server you vouch for.
+TEST_DB_OWN_URL="postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test"
+TEST_DB_URL="${TEST_DATABASE_URL:-$TEST_DB_OWN_URL}"
+# The development Postgres's host port: POSTGRES_PORT from the environment, else .env. Empty when
+# neither sets it (CI has no .env), which skips the development-server check below.
+DEV_DB_PORT="${POSTGRES_PORT:-}"
+[[ -n "$DEV_DB_PORT" ]] || DEV_DB_PORT="$(read_env POSTGRES_PORT)" || exit 1
 # The resolved URL is the single source of truth for the port we report. When a caller supplies
 # TEST_DATABASE_URL (e.g. a block-specific port), TEST_DB_PORT still holds the .env/default value, so
 # echoing it would claim "ready on port 5433" while actually using the URL's port. Read the port back
@@ -78,6 +85,32 @@ is_local_test_database() {
   return 1
 }
 
+# Whether TEST_DB_URL is on this machine's development Postgres (the port POSTGRES_PORT names). A
+# test database there sits beside the development data, in a server `reset` never clears, and
+# `ensure` would create it inside that server.
+on_development_server() {
+  [[ -n "$DEV_DB_PORT" ]] || return 1
+  [[ "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]] || return 1
+  local host="${BASH_REMATCH[3]}" port="${BASH_REMATCH[4]#:}"
+  [[ "$host" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ ]] || return 1
+  [[ "${port:-5432}" == "$DEV_DB_PORT" ]]
+}
+
+# A liveness check is not an identity check: pg_isready and `SELECT 1` say something answers on the
+# port, never that it is this repo's server. For the repo's own URL, the server must be the repo's
+# own test container, publishing that port. Without a reachable Docker there is no container to
+# compare with, and the check is skipped; a URL of your own is yours to vouch for.
+own_test_container_problem() {
+  [[ "$TEST_DB_URL" == "$TEST_DB_OWN_URL" ]] || return 0
+  docker info >/dev/null 2>&1 || return 0
+  if docker port "$TEST_DB_CONTAINER" 5432/tcp 2>/dev/null | grep -qE ":${TEST_DB_PORT}\$"; then
+    return 0
+  fi
+  echo "this repo's test container ($TEST_DB_CONTAINER) is not running on port $TEST_DB_PORT, so" \
+    "whatever answers there is another server (very likely another repo's Postgres)"
+  return 0
+}
+
 # Prisma's `migrate deploy` has no guard of its own, so `migrate` refuses a URL that is not a
 # disposable test database, by the rules the e2e setup applies before it resets, migrates, pushes or
 # seeds (apps/api-e2e/src/support/database-guards.ts): a postgres(ql):// URL on this machine, named
@@ -89,12 +122,18 @@ assert_disposable_test_database() {
     echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
     exit 1
   fi
-  if is_local_test_database; then
+  if is_local_test_database && ! on_development_server; then
     return 0
   fi
   if [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" == "1" ]]; then
     echo "⚠️  E2E_ALLOW_NON_DISPOSABLE_DB=1: running $action on $TEST_DB_DISPLAY_URL, which is not a local *_test database."
     return 0
+  fi
+  if on_development_server; then
+    echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development" >&2
+    echo "   Postgres (POSTGRES_PORT). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or" >&2
+    echo "   set E2E_ALLOW_NON_DISPOSABLE_DB=1 if sharing that server is deliberate." >&2
+    exit 1
   fi
   echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: a test database must be on this machine (localhost," >&2
   echo "   127.0.0.1 or [::1]) and named *_test. Point TEST_DATABASE_URL at one, or set" >&2
@@ -111,6 +150,20 @@ ensure_test_database() {
     echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: only a plain postgresql:// URL on this machine" >&2
     echo "   (localhost, 127.0.0.1 or [::1]) named *_test is created. E2E_ALLOW_NON_DISPOSABLE_DB does" >&2
     echo "   not apply; create any other database yourself." >&2
+    return 1
+  fi
+  if on_development_server; then
+    echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development Postgres" >&2
+    echo "   (POSTGRES_PORT), so it would be created beside the development data. Point" >&2
+    echo "   TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or create it yourself." >&2
+    return 1
+  fi
+  local problem
+  problem="$(own_test_container_problem)"
+  if [[ -n "$problem" ]]; then
+    echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: $problem." >&2
+    echo "   Start this repo's test database (./scripts/test-db.sh start), or move POSTGRES_TEST_PORT" >&2
+    echo "   (and TEST_DATABASE_URL with it) to a free port." >&2
     return 1
   fi
   TEST_DATABASE_URL="$TEST_DB_URL" node "$SCRIPT_DIR/test-database.mjs" ensure || return 1
@@ -232,6 +285,25 @@ case "$COMMAND" in
     ensure_test_database || exit 1
     ;;
 
+  "verify")
+    # Before a run: the database the URL names is the one this repo should test against. Not on the
+    # development server (E2E_ALLOW_NON_DISPOSABLE_DB=1 accepts that deliberately), and, for the
+    # repo's own URL, served by the repo's own test container.
+    if on_development_server && [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" != "1" ]]; then
+      echo "❌ $TEST_DB_DISPLAY_URL is on port $DEV_DB_PORT, the development Postgres (POSTGRES_PORT)." >&2
+      echo "   Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or set" >&2
+      echo "   E2E_ALLOW_NON_DISPOSABLE_DB=1 if sharing that server is deliberate." >&2
+      exit 1
+    fi
+    VERIFY_PROBLEM="$(own_test_container_problem)"
+    if [[ -n "$VERIFY_PROBLEM" ]]; then
+      echo "❌ Not testing against $TEST_DB_DISPLAY_URL: $VERIFY_PROBLEM." >&2
+      echo "   Stop that server or move POSTGRES_TEST_PORT (and TEST_DATABASE_URL with it) to a free" >&2
+      echo "   port, then run ./scripts/test-db.sh start." >&2
+      exit 1
+    fi
+    ;;
+
   "url")
     # The one place that resolves the test-database URL. Callers that are NOT launched through Nx
     # (pnpm runs a script with a plain shell, which never loads .env) must ask for it here rather
@@ -252,6 +324,7 @@ case "$COMMAND" in
     echo "  logs    - Show test database logs"
     echo "  migrate - Run Prisma migrations on test database"
     echo "  ensure  - Create the test database if the server does not have it (local *_test only)"
+    echo "  verify  - Check the URL is not the development server, and is served by this repo's container"
     echo "  url     - Print the resolved test database URL"
     echo ""
     echo "Test DB URL: $TEST_DB_DISPLAY_URL"

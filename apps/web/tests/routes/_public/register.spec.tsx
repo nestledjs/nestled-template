@@ -106,11 +106,9 @@ vi.mock('@nestledjs/forms-core', () => ({
 
 describe('Register Component', () => {
   let mockRegisterMutation: ReturnType<typeof vi.fn>
-  let mockNavigate: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     mockRegisterMutation = vi.fn()
-    mockNavigate = vi.fn()
 
     vi.mocked(useMutation).mockReturnValue([mockRegisterMutation, { loading: false }] as any)
   })

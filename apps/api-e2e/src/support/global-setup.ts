@@ -2,7 +2,12 @@ import { waitForPortOpen } from '@nx/node/utils'
 import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createConnection, type Socket } from 'node:net'
 import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
-import { API_OUTPUT_TAIL_LINES, apiStartTimeoutSeconds, lastOutputLines } from './api-readiness'
+import {
+  API_OUTPUT_TAIL_LINES,
+  apiServeArgs,
+  apiStartTimeoutSeconds,
+  lastOutputLines,
+} from './api-readiness'
 import {
   ALLOW_NON_DISPOSABLE_DB,
   assertDisposableTestDatabase,
@@ -141,7 +146,8 @@ async function startApiServer(
   port: number,
   host: string,
 ): Promise<ChildProcess> {
-  const apiProcess = spawn('pnpm', ['nx', 'serve', 'api'], {
+  // Without the inspector, unless E2E_API_INSPECT_PORT asks for it (see apiServeArgs).
+  const apiProcess = spawn('pnpm', apiServeArgs(), {
     cwd: projectRoot,
     env: {
       ...process.env,

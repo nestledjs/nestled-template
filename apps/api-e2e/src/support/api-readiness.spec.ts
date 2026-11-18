@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   API_OUTPUT_TAIL_LINES,
   DEFAULT_API_START_TIMEOUT_SECONDS,
+  apiServeArgs,
   apiStartTimeoutSeconds,
   lastOutputLines,
 } from './api-readiness'
@@ -54,4 +55,35 @@ describe('lastOutputLines', () => {
     expect(lastOutputLines('')).toBe('(the API printed nothing)')
     expect(lastOutputLines('\n \n')).toBe('(the API printed nothing)')
   })
+})
+
+describe('apiServeArgs', () => {
+  it('serves the API without the inspector by default, so 9229 is never bound', () => {
+    expect(apiServeArgs({})).toEqual(['nx', 'serve', 'api', '--inspect=false'])
+    expect(apiServeArgs({ E2E_API_INSPECT_PORT: ' ' })).toEqual([
+      'nx',
+      'serve',
+      'api',
+      '--inspect=false',
+    ])
+  })
+
+  it('turns the inspector on, on E2E_API_INSPECT_PORT, when it is a port number', () => {
+    expect(apiServeArgs({ E2E_API_INSPECT_PORT: '9339' })).toEqual([
+      'nx',
+      'serve',
+      'api',
+      '--inspect=inspect',
+      '--port=9339',
+    ])
+  })
+
+  it.each(['abc', '0', '70000', '9229; rm -rf /'])(
+    'keeps the inspector off, and says so, for E2E_API_INSPECT_PORT=%s',
+    raw => {
+      const warn = vi.fn()
+      expect(apiServeArgs({ E2E_API_INSPECT_PORT: raw }, warn)).toContain('--inspect=false')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('not a port number'))
+    },
+  )
 })

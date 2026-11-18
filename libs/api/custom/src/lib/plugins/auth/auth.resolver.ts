@@ -76,7 +76,7 @@ export class AuthResolver {
   @Query(() => User, { nullable: true })
   @UseGuards(GqlAuthGuard)
   @Authenticated()
-  async me(@CtxUser() user: User, @Info() info: GraphQLResolveInfo) {
+  async me(@CtxUser() user: User, @Info() _info: GraphQLResolveInfo) {
     const validatedUser = await this.service.validateUser(user.id)
 
     // The user object from @CtxUser() already has emulation fields attached by JwtStrategy
