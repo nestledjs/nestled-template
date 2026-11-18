@@ -484,3 +484,7 @@ Qalatra agents are registered with `agents/**/agent.config`; do not replace thos
 - The `nx-generate` skill handles generator discovery internally - don't call nx_docs just to look up generator syntax
 
 <!-- nx configuration end-->
+
+## Development secrets
+
+Development secrets come from 1Password through `.env.tpl`; never put secret values in `.env`, commits or PRs. See `docs/dev/secrets-1password.md`.
