@@ -12,6 +12,7 @@ applyAfter:
     2026-11-16-session-org-consistency,
     2026-11-16-ssr-signout-outage,
     2026-11-19-mutation-errorpolicy-none,
+    2026-11-19-api-auth-ambiguity,
   ]
 
 intent: >
