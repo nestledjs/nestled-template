@@ -1,0 +1,997 @@
+diff --git a/apps/web/tests/routes/admin/users/_index.spec.tsx b/apps/web/tests/routes/admin/users/_index.spec.tsx
+index 20184e7..3affbf1 100644
+--- a/apps/web/tests/routes/admin/users/_index.spec.tsx
++++ b/apps/web/tests/routes/admin/users/_index.spec.tsx
+@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+ import { createTestRouter } from '../../../helpers/createTestRouter'
+ import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { ACTIVE_ORGANIZATION_STORAGE_KEY } from '@nestled-template/shared/apollo'
+ import AdminUsersPage from '../../../../app/routes/admin/users/_index'
+ 
+ // Mock Apollo Client
+@@ -47,7 +48,7 @@ describe('Admin Users Management Page', () => {
+ 
+     // Default mock for useMutation that calls onCompleted/onError callbacks
+     mockUseMutation.mockImplementation((_document, options) => {
+-      const mutationFn = vi.fn().mockImplementation(async args => {
++      const mutationFn = vi.fn().mockImplementation(async () => {
+         try {
+           const result = { data: {} }
+           if (options?.onCompleted) {
+@@ -647,6 +648,27 @@ describe('Admin Users Management Page', () => {
+       })
+     })
+ 
++    it("forgets the admin's stored organization before switching to the emulated session", async () => {
++      // The emulated user may not belong to it: their requests must not carry it.
++      localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, 'admin-org')
++      mockUseQuery.mockImplementation(() => ({
++        data: mockUsersData,
++        loading: false,
++        error: null,
++        refetch: vi.fn(),
++      }))
++
++      renderUsersPage()
++
++      await user.click(screen.getAllByRole('button', { name: 'Emulate' })[0])
++      await user.click(await screen.findByRole('button', { name: 'Start Emulation' }))
++
++      await waitFor(() => {
++        expect(window.location.href).toBe('/members/dashboard')
++      })
++      expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBeNull()
++    })
++
+     it('should show error message on emulation failure', async () => {
+       mockUseQuery.mockImplementation(() => ({
+         data: mockUsersData,
+diff --git a/.env.example b/.env.example
+index a2a1152..fff5272 100644
+--- a/.env.example
++++ b/.env.example
+@@ -79,9 +79,11 @@ API_COOKIE_SECRET=change-this-in-production
+ # (e.g. app.example.com + api.example.com), set this to the shared registrable
+ # domain with a leading dot: API_COOKIE_DOMAIN=.example.com
+ API_COOKIE_DOMAIN=localhost
+-# MUST match API_COOKIE_DOMAIN on split-subdomain deploys so the WEB app can
+-# clear the domain-scoped session cookie (otherwise forced logout cannot remove
+-# the cookie and you risk a login↔dashboard redirect loop).
++# The WEB service needs the same cookie domain on split-subdomain deploys so it
++# can clear the domain-scoped session cookie (otherwise forced logout cannot
++# remove the cookie and you risk a login↔dashboard redirect loop). Set
++# API_COOKIE_DOMAIN on the web service too (Railway: ${{api.API_COOKIE_DOMAIN}}).
++# VITE_COOKIE_DOMAIN also works, and wins if both are set.
+ # Leave unset/empty for single-host or localhost deploys.
+ # VITE_COOKIE_DOMAIN=.example.com
+ 
+diff --git a/apps/web/app/entry.server.tsx b/apps/web/app/entry.server.tsx
+index 2b97f14..816e1c9 100644
+--- a/apps/web/app/entry.server.tsx
++++ b/apps/web/app/entry.server.tsx
+@@ -29,6 +29,7 @@ import {
+   organizationRequiredResponse,
+ } from './organization-required'
+ import { loaderReportsOutage } from './loader-outage'
++import { expiredSessionCookies } from './session-cookie'
+ 
+ disableFragmentWarnings()
+ 
+@@ -263,16 +264,12 @@ async function signOutOnceSettled(
+ 
+ function forceLogoutResponse(request: Request): Response {
+   const cookieName = process.env.VITE_COOKIE_NAME || '__session'
+-  const cookieDomain = process.env.VITE_COOKIE_DOMAIN
+-  const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
+-  const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
+   const url = new URL(request.url)
+   const returnParam = url.pathname === '/' ? '' : `?return_url=${encodeURIComponent(url.pathname)}`
+   const headers = new Headers({ Location: `/force-logout${returnParam}` })
+-  headers.append(
+-    'Set-Cookie',
+-    cookieDomain && cookieDomain !== 'localhost' ? `${base}; Domain=${cookieDomain}` : base,
+-  )
++  // Both the domain cookie and the host-only one: expiring only the domain one (as this did)
++  // left a host-only cookie in place, and the reverse a parent-domain one.
++  for (const cookie of expiredSessionCookies(cookieName)) headers.append('Set-Cookie', cookie)
+   return new Response(null, { status: 302, headers })
+ }
+ 
+diff --git a/apps/web/app/root.tsx b/apps/web/app/root.tsx
+index a4dfc31..34bc469 100644
+--- a/apps/web/app/root.tsx
++++ b/apps/web/app/root.tsx
+@@ -24,6 +24,7 @@ import {
+   type MetaFunction,
+   Scripts,
+   ScrollRestoration,
++  data,
+   isRouteErrorResponse,
+   useLoaderData,
+ } from 'react-router'
+@@ -34,6 +35,7 @@ import { isOrganizationContextRequired, OrganizationRequired } from './organizat
+ import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
+ import { DeferredAuthRecovery } from './deferred-auth-recovery'
+ import { useRootLoaderOutage } from './loader-outage'
++import { expiredSessionCookies } from './session-cookie'
+ 
+ export const meta: MetaFunction = () => [
+   {
+@@ -51,25 +53,16 @@ export const links: LinksFunction = () => [
+ ]
+ 
+ function clearSessionCookieHeaders(cookieName: string): Headers {
+-  const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
+-  const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
+-  const domain = process.env.VITE_COOKIE_DOMAIN
+   const headers = new Headers()
+-  if (domain && domain !== 'localhost' && !domain.startsWith('127.')) {
+-    headers.append('Set-Cookie', `${base}; Domain=${domain}`)
+-  }
+-  headers.append('Set-Cookie', base)
++  for (const cookie of expiredSessionCookies(cookieName)) headers.append('Set-Cookie', cookie)
+   return headers
+ }
+ 
+-function buildLoginRedirect(pathname: string, opts?: { expired?: boolean }) {
++function buildLoginRedirect(pathname: string) {
+   const params = new URLSearchParams()
+   if (pathname && pathname !== '/') {
+     params.set('return_url', pathname)
+   }
+-  if (opts?.expired) {
+-    params.set('expired', '1')
+-  }
+   const qs = params.toString()
+   return qs ? `/login?${qs}` : '/login'
+ }
+@@ -80,12 +73,20 @@ function buildAuthRedirectResponse(cookieName: string, loginRedirect: string) {
+   return new Response(null, { status: 302, headers })
+ }
+ 
+-function handlePrivateRoutePreloadError(
+-  error: unknown,
+-  cookieName: string,
+-  pathname: string,
+-  theme: string,
+-) {
++/**
++ * What the root loader does when the Me query for a private route fails in the loader itself (an
++ * app that awaits Me there; the template's preload is returned unawaited, and its failure is
++ * judged in the render). Exported for such an app, and for the specs.
++ *
++ * A rejected session (an HTTP 401 or an UNAUTHENTICATED GraphQL error; the message is never read)
++ * is not signed out here: this loader cannot see the request's other loaders, and one of them may
++ * have found the API unreachable, which outranks a 401. It throws a 401 route error instead, and
++ * the request's own decision applies: the server render waits for the request's other API calls
++ * (`routeErrorOutcome` and `SSR_API_SETTLE_MS` in entry.server.tsx) and signs out through
++ * /force-logout only when none points to an outage; in the browser the root ErrorBoundary checks
++ * the app's outage evidence first. Anything else keeps the session as an outage.
++ */
++export function privateRouteMeFailure(error: unknown, theme: string) {
+   console.error('[Root Loader] Error during Me query preload:', error)
+ 
+   if (isNetworkError(error)) {
+@@ -93,13 +94,9 @@ function handlePrivateRoutePreloadError(
+     return { serviceUnavailable: true, theme }
+   }
+ 
+-  // Only an HTTP 401 or an UNAUTHENTICATED GraphQL error is a rejected session. The message is
+-  // never read: an error that merely says "Unauthorized" or "401" keeps the session.
+   if (classifyApiFailure(error) === 'unauthenticated') {
+-    console.log('[Root Loader] Auth error detected, redirecting to login')
+-    // Append `expired=1` so the rejected session lands on a login form that
+-    // won't auto-bounce back to the dashboard (breaks the redirect loop).
+-    return buildAuthRedirectResponse(cookieName, buildLoginRedirect(pathname, { expired: true }))
++    console.log('[Root Loader] Auth error detected, leaving the sign-out to the request decision')
++    throw data(null, { status: 401, statusText: 'Unauthorized' }) // NOSONAR: a route error response on purpose
+   }
+ 
+   console.log('[Root Loader] Unknown error, returning serviceUnavailable as fallback')
+@@ -131,7 +128,7 @@ export const loader = apolloLoader()(({ preloadQuery, request }) => {
+       const meQueryRef = preloadQuery<MeQuery>(Me)
+       return { meQueryRef, theme }
+     } catch (error) {
+-      return handlePrivateRoutePreloadError(error, cookieName, url.pathname, theme)
++      return privateRouteMeFailure(error, theme)
+     }
+   }
+ 
+diff --git a/apps/web/app/routes/_public/login.tsx b/apps/web/app/routes/_public/login.tsx
+index 83a7096..7001fa0 100644
+--- a/apps/web/app/routes/_public/login.tsx
++++ b/apps/web/app/routes/_public/login.tsx
+@@ -24,6 +24,7 @@ import {
+   type Complete2FaLoginMutation,
+ } from '@nestled-template/shared/sdk'
+ import { formTheme } from '@nestled-template/shared/styles'
++import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ import { useMutation } from '@apollo/client/react'
+ 
+ export async function loader({ request }: LoaderFunctionArgs) {
+@@ -100,6 +101,15 @@ export default function LoginPage() {
+   const [tempToken, setTempToken] = useState<string | null>(oauth2FAToken)
+   const [twoFACode, setTwoFACode] = useState('')
+ 
++  // A form opened from a rejected session: /force-logout (a server redirect, which cannot reach
++  // localStorage) and the server render's sign-out land here with `expired=1`, and the session they
++  // ended left its organization stored for `x-organization-id`. Forget it, as /logout does. Any
++  // other visit keeps it: only a sign-in (`signedIn()`) replaces the session.
++  const openedFromRejectedSession = searchParams.has('expired')
++  useEffect(() => {
++    if (openedFromRejectedSession) storeActiveOrganizationId(null)
++  }, [openedFromRejectedSession])
++
+   // Once the token is held in component state, strip it from the address bar. It is a
+   // credential — short-lived and still gated on the second factor, but it should not persist in
+   // browser history, bookmarks, or a Referer header sent to a third party.
+@@ -120,6 +130,14 @@ export default function LoginPage() {
+     errorPolicy: 'none',
+   })
+ 
++  // A new session starts here: the organization stored for `x-organization-id` belonged to whoever
++  // was signed in before (a shared browser, a session that expired without a logout). The API
++  // refuses an organization the new user is not a member of, but the browser must not send it.
++  function signedIn() {
++    storeActiveOrganizationId(null)
++    navigate(redirectUrl)
++  }
++
+   async function processLogin(input: LoginInput) {
+     console.log('Login Clicked')
+     setFormError(null)
+@@ -138,7 +156,7 @@ export default function LoginPage() {
+       if (loginInfo?.user?.id) {
+         // The backend already sets the __session cookie via the GraphQL mutation
+         // We should not set our own cookies here, just navigate
+-        navigate(redirectUrl)
++        signedIn()
+       } else {
+         setFormError('Invalid login credentials')
+       }
+@@ -161,7 +179,7 @@ export default function LoginPage() {
+       })
+ 
+       if (data?.complete2FALogin?.user?.id) {
+-        navigate(redirectUrl)
++        signedIn()
+       } else {
+         setFormError('Invalid 2FA code')
+       }
+diff --git a/apps/web/app/routes/_public/register.tsx b/apps/web/app/routes/_public/register.tsx
+index eac880d..1412f94 100644
+--- a/apps/web/app/routes/_public/register.tsx
++++ b/apps/web/app/routes/_public/register.tsx
+@@ -5,6 +5,7 @@ import { FormFieldClass } from '@nestledjs/forms-core'
+ import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
+ import { RegisterInput, Register, type RegisterMutation } from '@nestled-template/shared/sdk'
+ import { formTheme } from '@nestled-template/shared/styles'
++import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ import { useMutation } from '@apollo/client/react'
+ 
+ interface RegisterFormInput extends RegisterInput {
+@@ -55,6 +56,9 @@ export default function RegisterPage() {
+ 
+       const token = data?.register?.token
+       if (token) {
++        // The new account is signed in: forget an organization stored for a previous user, so its
++        // requests never carry another user's `x-organization-id`.
++        storeActiveOrganizationId(null)
+         // Redirect to dashboard after successful registration
+         // Email verification can be handled separately if needed
+         navigate('/members/dashboard')
+diff --git a/apps/web/app/routes/accept-invitation.tsx b/apps/web/app/routes/accept-invitation.tsx
+index 21cc253..f714732 100644
+--- a/apps/web/app/routes/accept-invitation.tsx
++++ b/apps/web/app/routes/accept-invitation.tsx
+@@ -22,6 +22,7 @@ import { useGlobalCtx } from '@nestled-template/web'
+ import { Form } from '@nestledjs/forms'
+ import { FormFieldClass } from '@nestledjs/forms-core'
+ import { formTheme } from '@nestled-template/shared/styles'
++import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ import { useQuery, useMutation } from '@apollo/client/react'
+ 
+ type Tab = 'login' | 'signup'
+@@ -209,6 +210,9 @@ export default function AcceptInvitation() {
+       })
+ 
+       if (data?.login?.user?.id) {
++        // A new session: forget an organization stored for a previous user before the invitation
++        // (or anything after it) is sent with its `x-organization-id`.
++        storeActiveOrganizationId(null)
+         // Login successful, now accept the invitation
+         await acceptInvitation({
+           variables: {
+@@ -243,6 +247,8 @@ export default function AcceptInvitation() {
+         },
+       })
+       if (result.data?.registerWithInvitation?.user?.id) {
++        // The new account is signed in: forget an organization stored for a previous user.
++        storeActiveOrganizationId(null)
+         // Registration successful, redirect to members area
+         setTimeout(() => {
+           navigate('/members', { replace: true })
+diff --git a/apps/web/app/routes/admin/users/_index.tsx b/apps/web/app/routes/admin/users/_index.tsx
+index 48b7ed9..7d8dbd6 100644
+--- a/apps/web/app/routes/admin/users/_index.tsx
++++ b/apps/web/app/routes/admin/users/_index.tsx
+@@ -18,6 +18,7 @@ import {
+   XCircleIcon,
+ } from '@heroicons/react/24/outline'
+ import { cn } from '@nestled-template/shared/utils'
++import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ 
+ function formatDate(date: string | null) {
+   if (!date) return 'Never'
+@@ -204,6 +205,9 @@ export default function AdminUsersPage() {
+   // Emulate user mutation
+   const [emulateUser, { loading: emulating }] = useMutation<EmulateUserMutation>(EmulateUser, {
+     onCompleted: () => {
++      // The emulated user's session starts now: forget the admin's organization, so its requests
++      // are not sent for an organization the emulated user may not belong to.
++      storeActiveOrganizationId(null)
+       // Reload the page to switch to the emulated user's session
+       globalThis.location.href = '/members/dashboard'
+     },
+diff --git a/apps/web/app/routes/force-logout.tsx b/apps/web/app/routes/force-logout.tsx
+index d7a6113..b83c87c 100644
+--- a/apps/web/app/routes/force-logout.tsx
++++ b/apps/web/app/routes/force-logout.tsx
+@@ -1,23 +1,14 @@
+ import { getSessionCookieName } from '@nestled-template/shared/utils'
+-
+-function buildClearCookieHeader(cookieName: string): string[] {
+-  const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
+-  const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
+-  const domain = process.env.VITE_COOKIE_DOMAIN
+-
+-  if (domain && domain !== 'localhost' && !domain.startsWith('127.')) {
+-    // Clear for both the configured domain and bare host to handle both cookie scopes
+-    return [`${base}; Domain=${domain}`, base]
+-  }
+-  return [base]
+-}
++import { expiredSessionCookies } from '../session-cookie'
+ 
+ export async function loader({ request }: { request: Request }) {
+   const cookieName = getSessionCookieName()
+   const url = new URL(request.url)
+   const returnUrl = url.searchParams.get('return_url')
+-  // Always append `expired=1`. Even after clearing the cookie (which can fail when the
+-  // web service lacks VITE_COOKIE_DOMAIN on a split-subdomain deploy), the login page
++  // The organization stored for `x-organization-id` lives in localStorage, which a server redirect
++  // cannot reach: the login form this lands on forgets it as it opens, as /logout does.
++  // Always append `expired=1`. Even after clearing the cookie (which can fail when the web
++  // service lacks the API's cookie domain on a split-subdomain deploy), the login page
+   // must not auto-redirect back to the dashboard.
+   const params = new URLSearchParams()
+   if (returnUrl) {
+@@ -27,7 +18,7 @@ export async function loader({ request }: { request: Request }) {
+   const loginPath = `/login?${params.toString()}`
+ 
+   const headers = new Headers()
+-  for (const cookie of buildClearCookieHeader(cookieName)) {
++  for (const cookie of expiredSessionCookies(cookieName)) {
+     headers.append('Set-Cookie', cookie)
+   }
+   headers.set('Location', loginPath)
+diff --git a/apps/web/app/session-cookie.ts b/apps/web/app/session-cookie.ts
+new file mode 100644
+index 0000000..da1ca0c
+--- /dev/null
++++ b/apps/web/app/session-cookie.ts
+@@ -0,0 +1,28 @@
++/**
++ * The domain the API sets the session cookie for (its `Domain` attribute), as the web server sees
++ * it: `VITE_COOKIE_DOMAIN`, else `API_COOKIE_DOMAIN` (the API's own variable, when the web service
++ * is given it too). Undefined for a host-only cookie: nothing set, `localhost`, or an IP address,
++ * which the API never uses as a cookie domain either.
++ *
++ * The web service must be given the same value as the API: set `API_COOKIE_DOMAIN` on it too (on
++ * Railway, `${{api.API_COOKIE_DOMAIN}}`): a cookie the API set for the parent domain survives a sign-out
++ * that only expires the host-only one, and the user is signed straight back in.
++ */
++export function sessionCookieDomain(): string | undefined {
++  const domain = (process.env.VITE_COOKIE_DOMAIN || process.env.API_COOKIE_DOMAIN || '').trim()
++  if (!domain || domain === 'localhost' || domain === '[::1]' || domain.startsWith('127.')) {
++    return undefined
++  }
++  return domain
++}
++
++/**
++ * `Set-Cookie` values that expire the session cookie `cookieName` wherever it may have been set:
++ * the host-only cookie always, and the domain cookie as well when a cookie domain is configured
++ * (`sessionCookieDomain`). Expiring only one of them left the other in place.
++ */
++export function expiredSessionCookies(cookieName: string): string[] {
++  const base = `${cookieName}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`
++  const domain = sessionCookieDomain()
++  return domain ? [`${base}; Domain=${domain}`, base] : [base]
++}
+diff --git a/apps/web/tests/entry-server-shell-error.spec.tsx b/apps/web/tests/entry-server-shell-error.spec.tsx
+index 6398679..71620b4 100644
+--- a/apps/web/tests/entry-server-shell-error.spec.tsx
++++ b/apps/web/tests/entry-server-shell-error.spec.tsx
+@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
+ import { useReadQuery, type QueryRef } from '@apollo/client/react'
+ import { apolloLoader, makeClient } from '@nestled-template/shared/apollo'
++import { Me } from '@nestled-template/shared/sdk'
+ import * as entryServer from '../app/entry.server'
+ import {
+   recordedLoaderCause,
+@@ -225,6 +226,29 @@ describe('server render when the Me preload fails', () => {
+     expect(clearsTheCookie(response)).toBe(true)
+   })
+ 
++  it('expires both the cookie-domain cookie and the host-only one when it signs out', async () => {
++    // The API set the cookie for its cookie domain; the web service may know it only as the API's
++    // own variable. Expiring the domain cookie alone left a host-only one, and the reverse a
++    // parent-domain one, either of which signed the user straight back in.
++    vi.stubEnv('VITE_COOKIE_DOMAIN', '')
++    vi.stubEnv('API_COOKIE_DOMAIN', '.example.com')
++    graphqlAnswers(401, { message: 'Unauthorized' })
++
++    try {
++      const response = await reloadSignedIn('/members/dashboard')
++
++      expect(response.status).toBe(302)
++      const cleared = response.headers
++        .getSetCookie()
++        .filter(cookie => cookie.startsWith(`${COOKIE_NAME}=;`))
++      expect(cleared).toHaveLength(2)
++      expect(cleared.filter(cookie => cookie.endsWith('; Domain=.example.com'))).toHaveLength(1)
++      expect(cleared.filter(cookie => !cookie.includes('Domain='))).toHaveLength(1)
++    } finally {
++      vi.unstubAllEnvs()
++    }
++  })
++
+   it.each([
+     ['"Unauthorized"', 'Unauthorized'],
+     ['"401"', 'Request failed with status 401'],
+@@ -766,6 +790,62 @@ describe('server render sign-out decisions with the whole request in view', () =
+     })
+   })
+ 
++  // The template's root loader returns its Me preload unawaited, so Me's 401 surfaces in the
++  // render. An app that awaits Me in the root loader meets it in the loader instead, and the race
++  // specs above must hold for it too: its own 401 is judged with the whole request in view.
++  describe('a root loader that awaits Me', () => {
++    const rootAwaitsMe = async () => {
++      try {
++        await makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' }).query({
++          query: Me,
++          fetchPolicy: 'network-only',
++          errorPolicy: 'none',
++        })
++        return { theme: 'dark' }
++      } catch (error) {
++        return rootModule.privateRouteMeFailure(error, 'dark')
++      }
++    }
++
++    it("keeps the session and serves the recovering 503 when its 401 comes before another loader's 503", async () => {
++      // Signing out from the root loader on its own 401 missed the members loader's outage.
++      answer({ Me: unauthorized, MembersData: later(50, proxy503) })
++
++      const response = await reloadSignedIn(
++        '/members/dashboard',
++        build(undefined, preloadsQuery, { rootLoader: rootAwaitsMe }),
++      )
++
++      expectRecovering503(response, await response.text())
++    })
++
++    it('still signs out through /force-logout on its 401 once the other calls are answered', async () => {
++      answer({ Me: unauthorized, MembersData: later(50, json(200, { data: { membersData: 1 } })) })
++
++      const response = await reloadSignedIn(
++        '/members/dashboard',
++        build(undefined, preloadsQuery, { rootLoader: rootAwaitsMe }),
++      )
++
++      expect(response.status).toBe(302)
++      expect(response.headers.get('Location')).toBe(
++        `/force-logout?return_url=${encodeURIComponent('/members/dashboard')}`,
++      )
++      expect(clearsTheCookie(response)).toBe(true)
++    })
++
++    it("keeps the session when a child loader's 401 comes beside the root's Me outage", async () => {
++      answer({ Me: later(50, proxy503), MembersData: unauthorized })
++
++      const response = await reloadSignedIn(
++        '/members/dashboard',
++        build(undefined, awaitsQuery, { rootLoader: rootAwaitsMe }),
++      )
++
++      expectRecovering503(response, await response.text())
++    })
++  })
++
+   describe('a preloaded query refused with ORGANIZATION_CONTEXT_REQUIRED (#114)', () => {
+     it('serves the organization picker (403, cookie kept), not a 500', async () => {
+       answer({ Me: signedIn, MembersData: organizationRequired })
+diff --git a/apps/web/tests/root-loader-session.spec.ts b/apps/web/tests/root-loader-session.spec.ts
+index 5a99213..5c7e54e 100644
+--- a/apps/web/tests/root-loader-session.spec.ts
++++ b/apps/web/tests/root-loader-session.spec.ts
+@@ -94,16 +94,23 @@ describe('root loader when the Me preload throws', () => {
+         errors: [{ message: 'Session expired', extensions: { code: 'UNAUTHENTICATED' } }],
+       }),
+     ],
+-  ])('clears the cookie and redirects to login on %s', async (_label, error) => {
+-    preload.error = error
++  ])(
++    'leaves the sign-out to the request decision on %s, with the cookie kept here',
++    async (_label, error) => {
++      // This loader cannot see the request's other loaders, one of which may have found the API
++      // unreachable: it throws a 401 route error, and entry.server.tsx (or, in the browser, the root
++      // ErrorBoundary) signs out only when nothing points to an outage.
++      preload.error = error
+ 
+-    const result = await loadSignedIn()
++      const thrown = await loadSignedIn().then(
++        () => undefined,
++        (reason: unknown) => reason,
++      )
+ 
+-    expect(result).toBeInstanceOf(Response)
+-    expect((result as Response).status).toBe(302)
+-    expect((result as Response).headers.get('Location')).toBe(
+-      `/login?return_url=${encodeURIComponent('/members/dashboard')}&expired=1`,
+-    )
+-    expect(clearsTheCookie(result)).toBe(true)
+-  })
++      // React Router's `data(null, { status: 401 })`, which reaches the error handling as a 401 route
++      // error response; no redirect and no Set-Cookie of its own.
++      expect(thrown).toMatchObject({ init: { status: 401 } })
++      expect(clearsTheCookie(thrown)).toBe(false)
++    },
++  )
+ })
+diff --git a/apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx b/apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+new file mode 100644
+index 0000000..007cfa3
+--- /dev/null
++++ b/apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+@@ -0,0 +1,259 @@
++import React from 'react'
++import { act, render, screen, waitFor } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { useMutation } from '@apollo/client/react'
++import {
++  getStoredActiveOrganizationId,
++  storeActiveOrganizationId,
++} from '@nestled-template/shared/apollo'
++import {
++  AcceptOrganizationInvitation,
++  Complete2FaLogin,
++  Login,
++  Register,
++  RegisterWithInvitation,
++} from '@nestled-template/shared/sdk'
++import { createTestRouter } from '../../helpers/createTestRouter'
++import LoginPage from '../../../app/routes/_public/login'
++import RegisterPage from '../../../app/routes/_public/register'
++import AcceptInvitationPage from '../../../app/routes/accept-invitation'
++
++// A new session must not be sent for the organization the browser stored for whoever was signed in
++// before (`x-organization-id`): a shared browser, or a session that ended without a logout (it
++// expired, or went through /force-logout, which cannot reach localStorage). Every sign-in path
++// forgets the stored organization, and so does the login form opened from a rejected session
++// (`expired=1`); any other visit to the form keeps it.
++
++vi.mock('@apollo/client/react', () => ({
++  useMutation: vi.fn(),
++  // The invitation page reads its invitation; nothing else here queries.
++  useQuery: () => ({
++    data: {
++      getInvitationDetails: {
++        id: 'inv-1',
++        token: 'invitation-token',
++        email: 'invitee@example.com',
++        organizationName: 'Invited Org',
++        organizationId: 'invited-org',
++        inviterName: 'Inviter',
++        roleName: 'Member',
++        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
++        status: 'PENDING',
++      },
++    },
++    loading: false,
++  }),
++}))
++
++vi.mock('@nestled-template/web', () => ({
++  AuthLayout: ({ children, title }: { children: React.ReactNode; title: string }) => (
++    <div>
++      <h1>{title}</h1>
++      {children}
++    </div>
++  ),
++  turnstileSiteKey: () => undefined,
++  useGlobalCtx: () => ({ user: null }),
++  TurnstileWidget: () => null,
++}))
++
++// A plain form that submits its inputs' values.
++vi.mock('@nestledjs/forms', () => ({
++  Form: ({
++    id,
++    fields,
++    submit,
++  }: {
++    id: string
++    fields: Array<{ key: string; type: string; options?: { label?: string; text?: string } }>
++    submit: (values: Record<string, unknown>) => void
++  }) => (
++    <form
++      id={id}
++      onSubmit={event => {
++        event.preventDefault()
++        submit(Object.fromEntries(new FormData(event.currentTarget)))
++      }}
++    >
++      {fields.map(({ key, type, options }) =>
++        type === 'button' ? (
++          <button key={key} type="submit">
++            {options?.text}
++          </button>
++        ) : (
++          <label key={key}>
++            {options?.label}
++            <input name={key} />
++          </label>
++        ),
++      )}
++    </form>
++  ),
++}))
++
++vi.mock('@nestled-template/shared/styles', () => ({ formTheme: {} }))
++
++vi.mock('@nestledjs/forms-core', () => ({
++  FormFieldClass: Object.fromEntries(
++    ['text', 'email', 'password', 'checkbox', 'button'].map(type => [
++      type,
++      (key: string, options: unknown) => ({ key, type, options }),
++    ]),
++  ),
++}))
++
++const PREVIOUS_USERS_ORGANIZATION = 'org-of-the-previous-user'
++
++type MutationAnswer = (variables: unknown) => unknown
++
++function answerMutations(answers: Map<unknown, MutationAnswer>) {
++  vi.mocked(useMutation).mockImplementation(((document: unknown) => [
++    vi.fn(async ({ variables }: { variables?: unknown } = {}) => ({
++      data: answers.get(document)?.(variables),
++    })),
++    { loading: false },
++  ]) as never)
++}
++
++function renderAt(path: string, Component: React.ComponentType) {
++  const Stub = createTestRouter([
++    { path: path.split('?')[0], Component, loader: () => ({}) },
++    { path: '/members/dashboard', Component: () => <p>Dashboard</p> },
++  ])
++  return render(<Stub initialEntries={[path]} />)
++}
++
++describe('signing in forgets the organization stored for the previous user', () => {
++  beforeEach(() => {
++    localStorage.clear()
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.restoreAllMocks()
++    localStorage.clear()
++  })
++
++  it('the login form forgets it as it opens after a rejected session (/force-logout lands here with expired=1)', async () => {
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++    answerMutations(new Map())
++
++    renderAt('/login?expired=1', LoginPage)
++    await screen.findByRole('heading', { name: 'Welcome Back' })
++
++    // A passive effect: it may run after the heading is on screen.
++    await waitFor(() => expect(getStoredActiveOrganizationId()).toBeNull())
++  })
++
++  it('any other visit to the login form keeps the stored organization until a sign-in', async () => {
++    // A signed-in user who reaches /login (and is sent on to the app) keeps their organization.
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++    answerMutations(new Map())
++
++    renderAt('/login', LoginPage)
++    await screen.findByRole('heading', { name: 'Welcome Back' })
++    // Let the form's effects run before judging that nothing was cleared.
++    await act(async () => {
++      await new Promise(resolve => setTimeout(resolve, 0))
++    })
++
++    expect(getStoredActiveOrganizationId()).toBe(PREVIOUS_USERS_ORGANIZATION)
++  })
++
++  it('a password sign-in forgets an organization stored after the form opened', async () => {
++    answerMutations(new Map([[Login, () => ({ login: { user: { id: 'user-2' } } })]]))
++    renderAt('/login', LoginPage)
++    await screen.findByRole('heading', { name: 'Welcome Back' })
++    // Another tab of the previous user's session stores its organization meanwhile.
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++
++    await userEvent.click(screen.getByRole('button', { name: 'Log In' }))
++
++    await screen.findByText('Dashboard')
++    expect(getStoredActiveOrganizationId()).toBeNull()
++  })
++
++  it('a two-factor sign-in forgets it too', async () => {
++    answerMutations(
++      new Map<unknown, MutationAnswer>([
++        [Login, () => ({ login: { requires2FA: true, tempToken: 'temp' } })],
++        [Complete2FaLogin, () => ({ complete2FALogin: { user: { id: 'user-2' } } })],
++      ]),
++    )
++    renderAt('/login', LoginPage)
++    await userEvent.click(await screen.findByRole('button', { name: 'Log In' }))
++    await screen.findByRole('heading', { name: 'Two-Factor Authentication' })
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++
++    await userEvent.type(screen.getByLabelText('Authentication Code'), '123456')
++    await userEvent.click(screen.getByRole('button', { name: 'Verify and Login' }))
++
++    await screen.findByText('Dashboard')
++    expect(getStoredActiveOrganizationId()).toBeNull()
++  })
++
++  it('a failed sign-in keeps what is stored', async () => {
++    answerMutations(new Map([[Login, () => ({ login: null })]]))
++    renderAt('/login', LoginPage)
++    await screen.findByRole('heading', { name: 'Welcome Back' })
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++
++    await userEvent.click(screen.getByRole('button', { name: 'Log In' }))
++
++    await screen.findByText('Invalid login credentials')
++    expect(getStoredActiveOrganizationId()).toBe(PREVIOUS_USERS_ORGANIZATION)
++  })
++
++  it('registering (which signs the new account in) forgets it', async () => {
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++    answerMutations(new Map([[Register, () => ({ register: { token: 'token' } })]]))
++    renderAt('/register', RegisterPage)
++
++    await userEvent.click(await screen.findByRole('button', { name: 'Create Account' }))
++
++    await screen.findByText('Dashboard')
++    await waitFor(() => expect(getStoredActiveOrganizationId()).toBeNull())
++  })
++
++  it('signing in on the invitation page forgets it before the invitation is accepted', async () => {
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++    // An invitation link opened straight after a previous session expired skips the login form.
++    let storedWhenAccepting: string | null = 'not accepted'
++    answerMutations(
++      new Map<unknown, MutationAnswer>([
++        [Login, () => ({ login: { user: { id: 'user-2' } } })],
++        [
++          AcceptOrganizationInvitation,
++          () => {
++            storedWhenAccepting = getStoredActiveOrganizationId()
++            return { acceptOrganizationInvitation: { success: true } }
++          },
++        ],
++      ]),
++    )
++    renderAt('/accept-invitation?token=invitation-token', AcceptInvitationPage)
++
++    await userEvent.click(await screen.findByRole('button', { name: 'Login' }))
++    await userEvent.click(screen.getByRole('button', { name: 'Login & Accept Invitation' }))
++
++    await waitFor(() => expect(storedWhenAccepting).toBeNull())
++    expect(getStoredActiveOrganizationId()).toBeNull()
++  })
++
++  it('registering on the invitation page forgets it', async () => {
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++    answerMutations(
++      new Map<unknown, MutationAnswer>([
++        [RegisterWithInvitation, () => ({ registerWithInvitation: { user: { id: 'user-2' } } })],
++      ]),
++    )
++    renderAt('/accept-invitation?token=invitation-token', AcceptInvitationPage)
++
++    await userEvent.click(
++      await screen.findByRole('button', { name: 'Sign Up & Accept Invitation' }),
++    )
++
++    await waitFor(() => expect(getStoredActiveOrganizationId()).toBeNull())
++  })
++})
+diff --git a/apps/web/tests/session-cookie.spec.ts b/apps/web/tests/session-cookie.spec.ts
+new file mode 100644
+index 0000000..30fea3e
+--- /dev/null
++++ b/apps/web/tests/session-cookie.spec.ts
+@@ -0,0 +1,91 @@
++// @vitest-environment node
++import type { LoaderFunctionArgs } from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { expiredSessionCookies, sessionCookieDomain } from '../app/session-cookie'
++import { loader as forceLogoutLoader } from '../app/routes/force-logout'
++import { loader as rootLoader } from '../app/root'
++
++// Every sign-out the web server performs expires the session cookie wherever the API may have set
++// it: for the cookie domain (API_COOKIE_DOMAIN on the API) and host-only. A cookie the API set for
++// the parent domain survived a sign-out that expired only the host-only one, and signed the user
++// straight back in; the web service reads the API's own variable when it has no VITE_ one.
++
++const SESSION = '__session'
++const EXPIRED = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
++
++function sessionClears(response: Response): string[] {
++  return response.headers
++    .getSetCookie()
++    .filter(cookie => cookie.startsWith(`${SESSION}=;`) && cookie.includes(EXPIRED))
++}
++
++describe('expiring the session cookie on sign-out', () => {
++  beforeEach(() => {
++    vi.stubEnv('VITE_COOKIE_DOMAIN', '')
++    vi.stubEnv('API_COOKIE_DOMAIN', '')
++    vi.spyOn(console, 'log').mockImplementation(() => undefined)
++  })
++
++  afterEach(() => {
++    vi.unstubAllEnvs()
++    vi.restoreAllMocks()
++  })
++
++  it.each([
++    ['VITE_COOKIE_DOMAIN', '.example.com'],
++    ['API_COOKIE_DOMAIN', '.example.com'],
++  ])('expires both the %s cookie and the host-only one', (variable, domain) => {
++    vi.stubEnv(variable, domain)
++
++    expect(sessionCookieDomain()).toBe(domain)
++    expect(expiredSessionCookies(SESSION)).toEqual([
++      `${SESSION}=; Path=/; ${EXPIRED}; HttpOnly; SameSite=Lax; Domain=${domain}`,
++      `${SESSION}=; Path=/; ${EXPIRED}; HttpOnly; SameSite=Lax`,
++    ])
++  })
++
++  it('prefers VITE_COOKIE_DOMAIN when both are set', () => {
++    vi.stubEnv('VITE_COOKIE_DOMAIN', '.web.example.com')
++    vi.stubEnv('API_COOKIE_DOMAIN', '.example.com')
++
++    expect(sessionCookieDomain()).toBe('.web.example.com')
++  })
++
++  it.each(['', 'localhost', '127.0.0.1', '[::1]'])(
++    'expires only the host-only cookie for %j, which the API never uses as a domain',
++    domain => {
++      vi.stubEnv('API_COOKIE_DOMAIN', domain)
++
++      expect(sessionCookieDomain()).toBeUndefined()
++      expect(expiredSessionCookies(SESSION)).toEqual([
++        `${SESSION}=; Path=/; ${EXPIRED}; HttpOnly; SameSite=Lax`,
++      ])
++    },
++  )
++
++  it('/force-logout expires both when only the API variable is set', async () => {
++    vi.stubEnv('API_COOKIE_DOMAIN', '.example.com')
++
++    const response = await forceLogoutLoader({
++      request: new Request('https://app.example.com/force-logout'),
++    })
++
++    expect(sessionClears(response)).toHaveLength(2)
++    expect(sessionClears(response).some(cookie => cookie.endsWith('Domain=.example.com'))).toBe(
++      true,
++    )
++  })
++
++  it('the root loader expires both when it sends a signed-out visitor to /login', async () => {
++    vi.stubEnv('API_COOKIE_DOMAIN', '.example.com')
++
++    const response = (await rootLoader({
++      request: new Request('https://app.example.com/members/dashboard'),
++      params: {},
++      context: {},
++    } as unknown as LoaderFunctionArgs)) as Response
++
++    expect(response.status).toBe(302)
++    expect(sessionClears(response)).toHaveLength(2)
++  })
++})
+diff --git a/libs/web/src/lib/components/emulation-banner.spec.tsx b/libs/web/src/lib/components/emulation-banner.spec.tsx
+new file mode 100644
+index 0000000..c860201
+--- /dev/null
++++ b/libs/web/src/lib/components/emulation-banner.spec.tsx
+@@ -0,0 +1,54 @@
++import { render, screen, waitFor } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { useMutation } from '@apollo/client/react'
++import {
++  getStoredActiveOrganizationId,
++  storeActiveOrganizationId,
++} from '@nestled-template/shared/apollo'
++import { EmulationBanner } from './emulation-banner'
++
++vi.mock('@apollo/client/react', () => ({ useMutation: vi.fn() }))
++vi.mock('../contexts', () => ({
++  useGlobalCtx: () => ({ user: { id: 'emulated-user', isEmulating: true } }),
++}))
++
++describe('EmulationBanner', () => {
++  const originalLocation = globalThis.location
++
++  beforeEach(() => {
++    localStorage.clear()
++    Object.defineProperty(globalThis, 'location', {
++      configurable: true,
++      value: { href: '' },
++    })
++    // The mutation completes at once, as when the API ends the emulation.
++    vi.mocked(useMutation).mockImplementation(((
++      _document: unknown,
++      options?: { onCompleted?: () => void },
++    ) => [
++      vi.fn(async () => {
++        options?.onCompleted?.()
++        return { data: {} }
++      }),
++      { loading: false },
++    ]) as never)
++  })
++
++  afterEach(() => {
++    Object.defineProperty(globalThis, 'location', { configurable: true, value: originalLocation })
++    localStorage.clear()
++    vi.restoreAllMocks()
++  })
++
++  it("forgets the emulated user's organization before going back to the admin's session", async () => {
++    storeActiveOrganizationId('emulated-users-org')
++    render(<EmulationBanner />)
++
++    await userEvent.click(screen.getByRole('button', { name: /Exit Emulation/ }))
++    await userEvent.click(await screen.findByRole('button', { name: 'End Emulation' }))
++
++    await waitFor(() => expect(globalThis.location.href).toBe('/admin/users'))
++    expect(getStoredActiveOrganizationId()).toBeNull()
++  })
++})
+diff --git a/libs/web/src/lib/components/emulation-banner.tsx b/libs/web/src/lib/components/emulation-banner.tsx
+index 9b57139..d0b5734 100644
+--- a/libs/web/src/lib/components/emulation-banner.tsx
++++ b/libs/web/src/lib/components/emulation-banner.tsx
+@@ -1,5 +1,6 @@
+ import { useMutation } from '@apollo/client/react'
+ import { EndEmulation, type EndEmulationMutation } from '@nestled-template/shared/sdk'
++import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+ import {
+   ShieldExclamationIcon,
+   XMarkIcon,
+@@ -22,6 +23,8 @@ export function EmulationBanner() {
+ 
+   const [endEmulation, { loading }] = useMutation<EndEmulationMutation>(EndEmulation, {
+     onCompleted: () => {
++      // Back to the admin's own session: forget the emulated user's organization first.
++      storeActiveOrganizationId(null)
+       // Reload page to switch back to admin session
+       globalThis.location.href = '/admin/users'
+     },

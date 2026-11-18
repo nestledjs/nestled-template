@@ -1,0 +1,831 @@
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index 133e1e8..a255aea 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -29,7 +29,6 @@ import {
+   ORGANIZATION_CONTEXT_REQUIRED_CODE,
+   resolveActiveOrganization,
+   signalApiOutage,
+-  SKIP_AUTH_ERROR_REPORT_CONTEXT,
+   storeActiveOrganizationId,
+   subscriptionRetryDelayMs,
+   takeDeferredAuthFailure,
+@@ -115,6 +114,49 @@ describe('makeClient', () => {
+     localStorage.clear()
+   })
+ 
++  describe('errorPolicy defaults', () => {
++    const refusal = () =>
++      new Response(
++        JSON.stringify({
++          data: null,
++          errors: [{ message: 'That name is taken', extensions: { code: 'BAD_USER_INPUT' } }],
++        }),
++        { status: 200, headers: { 'content-type': 'application/json' } },
++      )
++
++    it('rejects a mutation the API refuses, with the API message', async () => {
++      vi.spyOn(console, 'error').mockImplementation(() => undefined)
++      globalThis.fetch = vi.fn().mockResolvedValue(refusal())
++      const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++      const mutation = gql`
++        mutation Rename {
++          rename
++        }
++      `
++
++      const outcome = client.mutate({ mutation })
++
++      await expect(outcome).rejects.toBeInstanceOf(CombinedGraphQLErrors)
++      await expect(outcome).rejects.toThrow('That name is taken')
++    })
++
++    it('still resolves a query with its GraphQL error (queries keep errorPolicy all)', async () => {
++      vi.spyOn(console, 'error').mockImplementation(() => undefined)
++      globalThis.fetch = vi.fn().mockResolvedValue(refusal())
++      const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++      const query = gql`
++        query Name {
++          name
++        }
++      `
++
++      const { error } = await client.query({ query, fetchPolicy: 'no-cache' })
++
++      expect(error).toBeInstanceOf(CombinedGraphQLErrors)
++      expect(error?.message).toContain('That name is taken')
++    })
++  })
++
+   it('creates an SSR client with an explicit token and API url', () => {
+     const client = makeClient(undefined, {
+       token: 'token-123',
+@@ -817,13 +859,16 @@ describe('makeClient', () => {
+     )
+     const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+ 
+-    await client.mutate({
+-      mutation: gql`
+-        mutation UpdatePrivateData {
+-          updatePrivateData
+-        }
+-      `,
+-    })
++    // The refusal goes back to the caller (it rejects under the 'none' mutation default).
++    await expect(
++      client.mutate({
++        mutation: gql`
++          mutation UpdatePrivateData {
++            updatePrivateData
++          }
++        `,
++      }),
++    ).rejects.toThrow('Forbidden')
+ 
+     expect(forbiddenHandler).not.toHaveBeenCalled()
+     globalThis.removeEventListener(APOLLO_ACCESS_FORBIDDEN_EVENT, forbiddenHandler)
+diff --git a/libs/web/src/lib/components/usage-limit-warning.tsx b/libs/web/src/lib/components/usage-limit-warning.tsx
+index 5b6f19a..13bbf38 100644
+--- a/libs/web/src/lib/components/usage-limit-warning.tsx
++++ b/libs/web/src/lib/components/usage-limit-warning.tsx
+@@ -173,7 +173,7 @@ export function MultiUsageLimitWarning({
+ 
+   return (
+     <div className="space-y-3">
+-      {trackedLimits.map(([key, data]) => (
++      {trackedLimits.map(([key]) => (
+         <UsageLimitWarning
+           key={key}
+           limitKey={key}
+diff --git a/apps/web/app/routes.tsx b/apps/web/app/routes.tsx
+index e9a8547..0fec2b9 100644
+--- a/apps/web/app/routes.tsx
++++ b/apps/web/app/routes.tsx
+@@ -1,6 +1,10 @@
+ import { index, route, type RouteConfig } from '@react-router/dev/routes'
+ 
+ export default [
++  // Web health check (Railway's web health check path). Outside every layout on purpose: a
++  // resource route here runs only its own loader, so it never calls the API or reads the session.
++  route('healthz', './routes/healthz.ts'),
++
+   // Global layout - provides GlobalContextProvider and Apollo context to ALL routes
+   route('', './routes/_layout.tsx', [
+     // Public routes (no conflicting paths)
+diff --git a/apps/web/app/routes/_public/forgot-password.tsx b/apps/web/app/routes/_public/forgot-password.tsx
+index ca039be..97a014f 100644
+--- a/apps/web/app/routes/_public/forgot-password.tsx
++++ b/apps/web/app/routes/_public/forgot-password.tsx
+@@ -20,7 +20,7 @@ export default function ForgotPasswordPage() {
+   // A Turnstile token is single-use, so a failed attempt must remount the widget for a fresh
+   // challenge — otherwise the retry fails the captcha instead of surfacing the real error.
+   const [captchaKey, setCaptchaKey] = useState(0)
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [forgotPasswordMutation, { loading }] = useMutation<ForgotPasswordMutation>(
+     ForgotPassword,
+     { errorPolicy: 'none' },
+diff --git a/apps/web/app/routes/_public/login.tsx b/apps/web/app/routes/_public/login.tsx
+index 8378cb1..83a7096 100644
+--- a/apps/web/app/routes/_public/login.tsx
++++ b/apps/web/app/routes/_public/login.tsx
+@@ -114,7 +114,7 @@ export default function LoginPage() {
+   // through the same open-redirect guard.
+   const redirectUrl = safeReturnUrl(searchParams.get('return_url') ?? searchParams.get('redirect'))
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [loginMutation] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
+   const [complete2FALoginMutation] = useMutation<Complete2FaLoginMutation>(Complete2FaLogin, {
+     errorPolicy: 'none',
+diff --git a/apps/web/app/routes/_public/register.tsx b/apps/web/app/routes/_public/register.tsx
+index 7abf24a..eac880d 100644
+--- a/apps/web/app/routes/_public/register.tsx
++++ b/apps/web/app/routes/_public/register.tsx
+@@ -19,7 +19,7 @@ export default function RegisterPage() {
+   // every failed attempt — including the common "email already in use" — burns it, and without a
+   // reset the retry would fail the captcha instead of showing the real error.
+   const [captchaKey, setCaptchaKey] = useState(0)
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/app/routes/_public/resend-verification.tsx b/apps/web/app/routes/_public/resend-verification.tsx
+index 44ea50c..d2a17ce 100644
+--- a/apps/web/app/routes/_public/resend-verification.tsx
++++ b/apps/web/app/routes/_public/resend-verification.tsx
+@@ -19,7 +19,7 @@ export default function ResendVerification() {
+   // Bumping this remounts the widget for a fresh challenge — a Turnstile token is single-use, so any
+   // failed/retried resend must not reuse a spent token. See register.tsx for the same pattern.
+   const [captchaKey, setCaptchaKey] = useState(0)
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [resendMutation, { loading }] = useMutation<ResendVerificationEmailMutation>(
+     ResendVerificationEmail,
+     { errorPolicy: 'none' },
+diff --git a/apps/web/app/routes/_public/reset-password.tsx b/apps/web/app/routes/_public/reset-password.tsx
+index 2cccb6b..bb1c842 100644
+--- a/apps/web/app/routes/_public/reset-password.tsx
++++ b/apps/web/app/routes/_public/reset-password.tsx
+@@ -18,7 +18,7 @@ export default function ResetPasswordPage() {
+     type: 'success' | 'error'
+     text: string
+   } | null>(null)
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [resetPasswordMutation, { loading }] = useMutation<ResetPasswordMutation>(ResetPassword, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/app/routes/_public/verify-email.tsx b/apps/web/app/routes/_public/verify-email.tsx
+index 760026c..d9214c7 100644
+--- a/apps/web/app/routes/_public/verify-email.tsx
++++ b/apps/web/app/routes/_public/verify-email.tsx
+@@ -15,7 +15,7 @@ export default function VerifyEmailPage() {
+   const [params] = useSearchParams()
+   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
+   const [message, setMessage] = useState<string>('Verifying your email...')
+-  // Throw on a GraphQL error so the .catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the .catch below sees it (also the client default; kept explicit).
+   const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/app/routes/accept-invitation.tsx b/apps/web/app/routes/accept-invitation.tsx
+index 9ea22ca..21cc253 100644
+--- a/apps/web/app/routes/accept-invitation.tsx
++++ b/apps/web/app/routes/accept-invitation.tsx
+@@ -82,13 +82,6 @@ function capitalizeSentence(message: string): string {
+   return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`
+ }
+ 
+-function getMutationResultErrorMessage(result: unknown, fallback: string): string {
+-  if (!result || typeof result !== 'object') return fallback
+-
+-  const maybeResult = result as { error?: unknown; errors?: unknown }
+-  return getInvitationErrorMessage(maybeResult.error ?? maybeResult.errors ?? result, fallback)
+-}
+-
+ export default function AcceptInvitation() {
+   const [searchParams] = useSearchParams()
+   const navigate = useNavigate()
+@@ -109,14 +102,16 @@ export default function AcceptInvitation() {
+     skip: !token,
+   })
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [acceptInvitation] = useMutation<AcceptOrganizationInvitationMutation>(
+     AcceptOrganizationInvitation,
+     { errorPolicy: 'none' },
+   )
+   const [login] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
+-  const [registerWithInvitation] =
+-    useMutation<RegisterWithInvitationMutation>(RegisterWithInvitation)
++  const [registerWithInvitation] = useMutation<RegisterWithInvitationMutation>(
++    RegisterWithInvitation,
++    { errorPolicy: 'none' },
++  )
+ 
+   const invitationDetails = inviteData?.getInvitationDetails
+ 
+@@ -247,15 +242,13 @@ export default function AcceptInvitation() {
+           input: buildRegisterWithInvitationInput(token, invitationDetails.email, input),
+         },
+       })
+-      const resultErrorMessage = getMutationResultErrorMessage(result, '')
+-
+       if (result.data?.registerWithInvitation?.user?.id) {
+         // Registration successful, redirect to members area
+         setTimeout(() => {
+           navigate('/members', { replace: true })
+         }, 1500)
+       } else {
+-        setFormError(resultErrorMessage || 'Failed to create account')
++        setFormError('Failed to create account')
+         setIsProcessing(false)
+       }
+     } catch (error) {
+diff --git a/apps/web/app/routes/admin/access-control/_index.tsx b/apps/web/app/routes/admin/access-control/_index.tsx
+index a3a0dba..94e94d7 100644
+--- a/apps/web/app/routes/admin/access-control/_index.tsx
++++ b/apps/web/app/routes/admin/access-control/_index.tsx
+@@ -60,7 +60,7 @@ export default function PlatformAccessControlPage() {
+         )
+       },
+       // Each mutation throws on a GraphQL error, so the console shows the API's reason rather than
+-      // a generic "not created" (the client default is 'all').
++      // a generic "not created" (also the client default; kept explicit).
+       async createRole(input) {
+         const { data } = await client.mutate({
+           errorPolicy: 'none',
+diff --git a/apps/web/app/routes/admin/billing/_index.tsx b/apps/web/app/routes/admin/billing/_index.tsx
+index 576e066..ffa7d3d 100644
+--- a/apps/web/app/routes/admin/billing/_index.tsx
++++ b/apps/web/app/routes/admin/billing/_index.tsx
+@@ -28,7 +28,7 @@ export default function AdminBillingOverview() {
+     variables: { input: { take: 5 } },
+   })
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [syncProducts] = useMutation(AdminSyncStripeProducts, { errorPolicy: 'none' })
+   const [syncPrices] = useMutation(AdminSyncStripePrices, { errorPolicy: 'none' })
+ 
+diff --git a/apps/web/app/routes/healthz.ts b/apps/web/app/routes/healthz.ts
+new file mode 100644
+index 0000000..6d5d695
+--- /dev/null
++++ b/apps/web/app/routes/healthz.ts
+@@ -0,0 +1,18 @@
++/**
++ * `GET /healthz`: the web service's own health check (Railway's web health check path).
++ *
++ * It answers 200 `ok` from this process alone: no API call, no cookie or session work, no Apollo
++ * client. It is a resource route (a loader and no component) registered outside every layout, so
++ * React Router runs this loader only, not the root, signed-in or public layout loaders. The web
++ * health check then says whether this server is up, and stays green while the API is down (the
++ * API has its own check on `/api/uptime`).
++ */
++export function loader(): Response {
++  return new Response('ok', {
++    status: 200,
++    headers: {
++      'Content-Type': 'text/plain; charset=utf-8',
++      'Cache-Control': 'no-store',
++    },
++  })
++}
+diff --git a/apps/web/app/routes/pricing.tsx b/apps/web/app/routes/pricing.tsx
+index 9254d3d..565d646 100644
+--- a/apps/web/app/routes/pricing.tsx
++++ b/apps/web/app/routes/pricing.tsx
+@@ -19,7 +19,7 @@ export default function PricingPage() {
+   const { user } = useGlobalCtx()
+   const { plan: currentPlan } = useSubscription()
+   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [createCheckoutSession, { loading: checkoutLoading }] =
+     useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession, { errorPolicy: 'none' })
+ 
+diff --git a/apps/web/app/routes/settings/_shared-sections.tsx b/apps/web/app/routes/settings/_shared-sections.tsx
+index 30045c5..2ce52c9 100644
+--- a/apps/web/app/routes/settings/_shared-sections.tsx
++++ b/apps/web/app/routes/settings/_shared-sections.tsx
+@@ -153,7 +153,7 @@ export function TransferOwnershipSection() {
+ export function DangerZoneSection() {
+   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+   const [deleteConfirmText, setDeleteConfirmText] = useState('')
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [deleteAccountMutation] = useMutation<DeleteUserAccountMutation>(DeleteUserAccount, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/app/routes/settings/account.tsx b/apps/web/app/routes/settings/account.tsx
+index cca38b5..697ab0c 100644
+--- a/apps/web/app/routes/settings/account.tsx
++++ b/apps/web/app/routes/settings/account.tsx
+@@ -27,7 +27,7 @@ export default function AccountSettings() {
+   // session rather than accepting one, so it cannot be pointed at anyone else. The public
+   // resendVerificationEmail requires a Turnstile token and would reject this call outright on a
+   // deployment with Turnstile enabled.
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [resendMyVerificationEmail] = useMutation<ResendMyVerificationEmailMutation>(
+     ResendMyVerificationEmail,
+     { errorPolicy: 'none' },
+diff --git a/apps/web/app/routes/settings/ai.tsx b/apps/web/app/routes/settings/ai.tsx
+index 3d82b3a..b1c76ce 100644
+--- a/apps/web/app/routes/settings/ai.tsx
++++ b/apps/web/app/routes/settings/ai.tsx
+@@ -37,7 +37,7 @@ export default function AiSettingsPage() {
+   const [newToken, setNewToken] = useState<{ token: string; name: string } | null>(null)
+   const [error, setError] = useState<string | null>(null)
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [generateApiToken, { loading: generating }] = useMutation<
+     GenerateApiTokenMutation,
+     GenerateApiTokenMutationVariables
+diff --git a/apps/web/app/routes/settings/api-tokens.tsx b/apps/web/app/routes/settings/api-tokens.tsx
+index b0d313c..b782a36 100644
+--- a/apps/web/app/routes/settings/api-tokens.tsx
++++ b/apps/web/app/routes/settings/api-tokens.tsx
+@@ -36,7 +36,7 @@ export default function ApiTokensSettings() {
+   const [newToken, setNewToken] = useState<{ token: string; name: string } | null>(null)
+   const [error, setError] = useState<string | null>(null)
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [generateApiToken, { loading: generating }] = useMutation<
+     GenerateApiTokenMutation,
+     GenerateApiTokenMutationVariables
+diff --git a/apps/web/app/routes/settings/billing.tsx b/apps/web/app/routes/settings/billing.tsx
+index 971866e..e60c186 100644
+--- a/apps/web/app/routes/settings/billing.tsx
++++ b/apps/web/app/routes/settings/billing.tsx
+@@ -63,7 +63,7 @@ export default function BillingSettings() {
+     trialEndsAt,
+   } = useSubscription()
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [createPortalSession] = useMutation<CreatePortalSessionMutation>(CreatePortalSession, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/app/routes/settings/members.tsx b/apps/web/app/routes/settings/members.tsx
+index 2330188..35daacb 100644
+--- a/apps/web/app/routes/settings/members.tsx
++++ b/apps/web/app/routes/settings/members.tsx
+@@ -225,7 +225,7 @@ export default function MembersSettings() {
+     onConfirm: () => void
+   } | null>(null)
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [inviteMember] = useMutation<CreateOrganizationInvitationMutation>(
+     CreateOrganizationInvitation,
+     { errorPolicy: 'none' },
+diff --git a/apps/web/app/routes/settings/notifications.tsx b/apps/web/app/routes/settings/notifications.tsx
+index 57783be..9527611 100644
+--- a/apps/web/app/routes/settings/notifications.tsx
++++ b/apps/web/app/routes/settings/notifications.tsx
+@@ -129,7 +129,7 @@ export default function NotificationsSettings() {
+   const [formSuccess, setFormSuccess] = useState<string | null>(null)
+   const [formError, setFormError] = useState<string | null>(null)
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [createPreference] = useMutation<UserCreateUserPreferenceMutation>(
+     UserCreateUserPreference,
+     { errorPolicy: 'none' },
+diff --git a/apps/web/app/routes/settings/organization.tsx b/apps/web/app/routes/settings/organization.tsx
+index 60ef14e..ede783e 100644
+--- a/apps/web/app/routes/settings/organization.tsx
++++ b/apps/web/app/routes/settings/organization.tsx
+@@ -111,7 +111,7 @@ export default function OrganizationSettings() {
+     type: 'success' | 'error'
+     text: string
+   } | null>(null)
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [updateOrganization] = useMutation<UserUpdateOrganizationMutation>(UserUpdateOrganization, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/app/routes/settings/profile.tsx b/apps/web/app/routes/settings/profile.tsx
+index fbf0b15..5de605f 100644
+--- a/apps/web/app/routes/settings/profile.tsx
++++ b/apps/web/app/routes/settings/profile.tsx
+@@ -166,7 +166,7 @@ export default function ProfileSettings() {
+   const user = data?.me
+   const client = useApolloClient()
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/app/routes/settings/roles.tsx b/apps/web/app/routes/settings/roles.tsx
+index 979e34e..227a430 100644
+--- a/apps/web/app/routes/settings/roles.tsx
++++ b/apps/web/app/routes/settings/roles.tsx
+@@ -220,7 +220,7 @@ export default function OrganizationRolesSettings() {
+     permission => permission.subject === 'role' && permission.action === 'delete',
+   )
+ 
+-  // Throw on a GraphQL error so `run`'s catch sees it (the client default is 'all').
++  // Throw on a GraphQL error so `run`'s catch sees it (also the client default; kept explicit).
+   const [createRole] = useMutation(UserCreateOrganizationRole, { errorPolicy: 'none' })
+   const [updateRole] = useMutation(UserUpdateOrganizationRole, { errorPolicy: 'none' })
+   const [deleteRole] = useMutation(UserDeleteOrganizationRole, { errorPolicy: 'none' })
+diff --git a/apps/web/app/routes/settings/security.tsx b/apps/web/app/routes/settings/security.tsx
+index bbf195b..11be3f5 100644
+--- a/apps/web/app/routes/settings/security.tsx
++++ b/apps/web/app/routes/settings/security.tsx
+@@ -75,7 +75,7 @@ export default function SecuritySettings() {
+   const [disablePassword, setDisablePassword] = useState('')
+   const [backupCodes, setBackupCodes] = useState<string[]>([])
+ 
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [changePassword] = useMutation<ChangePasswordMutation>(ChangePassword, {
+     errorPolicy: 'none',
+   })
+diff --git a/apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx b/apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx
+index 3f594e2..17f1d9a 100644
+--- a/apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx
++++ b/apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx
+@@ -48,8 +48,7 @@ function renderModal(result: ApolloLink.Result) {
+         observer.complete()
+       }),
+   )
+-  // `makeClient` sets `errorPolicy: 'all'` for mutations; the modal must still treat a refusal as
+-  // a failure.
++  // The app client's real defaults (`makeClient`): the modal must treat a refusal as a failure.
+   const client = new ApolloClient({
+     link,
+     cache: new InMemoryCache(),
+diff --git a/apps/web/tests/healthz.spec.ts b/apps/web/tests/healthz.spec.ts
+new file mode 100644
+index 0000000..cf39423
+--- /dev/null
++++ b/apps/web/tests/healthz.spec.ts
+@@ -0,0 +1,137 @@
++// @vitest-environment node
++import {
++  createRequestHandler,
++  type LoaderFunctionArgs,
++  UNSAFE_withComponentProps as withComponentProps,
++  UNSAFE_withErrorBoundaryProps as withErrorBoundaryProps,
++  type ServerBuild,
++} from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import * as entryServer from '../app/entry.server'
++import * as rootModule from '../app/root'
++import * as healthzModule from '../app/routes/healthz'
++import routes from '../app/routes'
++
++// `GET /healthz` served through React Router's own request handler, the real entry.server.tsx and
++// the real root route, with a signed-in session cookie and every outgoing `fetch` (the API) failing
++// the test if it is called.
++
++function routeEntry(id: string, path: string, parentId?: string, hasLoader = false) {
++  return {
++    id,
++    path,
++    parentId,
++    hasAction: false,
++    hasLoader,
++    hasClientAction: false,
++    hasClientLoader: false,
++    hasClientMiddleware: false,
++    hasErrorBoundary: id === 'root',
++    module: `/${id}.js`,
++    imports: [],
++    css: [],
++    clientActionModule: undefined,
++    clientLoaderModule: undefined,
++    clientMiddlewareModule: undefined,
++    hydrateFallbackModule: undefined,
++  }
++}
++
++const fetchMock = vi.fn()
++const rootLoader = vi.fn((args: LoaderFunctionArgs) =>
++  (rootModule.loader as (args: LoaderFunctionArgs) => unknown)(args),
++)
++
++function build(): ServerBuild {
++  return {
++    entry: { module: entryServer },
++    routes: {
++      root: {
++        id: 'root',
++        path: '',
++        module: {
++          ...rootModule,
++          loader: rootLoader,
++          default: withComponentProps(rootModule.default),
++          ErrorBoundary: withErrorBoundaryProps(rootModule.ErrorBoundary),
++        },
++      },
++      'routes/healthz': {
++        id: 'routes/healthz',
++        parentId: 'root',
++        path: 'healthz',
++        module: healthzModule,
++      },
++    },
++    assets: {
++      entry: { imports: [], module: '/entry.client.js' },
++      routes: {
++        root: routeEntry('root', '', undefined, true),
++        'routes/healthz': routeEntry('routes/healthz', 'healthz', 'root', true),
++      },
++      url: '/manifest.js',
++      version: 'test',
++    },
++    publicPath: '/',
++    assetsBuildDirectory: 'build/client',
++    future: {},
++    ssr: true,
++    isSpaMode: false,
++    prerender: [],
++    routeDiscovery: { mode: 'initial', manifestPath: '/__manifest' },
++  } as unknown as ServerBuild
++}
++
++function request() {
++  const handler = createRequestHandler(build(), 'production')
++  return handler(
++    new Request('http://localhost/healthz', {
++      headers: { cookie: '__session=header.e30.signature; theme=dark' },
++    }),
++  )
++}
++
++describe('GET /healthz', () => {
++  beforeEach(() => {
++    fetchMock.mockReset()
++    rootLoader.mockClear()
++    vi.stubGlobal('fetch', fetchMock)
++  })
++
++  afterEach(() => {
++    vi.unstubAllGlobals()
++  })
++
++  it('answers 200 ok as uncached plain text', async () => {
++    const response = await request()
++
++    expect(response.status).toBe(200)
++    expect(await response.text()).toBe('ok')
++    expect(response.headers.get('content-type')).toMatch(/^text\/plain/)
++    expect(response.headers.get('cache-control')).toBe('no-store')
++  })
++
++  it('calls no API and runs no layout loader, even with a session cookie', async () => {
++    await request()
++
++    expect(fetchMock).not.toHaveBeenCalled()
++    expect(rootLoader).not.toHaveBeenCalled()
++  })
++
++  it('stays 200 while the API is down', async () => {
++    fetchMock.mockRejectedValue(new TypeError('fetch failed'))
++
++    const response = await request()
++
++    expect(response.status).toBe(200)
++    expect(await response.text()).toBe('ok')
++  })
++
++  it('is registered outside every layout, so no signed-in or public layout loader runs', () => {
++    const entry = routes.find(route => route.path === 'healthz')
++
++    expect(entry?.file).toBe('./routes/healthz.ts')
++    expect(entry?.children ?? []).toHaveLength(0)
++    expect('default' in healthzModule).toBe(false)
++  })
++})
+diff --git a/apps/web/tests/mutation-error-policy.spec.tsx b/apps/web/tests/mutation-error-policy.spec.tsx
+new file mode 100644
+index 0000000..21146c9
+--- /dev/null
++++ b/apps/web/tests/mutation-error-policy.spec.tsx
+@@ -0,0 +1,115 @@
++import React, { useState } from 'react'
++import { render, screen, waitFor } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { ApolloClient, ApolloLink, gql, InMemoryCache, Observable } from '@apollo/client'
++import { ApolloProvider, useMutation } from '@apollo/client/react'
++import { makeClient } from '@nestled-template/shared/apollo'
++import { EmulationBanner } from '@nestled-template/web'
++
++const mockUseGlobalCtx = vi.fn()
++vi.mock('../../../libs/web/src/lib/contexts', async importOriginal => {
++  const actual = await importOriginal<typeof import('../../../libs/web/src/lib/contexts')>()
++  return { ...actual, useGlobalCtx: () => mockUseGlobalCtx() }
++})
++
++const REFUSAL: ApolloLink.Result = {
++  data: null,
++  errors: [{ message: 'You cannot do that here', extensions: { code: 'FORBIDDEN' } }],
++}
++
++/** A client with the app's real defaults (`makeClient`) that answers every request with `result`. */
++function clientAnswering(result: ApolloLink.Result) {
++  const link = new ApolloLink(
++    () =>
++      new Observable<ApolloLink.Result>(observer => {
++        observer.next(result)
++        observer.complete()
++      }),
++  )
++  return new ApolloClient({
++    link,
++    cache: new InMemoryCache(),
++    defaultOptions: makeClient(undefined, { apiUrl: 'http://localhost:3000/graphql' })
++      .defaultOptions,
++  })
++}
++
++const RENAME = gql`
++  mutation Rename {
++    rename
++  }
++`
++
++/**
++ * The most common caller shape, here and downstream: `useMutation` with no `errorPolicy`, an
++ * awaited call and a `try/catch`. Under a mutation default of `'all'` a refusal resolved, so this
++ * shape showed "Saved" for a write the API refused.
++ */
++function TypicalForm() {
++  const [rename] = useMutation(RENAME)
++  const [status, setStatus] = useState<string | null>(null)
++  return (
++    <form
++      onSubmit={async event => {
++        event.preventDefault()
++        try {
++          await rename()
++          setStatus('Saved')
++        } catch (error) {
++          setStatus(error instanceof Error ? error.message : 'Failed')
++        }
++      }}
++    >
++      <button type="submit">Save</button>
++      {status && <p role="status">{status}</p>}
++    </form>
++  )
++}
++
++afterEach(() => {
++  vi.clearAllMocks()
++})
++
++describe('mutation callers under the app client defaults', () => {
++  it('a try/catch caller with no errorPolicy shows the API message, not success', async () => {
++    render(
++      <ApolloProvider client={clientAnswering(REFUSAL)}>
++        <TypicalForm />
++      </ApolloProvider>,
++    )
++
++    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
++
++    expect(await screen.findByRole('status')).toHaveTextContent('You cannot do that here')
++    expect(screen.queryByText('Saved')).not.toBeInTheDocument()
++  })
++
++  it('the same caller still reports success when the API accepts', async () => {
++    render(
++      <ApolloProvider client={clientAnswering({ data: { rename: true } })}>
++        <TypicalForm />
++      </ApolloProvider>,
++    )
++
++    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
++
++    expect(await screen.findByRole('status')).toHaveTextContent('Saved')
++  })
++
++  it('an onError caller (the emulation banner) shows the API message and stays put', async () => {
++    mockUseGlobalCtx.mockReturnValue({ user: { id: 'user-1', isEmulating: true } })
++    const hrefBefore = globalThis.location.href
++    render(
++      <ApolloProvider client={clientAnswering(REFUSAL)}>
++        <EmulationBanner />
++      </ApolloProvider>,
++    )
++
++    await userEvent.click(screen.getByRole('button', { name: /exit emulation/i }))
++    await userEvent.click(await screen.findByRole('button', { name: 'End Emulation' }))
++
++    await waitFor(() => expect(screen.getByText('You cannot do that here')).toBeInTheDocument())
++    expect(globalThis.location.href).toBe(hrefBefore)
++  })
++})
+diff --git a/apps/web/tests/organization-required.spec.tsx b/apps/web/tests/organization-required.spec.tsx
+index 810e60c..8c05c49 100644
+--- a/apps/web/tests/organization-required.spec.tsx
++++ b/apps/web/tests/organization-required.spec.tsx
+@@ -77,8 +77,8 @@ function renderPicker({
+         observer.complete()
+       }),
+   )
+-  // The app's client defaults (`makeClient`: `errorPolicy: 'all'` for queries and mutations), so a
+-  // GraphQL refusal behaves here as it does in the app: it resolves, it does not throw.
++  // The app's client defaults (`makeClient`: `errorPolicy: 'all'` for queries, `'none'` for
++  // mutations), so a GraphQL refusal behaves here as it does in the app.
+   const client = new ApolloClient({
+     link,
+     cache: new InMemoryCache(),
+diff --git a/apps/web/tests/routes/settings/members.error-policy.spec.tsx b/apps/web/tests/routes/settings/members.error-policy.spec.tsx
+index e205d8d..54de652 100644
+--- a/apps/web/tests/routes/settings/members.error-policy.spec.tsx
++++ b/apps/web/tests/routes/settings/members.error-policy.spec.tsx
+@@ -63,8 +63,7 @@ function renderMembers(result: ApolloLink.Result) {
+         observer.complete()
+       }),
+   )
+-  // `makeClient` sets `errorPolicy: 'all'` for mutations; the page must still treat a refusal as a
+-  // failure.
++  // The app client's real defaults (`makeClient`): the page must treat a refusal as a failure.
+   const client = new ApolloClient({
+     link,
+     cache: new InMemoryCache(),
+diff --git a/libs/shared/apollo/src/lib/apollo.ts b/libs/shared/apollo/src/lib/apollo.ts
+index 4863818..2eff804 100644
+--- a/libs/shared/apollo/src/lib/apollo.ts
++++ b/libs/shared/apollo/src/lib/apollo.ts
+@@ -960,7 +960,10 @@ export function makeClient(request?: Request, options?: ClientOptions) {
+     defaultOptions: {
+       watchQuery: { fetchPolicy: 'cache-and-network' },
+       query: { errorPolicy: 'all' },
+-      mutate: { errorPolicy: 'all' },
++      // A refused mutation rejects, so no caller can mistake a refusal for success: under 'all' it
++      // resolved with the error beside `data` and any caller that only awaited it moved on. A
++      // call site that really uses partial data from a failed mutation sets 'all' itself.
++      mutate: { errorPolicy: 'none' },
+     },
+   })
+ }
+diff --git a/libs/web/src/lib/components/upgrade-modal.tsx b/libs/web/src/lib/components/upgrade-modal.tsx
+index 8f75347..5f5f5c0 100644
+--- a/libs/web/src/lib/components/upgrade-modal.tsx
++++ b/libs/web/src/lib/components/upgrade-modal.tsx
+@@ -37,7 +37,7 @@ interface UpgradeModalProps {
+ export function UpgradeModal({ isOpen, onClose, feature, reason }: UpgradeModalProps) {
+   const { plan: currentPlan } = useSubscription()
+   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [createCheckout, { loading: checkoutLoading }] = useMutation<CreateCheckoutSessionMutation>(
+     CreateCheckoutSession,
+     { errorPolicy: 'none' },
+diff --git a/libs/web/src/lib/modals/transfer-ownership-modal.tsx b/libs/web/src/lib/modals/transfer-ownership-modal.tsx
+index de42e15..44e8431 100644
+--- a/libs/web/src/lib/modals/transfer-ownership-modal.tsx
++++ b/libs/web/src/lib/modals/transfer-ownership-modal.tsx
+@@ -34,7 +34,7 @@ export default function TransferOwnershipModal({
+   const { data: organizationsData, loading } = useQuery<MyOrganizationsWithMembersQuery>(
+     MyOrganizationsWithMembers,
+   )
+-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
++  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+   const [transferOwnershipMutation] = useMutation<TransferOrganizationOwnershipMutation>(
+     TransferOrganizationOwnership,
+     { errorPolicy: 'none' },
+diff --git a/libs/web/src/lib/organization/switch-active-organization.spec.tsx b/libs/web/src/lib/organization/switch-active-organization.spec.tsx
+index 7a94172..79304e1 100644
+--- a/libs/web/src/lib/organization/switch-active-organization.spec.tsx
++++ b/libs/web/src/lib/organization/switch-active-organization.spec.tsx
+@@ -28,7 +28,8 @@ function renderSwitch(refuse: boolean) {
+         observer.complete()
+       }),
+   )
+-  // The app client's default (`makeClient`), under which a refusal resolves unless told otherwise.
++  // A client that defaults mutations to 'all' (as `makeClient` did before 2026.11.9, and as some
++  // apps still do): the hook's own 'none' must still make a refusal throw.
+   const client = new ApolloClient({
+     link,
+     cache: new InMemoryCache(),
+diff --git a/libs/web/src/lib/organization/switch-active-organization.ts b/libs/web/src/lib/organization/switch-active-organization.ts
+index 3edcfff..b0bb18d 100644
+--- a/libs/web/src/lib/organization/switch-active-organization.ts
++++ b/libs/web/src/lib/organization/switch-active-organization.ts
+@@ -52,8 +52,8 @@ export function isOrganizationSwitchSuperseded(
+  * under it.
+  *
+  * It throws when the API refuses the switch, with nothing stored: the mutation runs with
+- * `errorPolicy: 'none'`, since under the app client's default (`'all'`) a refusal resolves instead
+- * and the refused id would be stored and reloaded into.
++ * `errorPolicy: 'none'` (also the client default, kept explicit so a client that defaults
++ * mutations to `'all'` cannot make a refusal resolve and the refused id be stored and reloaded).
+  *
+  * An answer that arrives after its session ended (a logout, a change of user the caller reports
+  * through `isCurrent`, or this component unmounted) is dropped: nothing is cached or stored, and it
