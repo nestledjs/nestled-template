@@ -10,7 +10,7 @@ delivery: code-patch
 # Builds on 2026-11-16-api-internal-errors-not-401 (the 503 for a failed API-token lookup, and the
 # list of ambiguous sites this note resolves) and 2026-11-14-api-auth-error-codes (forbiddenWithCode,
 # formatApiError).
-applyAfter: [2026-11-16-api-internal-errors-not-401]
+applyAfter: [2026-11-16-api-internal-errors-not-401, 2026-11-19-dev-tooling]
 
 intent: >
   Clients drop a session or an API token on an HTTP 401 or a GraphQL `UNAUTHENTICATED`. The owner
