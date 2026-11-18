@@ -24,6 +24,7 @@ import {
   type Complete2FaLoginMutation,
 } from '@nestled-template/shared/sdk'
 import { formTheme } from '@nestled-template/shared/styles'
+import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 import { useMutation } from '@apollo/client/react'
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -100,6 +101,15 @@ export default function LoginPage() {
   const [tempToken, setTempToken] = useState<string | null>(oauth2FAToken)
   const [twoFACode, setTwoFACode] = useState('')
 
+  // A form opened from a rejected session: /force-logout (a server redirect, which cannot reach
+  // localStorage) and the server render's sign-out land here with `expired=1`, and the session they
+  // ended left its organization stored for `x-organization-id`. Forget it, as /logout does. Any
+  // other visit keeps it: only a sign-in (`signedIn()`) replaces the session.
+  const openedFromRejectedSession = searchParams.has('expired')
+  useEffect(() => {
+    if (openedFromRejectedSession) storeActiveOrganizationId(null)
+  }, [openedFromRejectedSession])
+
   // Once the token is held in component state, strip it from the address bar. It is a
   // credential — short-lived and still gated on the second factor, but it should not persist in
   // browser history, bookmarks, or a Referer header sent to a third party.
@@ -120,6 +130,14 @@ export default function LoginPage() {
     errorPolicy: 'none',
   })
 
+  // A new session starts here: the organization stored for `x-organization-id` belonged to whoever
+  // was signed in before (a shared browser, a session that expired without a logout). The API
+  // refuses an organization the new user is not a member of, but the browser must not send it.
+  function signedIn() {
+    storeActiveOrganizationId(null)
+    navigate(redirectUrl)
+  }
+
   async function processLogin(input: LoginInput) {
     console.log('Login Clicked')
     setFormError(null)
@@ -138,7 +156,7 @@ export default function LoginPage() {
       if (loginInfo?.user?.id) {
         // The backend already sets the __session cookie via the GraphQL mutation
         // We should not set our own cookies here, just navigate
-        navigate(redirectUrl)
+        signedIn()
       } else {
         setFormError('Invalid login credentials')
       }
@@ -161,7 +179,7 @@ export default function LoginPage() {
       })
 
       if (data?.complete2FALogin?.user?.id) {
-        navigate(redirectUrl)
+        signedIn()
       } else {
         setFormError('Invalid 2FA code')
       }

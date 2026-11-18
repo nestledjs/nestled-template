@@ -22,6 +22,7 @@ import { useGlobalCtx } from '@nestled-template/web'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { formTheme } from '@nestled-template/shared/styles'
+import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 import { useQuery, useMutation } from '@apollo/client/react'
 
 type Tab = 'login' | 'signup'
@@ -209,6 +210,9 @@ export default function AcceptInvitation() {
       })
 
       if (data?.login?.user?.id) {
+        // A new session: forget an organization stored for a previous user before the invitation
+        // (or anything after it) is sent with its `x-organization-id`.
+        storeActiveOrganizationId(null)
         // Login successful, now accept the invitation
         await acceptInvitation({
           variables: {
@@ -243,6 +247,8 @@ export default function AcceptInvitation() {
         },
       })
       if (result.data?.registerWithInvitation?.user?.id) {
+        // The new account is signed in: forget an organization stored for a previous user.
+        storeActiveOrganizationId(null)
         // Registration successful, redirect to members area
         setTimeout(() => {
           navigate('/members', { replace: true })

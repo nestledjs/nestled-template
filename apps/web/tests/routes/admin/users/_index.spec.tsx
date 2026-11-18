@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ACTIVE_ORGANIZATION_STORAGE_KEY } from '@nestled-template/shared/apollo'
 import AdminUsersPage from '../../../../app/routes/admin/users/_index'
 
 // Mock Apollo Client
@@ -645,6 +646,27 @@ describe('Admin Users Management Page', () => {
       await waitFor(() => {
         expect(window.location.href).toBe('/members/dashboard')
       })
+    })
+
+    it("forgets the admin's stored organization before switching to the emulated session", async () => {
+      // The emulated user may not belong to it: their requests must not carry it.
+      localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, 'admin-org')
+      mockUseQuery.mockImplementation(() => ({
+        data: mockUsersData,
+        loading: false,
+        error: null,
+        refetch: vi.fn(),
+      }))
+
+      renderUsersPage()
+
+      await user.click(screen.getAllByRole('button', { name: 'Emulate' })[0])
+      await user.click(await screen.findByRole('button', { name: 'Start Emulation' }))
+
+      await waitFor(() => {
+        expect(window.location.href).toBe('/members/dashboard')
+      })
+      expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBeNull()
     })
 
     it('should show error message on emulation failure', async () => {
