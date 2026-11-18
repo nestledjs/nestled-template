@@ -105,11 +105,9 @@ vi.mock('@nestledjs/forms-core', () => ({
 
 describe('ResetPassword Component', () => {
   let mockResetPasswordMutation: ReturnType<typeof vi.fn>
-  let mockNavigate: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     mockResetPasswordMutation = vi.fn()
-    mockNavigate = vi.fn()
 
     vi.mocked(useMutation).mockReturnValue([mockResetPasswordMutation, { loading: false }] as any)
   })

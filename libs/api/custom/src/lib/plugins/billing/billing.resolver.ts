@@ -7,7 +7,7 @@ import {
   RequirePlatformPermissionUnderClassGuard,
 } from '@nestled-template/api/utils'
 import { SyncService } from './sync.service'
-import { Plan, Subscription, User } from '@nestled-template/api/core/models'
+import { Plan, User } from '@nestled-template/api/core/models'
 import { ApiCoreDataAccessService } from '@nestled-template/api/core/data-access'
 import { recordAuditLog } from '../../shared/audit-log'
 import {

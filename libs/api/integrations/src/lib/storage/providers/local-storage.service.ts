@@ -99,7 +99,7 @@ export class LocalStorageService implements IStorageService, OnModuleInit {
     return `${this.baseUrl}/uploads/${providerFileId}`
   }
 
-  async getSignedUrl(providerFileId: string, expiresIn: number): Promise<string> {
+  async getSignedUrl(providerFileId: string, _expiresIn: number): Promise<string> {
     return this.getUrl(providerFileId) // Local storage doesn't support true signed URLs
   }
 

@@ -83,6 +83,30 @@ export function nonDisposableReason(
 }
 
 /**
+ * Why a URL reaches this machine's development Postgres, or undefined. POSTGRES_PORT, from the
+ * repo-root .env that Nx loads, is the port it listens on; a local URL on that port puts the test
+ * database beside the development data, however it is named. CI sets no POSTGRES_PORT, and then
+ * there is nothing to compare with.
+ */
+export function developmentServerReason(
+  databaseUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const developmentPort = env.POSTGRES_PORT?.trim()
+  if (!developmentPort) return undefined
+  let url: URL
+  try {
+    url = new URL(databaseUrl)
+  } catch {
+    return undefined
+  }
+  if (!LOCAL_DATABASE_HOSTS.has(url.hostname)) return undefined
+  const port = url.port || '5432'
+  if (port !== developmentPort) return undefined
+  return `it is on port ${port}, where the development Postgres listens (POSTGRES_PORT)`
+}
+
+/**
  * Whether a URL names a database this suite may migrate, push, seed and wipe: a postgresql: URL on
  * this machine (the rule prisma.config.ts applies to `migrate reset`), named as a test database,
  * ending in `_test` (`nestled_template_test` by default), with no `?schema=` and no fragment. A URL
@@ -100,7 +124,8 @@ export function isDisposableTestDatabase(databaseUrl: string): boolean {
  * shared host, would otherwise have its schema rewritten and its data seeded over.
  *
  * `E2E_ALLOW_NON_DISPOSABLE_DB=1` is the opt-out for a database you know is disposable under another
- * name or host (a CI service container reached by its service name, for example). It never lets
+ * name or host (a CI service container reached by its service name, for example), or one you keep on
+ * the development server deliberately. It never lets
  * through a URL that could connect elsewhere (a destination override, a fragment, another
  * protocol), and the from-scratch reset still requires a disposable database. So in a setup that
  * empties the schema on every run, the opt-out changes nothing: such a setup should not offer it.
@@ -109,7 +134,10 @@ export function assertDisposableTestDatabase(
   databaseUrl: string,
   env: NodeJS.ProcessEnv = process.env,
 ): 'disposable' | 'allowed' {
-  const problem = nonDisposableReason(databaseUrl)
+  const developmentServer = developmentServerReason(databaseUrl, env)
+  const problem =
+    nonDisposableReason(databaseUrl) ??
+    (developmentServer ? { reason: developmentServer, overridable: true } : undefined)
   if (!problem) return 'disposable'
   if (problem.overridable && env[ALLOW_NON_DISPOSABLE_DB] === '1') return 'allowed'
   throw new Error(
@@ -117,11 +145,11 @@ export function assertDisposableTestDatabase(
       `Refusing to run e2e setup against ${describeDatabase(databaseUrl)}: ${problem.reason}.`,
       `Setup resets, migrates, pushes the schema to and seeds the test database, so it must be`,
       `disposable: a postgresql: URL on this machine (localhost, 127.0.0.1 or ::1), named *_test,`,
-      `with no query parameter that changes where it connects.`,
+      `with no query parameter that changes where it connects, and not on the development server.`,
       ``,
       problem.overridable
         ? `Point TEST_DATABASE_URL at a disposable database, or, if this one is disposable under ` +
-          `another name or host, say so explicitly:  ${ALLOW_NON_DISPOSABLE_DB}=1`
+          `another name, host or server, say so explicitly:  ${ALLOW_NON_DISPOSABLE_DB}=1`
         : `Point TEST_DATABASE_URL at a disposable database. ${ALLOW_NON_DISPOSABLE_DB} does not ` +
           `apply to a URL that could connect somewhere other than it appears to.`,
     ].join('\n'),

@@ -4,6 +4,7 @@ import {
   assertDisposableTestDatabase,
   databaseProbe,
   describeDatabase,
+  developmentServerReason,
   isDisposableTestDatabase,
   psqlEnvironment,
   psqlProcessEnvironment,
@@ -52,6 +53,30 @@ describe('test database guards', () => {
       expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
     },
   )
+
+  it.each([
+    ['postgresql://u:p@localhost:5432/app_test', '5432'],
+    ['postgresql://u:p@127.0.0.1/app_test', '5432'],
+    ['postgresql://u:p@[::1]:55460/app_test', '55460'],
+  ])('refuses %s, on the development server (POSTGRES_PORT=%s)', (url, port) => {
+    expect(developmentServerReason(url, { POSTGRES_PORT: port })).toContain('development Postgres')
+    expect(() => assertDisposableTestDatabase(url, { POSTGRES_PORT: port })).toThrow(
+      /Refusing to run e2e setup .*: it is on port \d+, where the development Postgres listens/,
+    )
+    expect(
+      assertDisposableTestDatabase(url, { POSTGRES_PORT: port, E2E_ALLOW_NON_DISPOSABLE_DB: '1' }),
+    ).toBe('allowed')
+  })
+
+  it.each([
+    ['postgresql://u:p@localhost:5433/app_test', { POSTGRES_PORT: '5432' }],
+    ['postgresql://u:p@localhost:5432/app_test', {}],
+    ['postgresql://u:p@localhost:5432/app_test', { POSTGRES_PORT: ' ' }],
+    ['postgresql://u:p@db.example.com:5432/app_test', { POSTGRES_PORT: '5432' }],
+    ['not a url', { POSTGRES_PORT: '5432' }],
+  ])('does not place %s on the development server (%o)', (url, env) => {
+    expect(developmentServerReason(url, env)).toBeUndefined()
+  })
 
   it('lets an explicit opt-out through, and only the value 1', () => {
     const url = 'postgresql://u:p@postgres:5432/app_test'

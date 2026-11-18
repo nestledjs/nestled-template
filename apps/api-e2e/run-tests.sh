@@ -11,6 +11,15 @@ TMPFILE=$(mktemp)
 # A caller-supplied URL names a database this script does not manage: if it is unreachable the run
 # fails, rather than starting the repo's Compose test database, which would not be at that URL.
 SUPPLIED_TEST_DATABASE_URL="${TEST_DATABASE_URL:-}"
+# Nx loads the repo-root .env into every target, so a TEST_DATABASE_URL written there (the pair
+# .env.example ships with POSTGRES_TEST_PORT) arrives here as if a caller had supplied it. When it is
+# the repo's own URL, the repo still manages that database, and starts it when it is down.
+if [[ -n "$SUPPLIED_TEST_DATABASE_URL" ]]; then
+  OWN_TEST_DATABASE_URL="$(TEST_DATABASE_URL='' ./scripts/test-db.sh url 2>/dev/null || true)"
+  if [[ "$SUPPLIED_TEST_DATABASE_URL" == "$OWN_TEST_DATABASE_URL" ]]; then
+    SUPPLIED_TEST_DATABASE_URL=""
+  fi
+fi
 # Resolve the test DB URL the way scripts/test-db.sh does (it reads POSTGRES_TEST_PORT from the
 # repo-root .env), so a direct `api-e2e:e2e` run doesn't probe/migrate the wrong port.
 # Assigned, then exported: `export X="$(cmd)"` returns export's status, so under `set -e` a failing
@@ -121,6 +130,11 @@ if ! probe_test_database; then
     TEST_DB_STARTED=true
   fi
 fi
+
+# Something answers at the URL; check it is the database to test against (not the development
+# server, and for the repo's own URL the repo's own container), since a liveness check is not an
+# identity check. test-db.sh verify says why when it is not.
+./scripts/test-db.sh verify
 
 # Call vitest directly to avoid infinite loop (since NX now calls this script)
 # "$@" passes through any extra flags from the caller (e.g. --coverage)

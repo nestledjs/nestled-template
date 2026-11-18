@@ -410,6 +410,7 @@ function testDb(root, bin, command, env = {}) {
   delete base.TEST_DATABASE_URL
   delete base.POSTGRES_TEST_PORT
   delete base.E2E_ALLOW_NON_DISPOSABLE_DB
+  delete base.POSTGRES_PORT
   return spawnSync('bash', [join(root, 'scripts/test-db.sh'), command], {
     cwd: root,
     env: { ...base, ...env },
@@ -662,6 +663,26 @@ function nodeStub(root) {
   return { bin, calls }
 }
 
+// A docker stub whose daemon answers, and whose `port` lists `published` for the test container
+// (nothing, and a failure, when it is empty: the container is not running).
+function dockerStub(root, published = '') {
+  const bin = join(root, '..', 'docker-bin')
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(
+    join(bin, 'docker'),
+    [
+      '#!/bin/bash',
+      'case "$1" in',
+      '  info) exit 0 ;;',
+      `  port) ${published ? `printf '%s\\n' ${JSON.stringify(published)}` : 'exit 1'} ;;`,
+      'esac',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  )
+  return bin
+}
+
 void describe('scripts/test-db.sh ensure creates only a local *_test database', () => {
   void it('hands a local *_test URL to test-database.mjs through the environment', () => {
     const { main, bin } = checkouts()
@@ -677,10 +698,59 @@ void describe('scripts/test-db.sh ensure creates only a local *_test database', 
   void it('ensures the default URL, built from the port in .env', () => {
     const { main, bin } = checkouts()
     const node = nodeStub(main)
+    const docker = dockerStub(main, '0.0.0.0:55444')
     writeFileSync(join(main, '.env'), 'POSTGRES_TEST_PORT=55444\n')
-    const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure')
+    const ensured = testDb(main, `${node.bin}:${docker}:${bin}`, 'ensure')
     assert.equal(ensured.status, 0, ensured.stderr)
     assert.match(node.calls(), new RegExp(`@localhost:55444/${testDatabaseName}\\n$`))
+  })
+
+  void it("refuses the default URL when the repo's test container is not the server on its port", () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    writeFileSync(join(main, '.env'), 'POSTGRES_TEST_PORT=55444\n')
+    for (const published of ['', '0.0.0.0:55445']) {
+      const docker = dockerStub(main, published)
+      const refused = testDb(main, `${node.bin}:${docker}:${bin}`, 'ensure')
+      assert.notEqual(refused.status, 0, published)
+      assert.match(refused.stderr, /test container .* is not running on port 55444/, published)
+      const verify = testDb(main, `${node.bin}:${docker}:${bin}`, 'verify')
+      assert.notEqual(verify.status, 0, published)
+      assert.match(verify.stderr, /Not testing against/, published)
+    }
+    assert.equal(node.calls(), '')
+  })
+
+  void it('refuses a test database on the development server, POSTGRES_PORT in .env', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    const docker = dockerStub(main, '0.0.0.0:55450')
+    const { bin: recording, calls } = recordingStubs(join(main, '..'))
+    const path = `${node.bin}:${docker}:${recording}:${bin}`
+    writeFileSync(join(main, '.env'), 'POSTGRES_PORT=55450\nPOSTGRES_TEST_PORT=55450\n')
+    const ensured = testDb(main, path, 'ensure')
+    assert.notEqual(ensured.status, 0)
+    assert.match(ensured.stderr, /on port 55450, the development Postgres/)
+    for (const command of ['verify', 'migrate']) {
+      const refused = testDb(main, path, command)
+      assert.notEqual(refused.status, 0, command)
+      assert.match(refused.stderr, /the development\s+Postgres \(POSTGRES_PORT\)/, command)
+      const allowed = testDb(main, path, command, {
+        E2E_ALLOW_NON_DISPOSABLE_DB: '1',
+      })
+      assert.equal(allowed.status, 0, `${command}: ${allowed.stderr}`)
+    }
+    assert.equal(node.calls(), '')
+    assert.equal(calls().match(/prisma migrate deploy/g)?.length, 1, calls())
+  })
+
+  void it('verifies a URL of your own on another port without asking Docker', () => {
+    const { main, bin } = checkouts()
+    writeFileSync(join(main, '.env'), 'POSTGRES_PORT=55450\n')
+    const verified = testDb(main, `${dockerStub(main)}:${bin}`, 'verify', {
+      TEST_DATABASE_URL: urlWithPassword('localhost:55451/app_test'),
+    })
+    assert.equal(verified.status, 0, verified.stderr)
   })
 
   void it('fails when test-database.mjs fails', () => {

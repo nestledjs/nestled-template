@@ -100,7 +100,8 @@ const runWrapper = (
     probeExits = [probeExit],
     probeStderr = '',
     ensureExit = 0,
-  }: { probeExits?: number[]; probeStderr?: string; ensureExit?: number } = {},
+    verifyExit = 0,
+  }: { probeExits?: number[]; probeStderr?: string; ensureExit?: number; verifyExit?: number } = {},
 ) => {
   const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
   roots.push(root)
@@ -113,7 +114,8 @@ const runWrapper = (
     '#!/bin/bash\necho "$1" >> db-calls\n' +
       `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n` +
       `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n` +
-      `if [[ "$1" == ensure ]]; then echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit}; fi\n`,
+      `if [[ "$1" == ensure ]]; then echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit}; fi\n` +
+      `if [[ "$1" == verify ]]; then echo "verify refused" >&2; exit ${verifyExit}; fi\n`,
     { mode: 0o755 },
   )
   // Stands in for the pg runner: records the probe request and answers each probe in turn with the
@@ -283,6 +285,30 @@ describe('api-e2e test wrapper', () => {
     expect(result.status).toBe(0)
     expect(dbCalls).toContain('ensure')
     expect(dbCalls).toContain('start')
+  })
+  it("starts the repo's test database when the supplied URL is the repo's own (from .env)", () => {
+    // Nx loads .env, so a TEST_DATABASE_URL written there arrives as if supplied.
+    const { result, dbCalls } = runWrapper(
+      summary('5 passed (5)'),
+      0,
+      1,
+      0,
+      'postgresql://local/test',
+    )
+    expect(result.status).toBe(0)
+    expect(dbCalls).toContain('start')
+    expect(dbCalls).toContain('stop')
+  })
+  it('verifies the database before testing, and runs no test when it is not the one to use', () => {
+    const verified = runWrapper(summary('5 passed (5)'), 0)
+    expect(verified.dbCalls).toContain('verify')
+    const { result, npxCalls } = runWrapper(summary('5 passed (5)'), 0, 0, 0, SUPPLIED_URL, 0, {
+      verifyExit: 1,
+    })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('verify refused')
+    expect(npxCalls).toBe('')
+    expect(result.stdout).not.toContain('PASSED')
   })
   it('finds a failure in the summary of a long log', () => {
     const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`

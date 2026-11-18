@@ -97,9 +97,8 @@ describe('Authentication E2E', () => {
       const user = await TestHelpers.registerUser(userData)
       // In a real test, you'd extract this from the sent email
       // For now, we'll need to get it from the database or mock it
-      const mockVerificationToken = 'mock-verification-token-123'
       // This test would need actual database access to work properly
-      // await TestHelpers.verifyEmail(mockVerificationToken)
+      // await TestHelpers.verifyEmail(verificationToken)
       // For now, just test that the mutation accepts the input
       expect(user.id).toBeDefined()
     })
@@ -121,10 +120,8 @@ describe('Authentication E2E', () => {
       const user = await TestHelpers.registerUser(userData)
       await TestHelpers.requestPasswordReset(userData.email)
       // In a real test, you'd extract the reset token from the email
-      const mockResetToken = 'mock-reset-token-123'
-      const newPassword = 'NewPassword123!'
       // This test would need actual token extraction to work properly
-      // await TestHelpers.resetPassword(mockResetToken, newPassword)
+      // await TestHelpers.resetPassword(resetToken, 'NewPassword123!')
       // For now, just verify the user exists
       expect(user.id).toBeDefined()
     })

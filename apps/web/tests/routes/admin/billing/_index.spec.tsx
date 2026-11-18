@@ -27,7 +27,7 @@ describe('Admin Billing Overview Page', () => {
 
     // Default mock for useMutation that calls onCompleted/onError callbacks
     mockUseMutation.mockImplementation((_document, options) => {
-      const mutationFn = vi.fn().mockImplementation(async args => {
+      const mutationFn = vi.fn().mockImplementation(async () => {
         try {
           const result = { data: {} }
           if (options?.onCompleted) {
@@ -137,7 +137,7 @@ describe('Admin Billing Overview Page', () => {
   }
 
   const setupMocks = () => {
-    mockUseQuery.mockImplementation((query, options) => {
+    mockUseQuery.mockImplementation(query => {
       // SDK documents are real GraphQL ASTs — discriminate on the operation name.
       const operationName = query?.definitions?.[0]?.name?.value ?? ''
       if (operationName === 'AdminBillingPlans') {

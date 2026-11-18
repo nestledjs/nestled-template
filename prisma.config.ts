@@ -3,11 +3,11 @@ import * as path from 'node:path'
 import { defineConfig } from 'prisma/config'
 
 // The Prisma CLI (generate, db push, migrate, studio) connects through this datasource.
-// Prefer DIRECT_URL when set — on Railway, DATABASE_URL is the pgbouncer/pooled URL and
-// DIRECT_URL is the direct Postgres URL that migrations require — falling back to
-// DATABASE_URL for local/single-host setups. This removes the manual DATABASE_URL swap
-// that `prisma migrate deploy` used to need. The runtime app connects separately via the
-// PrismaPg driver adapter using DATABASE_URL, so the pooled URL is still used for queries.
+// Prefer DIRECT_URL when set, falling back to DATABASE_URL. There is no connection pooler in
+// front of Postgres (on Railway DATABASE_URL is the direct private URL), so DIRECT_URL is
+// normally unset; it is for a CLI run that must reach the database another way than the app
+// does, such as a pooler you add yourself, without swapping DATABASE_URL. The runtime app
+// connects separately via the PrismaPg driver adapter using DATABASE_URL.
 // The fallback placeholder is only for CI where no URL is set during `prisma generate`
 // (schema parsing only, never an actual connection).
 const databaseUrl =

@@ -378,7 +378,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=6144
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:16
+        image: mirror.gcr.io/library/postgres:18
         env:
           POSTGRES_USER: prisma
           POSTGRES_PASSWORD: prisma
@@ -436,7 +436,7 @@ jobs:
       # mirror (see the service containers above) and are tagged with the names compose expects.
       - name: Cache official schema-refresh images
         run: |
-          for image in postgres:16 redis:alpine; do
+          for image in postgres:18 redis:alpine; do
             for attempt in 1 2 3; do
               if docker pull "mirror.gcr.io/library/$image"; then
                 docker tag "mirror.gcr.io/library/$image" "$image"

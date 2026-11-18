@@ -1,11 +1,16 @@
 import nx from '@nx/eslint-plugin'
-import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../eslint.config.mjs'
+import baseConfig, {
+  reactHooksRuleLevels,
+  reactVersionSettings,
+  unusedVarsRule,
+} from '../../eslint.config.mjs'
 
 export default [
   ...baseConfig,
   ...nx.configs['flat/react'],
   reactVersionSettings,
   reactHooksRuleLevels,
+  unusedVarsRule,
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     // Override or add rules here
@@ -16,7 +21,6 @@ export default [
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
     },
   },
 ]

@@ -29,7 +29,6 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
   let org2User: TestUser & {
     organizationId: string
   }
-  let org1MemberId: string
   let org2MemberId: string
   beforeAll(async () => {
     // Create two users, each in their own organization
@@ -125,7 +124,7 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
     }
     org1User.organizationId = org1Response.data.data.userCreateOrganization.id
     org2User.organizationId = org2Response.data.data.userCreateOrganization.id
-    // Get member IDs
+    // Get org 2's member ID
     const membersQuery = `
       query UserOrganizationMembers($organizationId: String!) {
         userOrganizationMembers(organizationId: $organizationId) {
@@ -134,17 +133,11 @@ describe('CRITICAL: Multi-Tenant Data Isolation', () => {
         }
       }
     `
-    const org1MembersResponse = await TestHelpers.authenticatedGraphql<{
-      userOrganizationMembers: Member[]
-    }>(membersQuery, org1User, {
-      organizationId: org1User.organizationId,
-    })
     const org2MembersResponse = await TestHelpers.authenticatedGraphql<{
       userOrganizationMembers: Member[]
     }>(membersQuery, org2User, {
       organizationId: org2User.organizationId,
     })
-    org1MemberId = org1MembersResponse.data.data.userOrganizationMembers[0].id
     org2MemberId = org2MembersResponse.data.data.userOrganizationMembers[0].id
     console.log('\n📋 Test Setup Complete:')
     console.log(`  - Org 1 User: ${org1User.email} (Org: ${org1User.organizationId})`)

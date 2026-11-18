@@ -1,5 +1,5 @@
 import React from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -489,7 +489,7 @@ describe('Admin Organizations Page', () => {
         error: null,
       })
 
-      const { container } = renderOrganizationsPage()
+      renderOrganizationsPage()
 
       const activeStatus = screen.getByText('Active')
       expect(activeStatus).toHaveClass('text-emerald-700')

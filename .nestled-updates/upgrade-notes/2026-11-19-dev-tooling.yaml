@@ -1,0 +1,228 @@
+id: 2026-11-19-dev-tooling
+title: >-
+  Dev tooling: the test database pair ships complete, unused code fails lint, the e2e API serves
+  without the inspector, the e2e harness checks the test database is its own, API tests wait for
+  prisma generate, Postgres 18 locally, and no PgBouncer in the docs
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Eight parts, one per item. Each is independent unless it says otherwise. No package is added,
+  removed or bumped, and package.json, nx.json and tsconfig.base.json are unchanged. Part 6 is
+  optional (match your production database, see below). Part 8 is documentation in a file promotion
+  does not copy, so it needs no downstream action.
+
+
+  1. .env.example, PAIR 4. POSTGRES_TEST_PORT was set while TEST_DATABASE_URL was commented out,
+  so the pair the file documents shipped half-set, and the doctor's dev-ports check flags it as soon
+  as the port moves. TEST_DATABASE_URL is now set, to exactly the URL scripts/test-db.sh builds for
+  the repo's own test database (`postgresql://postgres:postgres@localhost:<POSTGRES_TEST_PORT>/<name>_test`),
+  with a comment saying who reads which. Because Nx loads .env into every target,
+  `nx run api-e2e:e2e` now sees that TEST_DATABASE_URL as if a caller had supplied it, so part 4's
+  run-tests.sh change treats a URL equal to the repo's own as the repo's database (it still starts
+  the container when it is down). Take the .env.example and run-tests.sh changes together. New
+  scripts/env-example-pairs.spec.mjs checks both Postgres pairs are complete, the shipped URL equals
+  test-db.sh's own URL, and no PgBouncer text remains.
+
+
+  2. Unused variables are a lint error. `@typescript-eslint/no-unused-vars` was a warning (and off
+  for apps/web/tests), so `nx run-many -t lint` passed with unused imports, locals and dead
+  destructures that then reached CI and Sonar. The root eslint.config.mjs exports `unusedVarsRule`:
+  error, `args: 'after-used'`, `argsIgnorePattern`/`varsIgnorePattern`/`caughtErrorsIgnorePattern`/
+  `destructuredArrayIgnorePattern` `^_`, `ignoreRestSiblings: true` (so
+  `const { password, ...safe } = user` is fine). The root config applies it to every file, and every
+  React project config (apps/web, libs/web, libs/web-ui, libs/shared/utils, and the published
+  package sources) spreads it after `nx.configs['flat/react']`, whose own level for this rule is
+  looser and would otherwise win. The apps/web/tests override that turned the rule off is removed.
+  The template's 33 hits were fixed: unused imports and helpers in specs removed, unused parameters
+  renamed with `_` (the `me` resolver keeps its `@Info()` parameter as `_info`, so its signature and
+  existing specs are unchanged). New scripts/eslint-unused-vars.spec.mjs resolves the rule for one
+  file under every eslint config and for apps/web/tests.
+
+
+  3. The e2e API binds no inspector port. Global setup served the API with `pnpm nx serve api`, and
+  `@nx/js:node` starts Node's inspector by default on a fixed 9229, shared by every repo and by a dev
+  API in a debug session, so two e2e runs could not run at once. New `apiServeArgs()` in
+  apps/api-e2e/src/support/api-readiness.ts returns `['nx', 'serve', 'api', '--inspect=false']`;
+  `E2E_API_INSPECT_PORT=<port>` gives `--inspect=inspect --port=<port>` instead (anything that is
+  not a port number warns and keeps it off). global-setup.ts spawns `pnpm` with it. `nx serve api`
+  for development is unchanged.
+
+
+  4. The e2e harness checks the test database is its own, not just that something answers.
+  pg_isready and `SELECT 1` are liveness checks: a test database could live inside the development
+  Postgres, and `test-db.sh ensure` created the repo's *_test database in whatever server answered
+  on POSTGRES_TEST_PORT, another repo's included. (a) scripts/test-db.sh: `DEV_DB_PORT` is
+  POSTGRES_PORT from the environment, else .env (empty in CI, which skips the check);
+  `on_development_server` is true for a local URL on that port. `ensure` refuses it, and `migrate`
+  and the new `verify` refuse it unless E2E_ALLOW_NON_DISPOSABLE_DB=1. `TEST_DB_OWN_URL` is the
+  repo's own URL (the default); for that URL, when `docker info` answers, `ensure` and `verify`
+  require `docker port <test container> 5432/tcp` to list the URL's port, and refuse otherwise
+  ("this repo's test container is not running on port N, so whatever answers there is another
+  server"). A URL of your own skips the container check. (b) apps/api-e2e/run-tests.sh runs
+  `./scripts/test-db.sh verify` after the probe and before Vitest, and treats a supplied
+  TEST_DATABASE_URL equal to `TEST_DATABASE_URL= ./scripts/test-db.sh url` as not supplied (see
+  part 1). (c) apps/api-e2e/src/support/database-guards.ts: new `developmentServerReason(url, env)`;
+  `assertDisposableTestDatabase` refuses a URL on POSTGRES_PORT on a local host, overridable with
+  E2E_ALLOW_NON_DISPOSABLE_DB=1. New cases in database-guards.spec.ts, e2e-runner.spec.ts and
+  scripts/dev-checkout.spec.mjs (which now also deletes POSTGRES_PORT from the test environment and
+  adds a docker stub that answers `info` and `port`).
+
+
+  5. API library tests wait for the Prisma client. Only api-core-data-access declared
+  `test.dependsOn: ["api-prisma:generate"]`, so Nx could run another libs/api project's tests
+  before or alongside generation, and on a clean checkout api-utils failed to compile with
+  TS2339/TS7006 in files no change touched. Every libs/api project.json now declares it on `test`
+  (api-prisma declares `["generate"]`, its own target). In project.json rather than nx.json
+  targetDefaults, because promotion does not mirror nx.json. New
+  scripts/test-targets-need-prisma-generate.spec.mjs checks every libs/api project with a
+  jest.config.
+
+
+  6. Optional: Postgres 18 locally. The Railway template runs Postgres 18, so the template's
+  .dev/docker-compose.yml `postgres` and `postgres-test` services moved from `postgres:16` to
+  `postgres:18`, and CI's api-e2e service image and generated-artifacts image cache moved with them.
+  The 18 image keeps its data in /var/lib/postgresql/18/docker under a single mount at
+  /var/lib/postgresql, so both mounts now target /var/lib/postgresql (same host folders). The 18
+  image REFUSES TO START on a data folder another major wrote ("in 18+, these Docker images are
+  configured to store database data in a format which is compatible with pg_ctlcluster ... there
+  appears to be PostgreSQL data in /var/lib/postgresql"). Do not take this part blindly: match the
+  major YOUR production database runs. Read it there (`SHOW server_version`), never infer it from
+  the template, the Railway template or another app. Only when production is on 18 move local dev
+  to 18; otherwise pin your production major and change the mount only if that major is 18 or
+  later (16 and 17 keep /var/lib/postgresql/data).
+
+
+  7. .env.example and prisma.config.ts described Railway's DATABASE_URL as a PgBouncer pooled URL
+  on port 6432. PgBouncer is gone from the Railway setup: DATABASE_URL is the direct private URL and
+  DIRECT_URL is normally unset. Comments only.
+
+
+  8. Documentation only, no downstream action: the dev-template's AGENTS.md (a template-owned file
+  promotion does not copy) records that the Railway template runs Postgres 18 and Redis 8.2 with no
+  pooler, and that the compose and CI Postgres pins follow production.
+
+why: >
+  Each item cost real time downstream. A copied .env.example inherited a doctor finding it did not
+  cause. Roughly thirty unused declarations per project reached CI and Sonar because lint only
+  warned. Two projects' e2e runs could not run side by side because both bound 9229. A port check
+  that only asked "is something listening" left projects pointed at another repo's database for
+  months, and test databases were created inside other repos' servers. A test target racing
+  `prisma generate` failed docs-only PRs with type errors in untouched files. And the docs still
+  described a PgBouncer that no longer exists.
+
+affectedPaths:
+  - .env.example
+  - prisma.config.ts
+  - eslint.config.mjs
+  - apps/web/eslint.config.mjs
+  - libs/web/eslint.config.mjs
+  - libs/web-ui/eslint.config.mjs
+  - libs/shared/utils/eslint.config.mjs
+  - scripts/eslint-unused-vars.spec.mjs
+  - scripts/env-example-pairs.spec.mjs
+  - scripts/test-targets-need-prisma-generate.spec.mjs
+  - scripts/test-db.sh
+  - scripts/dev-checkout.spec.mjs
+  - apps/api-e2e/run-tests.sh
+  - apps/api-e2e/src/support/api-readiness.ts
+  - apps/api-e2e/src/support/api-readiness.spec.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/database-guards.ts
+  - apps/api-e2e/src/support/database-guards.spec.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - libs/api/*/project.json
+  - libs/api/*/*/project.json
+  - .dev/docker-compose.yml
+  - .github/workflows/ci.yml
+
+skipIf:
+  - >-
+    Part 6: your production database does not run Postgres 18. Record part 6 not-applicable (or
+    pin your production major) and take the rest.
+  - >-
+    Parts 3 and 4: the project's e2e suite does not use the template harness (no
+    apps/api-e2e/src/support/global-setup.ts that spawns `nx serve api`, no scripts/test-db.sh; for
+    example e2e on Testcontainers). Record those parts not-applicable, after checking whether the
+    project's own harness binds 9229 or creates databases on a shared port.
+
+verification:
+  - node --test scripts/*.spec.mjs
+  - pnpm exec nx run-many -t lint --skip-nx-cache
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - rm -rf libs/api/prisma/src/lib/prisma-generated && NX_DAEMON=false pnpm exec nx run-many -t test -p api-utils --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >-
+    Part 1: .env.example is repo-owned. Uncomment (or add) TEST_DATABASE_URL with the same port as
+    POSTGRES_TEST_PORT and the database name your scripts/test-db.sh builds (`url` prints it with
+    TEST_DATABASE_URL unset). If your project already ships the pair complete, part 1 is adapted
+    with only the comment. Your own .env is not touched by this note: an operator whose .env has
+    only POSTGRES_TEST_PORT can add the matching TEST_DATABASE_URL line themselves.
+  - >-
+    Part 1 depends on part 4(b): without run-tests.sh treating the repo's own URL as its own, a set
+    TEST_DATABASE_URL in .env makes `nx run api-e2e:e2e` refuse to start a stopped test container
+    ("TEST_DATABASE_URL is set but that database is not accessible"). If your run-tests.sh differs,
+    port the comparison (supplied URL == `TEST_DATABASE_URL= ./scripts/test-db.sh url`), or leave
+    TEST_DATABASE_URL commented and record part 1 adapted with that reason.
+  - >-
+    Part 2: expect a backlog. Run `pnpm exec nx run-many -t lint --skip-nx-cache` first and fix
+    what it reports: remove unused imports and dead locals; rename a parameter you must keep to
+    `_name`; never change a resolver's or exported function's parameter list just to satisfy lint
+    (rename instead), since specs and callers pass those arguments. A value that is computed but
+    never shown may be a real bug (an error state nothing renders); list those in your report
+    rather than deleting them silently.
+  - >-
+    Part 2: spread `unusedVarsRule` after `nx.configs['flat/react']` in every React lint config you
+    have, wherever it lives; a config that spreads flat/react after the base and not the rule keeps
+    the plugin's warning. If your apps/web/tests (or other spec folder) has an override turning the
+    rule off, remove it. scripts/eslint-unused-vars.spec.mjs finds configs with `git ls-files`, so
+    it covers your own projects without edits; if your web spec folder is not apps/web/tests,
+    change the one path the spec seeds.
+  - >-
+    Part 2, published package sources: libs/data-browser, libs/shared-components and
+    libs/access-control exist only in nestled-dev-template; a project without them has nothing to
+    change there.
+  - >-
+    Part 3: if your global setup serves the API another way (a built dist/apps/api/main.js run with
+    node, a different nx target), the inspector is only on when that command passes --inspect;
+    check, and record not-applicable if it does not. If you have no api-readiness.ts, put
+    `apiServeArgs` in the file your global setup imports helpers from.
+  - >-
+    Part 4: the checks key off POSTGRES_PORT (development) and the test container name and default
+    URL in scripts/test-db.sh. If your project has no POSTGRES_PORT in .env, the development-server
+    check is inactive until you add it; if your test database is not a compose container (a native
+    server, Testcontainers), keep only the development-server check and skip the container check.
+    If your CI's TEST_DATABASE_URL equals your test-db.sh default URL exactly, CI's `verify` will
+    ask Docker for the compose container; give CI's service a different user or database name, or
+    set CI's TEST_DATABASE_URL so it differs.
+  - >-
+    Part 4: test-db.sh reads TEST_DATABASE_URL from the environment only, never from .env; Nx loads
+    .env for `nx run` targets, `pnpm test:e2e` (scripts/run-e2e-tests.sh) does not.
+  - >-
+    Part 5: add `"test": { "dependsOn": ["api-prisma:generate"] }` to every libs/api project.json
+    that has a Jest or Vitest suite, merging with any `test` target already there; api-prisma gets
+    `["generate"]`. If your Prisma project or target is named differently, use that name. If your
+    `test` target is already `dependsOn: ["^generate"]` or similar, check it reaches the Prisma
+    project (a library that does not import it gets nothing from `^`).
+  - >-
+    Part 6, moving local dev to 18 (only when production is 18). With the OLD compose still in place:
+    `docker exec <dev container> pg_dump -U <user> -d <db> -Fc > dev.dump`, then
+    `pnpm docker:down`, move the old data folder aside (`mv .dev/tmp/postgres .dev/tmp/postgres-16`,
+    or under NESTLED_DEV_DATA_DIR), take the compose change, `pnpm docker:up`, wait for health, and
+    `docker exec -i <dev container> pg_restore -U <user> -d <db> --no-owner --clean --if-exists <
+    dev.dump`. The test database needs no dump: `pnpm test:db:reset` gives a fresh one. A fresh dev
+    folder plus `pnpm db-update` (or your seed) is the alternative to the dump. Tell the operator
+    in your report; the data folders are shared by every worktree of the checkout.
+  - >-
+    Part 6, CI: if your CI pulls Postgres images (service containers, an image cache step for
+    db-update), move them to the same major as compose. Check the tag exists on your mirror.
+  - >-
+    Part 7: comment only; if your project does run a pooler, keep your own description.
+
+applyAfter: [2026-11-19-mutation-errorpolicy-none]

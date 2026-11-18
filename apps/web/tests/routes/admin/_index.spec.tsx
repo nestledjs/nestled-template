@@ -1,5 +1,5 @@
 import React from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AdminDashboard from '../../../app/routes/admin/_index'
@@ -190,7 +190,6 @@ describe('Admin Dashboard', () => {
 
       renderAdminDashboard()
 
-      const loadingElements = screen.getAllByTestId
       const skeletons = document.querySelectorAll('.animate-pulse')
       expect(skeletons.length).toBe(5) // One for each stat card
     })

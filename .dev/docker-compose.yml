@@ -10,9 +10,16 @@ name: nestled-template
 # Data lives in NESTLED_DEV_DATA_DIR, by default ./tmp beside this file. From a git worktree,
 # scripts/dev-docker.sh and pnpm db-update point it at the main checkout's .dev/tmp, so the shared
 # containers keep their data when the worktree is removed.
+#
+# Postgres matches the major the Railway template runs (18). An app pins the major ITS production
+# database runs instead (`SHOW server_version` there), so local behaviour matches production.
+# Postgres 18's image keeps its data in a major-specific folder (/var/lib/postgresql/18/docker) under
+# a single mount at /var/lib/postgresql, and refuses to start on a data folder another major wrote:
+# moving majors means a dump and restore, or a fresh data folder (see the 2026-11-19-dev-tooling
+# upgrade note).
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     container_name: nestled-template_postgres_dev
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
@@ -21,7 +28,7 @@ services:
       POSTGRES_USER: prisma
       POSTGRES_PASSWORD: prisma
     volumes:
-      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres:/var/lib/postgresql/data
+      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']
       interval: 10s
@@ -30,7 +37,7 @@ services:
     restart: unless-stopped
 
   postgres-test:
-    image: postgres:16
+    image: postgres:18
     container_name: nestled-template_postgres_test
     ports:
       - '${POSTGRES_TEST_PORT:-5433}:5432' # Different port for test DB
@@ -39,7 +46,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes:
-      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres-test:/var/lib/postgresql/data
+      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres-test:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']
       interval: 10s

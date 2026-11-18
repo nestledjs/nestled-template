@@ -1,9 +1,5 @@
-import React from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import LoginPage, { loader, safeReturnUrl } from '../../../app/routes/_public/login'
+import { loader, safeReturnUrl } from '../../../app/routes/_public/login'
 import { useMutation } from '@apollo/client/react'
 import { getCookie, getJsonCookie, isJwtExpired } from '@nestled-template/shared/utils'
 
@@ -30,18 +26,6 @@ describe('Login Component', () => {
     vi.mocked(getJsonCookie).mockReturnValue(null)
     vi.mocked(isJwtExpired).mockReturnValue(false)
   })
-
-  const renderLogin = (loaderData = {}) => {
-    const ReactRouterStub = createTestRouter([
-      {
-        path: '/login',
-        Component: LoginPage,
-        loader: () => loaderData,
-      },
-    ])
-
-    return render(<ReactRouterStub initialEntries={['/login']} />)
-  }
 
   // Note: Component rendering tests are skipped due to complex dependency chain
   // (AuthLayout, Form from @nestledjs/forms, etc.) that would require extensive mocking.
