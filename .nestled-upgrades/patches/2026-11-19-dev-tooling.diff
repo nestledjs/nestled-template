@@ -1,0 +1,1145 @@
+diff --git a/.dev/docker-compose.yml b/.dev/docker-compose.yml
+index caa8909..70269c1 100644
+--- a/.dev/docker-compose.yml
++++ b/.dev/docker-compose.yml
+@@ -10,9 +10,16 @@ name: nestled-template
+ # Data lives in NESTLED_DEV_DATA_DIR, by default ./tmp beside this file. From a git worktree,
+ # scripts/dev-docker.sh and pnpm db-update point it at the main checkout's .dev/tmp, so the shared
+ # containers keep their data when the worktree is removed.
++#
++# Postgres matches the major the Railway template runs (18). An app pins the major ITS production
++# database runs instead (`SHOW server_version` there), so local behaviour matches production.
++# Postgres 18's image keeps its data in a major-specific folder (/var/lib/postgresql/18/docker) under
++# a single mount at /var/lib/postgresql, and refuses to start on a data folder another major wrote:
++# moving majors means a dump and restore, or a fresh data folder (see the 2026-11-19-dev-tooling
++# upgrade note).
+ services:
+   postgres:
+-    image: postgres:16
++    image: postgres:18
+     container_name: nestled-template_postgres_dev
+     ports:
+       - '${POSTGRES_PORT:-5432}:5432'
+@@ -21,7 +28,7 @@ services:
+       POSTGRES_USER: prisma
+       POSTGRES_PASSWORD: prisma
+     volumes:
+-      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres:/var/lib/postgresql/data
++      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres:/var/lib/postgresql
+     healthcheck:
+       test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']
+       interval: 10s
+@@ -30,7 +37,7 @@ services:
+     restart: unless-stopped
+ 
+   postgres-test:
+-    image: postgres:16
++    image: postgres:18
+     container_name: nestled-template_postgres_test
+     ports:
+       - '${POSTGRES_TEST_PORT:-5433}:5432' # Different port for test DB
+@@ -39,7 +46,7 @@ services:
+       POSTGRES_USER: postgres
+       POSTGRES_PASSWORD: postgres
+     volumes:
+-      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres-test:/var/lib/postgresql/data
++      - ${NESTLED_DEV_DATA_DIR:-./tmp}/postgres-test:/var/lib/postgresql
+     healthcheck:
+       test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}']
+       interval: 10s
+diff --git a/.env.example b/.env.example
+index fd4e346..7c7cca5 100644
+--- a/.env.example
++++ b/.env.example
+@@ -42,9 +42,14 @@ ALLOWED_ORIGINS=http://localhost:4200
+ # PAIR 3 — POSTGRES_PORT must match the port in DATABASE_URL (and DIRECT_URL if set).
+ #          FAILS SILENTLY AND WORST: a stale DATABASE_URL connects to ANOTHER repo's database.
+ POSTGRES_PORT=5432
+-# PAIR 4 — POSTGRES_TEST_PORT must match TEST_DATABASE_URL (used by pnpm test:e2e).
++# PAIR 4 — POSTGRES_TEST_PORT must match TEST_DATABASE_URL (the API e2e suite's database).
++#          The test database runs in its own container (`pnpm test:db:start`), never in the
++#          development Postgres: the e2e setup refuses a TEST_DATABASE_URL on POSTGRES_PORT, and one
++#          not on this machine or not named *_test. Nx passes this .env to `nx run api-e2e:e2e`;
++#          scripts/test-db.sh and `pnpm test:e2e` read POSTGRES_TEST_PORT from it and build the same
++#          URL, so keep the two in step. Exported in your shell, TEST_DATABASE_URL wins over both.
+ POSTGRES_TEST_PORT=5433
+-# TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/nestled_template_test
++TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/nestled_template_test
+ # PAIR 5 — REDIS_PORT must match REDIS_URL when REDIS_URL is set.
+ REDIS_PORT=6379
+ # PAIR 6 — MAILHOG_SMTP_PORT must match SMTP_PORT when SMTP_HOST is localhost.
+@@ -80,12 +85,13 @@ API_COOKIE_DOMAIN=localhost
+ # PAIR 3 — the port here must match POSTGRES_PORT above, or you silently connect to whatever
+ # other repo's Postgres is bound to that port.
+ DATABASE_URL=postgresql://prisma:prisma@localhost:5432/prisma
+-# DIRECT_URL is the direct (non-pooled) Postgres connection used by the Prisma CLI —
+-# migrations, db push, studio (see prisma.config.ts, which prefers it over DATABASE_URL).
+-# On Railway, DATABASE_URL is the pgbouncer/pooled URL (port 6432) and DIRECT_URL is the
+-# direct Postgres URL, so `prisma migrate deploy` needs no manual URL swap. Locally there
+-# is no pooler in front, so DIRECT_URL can be left unset (it falls back to DATABASE_URL).
+-# When set locally, its port must match POSTGRES_PORT too (PAIR 3).
++# DIRECT_URL is the Postgres connection the Prisma CLI uses for migrations, db push and studio
++# (see prisma.config.ts, which prefers it over DATABASE_URL). There is no connection pooler in
++# front of Postgres, locally or on Railway: on Railway DATABASE_URL is the database's direct
++# private-network URL, and DIRECT_URL is normally left unset there too. Set it only when the CLI
++# must reach the database another way than the app does (a pooler you add yourself, or a public
++# URL for a one-off run from your machine). Unset, it falls back to DATABASE_URL. When set
++# locally, its port must match POSTGRES_PORT too (PAIR 3).
+ # DIRECT_URL=postgresql://prisma:prisma@localhost:5432/prisma
+ # PAIR 5 — when set, the port here must match REDIS_PORT above.
+ #REDIS_URL=redis://localhost:6379
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 370230a..388266a 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -378,7 +378,7 @@ jobs:
+       NODE_OPTIONS: --max-old-space-size=6144
+     services:
+       postgres:
+-        image: mirror.gcr.io/library/postgres:16
++        image: mirror.gcr.io/library/postgres:18
+         env:
+           POSTGRES_USER: prisma
+           POSTGRES_PASSWORD: prisma
+@@ -436,7 +436,7 @@ jobs:
+       # mirror (see the service containers above) and are tagged with the names compose expects.
+       - name: Cache official schema-refresh images
+         run: |
+-          for image in postgres:16 redis:alpine; do
++          for image in postgres:18 redis:alpine; do
+             for attempt in 1 2 3; do
+               if docker pull "mirror.gcr.io/library/$image"; then
+                 docker tag "mirror.gcr.io/library/$image" "$image"
+diff --git a/apps/api-e2e/run-tests.sh b/apps/api-e2e/run-tests.sh
+index 227108b..8015d1b 100755
+--- a/apps/api-e2e/run-tests.sh
++++ b/apps/api-e2e/run-tests.sh
+@@ -11,6 +11,15 @@ TMPFILE=$(mktemp)
+ # A caller-supplied URL names a database this script does not manage: if it is unreachable the run
+ # fails, rather than starting the repo's Compose test database, which would not be at that URL.
+ SUPPLIED_TEST_DATABASE_URL="${TEST_DATABASE_URL:-}"
++# Nx loads the repo-root .env into every target, so a TEST_DATABASE_URL written there (the pair
++# .env.example ships with POSTGRES_TEST_PORT) arrives here as if a caller had supplied it. When it is
++# the repo's own URL, the repo still manages that database, and starts it when it is down.
++if [[ -n "$SUPPLIED_TEST_DATABASE_URL" ]]; then
++  OWN_TEST_DATABASE_URL="$(TEST_DATABASE_URL='' ./scripts/test-db.sh url 2>/dev/null || true)"
++  if [[ "$SUPPLIED_TEST_DATABASE_URL" == "$OWN_TEST_DATABASE_URL" ]]; then
++    SUPPLIED_TEST_DATABASE_URL=""
++  fi
++fi
+ # Resolve the test DB URL the way scripts/test-db.sh does (it reads POSTGRES_TEST_PORT from the
+ # repo-root .env), so a direct `api-e2e:e2e` run doesn't probe/migrate the wrong port.
+ # Assigned, then exported: `export X="$(cmd)"` returns export's status, so under `set -e` a failing
+@@ -122,6 +131,11 @@ if ! probe_test_database; then
+   fi
+ fi
+ 
++# Something answers at the URL; check it is the database to test against (not the development
++# server, and for the repo's own URL the repo's own container), since a liveness check is not an
++# identity check. test-db.sh verify says why when it is not.
++./scripts/test-db.sh verify
++
+ # Call vitest directly to avoid infinite loop (since NX now calls this script)
+ # "$@" passes through any extra flags from the caller (e.g. --coverage)
+ # errexit is off for the run itself: a failing Vitest is a result to report, not a script error.
+diff --git a/apps/api-e2e/src/support/api-readiness.spec.ts b/apps/api-e2e/src/support/api-readiness.spec.ts
+index fc6cc04..6f1653e 100644
+--- a/apps/api-e2e/src/support/api-readiness.spec.ts
++++ b/apps/api-e2e/src/support/api-readiness.spec.ts
+@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
+ import {
+   API_OUTPUT_TAIL_LINES,
+   DEFAULT_API_START_TIMEOUT_SECONDS,
++  apiServeArgs,
+   apiStartTimeoutSeconds,
+   lastOutputLines,
+ } from './api-readiness'
+@@ -55,3 +56,34 @@ describe('lastOutputLines', () => {
+     expect(lastOutputLines('\n \n')).toBe('(the API printed nothing)')
+   })
+ })
++
++describe('apiServeArgs', () => {
++  it('serves the API without the inspector by default, so 9229 is never bound', () => {
++    expect(apiServeArgs({})).toEqual(['nx', 'serve', 'api', '--inspect=false'])
++    expect(apiServeArgs({ E2E_API_INSPECT_PORT: ' ' })).toEqual([
++      'nx',
++      'serve',
++      'api',
++      '--inspect=false',
++    ])
++  })
++
++  it('turns the inspector on, on E2E_API_INSPECT_PORT, when it is a port number', () => {
++    expect(apiServeArgs({ E2E_API_INSPECT_PORT: '9339' })).toEqual([
++      'nx',
++      'serve',
++      'api',
++      '--inspect=inspect',
++      '--port=9339',
++    ])
++  })
++
++  it.each(['abc', '0', '70000', '9229; rm -rf /'])(
++    'keeps the inspector off, and says so, for E2E_API_INSPECT_PORT=%s',
++    raw => {
++      const warn = vi.fn()
++      expect(apiServeArgs({ E2E_API_INSPECT_PORT: raw }, warn)).toContain('--inspect=false')
++      expect(warn).toHaveBeenCalledWith(expect.stringContaining('not a port number'))
++    },
++  )
++})
+diff --git a/apps/api-e2e/src/support/api-readiness.ts b/apps/api-e2e/src/support/api-readiness.ts
+index 4ca350d..e57c344 100644
+--- a/apps/api-e2e/src/support/api-readiness.ts
++++ b/apps/api-e2e/src/support/api-readiness.ts
+@@ -30,3 +30,24 @@ export function lastOutputLines(output: string, count = API_OUTPUT_TAIL_LINES):
+   if (lines.length === 0) return '(the API printed nothing)'
+   return lines.slice(-count).join('\n')
+ }
++
++/**
++ * The arguments global setup runs `pnpm` with to serve the API. `@nx/js:node` starts Node's inspector
++ * by default, on a fixed 9229 shared by every repo (and by a dev API you are running), so two e2e
++ * runs, or an e2e run beside a debug session, collided on it. Nobody attaches to an API the harness
++ * starts and stops, so the inspector is off; E2E_API_INSPECT_PORT=<port> turns it on, on that port.
++ * `nx serve api` for development is unchanged.
++ */
++export function apiServeArgs(
++  env: NodeJS.ProcessEnv = process.env,
++  warn: (message: string) => void = console.warn,
++): string[] {
++  const serve = ['nx', 'serve', 'api']
++  const raw = env.E2E_API_INSPECT_PORT?.trim()
++  if (!raw) return [...serve, '--inspect=false']
++  if (/^\d+$/.test(raw) && Number(raw) > 0 && Number(raw) < 65536) {
++    return [...serve, '--inspect=inspect', `--port=${Number(raw)}`]
++  }
++  warn(`E2E_API_INSPECT_PORT="${raw}" is not a port number; serving the API without the inspector.`)
++  return [...serve, '--inspect=false']
++}
+diff --git a/apps/api-e2e/src/support/database-guards.spec.ts b/apps/api-e2e/src/support/database-guards.spec.ts
+index 93e566f..7283a68 100644
+--- a/apps/api-e2e/src/support/database-guards.spec.ts
++++ b/apps/api-e2e/src/support/database-guards.spec.ts
+@@ -4,6 +4,7 @@ import {
+   assertDisposableTestDatabase,
+   databaseProbe,
+   describeDatabase,
++  developmentServerReason,
+   isDisposableTestDatabase,
+   psqlEnvironment,
+   psqlProcessEnvironment,
+@@ -53,6 +54,30 @@ describe('test database guards', () => {
+     },
+   )
+ 
++  it.each([
++    ['postgresql://u:p@localhost:5432/app_test', '5432'],
++    ['postgresql://u:p@127.0.0.1/app_test', '5432'],
++    ['postgresql://u:p@[::1]:55460/app_test', '55460'],
++  ])('refuses %s, on the development server (POSTGRES_PORT=%s)', (url, port) => {
++    expect(developmentServerReason(url, { POSTGRES_PORT: port })).toContain('development Postgres')
++    expect(() => assertDisposableTestDatabase(url, { POSTGRES_PORT: port })).toThrow(
++      /Refusing to run e2e setup .*: it is on port \d+, where the development Postgres listens/,
++    )
++    expect(
++      assertDisposableTestDatabase(url, { POSTGRES_PORT: port, E2E_ALLOW_NON_DISPOSABLE_DB: '1' }),
++    ).toBe('allowed')
++  })
++
++  it.each([
++    ['postgresql://u:p@localhost:5433/app_test', { POSTGRES_PORT: '5432' }],
++    ['postgresql://u:p@localhost:5432/app_test', {}],
++    ['postgresql://u:p@localhost:5432/app_test', { POSTGRES_PORT: ' ' }],
++    ['postgresql://u:p@db.example.com:5432/app_test', { POSTGRES_PORT: '5432' }],
++    ['not a url', { POSTGRES_PORT: '5432' }],
++  ])('does not place %s on the development server (%o)', (url, env) => {
++    expect(developmentServerReason(url, env)).toBeUndefined()
++  })
++
+   it('lets an explicit opt-out through, and only the value 1', () => {
+     const url = 'postgresql://u:p@postgres:5432/app_test'
+     expect(assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe('allowed')
+diff --git a/apps/api-e2e/src/support/database-guards.ts b/apps/api-e2e/src/support/database-guards.ts
+index 55b6201..77274f4 100644
+--- a/apps/api-e2e/src/support/database-guards.ts
++++ b/apps/api-e2e/src/support/database-guards.ts
+@@ -82,6 +82,30 @@ export function nonDisposableReason(
+   return undefined
+ }
+ 
++/**
++ * Why a URL reaches this machine's development Postgres, or undefined. POSTGRES_PORT, from the
++ * repo-root .env that Nx loads, is the port it listens on; a local URL on that port puts the test
++ * database beside the development data, however it is named. CI sets no POSTGRES_PORT, and then
++ * there is nothing to compare with.
++ */
++export function developmentServerReason(
++  databaseUrl: string,
++  env: NodeJS.ProcessEnv = process.env,
++): string | undefined {
++  const developmentPort = env.POSTGRES_PORT?.trim()
++  if (!developmentPort) return undefined
++  let url: URL
++  try {
++    url = new URL(databaseUrl)
++  } catch {
++    return undefined
++  }
++  if (!LOCAL_DATABASE_HOSTS.has(url.hostname)) return undefined
++  const port = url.port || '5432'
++  if (port !== developmentPort) return undefined
++  return `it is on port ${port}, where the development Postgres listens (POSTGRES_PORT)`
++}
++
+ /**
+  * Whether a URL names a database this suite may migrate, push, seed and wipe: a postgresql: URL on
+  * this machine (the rule prisma.config.ts applies to `migrate reset`), named as a test database,
+@@ -100,7 +124,8 @@ export function isDisposableTestDatabase(databaseUrl: string): boolean {
+  * shared host, would otherwise have its schema rewritten and its data seeded over.
+  *
+  * `E2E_ALLOW_NON_DISPOSABLE_DB=1` is the opt-out for a database you know is disposable under another
+- * name or host (a CI service container reached by its service name, for example). It never lets
++ * name or host (a CI service container reached by its service name, for example), or one you keep on
++ * the development server deliberately. It never lets
+  * through a URL that could connect elsewhere (a destination override, a fragment, another
+  * protocol), and the from-scratch reset still requires a disposable database. So in a setup that
+  * empties the schema on every run, the opt-out changes nothing: such a setup should not offer it.
+@@ -109,7 +134,10 @@ export function assertDisposableTestDatabase(
+   databaseUrl: string,
+   env: NodeJS.ProcessEnv = process.env,
+ ): 'disposable' | 'allowed' {
+-  const problem = nonDisposableReason(databaseUrl)
++  const developmentServer = developmentServerReason(databaseUrl, env)
++  const problem =
++    nonDisposableReason(databaseUrl) ??
++    (developmentServer ? { reason: developmentServer, overridable: true } : undefined)
+   if (!problem) return 'disposable'
+   if (problem.overridable && env[ALLOW_NON_DISPOSABLE_DB] === '1') return 'allowed'
+   throw new Error(
+@@ -117,11 +145,11 @@ export function assertDisposableTestDatabase(
+       `Refusing to run e2e setup against ${describeDatabase(databaseUrl)}: ${problem.reason}.`,
+       `Setup resets, migrates, pushes the schema to and seeds the test database, so it must be`,
+       `disposable: a postgresql: URL on this machine (localhost, 127.0.0.1 or ::1), named *_test,`,
+-      `with no query parameter that changes where it connects.`,
++      `with no query parameter that changes where it connects, and not on the development server.`,
+       ``,
+       problem.overridable
+         ? `Point TEST_DATABASE_URL at a disposable database, or, if this one is disposable under ` +
+-          `another name or host, say so explicitly:  ${ALLOW_NON_DISPOSABLE_DB}=1`
++          `another name, host or server, say so explicitly:  ${ALLOW_NON_DISPOSABLE_DB}=1`
+         : `Point TEST_DATABASE_URL at a disposable database. ${ALLOW_NON_DISPOSABLE_DB} does not ` +
+           `apply to a URL that could connect somewhere other than it appears to.`,
+     ].join('\n'),
+diff --git a/apps/api-e2e/src/support/e2e-runner.spec.ts b/apps/api-e2e/src/support/e2e-runner.spec.ts
+index abcc9e6..624b03b 100644
+--- a/apps/api-e2e/src/support/e2e-runner.spec.ts
++++ b/apps/api-e2e/src/support/e2e-runner.spec.ts
+@@ -100,7 +100,8 @@ const runWrapper = (
+     probeExits = [probeExit],
+     probeStderr = '',
+     ensureExit = 0,
+-  }: { probeExits?: number[]; probeStderr?: string; ensureExit?: number } = {},
++    verifyExit = 0,
++  }: { probeExits?: number[]; probeStderr?: string; ensureExit?: number; verifyExit?: number } = {},
+ ) => {
+   const root = mkdtempSync(join(tmpdir(), 'e2e-test-wrapper-'))
+   roots.push(root)
+@@ -113,7 +114,8 @@ const runWrapper = (
+     '#!/bin/bash\necho "$1" >> db-calls\n' +
+       `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n` +
+       `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n` +
+-      `if [[ "$1" == ensure ]]; then echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit}; fi\n`,
++      `if [[ "$1" == ensure ]]; then echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit}; fi\n` +
++      `if [[ "$1" == verify ]]; then echo "verify refused" >&2; exit ${verifyExit}; fi\n`,
+     { mode: 0o755 },
+   )
+   // Stands in for the pg runner: records the probe request and answers each probe in turn with the
+@@ -284,6 +286,30 @@ describe('api-e2e test wrapper', () => {
+     expect(dbCalls).toContain('ensure')
+     expect(dbCalls).toContain('start')
+   })
++  it("starts the repo's test database when the supplied URL is the repo's own (from .env)", () => {
++    // Nx loads .env, so a TEST_DATABASE_URL written there arrives as if supplied.
++    const { result, dbCalls } = runWrapper(
++      summary('5 passed (5)'),
++      0,
++      1,
++      0,
++      'postgresql://local/test',
++    )
++    expect(result.status).toBe(0)
++    expect(dbCalls).toContain('start')
++    expect(dbCalls).toContain('stop')
++  })
++  it('verifies the database before testing, and runs no test when it is not the one to use', () => {
++    const verified = runWrapper(summary('5 passed (5)'), 0)
++    expect(verified.dbCalls).toContain('verify')
++    const { result, npxCalls } = runWrapper(summary('5 passed (5)'), 0, 0, 0, SUPPLIED_URL, 0, {
++      verifyExit: 1,
++    })
++    expect(result.status).toBe(1)
++    expect(result.stderr).toContain('verify refused')
++    expect(npxCalls).toBe('')
++    expect(result.stdout).not.toContain('PASSED')
++  })
+   it('finds a failure in the summary of a long log', () => {
+     const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`
+     const { result } = runWrapper(log, 0)
+diff --git a/apps/api-e2e/src/support/global-setup.ts b/apps/api-e2e/src/support/global-setup.ts
+index 11a4435..d471a11 100644
+--- a/apps/api-e2e/src/support/global-setup.ts
++++ b/apps/api-e2e/src/support/global-setup.ts
+@@ -2,7 +2,12 @@ import { waitForPortOpen } from '@nx/node/utils'
+ import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+ import { createConnection, type Socket } from 'node:net'
+ import { killApiProcessTree, ownedProcessOptions, registerApiProcessCleanup } from './api-process'
+-import { API_OUTPUT_TAIL_LINES, apiStartTimeoutSeconds, lastOutputLines } from './api-readiness'
++import {
++  API_OUTPUT_TAIL_LINES,
++  apiServeArgs,
++  apiStartTimeoutSeconds,
++  lastOutputLines,
++} from './api-readiness'
+ import {
+   ALLOW_NON_DISPOSABLE_DB,
+   assertDisposableTestDatabase,
+@@ -141,7 +146,8 @@ async function startApiServer(
+   port: number,
+   host: string,
+ ): Promise<ChildProcess> {
+-  const apiProcess = spawn('pnpm', ['nx', 'serve', 'api'], {
++  // Without the inspector, unless E2E_API_INSPECT_PORT asks for it (see apiServeArgs).
++  const apiProcess = spawn('pnpm', apiServeArgs(), {
+     cwd: projectRoot,
+     env: {
+       ...process.env,
+diff --git a/apps/web/eslint.config.mjs b/apps/web/eslint.config.mjs
+index d0ec6f0..3660731 100644
+--- a/apps/web/eslint.config.mjs
++++ b/apps/web/eslint.config.mjs
+@@ -1,11 +1,16 @@
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../eslint.config.mjs'
++import baseConfig, {
++  reactHooksRuleLevels,
++  reactVersionSettings,
++  unusedVarsRule,
++} from '../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
+   reactHooksRuleLevels,
++  unusedVarsRule,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+@@ -16,7 +21,6 @@ export default [
+     rules: {
+       '@typescript-eslint/no-explicit-any': 'off',
+       '@typescript-eslint/no-non-null-assertion': 'off',
+-      '@typescript-eslint/no-unused-vars': 'off',
+     },
+   },
+ ]
+diff --git a/eslint.config.mjs b/eslint.config.mjs
+index 3a3dade..44482c4 100644
+--- a/eslint.config.mjs
++++ b/eslint.config.mjs
+@@ -1,6 +1,39 @@
+ import nx from '@nx/eslint-plugin'
+ import { createRequire } from 'node:module'
+ 
++// Unused code is an error, not a warning: a warning never fails `nx run-many -t lint`, so unused
++// imports, locals and dead destructures reached CI (and Sonar) instead of failing at the desk.
++// Prefix a name with `_` to keep it deliberately (a required callback parameter, a caught error you
++// do not read, a skipped tuple element); a property dropped with a rest sibling
++// (`const { password, ...safe } = user`) is allowed. `nx.configs['flat/react']` sets its own,
++// looser level for this rule, so every React lint config spreads this after it.
++export const unusedVarsRule = {
++  files: [
++    '**/*.ts',
++    '**/*.cts',
++    '**/*.mts',
++    '**/*.tsx',
++    '**/*.js',
++    '**/*.cjs',
++    '**/*.mjs',
++    '**/*.jsx',
++  ],
++  rules: {
++    '@typescript-eslint/no-unused-vars': [
++      'error',
++      {
++        args: 'after-used',
++        argsIgnorePattern: '^_',
++        varsIgnorePattern: '^_',
++        caughtErrors: 'all',
++        caughtErrorsIgnorePattern: '^_',
++        destructuredArrayIgnorePattern: '^_',
++        ignoreRestSiblings: true,
++      },
++    ],
++  },
++}
++
+ export default [
+   ...nx.configs['flat/base'],
+   ...nx.configs['flat/typescript'],
+@@ -72,12 +105,12 @@ export default [
+     // Override or add rules here
+     rules: {},
+   },
++  unusedVarsRule,
+   {
+     files: ['apps/web/tests/**/*.spec.ts', 'apps/web/tests/**/*.spec.tsx'],
+     rules: {
+       '@typescript-eslint/no-explicit-any': 'off',
+       '@typescript-eslint/no-non-null-assertion': 'off',
+-      '@typescript-eslint/no-unused-vars': 'off',
+     },
+   },
+ ]
+diff --git a/libs/api/config/project.json b/libs/api/config/project.json
+index 09867a2..d4233f3 100644
+--- a/libs/api/config/project.json
++++ b/libs/api/config/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": ["scope:api"],
+   "// targets": "to see all targets run: nx show project config --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/api/core/feature/project.json b/libs/api/core/feature/project.json
+index 88917a0..e7a3dff 100644
+--- a/libs/api/core/feature/project.json
++++ b/libs/api/core/feature/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": ["scope:api", "type:feature"],
+   "// targets": "to see all targets run: nx show project api-core-feature --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/api/core/models/project.json b/libs/api/core/models/project.json
+index 2c7c16d..a12e90e 100644
+--- a/libs/api/core/models/project.json
++++ b/libs/api/core/models/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": ["scope:api", "type:models"],
+   "// targets": "to see all targets run: nx show project api-core-models --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/api/custom/project.json b/libs/api/custom/project.json
+index 49651cd..33b17fd 100644
+--- a/libs/api/custom/project.json
++++ b/libs/api/custom/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": ["scope:api", "type:application-api"],
+   "// targets": "to see all targets run: nx show project api-custom --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/api/generated-crud/data-access/project.json b/libs/api/generated-crud/data-access/project.json
+index 4134c9a..bb9eb8e 100644
+--- a/libs/api/generated-crud/data-access/project.json
++++ b/libs/api/generated-crud/data-access/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": ["scope:api", "type:data-access"],
+   "// targets": "to see all targets run: nx show project api-generated-crud-data-access --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/api/generated-crud/feature/project.json b/libs/api/generated-crud/feature/project.json
+index 287754e..67565c6 100644
+--- a/libs/api/generated-crud/feature/project.json
++++ b/libs/api/generated-crud/feature/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": ["scope:api", "type:feature"],
+   "// targets": "to see all targets run: nx show project api-generated-crud-feature --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/api/integrations/project.json b/libs/api/integrations/project.json
+index e6d861d..9c707d5 100644
+--- a/libs/api/integrations/project.json
++++ b/libs/api/integrations/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": [],
+   "// targets": "to see all targets run: nx show project integrations --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/api/prisma/project.json b/libs/api/prisma/project.json
+index 7e85740..e517fb0 100644
+--- a/libs/api/prisma/project.json
++++ b/libs/api/prisma/project.json
+@@ -11,6 +11,9 @@
+       "options": {
+         "command": "prisma generate --schema=libs/api/prisma/src/lib/schemas/schema.prisma"
+       }
++    },
++    "test": {
++      "dependsOn": ["generate"]
+     }
+   }
+ }
+diff --git a/libs/api/utils/project.json b/libs/api/utils/project.json
+index 54f1578..fd64cd6 100644
+--- a/libs/api/utils/project.json
++++ b/libs/api/utils/project.json
+@@ -5,5 +5,9 @@
+   "projectType": "library",
+   "tags": ["scope:api"],
+   "// targets": "to see all targets run: nx show project api-utils --web",
+-  "targets": {}
++  "targets": {
++    "test": {
++      "dependsOn": ["api-prisma:generate"]
++    }
++  }
+ }
+diff --git a/libs/shared/utils/eslint.config.mjs b/libs/shared/utils/eslint.config.mjs
+index 1fee45c..e257865 100644
+--- a/libs/shared/utils/eslint.config.mjs
++++ b/libs/shared/utils/eslint.config.mjs
+@@ -1,11 +1,16 @@
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../../eslint.config.mjs'
++import baseConfig, {
++  reactHooksRuleLevels,
++  reactVersionSettings,
++  unusedVarsRule,
++} from '../../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
+   reactHooksRuleLevels,
++  unusedVarsRule,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+diff --git a/libs/web-ui/eslint.config.mjs b/libs/web-ui/eslint.config.mjs
+index 05b17f2..aadf19b 100644
+--- a/libs/web-ui/eslint.config.mjs
++++ b/libs/web-ui/eslint.config.mjs
+@@ -3,13 +3,18 @@ import storybook from 'eslint-plugin-storybook'
+ 
+ import { fileURLToPath } from 'node:url'
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../eslint.config.mjs'
++import baseConfig, {
++  reactHooksRuleLevels,
++  reactVersionSettings,
++  unusedVarsRule,
++} from '../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
+   reactHooksRuleLevels,
++  unusedVarsRule,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+diff --git a/libs/web/eslint.config.mjs b/libs/web/eslint.config.mjs
+index 18e484a..f72daec 100644
+--- a/libs/web/eslint.config.mjs
++++ b/libs/web/eslint.config.mjs
+@@ -1,11 +1,16 @@
+ import nx from '@nx/eslint-plugin'
+-import baseConfig, { reactHooksRuleLevels, reactVersionSettings } from '../../eslint.config.mjs'
++import baseConfig, {
++  reactHooksRuleLevels,
++  reactVersionSettings,
++  unusedVarsRule,
++} from '../../eslint.config.mjs'
+ 
+ export default [
+   ...baseConfig,
+   ...nx.configs['flat/react'],
+   reactVersionSettings,
+   reactHooksRuleLevels,
++  unusedVarsRule,
+   {
+     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+     // Override or add rules here
+diff --git a/prisma.config.ts b/prisma.config.ts
+index b0b3a49..2f52682 100644
+--- a/prisma.config.ts
++++ b/prisma.config.ts
+@@ -3,11 +3,11 @@ import * as path from 'node:path'
+ import { defineConfig } from 'prisma/config'
+ 
+ // The Prisma CLI (generate, db push, migrate, studio) connects through this datasource.
+-// Prefer DIRECT_URL when set — on Railway, DATABASE_URL is the pgbouncer/pooled URL and
+-// DIRECT_URL is the direct Postgres URL that migrations require — falling back to
+-// DATABASE_URL for local/single-host setups. This removes the manual DATABASE_URL swap
+-// that `prisma migrate deploy` used to need. The runtime app connects separately via the
+-// PrismaPg driver adapter using DATABASE_URL, so the pooled URL is still used for queries.
++// Prefer DIRECT_URL when set, falling back to DATABASE_URL. There is no connection pooler in
++// front of Postgres (on Railway DATABASE_URL is the direct private URL), so DIRECT_URL is
++// normally unset; it is for a CLI run that must reach the database another way than the app
++// does, such as a pooler you add yourself, without swapping DATABASE_URL. The runtime app
++// connects separately via the PrismaPg driver adapter using DATABASE_URL.
+ // The fallback placeholder is only for CI where no URL is set during `prisma generate`
+ // (schema parsing only, never an actual connection).
+ const databaseUrl =
+diff --git a/scripts/dev-checkout.spec.mjs b/scripts/dev-checkout.spec.mjs
+index 88dde78..51606c1 100644
+--- a/scripts/dev-checkout.spec.mjs
++++ b/scripts/dev-checkout.spec.mjs
+@@ -410,6 +410,7 @@ function testDb(root, bin, command, env = {}) {
+   delete base.TEST_DATABASE_URL
+   delete base.POSTGRES_TEST_PORT
+   delete base.E2E_ALLOW_NON_DISPOSABLE_DB
++  delete base.POSTGRES_PORT
+   return spawnSync('bash', [join(root, 'scripts/test-db.sh'), command], {
+     cwd: root,
+     env: { ...base, ...env },
+@@ -662,6 +663,26 @@ function nodeStub(root) {
+   return { bin, calls }
+ }
+ 
++// A docker stub whose daemon answers, and whose `port` lists `published` for the test container
++// (nothing, and a failure, when it is empty: the container is not running).
++function dockerStub(root, published = '') {
++  const bin = join(root, '..', 'docker-bin')
++  mkdirSync(bin, { recursive: true })
++  writeFileSync(
++    join(bin, 'docker'),
++    [
++      '#!/bin/bash',
++      'case "$1" in',
++      '  info) exit 0 ;;',
++      `  port) ${published ? `printf '%s\\n' ${JSON.stringify(published)}` : 'exit 1'} ;;`,
++      'esac',
++      '',
++    ].join('\n'),
++    { mode: 0o755 },
++  )
++  return bin
++}
++
+ void describe('scripts/test-db.sh ensure creates only a local *_test database', () => {
+   void it('hands a local *_test URL to test-database.mjs through the environment', () => {
+     const { main, bin } = checkouts()
+@@ -677,12 +698,61 @@ void describe('scripts/test-db.sh ensure creates only a local *_test database',
+   void it('ensures the default URL, built from the port in .env', () => {
+     const { main, bin } = checkouts()
+     const node = nodeStub(main)
++    const docker = dockerStub(main, '0.0.0.0:55444')
+     writeFileSync(join(main, '.env'), 'POSTGRES_TEST_PORT=55444\n')
+-    const ensured = testDb(main, `${node.bin}:${bin}`, 'ensure')
++    const ensured = testDb(main, `${node.bin}:${docker}:${bin}`, 'ensure')
+     assert.equal(ensured.status, 0, ensured.stderr)
+     assert.match(node.calls(), new RegExp(`@localhost:55444/${testDatabaseName}\\n$`))
+   })
+ 
++  void it("refuses the default URL when the repo's test container is not the server on its port", () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    writeFileSync(join(main, '.env'), 'POSTGRES_TEST_PORT=55444\n')
++    for (const published of ['', '0.0.0.0:55445']) {
++      const docker = dockerStub(main, published)
++      const refused = testDb(main, `${node.bin}:${docker}:${bin}`, 'ensure')
++      assert.notEqual(refused.status, 0, published)
++      assert.match(refused.stderr, /test container .* is not running on port 55444/, published)
++      const verify = testDb(main, `${node.bin}:${docker}:${bin}`, 'verify')
++      assert.notEqual(verify.status, 0, published)
++      assert.match(verify.stderr, /Not testing against/, published)
++    }
++    assert.equal(node.calls(), '')
++  })
++
++  void it('refuses a test database on the development server, POSTGRES_PORT in .env', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    const docker = dockerStub(main, '0.0.0.0:55450')
++    const { bin: recording, calls } = recordingStubs(join(main, '..'))
++    const path = `${node.bin}:${docker}:${recording}:${bin}`
++    writeFileSync(join(main, '.env'), 'POSTGRES_PORT=55450\nPOSTGRES_TEST_PORT=55450\n')
++    const ensured = testDb(main, path, 'ensure')
++    assert.notEqual(ensured.status, 0)
++    assert.match(ensured.stderr, /on port 55450, the development Postgres/)
++    for (const command of ['verify', 'migrate']) {
++      const refused = testDb(main, path, command)
++      assert.notEqual(refused.status, 0, command)
++      assert.match(refused.stderr, /the development\s+Postgres \(POSTGRES_PORT\)/, command)
++      const allowed = testDb(main, path, command, {
++        E2E_ALLOW_NON_DISPOSABLE_DB: '1',
++      })
++      assert.equal(allowed.status, 0, `${command}: ${allowed.stderr}`)
++    }
++    assert.equal(node.calls(), '')
++    assert.equal(calls().match(/prisma migrate deploy/g)?.length, 1, calls())
++  })
++
++  void it('verifies a URL of your own on another port without asking Docker', () => {
++    const { main, bin } = checkouts()
++    writeFileSync(join(main, '.env'), 'POSTGRES_PORT=55450\n')
++    const verified = testDb(main, `${dockerStub(main)}:${bin}`, 'verify', {
++      TEST_DATABASE_URL: urlWithPassword('localhost:55451/app_test'),
++    })
++    assert.equal(verified.status, 0, verified.stderr)
++  })
++
+   void it('fails when test-database.mjs fails', () => {
+     const { main, bin } = checkouts()
+     const node = nodeStub(main)
+diff --git a/scripts/env-example-pairs.spec.mjs b/scripts/env-example-pairs.spec.mjs
+new file mode 100644
+index 0000000..07b2ec2
+--- /dev/null
++++ b/scripts/env-example-pairs.spec.mjs
+@@ -0,0 +1,47 @@
++import assert from 'node:assert/strict'
++import { readFileSync } from 'node:fs'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++const example = readFileSync(join(root, '.env.example'), 'utf8')
++
++/** The value an uncommented `KEY=value` line in .env.example sets, or undefined. */
++function value(key) {
++  return new RegExp(`^${key}=(.*)$`, 'm').exec(example)?.[1].trim()
++}
++
++/**
++ * `cp .env.example .env` must give a working, consistent setup. A port shipped set while its URL
++ * partner is commented out is a half-moved pair: the doctor's dev-ports check flags it as soon as
++ * the port moves, and the URL a tool reads falls back to a default on the old port.
++ */
++describe('.env.example port pairs', () => {
++  for (const [portKey, urlKey] of [
++    ['POSTGRES_PORT', 'DATABASE_URL'],
++    ['POSTGRES_TEST_PORT', 'TEST_DATABASE_URL'],
++  ]) {
++    it(`sets ${urlKey} on the port ${portKey} sets`, () => {
++      const port = value(portKey)
++      const url = value(urlKey)
++      assert.ok(port, `${portKey} is not set`)
++      assert.ok(url, `${urlKey} is not set (commented out?) while ${portKey} is`)
++      assert.equal(new URL(url).port, port)
++    })
++  }
++
++  it("ships TEST_DATABASE_URL as the URL test-db.sh builds for the repo's own test database", () => {
++    const script = readFileSync(join(root, 'scripts/test-db.sh'), 'utf8')
++    const own = /^TEST_DB_OWN_URL="(.*)"$/m.exec(script)?.[1]
++    assert.ok(own, 'test-db.sh defines TEST_DB_OWN_URL')
++    assert.equal(
++      value('TEST_DATABASE_URL'),
++      own.replace('${TEST_DB_PORT}', value('POSTGRES_TEST_PORT')),
++    )
++  })
++
++  it('describes no connection pooler, which the Railway setup no longer has', () => {
++    assert.doesNotMatch(example, /pgbouncer|6432/i)
++  })
++})
+diff --git a/scripts/eslint-unused-vars.spec.mjs b/scripts/eslint-unused-vars.spec.mjs
+new file mode 100644
+index 0000000..1eef488
+--- /dev/null
++++ b/scripts/eslint-unused-vars.spec.mjs
+@@ -0,0 +1,62 @@
++import assert from 'node:assert/strict'
++import { execFileSync } from 'node:child_process'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++import { ESLint } from 'eslint'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++const RULE = '@typescript-eslint/no-unused-vars'
++const ERROR = 2
++
++/** The folder of the eslint.config.mjs nearest to a path: the config ESLint applies to it. */
++function nearestConfigFolder(path, configFolders) {
++  return configFolders
++    .filter(folder => folder === '.' || path.startsWith(`${folder}/`))
++    .reduce(
++      (nearest, folder) => (nearest === '.' || folder.length > nearest.length ? folder : nearest),
++      '.',
++    )
++}
++
++/** One tracked TypeScript file per eslint.config.mjs that lints any, keyed by the config. */
++function oneFilePerConfig() {
++  const tracked = execFileSync('git', ['ls-files', '*.ts', '*.tsx', '*eslint.config.mjs'], {
++    cwd: root,
++    encoding: 'utf8',
++  })
++    .split('\n')
++    .filter(Boolean)
++  const configFolders = tracked.filter(path => path.endsWith('eslint.config.mjs')).map(dirname)
++  // apps/web/tests had its own override turning the rule off; check that it stays on there.
++  const files = new Map([['apps/web/tests', 'apps/web/tests/routes/logout.spec.tsx']])
++  for (const path of tracked) {
++    if (!/\.tsx?$/.test(path) || path.endsWith('.d.ts')) continue
++    const folder = nearestConfigFolder(path, configFolders)
++    if (!files.has(folder)) files.set(folder, path)
++  }
++  return files
++}
++
++/**
++ * Unused code fails lint everywhere: a warning never fails `nx run-many -t lint`, so unused imports,
++ * locals and dead destructures reached CI and Sonar instead of failing at the desk. The `_` prefix
++ * stays the way to keep a name deliberately. `nx.configs['flat/react']` sets a looser level of its
++ * own, so a React config that spreads it after the base must spread `unusedVarsRule` after it too.
++ */
++describe('no-unused-vars', () => {
++  const eslint = new ESLint({ cwd: root })
++
++  for (const [folder, file] of oneFilePerConfig()) {
++    it(`is an error, with the _ escape, under ${folder} (checked on ${file})`, async () => {
++      const resolved = await eslint.calculateConfigForFile(join(root, file))
++      const setting = resolved.rules?.[RULE]
++      assert.ok(setting, `${RULE} is not configured for ${file}`)
++      const [severity, options = {}] = setting
++      assert.equal(severity, ERROR, `${RULE} is not an error for ${file}`)
++      assert.equal(options.argsIgnorePattern, '^_')
++      assert.equal(options.varsIgnorePattern, '^_')
++      assert.equal(options.caughtErrorsIgnorePattern, '^_')
++    })
++  }
++})
+diff --git a/scripts/test-db.sh b/scripts/test-db.sh
+index 406eb9e..b3e0887 100755
+--- a/scripts/test-db.sh
++++ b/scripts/test-db.sh
+@@ -1,7 +1,7 @@
+ #!/bin/bash
+ 
+ # Test Database Management Script
+-# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|ensure|url]
++# Usage: ./scripts/test-db.sh [start|stop|reset|logs|migrate|ensure|verify|url]
+ 
+ set -e
+ 
+@@ -31,7 +31,14 @@ read_env() {
+ TEST_DB_PORT="${POSTGRES_TEST_PORT:-}"
+ [[ -n "$TEST_DB_PORT" ]] || TEST_DB_PORT="$(read_env POSTGRES_TEST_PORT)" || exit 1
+ TEST_DB_PORT="${TEST_DB_PORT:-5433}"
+-TEST_DB_URL="${TEST_DATABASE_URL:-postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test}"
++# The URL of the repo's own test database: the container `start` brings up on POSTGRES_TEST_PORT.
++# Any other URL names a database you chose, on a server you vouch for.
++TEST_DB_OWN_URL="postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test"
++TEST_DB_URL="${TEST_DATABASE_URL:-$TEST_DB_OWN_URL}"
++# The development Postgres's host port: POSTGRES_PORT from the environment, else .env. Empty when
++# neither sets it (CI has no .env), which skips the development-server check below.
++DEV_DB_PORT="${POSTGRES_PORT:-}"
++[[ -n "$DEV_DB_PORT" ]] || DEV_DB_PORT="$(read_env POSTGRES_PORT)" || exit 1
+ # The resolved URL is the single source of truth for the port we report. When a caller supplies
+ # TEST_DATABASE_URL (e.g. a block-specific port), TEST_DB_PORT still holds the .env/default value, so
+ # echoing it would claim "ready on port 5433" while actually using the URL's port. Read the port back
+@@ -78,6 +85,32 @@ is_local_test_database() {
+   return 1
+ }
+ 
++# Whether TEST_DB_URL is on this machine's development Postgres (the port POSTGRES_PORT names). A
++# test database there sits beside the development data, in a server `reset` never clears, and
++# `ensure` would create it inside that server.
++on_development_server() {
++  [[ -n "$DEV_DB_PORT" ]] || return 1
++  [[ "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]] || return 1
++  local host="${BASH_REMATCH[3]}" port="${BASH_REMATCH[4]#:}"
++  [[ "$host" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ ]] || return 1
++  [[ "${port:-5432}" == "$DEV_DB_PORT" ]]
++}
++
++# A liveness check is not an identity check: pg_isready and `SELECT 1` say something answers on the
++# port, never that it is this repo's server. For the repo's own URL, the server must be the repo's
++# own test container, publishing that port. Without a reachable Docker there is no container to
++# compare with, and the check is skipped; a URL of your own is yours to vouch for.
++own_test_container_problem() {
++  [[ "$TEST_DB_URL" == "$TEST_DB_OWN_URL" ]] || return 0
++  docker info >/dev/null 2>&1 || return 0
++  if docker port "$TEST_DB_CONTAINER" 5432/tcp 2>/dev/null | grep -qE ":${TEST_DB_PORT}\$"; then
++    return 0
++  fi
++  echo "this repo's test container ($TEST_DB_CONTAINER) is not running on port $TEST_DB_PORT, so" \
++    "whatever answers there is another server (very likely another repo's Postgres)"
++  return 0
++}
++
+ # Prisma's `migrate deploy` has no guard of its own, so `migrate` refuses a URL that is not a
+ # disposable test database, by the rules the e2e setup applies before it resets, migrates, pushes or
+ # seeds (apps/api-e2e/src/support/database-guards.ts): a postgres(ql):// URL on this machine, named
+@@ -89,13 +122,19 @@ assert_disposable_test_database() {
+     echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
+     exit 1
+   fi
+-  if is_local_test_database; then
++  if is_local_test_database && ! on_development_server; then
+     return 0
+   fi
+   if [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" == "1" ]]; then
+     echo "⚠️  E2E_ALLOW_NON_DISPOSABLE_DB=1: running $action on $TEST_DB_DISPLAY_URL, which is not a local *_test database."
+     return 0
+   fi
++  if on_development_server; then
++    echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development" >&2
++    echo "   Postgres (POSTGRES_PORT). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or" >&2
++    echo "   set E2E_ALLOW_NON_DISPOSABLE_DB=1 if sharing that server is deliberate." >&2
++    exit 1
++  fi
+   echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: a test database must be on this machine (localhost," >&2
+   echo "   127.0.0.1 or [::1]) and named *_test. Point TEST_DATABASE_URL at one, or set" >&2
+   echo "   E2E_ALLOW_NON_DISPOSABLE_DB=1 if this one is disposable under another host or name." >&2
+@@ -113,6 +152,20 @@ ensure_test_database() {
+     echo "   not apply; create any other database yourself." >&2
+     return 1
+   fi
++  if on_development_server; then
++    echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development Postgres" >&2
++    echo "   (POSTGRES_PORT), so it would be created beside the development data. Point" >&2
++    echo "   TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or create it yourself." >&2
++    return 1
++  fi
++  local problem
++  problem="$(own_test_container_problem)"
++  if [[ -n "$problem" ]]; then
++    echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: $problem." >&2
++    echo "   Start this repo's test database (./scripts/test-db.sh start), or move POSTGRES_TEST_PORT" >&2
++    echo "   (and TEST_DATABASE_URL with it) to a free port." >&2
++    return 1
++  fi
+   TEST_DATABASE_URL="$TEST_DB_URL" node "$SCRIPT_DIR/test-database.mjs" ensure || return 1
+   return 0
+ }
+@@ -232,6 +285,25 @@ case "$COMMAND" in
+     ensure_test_database || exit 1
+     ;;
+ 
++  "verify")
++    # Before a run: the database the URL names is the one this repo should test against. Not on the
++    # development server (E2E_ALLOW_NON_DISPOSABLE_DB=1 accepts that deliberately), and, for the
++    # repo's own URL, served by the repo's own test container.
++    if on_development_server && [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" != "1" ]]; then
++      echo "❌ $TEST_DB_DISPLAY_URL is on port $DEV_DB_PORT, the development Postgres (POSTGRES_PORT)." >&2
++      echo "   Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or set" >&2
++      echo "   E2E_ALLOW_NON_DISPOSABLE_DB=1 if sharing that server is deliberate." >&2
++      exit 1
++    fi
++    VERIFY_PROBLEM="$(own_test_container_problem)"
++    if [[ -n "$VERIFY_PROBLEM" ]]; then
++      echo "❌ Not testing against $TEST_DB_DISPLAY_URL: $VERIFY_PROBLEM." >&2
++      echo "   Stop that server or move POSTGRES_TEST_PORT (and TEST_DATABASE_URL with it) to a free" >&2
++      echo "   port, then run ./scripts/test-db.sh start." >&2
++      exit 1
++    fi
++    ;;
++
+   "url")
+     # The one place that resolves the test-database URL. Callers that are NOT launched through Nx
+     # (pnpm runs a script with a plain shell, which never loads .env) must ask for it here rather
+@@ -252,6 +324,7 @@ case "$COMMAND" in
+     echo "  logs    - Show test database logs"
+     echo "  migrate - Run Prisma migrations on test database"
+     echo "  ensure  - Create the test database if the server does not have it (local *_test only)"
++    echo "  verify  - Check the URL is not the development server, and is served by this repo's container"
+     echo "  url     - Print the resolved test database URL"
+     echo ""
+     echo "Test DB URL: $TEST_DB_DISPLAY_URL"
+diff --git a/scripts/test-targets-need-prisma-generate.spec.mjs b/scripts/test-targets-need-prisma-generate.spec.mjs
+new file mode 100644
+index 0000000..06982b8
+--- /dev/null
++++ b/scripts/test-targets-need-prisma-generate.spec.mjs
+@@ -0,0 +1,50 @@
++import assert from 'node:assert/strict'
++import { existsSync, readdirSync, readFileSync } from 'node:fs'
++import { dirname, join, relative } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++const PRISMA_PROJECT = 'api-prisma'
++
++/** Every folder under libs/api holding a project.json, as repo-relative paths. */
++function apiProjectRoots(folder = join(root, 'libs/api')) {
++  const found = []
++  for (const entry of readdirSync(folder, { withFileTypes: true })) {
++    if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name.startsWith('.'))
++      continue
++    const path = join(folder, entry.name)
++    if (existsSync(join(path, 'project.json'))) found.push(relative(root, path))
++    found.push(...apiProjectRoots(path))
++  }
++  return found
++}
++
++/**
++ * A libs/api project's Jest suite compiles against the generated Prisma client. Nothing orders the
++ * inferred `test` target after `api-prisma:generate` unless the project says so, so on a clean
++ * checkout (or whenever Nx schedules them together) the suite can compile against a missing or
++ * half-written client and fail with TS7006/TS2339 in files the change never touched.
++ */
++describe('libs/api test targets', () => {
++  const projects = apiProjectRoots().filter(projectRoot =>
++    readdirSync(join(root, projectRoot)).some(name => /^jest\.config\.[cm]?[jt]s$/.test(name)),
++  )
++
++  it('finds the API projects with a Jest suite', () => {
++    assert.ok(projects.length > 0, 'no libs/api project with a jest.config was found')
++  })
++
++  for (const projectRoot of projects) {
++    it(`${projectRoot} runs api-prisma:generate before its tests`, () => {
++      const project = JSON.parse(readFileSync(join(root, projectRoot, 'project.json'), 'utf8'))
++      const needed = project.name === PRISMA_PROJECT ? 'generate' : `${PRISMA_PROJECT}:generate`
++      const dependsOn = project.targets?.test?.dependsOn ?? []
++      const declared = dependsOn.includes(needed)
++      assert.ok(
++        declared,
++        `${projectRoot}/project.json: targets.test.dependsOn must include "${needed}"`,
++      )
++    })
++  }
++})

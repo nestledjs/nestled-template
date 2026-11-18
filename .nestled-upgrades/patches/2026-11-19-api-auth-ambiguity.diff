@@ -1,0 +1,1344 @@
+diff --git a/.env.example b/.env.example
+index 7c7cca5..a2a1152 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,6 +1,10 @@
+ APP_NAME=your-app-name
+ NODE_ENV=development
+ JWT_SECRET=JWT_SECRET
++# Set to true to include stack traces (extensions.stacktrace) in GraphQL error responses while
++# debugging locally. Honoured only with NODE_ENV=development, and ignored on every deployed
++# environment whatever its NODE_ENV, so leave it unset in Railway and CI.
++GRAPHQL_INCLUDE_STACKTRACE=false
+ 
+ ## LOCAL DEV PORTS
+ # Every nestled app defaults to block 0, so only one can run at a time. To run several side by
+diff --git a/libs/api/core/feature/src/lib/api-core-feature.module.ts b/libs/api/core/feature/src/lib/api-core-feature.module.ts
+index 2b02d60..1d3b06c 100644
+--- a/libs/api/core/feature/src/lib/api-core-feature.module.ts
++++ b/libs/api/core/feature/src/lib/api-core-feature.module.ts
+@@ -4,14 +4,14 @@ import { GraphQLModule } from '@nestjs/graphql'
+ import { join } from 'node:path'
+ import { Request, Response } from 'express'
+ import { apiCorePubSub } from '@nestled-template/api/core/data-access'
+-import { formatApiError } from '@nestled-template/api/utils'
+ import { Context } from 'graphql-ws'
+ import { ApiCoreFeatureController } from './api-core-feature.controller'
+ import { ApiCoreFeatureResolver } from './api-core-feature.resolver'
+ import { ApiCoreFeatureService } from './api-core-feature.service'
++import { graphqlErrorOptions } from './graphql-error-options'
+ import { ComplexityPlugin } from './plugins/complexity.plugin'
+ import { NoCachePlugin } from './plugins/no-cache.plugin'
+-import { extractTokenFromWsContext } from './ws-session-token'
++import { authorizeWsConnection } from './ws-session-token'
+ 
+ interface ConnectionParameters {
+   headers?: Record<string, string>
+@@ -32,14 +32,10 @@ const redisPubSubProvider = {
+       },
+       subscriptions: {
+         'graphql-ws': {
+-          onConnect: async (context: Context<Record<string, unknown> | undefined>) => {
+-            const { extra } = context
+-            const token = extractTokenFromWsContext(extra)
+-            if (token === '') {
+-              throw new Error('Authentication token is missing')
+-            }
+-            return true
+-          },
++          // 4401 for a missing or unverifiable session, 1013 (try again later) for an internal
++          // failure; see authorizeWsConnection.
++          onConnect: (context: Context<Record<string, unknown> | undefined>) =>
++            authorizeWsConnection(context.extra),
+         },
+       },
+       context: ({
+@@ -57,9 +53,8 @@ const redisPubSubProvider = {
+         }
+         return { req, res }
+       },
+-      // Keeps the code a 403 was thrown with (`forbiddenWithCode`), so a client can tell "pick an
+-      // organization" from "no permission". Nest's own HTTP-status mapping runs before it.
+-      formatError: formatApiError,
++      // formatApiError, and stack traces only on a local opt-in (GRAPHQL_INCLUDE_STACKTRACE).
++      ...graphqlErrorOptions(),
+       sortSchema: true,
+       buildSchemaOptions: {
+         dateScalarMode: 'isoDate',
+diff --git a/libs/api/core/feature/src/lib/graphql-error-options.spec.ts b/libs/api/core/feature/src/lib/graphql-error-options.spec.ts
+new file mode 100644
+index 0000000..2e70828
+--- /dev/null
++++ b/libs/api/core/feature/src/lib/graphql-error-options.spec.ts
+@@ -0,0 +1,78 @@
++import { ApolloServer } from '@apollo/server'
++import { GraphQLObjectType, GraphQLSchema, GraphQLString } from 'graphql'
++import { graphqlErrorOptions, includeGraphqlStacktrace } from './graphql-error-options'
++
++const schema = new GraphQLSchema({
++  query: new GraphQLObjectType({
++    name: 'Query',
++    fields: {
++      broken: {
++        type: GraphQLString,
++        resolve: () => {
++          throw new Error('database unavailable')
++        },
++      },
++    },
++  }),
++})
++
++/** `extensions.stacktrace` of a resolver error, from a real ApolloServer under `nodeEnv`. */
++async function stacktraceUnder(
++  nodeEnv: string,
++  options: Partial<ReturnType<typeof graphqlErrorOptions>>,
++): Promise<unknown> {
++  const original = process.env['NODE_ENV']
++  process.env['NODE_ENV'] = nodeEnv
++  try {
++    const server = new ApolloServer({ schema, ...options })
++    const response = await server.executeOperation({ query: '{ broken }' })
++    if (response.body.kind !== 'single') throw new Error('expected a single result')
++    return response.body.singleResult.errors?.[0]?.extensions?.['stacktrace']
++  } finally {
++    process.env['NODE_ENV'] = original
++  }
++}
++
++describe('GraphQL error stack traces', () => {
++  // The control: Apollo's own default sends stack traces on any NODE_ENV but production and test.
++  // A staging environment running NODE_ENV=stage leaked them to every client.
++  it('Apollo sends them on a non-production NODE_ENV when the option is left out', async () => {
++    await expect(stacktraceUnder('stage', {})).resolves.toEqual(expect.any(Array))
++  })
++
++  it('does not send them on NODE_ENV=stage', async () => {
++    const options = graphqlErrorOptions({ NODE_ENV: 'stage' })
++
++    await expect(stacktraceUnder('stage', options)).resolves.toBeUndefined()
++  })
++
++  it('ignores GRAPHQL_INCLUDE_STACKTRACE on a deployed NODE_ENV', async () => {
++    for (const nodeEnv of ['stage', 'staging', 'production']) {
++      const options = graphqlErrorOptions({ NODE_ENV: nodeEnv, GRAPHQL_INCLUDE_STACKTRACE: 'true' })
++
++      await expect(stacktraceUnder(nodeEnv, options)).resolves.toBeUndefined()
++    }
++  })
++
++  it('does not send them in development unless asked to', async () => {
++    const options = graphqlErrorOptions({ NODE_ENV: 'development' })
++
++    await expect(stacktraceUnder('development', options)).resolves.toBeUndefined()
++  })
++
++  it('sends them in development with GRAPHQL_INCLUDE_STACKTRACE=true', async () => {
++    const options = graphqlErrorOptions({
++      NODE_ENV: 'development',
++      GRAPHQL_INCLUDE_STACKTRACE: 'true',
++    })
++
++    await expect(stacktraceUnder('development', options)).resolves.toEqual(expect.any(Array))
++  })
++
++  it('needs exactly "true"', () => {
++    expect(
++      includeGraphqlStacktrace({ NODE_ENV: 'development', GRAPHQL_INCLUDE_STACKTRACE: '1' }),
++    ).toBe(false)
++    expect(includeGraphqlStacktrace({})).toBe(false)
++  })
++})
+diff --git a/libs/api/core/feature/src/lib/graphql-error-options.ts b/libs/api/core/feature/src/lib/graphql-error-options.ts
+new file mode 100644
+index 0000000..6ea6b78
+--- /dev/null
++++ b/libs/api/core/feature/src/lib/graphql-error-options.ts
+@@ -0,0 +1,25 @@
++import { formatApiError } from '@nestled-template/api/utils'
++
++/**
++ * Whether GraphQL error responses carry `extensions.stacktrace`. Only when
++ * `GRAPHQL_INCLUDE_STACKTRACE=true` AND `NODE_ENV=development`: a local opt-in for debugging.
++ *
++ * Apollo's own default includes stack traces unless NODE_ENV is `production` or `test`, so a
++ * deployed environment with any other NODE_ENV (`stage`, `staging`, `preview`, ...) sent server
++ * file paths and code to every client. The variable is ignored on any deployed environment, since
++ * none runs with NODE_ENV=development.
++ */
++export function includeGraphqlStacktrace(env: NodeJS.ProcessEnv = process.env): boolean {
++  return env['GRAPHQL_INCLUDE_STACKTRACE'] === 'true' && env['NODE_ENV'] === 'development'
++}
++
++/** The error handling options of the API's GraphQL server. */
++export function graphqlErrorOptions(env: NodeJS.ProcessEnv = process.env) {
++  return {
++    // Always set: left out, Apollo decides from NODE_ENV (see includeGraphqlStacktrace).
++    includeStacktraceInErrorResponses: includeGraphqlStacktrace(env),
++    // Keeps the code a 403 was thrown with (`forbiddenWithCode`), so a client can tell "pick an
++    // organization" from "no permission". Nest's own HTTP-status mapping runs before it.
++    formatError: formatApiError,
++  }
++}
+diff --git a/libs/api/core/feature/src/lib/ws-session-token.spec.ts b/libs/api/core/feature/src/lib/ws-session-token.spec.ts
+index c1672c4..94f6f28 100644
+--- a/libs/api/core/feature/src/lib/ws-session-token.spec.ts
++++ b/libs/api/core/feature/src/lib/ws-session-token.spec.ts
+@@ -1,5 +1,12 @@
+ import { JwtService } from '@nestjs/jwt'
+-import { extractTokenFromWsContext } from './ws-session-token'
++import { GraphQLObjectType, GraphQLSchema, GraphQLString } from 'graphql'
++import { makeServer } from 'graphql-ws'
++import {
++  authorizeWsConnection,
++  extractTokenFromWsContext,
++  WS_CLOSE_TRY_AGAIN_LATER,
++  WS_CLOSE_UNAUTHORIZED,
++} from './ws-session-token'
+ 
+ describe('extractTokenFromWsContext', () => {
+   const originalSecret = process.env['JWT_SECRET']
+@@ -45,3 +52,91 @@ describe('extractTokenFromWsContext', () => {
+     expect(extractTokenFromWsContext(undefined)).toBe('')
+   })
+ })
++
++/**
++ * Through graphql-ws's own server: the close code a client sees for `connection_init`. The first
++ * close wins (graphql-ws's later 4403 for `false` lands on a socket that is already closing).
++ */
++describe('authorizeWsConnection', () => {
++  const originalSecret = process.env['JWT_SECRET']
++  const schema = new GraphQLSchema({
++    query: new GraphQLObjectType({ name: 'Query', fields: { ok: { type: GraphQLString } } }),
++  })
++
++  beforeEach(() => {
++    process.env['JWT_SECRET'] = 'test-secret'
++  })
++
++  afterEach(() => {
++    if (originalSecret === undefined) delete process.env['JWT_SECRET']
++    else process.env['JWT_SECRET'] = originalSecret
++  })
++
++  async function closeCodeFor(cookie: string | undefined): Promise<number | undefined> {
++    const closes: number[] = []
++    let onMessage: (data: string) => Promise<void> = async () => undefined
++    const socket = {
++      protocol: 'graphql-transport-ws',
++      send: async () => undefined,
++      close: (code: number) => {
++        closes.push(code)
++      },
++      onMessage: (cb: (data: string) => Promise<void>) => {
++        onMessage = cb
++      },
++    }
++    const extra = {
++      socket,
++      request: { rawHeaders: cookie === undefined ? [] : ['Cookie', cookie] },
++    }
++    const server = makeServer({ schema, onConnect: ctx => authorizeWsConnection(ctx.extra) })
++    server.opened(socket, extra)
++    await onMessage(JSON.stringify({ type: 'connection_init' }))
++    return closes[0]
++  }
++
++  it('admits a connection with a session that verifies', async () => {
++    const session = new JwtService({ secret: 'test-secret' }).sign({ userId: 'u1' })
++
++    await expect(closeCodeFor(`__session=${session}`)).resolves.toBeUndefined()
++  })
++
++  it('closes with 4401 Unauthorized when there is no session', async () => {
++    await expect(closeCodeFor(undefined)).resolves.toBe(WS_CLOSE_UNAUTHORIZED)
++  })
++
++  it('closes with 4401 Unauthorized when the session does not verify', async () => {
++    const forged = new JwtService({ secret: 'other-secret' }).sign({ userId: 'u1' })
++
++    await expect(closeCodeFor(`__session=${forged}`)).resolves.toBe(WS_CLOSE_UNAUTHORIZED)
++  })
++
++  // Not the client's session: the server cannot check any. 1013 is retried by graphql-ws clients;
++  // 4500 (what a thrown error became) and 4401 are not.
++  it('closes with 1013 Try Again Later when the server cannot check the session', async () => {
++    delete process.env['JWT_SECRET']
++
++    await expect(closeCodeFor('__session=anything')).resolves.toBe(WS_CLOSE_TRY_AGAIN_LATER)
++  })
++
++  // An unexpected verifier failure is the server's, not the session's: 1013, not the fatal 4401.
++  // Also through duplicate-cookie selection, which verifies each candidate.
++  it.each([
++    ['one cookie', (token: string) => `__session=${token}`],
++    ['duplicate cookies', (token: string) => `__session=${token}; __session=${token}x`],
++  ])('closes with 1013 when the verifier throws a plain Error (%s)', async (_label, header) => {
++    const session = new JwtService({ secret: 'test-secret' }).sign({ userId: 'u1' })
++    const verify = jest.spyOn(JwtService.prototype, 'verify').mockImplementation(() => {
++      throw new Error('crypto backend unavailable')
++    })
++    try {
++      await expect(closeCodeFor(header(session))).resolves.toBe(WS_CLOSE_TRY_AGAIN_LATER)
++    } finally {
++      verify.mockRestore()
++    }
++  })
++
++  it('refuses without a socket to close (another transport)', () => {
++    expect(authorizeWsConnection({ request: { rawHeaders: [] } })).toBe(false)
++  })
++})
+diff --git a/libs/api/core/feature/src/lib/ws-session-token.ts b/libs/api/core/feature/src/lib/ws-session-token.ts
+index ac41149..c998321 100644
+--- a/libs/api/core/feature/src/lib/ws-session-token.ts
++++ b/libs/api/core/feature/src/lib/ws-session-token.ts
+@@ -1,4 +1,5 @@
+-import { JwtService } from '@nestjs/jwt'
++import { Logger } from '@nestjs/common'
++import { JsonWebTokenError, JwtService } from '@nestjs/jwt'
+ import { rawHeaderCookieValues, selectSessionToken } from '@nestled-template/api/utils'
+ 
+ type WsContextExtra = {
+@@ -7,14 +8,20 @@ type WsContextExtra = {
+   }
+ }
+ 
+-/** The JWT_SECRET signature check, or null when the token (or the configuration) does not verify. */
++/**
++ * The JWT_SECRET signature check, or null when the token (or the configuration) does not verify.
++ * Only a credential failure (`JsonWebTokenError`, which covers a bad signature, a malformed token,
++ * `TokenExpiredError` and `NotBeforeError`) is null; anything else is a server failure and is
++ * rethrown, so authorizeWsConnection answers it with 1013, not 4401.
++ */
+ function verifyWithJwtSecret(token: string): object | null {
+   const secret = process.env['JWT_SECRET']
+   if (!secret) return null
+   try {
+     return new JwtService({ secret }).verify<object>(token)
+-  } catch {
+-    return null
++  } catch (error) {
++    if (error instanceof JsonWebTokenError) return null
++    throw error
+   }
+ }
+ 
+@@ -41,3 +48,63 @@ export function extractTokenFromWsContext(extra: unknown): string {
+   }
+   return ''
+ }
++
++/**
++ * graphql-ws close codes for a refused connection. 4401 is graphql-ws's own "Unauthorized": the
++ * session is missing or does not verify, and the client does not retry it. 1013 is the WebSocket
++ * "Try Again Later": the server could not check the session (a configuration or internal failure),
++ * which says nothing about it, so the client keeps it and reconnects.
++ */
++export const WS_CLOSE_UNAUTHORIZED = 4401
++export const WS_CLOSE_TRY_AGAIN_LATER = 1013
++
++type ClosableSocket = { close: (code: number, reason: string) => void }
++
++function socketOf(extra: unknown): ClosableSocket | undefined {
++  const socket =
++    extra && typeof extra === 'object' && 'socket' in extra ? (extra.socket as unknown) : undefined
++  return socket && typeof (socket as ClosableSocket).close === 'function'
++    ? (socket as ClosableSocket)
++    : undefined
++}
++
++const wsLogger = new Logger('GraphqlWsConnection')
++
++/**
++ * The graphql-ws `onConnect`: true admits the connection. A missing session, or one whose
++ * signature or expiry does not verify, closes it with 4401 Unauthorized; an internal failure with
++ * 1013 Try Again Later. Revocation is not checked here: every operation still goes through the
++ * guards, which check the session against the database.
++ *
++ * It closes the socket itself (graphql-ws's recipe for a custom close code) and answers false.
++ * Throwing, as before, made graphql-ws close with 4500 Internal Server Error and the error's
++ * message: a missing token looked like a server bug, and a server bug looked like a fatal error the
++ * client does not retry. Without a socket in `extra` (another transport), false still refuses the
++ * connection, as 4403 Forbidden.
++ */
++export function authorizeWsConnection(extra: unknown): boolean {
++  let verdict: 'ok' | 'unauthorized' | 'unavailable'
++  try {
++    // Without the secret no session can verify. That is a server misconfiguration, not the
++    // client's session.
++    if (!process.env['JWT_SECRET']) throw new Error('JWT_SECRET is not set')
++    // extractTokenFromWsContext returns a lone cookie unverified, so verify it here: a session
++    // with a bad signature or past its expiry is refused now, not admitted until its first
++    // operation.
++    const token = extractTokenFromWsContext(extra)
++    verdict = token !== '' && verifyWithJwtSecret(token) ? 'ok' : 'unauthorized'
++  } catch (error) {
++    wsLogger.error(
++      `WebSocket session check could not complete: ${error instanceof Error ? error.message : String(error)}`,
++    )
++    verdict = 'unavailable'
++  }
++
++  if (verdict === 'ok') return true
++  if (verdict === 'unauthorized') {
++    socketOf(extra)?.close(WS_CLOSE_UNAUTHORIZED, 'Unauthorized')
++  } else {
++    socketOf(extra)?.close(WS_CLOSE_TRY_AGAIN_LATER, 'Service unavailable')
++  }
++  return false
++}
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+new file mode 100644
+index 0000000..93c331c
+--- /dev/null
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+@@ -0,0 +1,95 @@
++import { ExecutionContext, ForbiddenException, HttpException } from '@nestjs/common'
++import { GqlAuthGuard } from '@nestled-template/api/utils'
++import { JwtStrategy } from './jwt.strategy'
++
++/**
++ * The API-token refusals as a client sees them: through passport and the real `AuthGuard('jwt')`,
++ * not the strategy's `fail` mock. AuthGuard turns every `fail(…)` into an UnauthorizedException
++ * whatever status it carries, so a refusal of a valid token must reach it as an error to stay 403.
++ */
++describe('JwtStrategy API-token refusals through AuthGuard', () => {
++  const token = 'b'.repeat(64)
++  let apiTokensService: { validateApiToken: jest.Mock; recordTokenUse: jest.Mock }
++  let auth: { validateUser: jest.Mock }
++
++  beforeEach(() => {
++    process.env['JWT_SECRET'] = 'test-secret'
++    auth = { validateUser: jest.fn().mockResolvedValue({ id: 'user-1' }) }
++    apiTokensService = { validateApiToken: jest.fn(), recordTokenUse: jest.fn() }
++    // Registers itself with passport as 'jwt', which AuthGuard('jwt') looks up.
++    new JwtStrategy(auth as never, apiTokensService as never)
++  })
++
++  function httpContext(headers: Record<string, string>): ExecutionContext {
++    const req = { headers: { authorization: `Bearer ${token}`, ...headers } }
++    return {
++      getType: () => 'http',
++      switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({}) }),
++    } as unknown as ExecutionContext
++  }
++
++  async function refusal(headers: Record<string, string> = {}): Promise<HttpException> {
++    const guard = new GqlAuthGuard()
++    try {
++      await guard.canActivate(httpContext(headers))
++    } catch (error) {
++      return error as HttpException
++    }
++    throw new Error('expected the guard to refuse')
++  }
++
++  it('answers a scoped token sent with another organization header with a 403 and a code', async () => {
++    apiTokensService.validateApiToken.mockResolvedValue({
++      userId: 'user-1',
++      tokenId: 'api-token-1',
++      organizationId: 'org-1',
++      resource: null,
++    })
++
++    const error = await refusal({ 'x-organization-id': 'org-2' })
++
++    expect(error).toBeInstanceOf(ForbiddenException)
++    expect(error.getStatus()).toBe(403)
++    expect(error.getResponse()).toMatchObject({ code: 'API_TOKEN_ORGANIZATION_MISMATCH' })
++    expect(auth.validateUser).not.toHaveBeenCalled()
++  })
++
++  it('answers a token bound to another resource with a 403 and a code', async () => {
++    apiTokensService.validateApiToken.mockResolvedValue({
++      userId: 'user-1',
++      tokenId: 'api-token-1',
++      organizationId: null,
++      resource: 'https://api.example.com/api/mcp',
++    })
++
++    const error = await refusal()
++
++    expect(error.getStatus()).toBe(403)
++    expect(error.getResponse()).toMatchObject({ code: 'API_TOKEN_RESOURCE_MISMATCH' })
++    expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
++  })
++
++  it('still answers an unknown token with a 401', async () => {
++    apiTokensService.validateApiToken.mockResolvedValue(null)
++
++    expect((await refusal()).getStatus()).toBe(401)
++  })
++
++  it('still answers a token whose owner is gone with a 401', async () => {
++    apiTokensService.validateApiToken.mockResolvedValue({
++      userId: 'user-1',
++      tokenId: 'api-token-1',
++      organizationId: null,
++      resource: null,
++    })
++    auth.validateUser.mockResolvedValue(null)
++
++    expect((await refusal()).getStatus()).toBe(401)
++  })
++
++  it('answers a failed lookup with a 503', async () => {
++    apiTokensService.validateApiToken.mockRejectedValue(new Error('database unavailable'))
++
++    expect((await refusal()).getStatus()).toBe(503)
++  })
++})
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+index 23c1c62..d7d369d 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+@@ -1,4 +1,8 @@
+-import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
++import {
++  ForbiddenException,
++  ServiceUnavailableException,
++  UnauthorizedException,
++} from '@nestjs/common'
+ import { JwtService } from '@nestjs/jwt'
+ import { JwtStrategy } from './jwt.strategy'
+ import type { Request } from 'express'
+@@ -29,8 +33,18 @@ describe('JwtStrategy API token authentication', () => {
+     strategy = new JwtStrategy(auth as never, apiTokensService as never)
+     ;(strategy as any).success = jest.fn()
+     ;(strategy as any).fail = jest.fn()
++    ;(strategy as any).error = jest.fn()
+   })
+ 
++  // A refusal of a valid token goes to passport's `error` as a 403 with a code; `fail` would reach
++  // the client as a 401 whatever status it carried (see jwt.strategy.guard.spec.ts).
++  const forbiddenCode = () => {
++    expect((strategy as any).fail).not.toHaveBeenCalled()
++    const error = (strategy as any).error.mock.calls[0]?.[0] as ForbiddenException
++    expect(error).toBeInstanceOf(ForbiddenException)
++    return (error.getResponse() as { code?: string }).code
++  }
++
+   it('authenticates opaque API tokens before JWT parsing', async () => {
+     const user = { id: 'user-1' }
+     const req = { headers: { authorization: `Bearer ${token}` } } as any
+@@ -80,10 +94,7 @@ describe('JwtStrategy API token authentication', () => {
+ 
+     expect(auth.validateUser).not.toHaveBeenCalled()
+     expect((strategy as any).success).not.toHaveBeenCalled()
+-    expect((strategy as any).fail).toHaveBeenCalledWith(
+-      { message: 'API token is not valid for this resource' },
+-      401,
+-    )
++    expect(forbiddenCode()).toBe('API_TOKEN_RESOURCE_MISMATCH')
+     // Refused here (GraphQL and the rest of the API), so not counted as use of the token.
+     expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
+   })
+@@ -142,10 +153,7 @@ describe('JwtStrategy API token authentication', () => {
+ 
+     expect(auth.validateUser).not.toHaveBeenCalled()
+     expect((strategy as any).success).not.toHaveBeenCalled()
+-    expect((strategy as any).fail).toHaveBeenCalledWith(
+-      { message: 'API token is not scoped to the requested organization' },
+-      403,
+-    )
++    expect(forbiddenCode()).toBe('API_TOKEN_ORGANIZATION_MISMATCH')
+   })
+ 
+   it('rejects a mismatch even when the header arrives as an array', async () => {
+@@ -161,10 +169,7 @@ describe('JwtStrategy API token authentication', () => {
+ 
+     await strategy.authenticate(req)
+ 
+-    expect((strategy as any).fail).toHaveBeenCalledWith(
+-      { message: 'API token is not scoped to the requested organization' },
+-      403,
+-    )
++    expect(forbiddenCode()).toBe('API_TOKEN_ORGANIZATION_MISMATCH')
+   })
+ 
+   it('collapses a repeated matching header to a single value', async () => {
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+index 4dfa0dc..56f91d7 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+@@ -1,4 +1,5 @@
+ import {
++  ForbiddenException,
+   Injectable,
+   Logger,
+   ServiceUnavailableException,
+@@ -9,7 +10,12 @@ import { Request } from 'express'
+ import { ExtractJwt, Strategy } from 'passport-jwt'
+ import { JwtService } from '@nestjs/jwt'
+ import { User } from '@nestled-template/api/core/models'
+-import { requestCookieValues, selectSessionToken } from '@nestled-template/api/utils'
++import {
++  API_ERROR_CODES,
++  forbiddenWithCode,
++  requestCookieValues,
++  selectSessionToken,
++} from '@nestled-template/api/utils'
+ import { AuthService } from '../auth.service'
+ import { ApiTokensService } from '../../api-tokens/api-tokens.service'
+ import type { AuthTokenClaims } from '../auth-token-claims'
+@@ -24,6 +30,20 @@ type ApiTokenRequest = Request & {
+ 
+ type TokenExtractor = (req: Request) => string | null
+ 
++type ValidatedApiToken = NonNullable<Awaited<ReturnType<ApiTokensService['validateApiToken']>>>
++
++/**
++ * A refusal. `rejected`: the credential is no good (unknown, revoked, expired, its owner gone or
++ * disabled), a 401 through passport's `fail`. `forbidden`: the credential is valid but not allowed
++ * here, a 403 the client must not read as "drop the token". It goes through passport's `error`,
++ * because AuthGuard turns every `fail` into an UnauthorizedException whatever status it carries.
++ */
++type ApiTokenRefusal = { rejected: string } | { forbidden: ForbiddenException }
++
++type ApiTokenVerdict = ApiTokenRefusal | { user: User; result: ValidatedApiToken }
++
++const API_TOKEN_PATTERN = /^[a-f0-9]{64}$/i
++
+ function sessionCookieName(): string {
+   return process.env['VITE_COOKIE_NAME'] || process.env['API_COOKIE_NAME'] || '__session'
+ }
+@@ -115,78 +135,128 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
+   override async authenticate(req: Request, options?: object): Promise<void> {
+     const token = this.extractToken(req)
+ 
+-    if (token && /^[a-f0-9]{64}$/i.test(token)) {
+-      try {
+-        const result = await this.apiTokensService.validateApiToken(token)
+-        if (!result) {
+-          return this.fail({ message: 'Invalid or expired API token' }, 401)
+-        }
+-
+-        // A token bound to a resource (RFC 8707) — the MCP endpoint, for tokens MCP OAuth issues —
+-        // is accepted only there (ApiTokenAuthMiddleware), never by the rest of the API.
+-        if (result.resource) {
+-          this.logger.warn(
+-            `API token ${result.tokenId} is bound to ${result.resource}; refused here`,
+-          )
+-          return this.fail({ message: 'API token is not valid for this resource' }, 401)
+-        }
+-
+-        // An organization-scoped token is a RESTRICTION below the user's own access, not a hint.
+-        // Without this, a user who belongs to both A and B, holding a token scoped only to A, can
+-        // act in B just by sending x-organization-id: B — every membership check downstream still
+-        // passes, because the user really is a member of B. Bind the header to the token's scope
+-        // before the user lookup, so a mismatched request costs nothing and cannot proceed.
+-        if (result.organizationId) {
+-          const rawHeader = req.headers['x-organization-id']
+-          const requestedOrganizationId = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
+-
+-          if (requestedOrganizationId && requestedOrganizationId !== result.organizationId) {
+-            this.logger.warn(
+-              `API token ${result.tokenId} is scoped to organization ${result.organizationId} but the request asked for ${requestedOrganizationId}`,
+-            )
+-            return this.fail(
+-              { message: 'API token is not scoped to the requested organization' },
+-              403,
+-            )
+-          }
+-
+-          // Assigned unconditionally, and that is deliberate — it does two jobs. When the header
+-          // was absent it states the token's organization, rather than letting resolution fall
+-          // through to the user's active organization, which is not what the token authorizes.
+-          // When the header was present it has already been proven equal above, and writing the
+-          // scalar collapses a repeated header (`['org-1', 'org-1']`) to a single value, so a
+-          // downstream consumer reading it naively cannot receive an array.
+-          req.headers['x-organization-id'] = result.organizationId
+-        }
+-
+-        const user = await this.auth.validateUser(result.userId)
+-        if (!user || user.isActive === false) {
+-          return this.fail({ message: 'User not found for API token' }, 401)
+-        }
+-
+-        const apiTokenReq = req as ApiTokenRequest
+-        apiTokenReq[API_TOKEN_USER_KEY] = user
+-        apiTokenReq.apiTokenId = result.tokenId
+-        apiTokenReq.apiTokenOrganizationId = result.organizationId
+-        this.apiTokensService.recordTokenUse(result.tokenId)
+-
+-        return this.success(user)
+-      } catch (error) {
+-        // Every "this token is not good" answer above is a return, not a throw. Reaching here
+-        // means the lookup itself failed (the database is down, say), which says nothing about
+-        // the token: a 401 would make the client discard a good token. A 503 is what clients
+-        // treat as outage evidence, so they keep the token and retry. Over GraphQL it arrives as
+-        // INTERNAL_SERVER_ERROR with status 503, never UNAUTHENTICATED.
+-        this.logger.error(
+-          `API token validation could not complete: ${error instanceof Error ? error.message : String(error)}`,
+-          error instanceof Error ? error.stack : undefined,
+-        )
+-        return this.error(
+-          new ServiceUnavailableException('API token validation is temporarily unavailable'),
+-        )
+-      }
++    if (token && API_TOKEN_PATTERN.test(token)) {
++      return this.authenticateApiToken(req as ApiTokenRequest, token)
+     }
+ 
+     return super.authenticate(req, options)
+   }
++
++  /**
++   * The API-token path: turns `checkApiToken`'s verdict into passport's success, fail or error.
++   */
++  private async authenticateApiToken(req: ApiTokenRequest, token: string): Promise<void> {
++    let verdict: ApiTokenVerdict
++    try {
++      verdict = await this.checkApiToken(req, token)
++    } catch (error) {
++      // Every "this token is not good" answer in checkApiToken is a returned verdict, not a throw.
++      // Reaching here means the lookup itself failed (the database is down, say), which says
++      // nothing about the token: a 401 would make the client discard a good token. A 503 is what
++      // clients treat as outage evidence, so they keep the token and retry. Over GraphQL it
++      // arrives as INTERNAL_SERVER_ERROR with status 503, never UNAUTHENTICATED.
++      this.logger.error(
++        `API token validation could not complete: ${error instanceof Error ? error.message : String(error)}`,
++        error instanceof Error ? error.stack : undefined,
++      )
++      return this.error(
++        new ServiceUnavailableException('API token validation is temporarily unavailable'),
++      )
++    }
++
++    if ('rejected' in verdict) {
++      return this.fail({ message: verdict.rejected }, 401)
++    }
++    if ('forbidden' in verdict) {
++      return this.error(verdict.forbidden)
++    }
++
++    const { user, result } = verdict
++    req[API_TOKEN_USER_KEY] = user
++    req.apiTokenId = result.tokenId
++    req.apiTokenOrganizationId = result.organizationId
++    this.apiTokensService.recordTokenUse(result.tokenId)
++
++    return this.success(user)
++  }
++
++  /**
++   * Validates an API token and loads its user. Every refusal is a returned verdict; a throw means
++   * a lookup failed (see authenticateApiToken).
++   */
++  private async checkApiToken(req: ApiTokenRequest, token: string): Promise<ApiTokenVerdict> {
++    const result = await this.apiTokensService.validateApiToken(token)
++    if (!result) {
++      return { rejected: 'Invalid or expired API token' }
++    }
++
++    // A token bound to a resource (RFC 8707) — the MCP endpoint, for tokens MCP OAuth issues —
++    // is accepted only there (ApiTokenAuthMiddleware), never by the rest of the API. The token
++    // itself is valid, so this is a 403: a 401 would tell the client to throw away a token that
++    // still works at the MCP endpoint.
++    if (result.resource) {
++      this.logger.warn(`API token ${result.tokenId} is bound to ${result.resource}; refused here`)
++      return {
++        forbidden: forbiddenWithCode(
++          API_ERROR_CODES.API_TOKEN_RESOURCE_MISMATCH,
++          'API token is not valid for this resource',
++        ),
++      }
++    }
++
++    const scopeRefusal = this.bindOrganizationScope(req, result)
++    if (scopeRefusal) {
++      return scopeRefusal
++    }
++
++    const user = await this.auth.validateUser(result.userId)
++    if (!user || user.isActive === false) {
++      return { rejected: 'User not found for API token' }
++    }
++
++    return { user, result }
++  }
++
++  /**
++   * An organization-scoped token is a RESTRICTION below the user's own access, not a hint.
++   * Without this, a user who belongs to both A and B, holding a token scoped only to A, can act in
++   * B just by sending x-organization-id: B — every membership check downstream still passes,
++   * because the user really is a member of B. Binds the header to the token's scope before the
++   * user lookup, so a mismatched request costs nothing and cannot proceed. Returns the refusal, or
++   * null when the request may go on.
++   */
++  private bindOrganizationScope(
++    req: ApiTokenRequest,
++    result: ValidatedApiToken,
++  ): ApiTokenRefusal | null {
++    if (!result.organizationId) {
++      return null
++    }
++
++    const rawHeader = req.headers['x-organization-id']
++    const requestedOrganizationId = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
++
++    if (requestedOrganizationId && requestedOrganizationId !== result.organizationId) {
++      this.logger.warn(
++        `API token ${result.tokenId} is scoped to organization ${result.organizationId} but the request asked for ${requestedOrganizationId}`,
++      )
++      // A 403 with a code, not a 401: the token is valid for its own organization, and an
++      // API-token client (MCP, scripts) must not drop it.
++      return {
++        forbidden: forbiddenWithCode(
++          API_ERROR_CODES.API_TOKEN_ORGANIZATION_MISMATCH,
++          'API token is not scoped to the requested organization',
++        ),
++      }
++    }
++
++    // Assigned unconditionally, and that is deliberate — it does two jobs. When the header was
++    // absent it states the token's organization, rather than letting resolution fall through to
++    // the user's active organization, which is not what the token authorizes. When the header was
++    // present it has already been proven equal above, and writing the scalar collapses a repeated
++    // header (`['org-1', 'org-1']`) to a single value, so a downstream consumer reading it
++    // naively cannot receive an array.
++    req.headers['x-organization-id'] = result.organizationId
++    return null
++  }
+ }
+diff --git a/libs/api/utils/src/lib/errors/api-error-code.ts b/libs/api/utils/src/lib/errors/api-error-code.ts
+index b2660ee..55b8498 100644
+--- a/libs/api/utils/src/lib/errors/api-error-code.ts
++++ b/libs/api/utils/src/lib/errors/api-error-code.ts
+@@ -15,6 +15,16 @@ export const API_ERROR_CODES = {
+   ORGANIZATION_CONTEXT_REQUIRED: 'ORGANIZATION_CONTEXT_REQUIRED',
+   /** The OAuth provider rejected the token or code it was given. Says nothing about the session. */
+   OAUTH_PROVIDER_REJECTED: 'OAUTH_PROVIDER_REJECTED',
++  /**
++   * A valid organization-scoped API token, sent with an `x-organization-id` for another
++   * organization. The token still works for its own organization; the client must keep it.
++   */
++  API_TOKEN_ORGANIZATION_MISMATCH: 'API_TOKEN_ORGANIZATION_MISMATCH',
++  /**
++   * A valid API token bound to one resource (RFC 8707: the MCP endpoint), presented anywhere else.
++   * The token still works where it is bound; the client must keep it.
++   */
++  API_TOKEN_RESOURCE_MISMATCH: 'API_TOKEN_RESOURCE_MISMATCH',
+ } as const
+ 
+ export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES]
+diff --git a/libs/api/utils/src/lib/guards/gql-auth.guard.spec.ts b/libs/api/utils/src/lib/guards/gql-auth.guard.spec.ts
+new file mode 100644
+index 0000000..ecf923b
+--- /dev/null
++++ b/libs/api/utils/src/lib/guards/gql-auth.guard.spec.ts
+@@ -0,0 +1,46 @@
++import { ExecutionContext, ForbiddenException, ServiceUnavailableException } from '@nestjs/common'
++import { AuthGuard } from '@nestjs/passport'
++import { OrganizationContextService } from '../services/organization-context.service'
++import { GqlAuthGuard } from './gql-auth.guard'
++
++describe('GqlAuthGuard organization context', () => {
++  const req = { user: { id: 'user-1' }, headers: {} }
++  const context = {
++    getType: () => 'http',
++    switchToHttp: () => ({ getRequest: () => req }),
++  } as unknown as ExecutionContext
++  let attach: jest.Mock
++  let guard: GqlAuthGuard
++
++  beforeEach(() => {
++    // The session itself is valid: passport has already authenticated the request.
++    jest.spyOn(AuthGuard('jwt').prototype, 'canActivate').mockResolvedValue(true)
++    attach = jest.fn()
++    guard = new GqlAuthGuard({ attach } as unknown as OrganizationContextService)
++  })
++
++  afterEach(() => jest.restoreAllMocks())
++
++  it('lets a user with no organization through (a plain authenticated operation)', async () => {
++    attach.mockResolvedValue(undefined)
++
++    await expect(guard.canActivate(context)).resolves.toBe(true)
++  })
++
++  it('lets a refusal of the organization through without context, as before', async () => {
++    attach.mockRejectedValue(new ForbiddenException('not a member'))
++
++    await expect(guard.canActivate(context)).resolves.toBe(true)
++  })
++
++  // A failed lookup (database or Redis down) is an outage. Swallowing it left the request with no
++  // organization, and the user saw the organization picker instead of the outage screen.
++  it('answers a failed organization lookup with a 503', async () => {
++    attach.mockRejectedValue(new Error('database unavailable'))
++
++    const failure = guard.canActivate(context)
++
++    await expect(failure).rejects.toBeInstanceOf(ServiceUnavailableException)
++    await expect(failure).rejects.toMatchObject({ status: 503 })
++  })
++})
+diff --git a/libs/api/utils/src/lib/guards/gql-auth.guard.ts b/libs/api/utils/src/lib/guards/gql-auth.guard.ts
+index d61ec78..d160258 100644
+--- a/libs/api/utils/src/lib/guards/gql-auth.guard.ts
++++ b/libs/api/utils/src/lib/guards/gql-auth.guard.ts
+@@ -1,4 +1,11 @@
+-import { ExecutionContext, Injectable, Logger, Optional } from '@nestjs/common'
++import {
++  ExecutionContext,
++  HttpException,
++  Injectable,
++  Logger,
++  Optional,
++  ServiceUnavailableException,
++} from '@nestjs/common'
+ import { GqlExecutionContext } from '@nestjs/graphql'
+ import { AuthGuard } from '@nestjs/passport'
+ import { OrganizationContextService } from '../services/organization-context.service'
+@@ -32,8 +39,23 @@ export class GqlAuthGuard extends AuthGuard('jwt') {
+     try {
+       await this.organizationContextService?.attach(req)
+     } catch (error) {
+-      // Plain authenticated operations should still work without org context.
+-      this.logger.debug(`Failed to preload organization context: ${(error as Error).message}`)
++      // A refusal (a 4xx) leaves the request without organization context: plain authenticated
++      // operations still work, and organization-scoped ones refuse on their own. Not being a
++      // member is not a throw at all (`attach` answers undefined).
++      if (error instanceof HttpException && error.getStatus() < 500) {
++        this.logger.debug(`Organization context not attached: ${error.message}`)
++        return true
++      }
++      // A 5xx already says what it is.
++      if (error instanceof HttpException) throw error
++      // Anything else is a failed lookup (database or Redis down) or a bug. Swallowing it sent the
++      // user to the organization picker instead of the outage screen. A 503 is outage evidence
++      // to clients and keeps the session; never a 401.
++      this.logger.error(
++        `Organization context could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
++        error instanceof Error ? error.stack : undefined,
++      )
++      throw new ServiceUnavailableException('Organization context is temporarily unavailable')
+     }
+ 
+     return true
+diff --git a/libs/api/utils/src/lib/services/auth-cache.service.spec.ts b/libs/api/utils/src/lib/services/auth-cache.service.spec.ts
+index 3edca18..8c52004 100644
+--- a/libs/api/utils/src/lib/services/auth-cache.service.spec.ts
++++ b/libs/api/utils/src/lib/services/auth-cache.service.spec.ts
+@@ -168,6 +168,53 @@ describe('AuthCacheService', () => {
+     await expect(service.invalidateUserMemberships('user-1')).resolves.toBeUndefined()
+   })
+ 
++  // null from a get* method means "ask the database"; the lookup* methods say which it was, so a
++  // caller never reads a Redis failure as "no session" or "no organization".
++  it('tells a cache miss from a failed read', async () => {
++    const redis = createRedisMock()
++    const service = new AuthCacheService(redis as never)
++
++    redis.get.mockResolvedValueOnce(null)
++    await expect(service.lookupSessionValid('session-1')).resolves.toEqual({ status: 'miss' })
++    redis.get.mockResolvedValueOnce('0')
++    await expect(service.lookupSessionValid('session-1')).resolves.toEqual({
++      status: 'hit',
++      value: false,
++    })
++
++    redis.get.mockRejectedValue(new Error('read failed'))
++    await expect(service.lookupSessionValid('session-1')).resolves.toEqual({
++      status: 'unavailable',
++    })
++    await expect(service.lookupUserActiveOrganization('user-1')).resolves.toEqual({
++      status: 'unavailable',
++    })
++    await expect(service.lookupMembership('user-1', 'org-1')).resolves.toEqual({
++      status: 'unavailable',
++    })
++    await expect(service.lookupUser('user-1')).resolves.toEqual({ status: 'unavailable' })
++  })
++
++  it('reads a value that will not parse as unavailable, not as a miss', async () => {
++    const redis = createRedisMock()
++    redis.get.mockResolvedValue('{not json')
++    const service = new AuthCacheService(redis as never)
++
++    await expect(service.lookupMembership('user-1', 'org-1')).resolves.toEqual({
++      status: 'unavailable',
++    })
++    await expect(service.getMembership('user-1', 'org-1')).resolves.toBeNull()
++  })
++
++  it('reports a disabled cache as a miss', async () => {
++    delete process.env['REDIS_URL']
++    delete process.env['REDIS_PRIVATE_URL']
++
++    await expect(new AuthCacheService().lookupSessionValid('session-1')).resolves.toEqual({
++      status: 'miss',
++    })
++  })
++
+   it('invalidates organization memberships when a role changes', async () => {
+     const redis = createRedisMock()
+     redis.keys.mockResolvedValue(['auth:membership:user-1:org-1'])
+diff --git a/libs/api/utils/src/lib/services/auth-cache.service.ts b/libs/api/utils/src/lib/services/auth-cache.service.ts
+index 448f049..9485c5b 100644
+--- a/libs/api/utils/src/lib/services/auth-cache.service.ts
++++ b/libs/api/utils/src/lib/services/auth-cache.service.ts
+@@ -15,6 +15,21 @@ export const AUTH_CACHE_REDIS_TIMEOUTS = {
+   commandTimeout: 3000,
+ } as const
+ 
++/**
++ * One cache read. `miss`: nothing is cached (or the cache is not configured), so read the
++ * database. `unavailable`: Redis failed (down, timed out, a value that would not parse), which says
++ * nothing about the session or the membership.
++ *
++ * The `get*` methods fold both into `null`. That is only right for a caller that reads the database
++ * on `null`. A caller that would read `null` as "no session", "not a member" or "no organization"
++ * must use the matching `lookup*` method and treat `unavailable` as an outage (fall back to the
++ * database, or answer 503), never as a refusal.
++ */
++export type AuthCacheLookup<T> =
++  { status: 'hit'; value: T } | { status: 'miss' } | { status: 'unavailable' }
++
++const CACHE_MISS = { status: 'miss' } as const
++
+ /**
+  * Redis cache service for authentication and organization context.
+  * Implements the second tier of the three-tier caching architecture:
+@@ -101,6 +116,23 @@ export class AuthCacheService {
+     return this.redis !== null
+   }
+ 
++  /** Reads `key` and parses it; see AuthCacheLookup. */
++  private async lookup<T>(
++    key: string,
++    parse: (value: string) => T,
++    what: string,
++  ): Promise<AuthCacheLookup<T>> {
++    if (!this.redis) return CACHE_MISS
++    try {
++      const value = await this.redis.get(key)
++      if (value === null) return CACHE_MISS
++      return { status: 'hit', value: parse(value) }
++    } catch (error) {
++      this.logger.warn(`Failed to get cached ${what}: ${(error as Error).message}`)
++      return { status: 'unavailable' }
++    }
++  }
++
+   // ==================== Session Methods ====================
+ 
+   /**
+@@ -125,18 +157,20 @@ export class AuthCacheService {
+   }
+ 
+   /**
+-   * Get cached session validity (returns null if not cached)
++   * Cached session validity: a hit, a miss, or Redis unavailable. A caller deciding whether a
++   * session is alive reads the database on `miss` and on `unavailable`; `unavailable` is never
++   * "invalid session" (a 401 would log the user out over a Redis outage).
++   */
++  lookupSessionValid(sessionId: string): Promise<AuthCacheLookup<boolean>> {
++    return this.lookup(`${this.PREFIX.SESSION}${sessionId}`, value => value === '1', 'session')
++  }
++
++  /**
++   * Get cached session validity: null when not cached OR when Redis failed, so null means "ask the
++   * database", never "invalid". Use lookupSessionValid to tell the two apart.
+    */
+   async getSessionValid(sessionId: string): Promise<boolean | null> {
+-    if (!this.redis) return null
+-    try {
+-      const value = await this.redis.get(`${this.PREFIX.SESSION}${sessionId}`)
+-      if (value === null) return null
+-      return value === '1'
+-    } catch (error) {
+-      this.logger.warn(`Failed to get cached session: ${(error as Error).message}`)
+-      return null
+-    }
++    return valueOrNull(await this.lookupSessionValid(sessionId))
+   }
+ 
+   /**
+@@ -177,19 +211,24 @@ export class AuthCacheService {
+     }
+   }
+ 
++  /** Cached membership context: a hit, a miss, or Redis unavailable (never "not a member"). */
++  lookupMembership(
++    userId: string,
++    organizationId: string,
++  ): Promise<AuthCacheLookup<OrganizationContext>> {
++    return this.lookup(
++      `${this.PREFIX.MEMBERSHIP}${userId}:${organizationId}`,
++      value => JSON.parse(value) as OrganizationContext,
++      'membership',
++    )
++  }
++
+   /**
+-   * Get cached membership context (returns null if not cached)
++   * Get cached membership context: null when not cached OR when Redis failed, so null means "ask
++   * the database", never "not a member". Use lookupMembership to tell the two apart.
+    */
+   async getMembership(userId: string, organizationId: string): Promise<OrganizationContext | null> {
+-    if (!this.redis) return null
+-    try {
+-      const value = await this.redis.get(`${this.PREFIX.MEMBERSHIP}${userId}:${organizationId}`)
+-      if (value === null) return null
+-      return JSON.parse(value) as OrganizationContext
+-    } catch (error) {
+-      this.logger.warn(`Failed to get cached membership: ${(error as Error).message}`)
+-      return null
+-    }
++    return valueOrNull(await this.lookupMembership(userId, organizationId))
+   }
+ 
+   /**
+@@ -254,17 +293,17 @@ export class AuthCacheService {
+     }
+   }
+ 
++  /** The cached active organization id: a hit, a miss, or Redis unavailable. */
++  lookupUserActiveOrganization(userId: string): Promise<AuthCacheLookup<string>> {
++    return this.lookup(`${this.PREFIX.USER_ACTIVE_ORG}${userId}`, value => value, 'user active org')
++  }
++
+   /**
+-   * Get cached user's active organization ID
++   * Get cached user's active organization ID: null when not cached OR when Redis failed. Use
++   * lookupUserActiveOrganization where "no organization" and "could not tell" must differ.
+    */
+   async getUserActiveOrganization(userId: string): Promise<string | null> {
+-    if (!this.redis) return null
+-    try {
+-      return await this.redis.get(`${this.PREFIX.USER_ACTIVE_ORG}${userId}`)
+-    } catch (error) {
+-      this.logger.warn(`Failed to get cached user active org: ${(error as Error).message}`)
+-      return null
+-    }
++    return valueOrNull(await this.lookupUserActiveOrganization(userId))
+   }
+ 
+   /**
+@@ -297,19 +336,21 @@ export class AuthCacheService {
+     }
+   }
+ 
++  /** Cached user data: a hit, a miss, or Redis unavailable (never "no such user"). */
++  lookupUser(userId: string): Promise<AuthCacheLookup<Record<string, unknown>>> {
++    return this.lookup(
++      `${this.PREFIX.USER}${userId}`,
++      value => JSON.parse(value) as Record<string, unknown>,
++      'user',
++    )
++  }
++
+   /**
+-   * Get cached user data
++   * Get cached user data: null when not cached OR when Redis failed, so null means "ask the
++   * database", never "no such user". Use lookupUser to tell the two apart.
+    */
+   async getUser(userId: string): Promise<Record<string, unknown> | null> {
+-    if (!this.redis) return null
+-    try {
+-      const value = await this.redis.get(`${this.PREFIX.USER}${userId}`)
+-      if (value === null) return null
+-      return JSON.parse(value)
+-    } catch (error) {
+-      this.logger.warn(`Failed to get cached user: ${(error as Error).message}`)
+-      return null
+-    }
++    return valueOrNull(await this.lookupUser(userId))
+   }
+ 
+   /**
+@@ -335,3 +376,7 @@ export class AuthCacheService {
+     await this.invalidateOrganizationMemberships(organizationId)
+   }
+ }
++
++function valueOrNull<T>(lookup: AuthCacheLookup<T>): T | null {
++  return lookup.status === 'hit' ? lookup.value : null
++}
+diff --git a/libs/api/utils/src/lib/services/auth-loader.service.spec.ts b/libs/api/utils/src/lib/services/auth-loader.service.spec.ts
+index f2d7d78..fef0e03 100644
+--- a/libs/api/utils/src/lib/services/auth-loader.service.spec.ts
++++ b/libs/api/utils/src/lib/services/auth-loader.service.spec.ts
+@@ -1,3 +1,4 @@
++import { ServiceUnavailableException } from '@nestjs/common'
+ import { AuthCacheService } from './auth-cache.service'
+ import { AuthLoaderService, createAuthLoaderService } from './auth-loader.service'
+ import { OrganizationContext } from '../types/nest-context-type'
+@@ -5,11 +6,11 @@ import { OrganizationContext } from '../types/nest-context-type'
+ function createAuthCacheMock(): jest.Mocked<
+   Pick<
+     AuthCacheService,
+-    'getUserActiveOrganization' | 'getMembership' | 'setMembership' | 'invalidateMembership'
++    'lookupUserActiveOrganization' | 'getMembership' | 'setMembership' | 'invalidateMembership'
+   >
+ > {
+   return {
+-    getUserActiveOrganization: jest.fn().mockResolvedValue(null),
++    lookupUserActiveOrganization: jest.fn().mockResolvedValue({ status: 'miss' }),
+     getMembership: jest.fn().mockResolvedValue(null),
+     setMembership: jest.fn().mockResolvedValue(undefined),
+     invalidateMembership: jest.fn().mockResolvedValue(undefined),
+@@ -42,13 +43,28 @@ describe('AuthLoaderService', () => {
+ 
+     await expect(service.loadMembership('user-1')).resolves.toBeNull()
+ 
+-    expect(authCache.getUserActiveOrganization).toHaveBeenCalledWith('user-1')
++    expect(authCache.lookupUserActiveOrganization).toHaveBeenCalledWith('user-1')
++    expect(queryMemberships).not.toHaveBeenCalled()
++  })
++
++  it('answers a 503, not "no organization", when the cache cannot be read', async () => {
++    const authCache = createAuthCacheMock()
++    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'unavailable' })
++    const queryMemberships = jest.fn()
++    const service = new AuthLoaderService(
++      authCache as unknown as AuthCacheService,
++      queryMemberships,
++    )
++
++    await expect(service.loadMembership('user-1')).rejects.toBeInstanceOf(
++      ServiceUnavailableException,
++    )
+     expect(queryMemberships).not.toHaveBeenCalled()
+   })
+ 
+   it('checks current membership despite a cached organization and permission grant', async () => {
+     const authCache = createAuthCacheMock()
+-    authCache.getUserActiveOrganization.mockResolvedValue('org-1')
++    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'hit', value: 'org-1' })
+     authCache.getMembership.mockResolvedValue(context)
+     const queryMemberships = jest.fn().mockResolvedValue([])
+     const service = new AuthLoaderService(
+diff --git a/libs/api/utils/src/lib/services/auth-loader.service.ts b/libs/api/utils/src/lib/services/auth-loader.service.ts
+index 2eae221..eea1a67 100644
+--- a/libs/api/utils/src/lib/services/auth-loader.service.ts
++++ b/libs/api/utils/src/lib/services/auth-loader.service.ts
+@@ -1,4 +1,4 @@
+-import { Injectable, Logger, Scope } from '@nestjs/common'
++import { Injectable, Logger, Scope, ServiceUnavailableException } from '@nestjs/common'
+ import DataLoader from 'dataloader'
+ import { OrganizationContext } from '../types/nest-context-type'
+ import { AuthCacheService } from './auth-cache.service'
+@@ -70,13 +70,18 @@ export class AuthLoaderService {
+   ): Promise<OrganizationContext | null> {
+     if (!organizationId) {
+       // Try to get from Redis cache
+-      const cachedOrgId = await this.authCache.getUserActiveOrganization(userId)
+-      if (cachedOrgId) {
+-        organizationId = cachedOrgId
+-      } else {
++      const cached = await this.authCache.lookupUserActiveOrganization(userId)
++      if (cached.status === 'unavailable') {
++        // Redis failed, so whether the user has an active organization is unknown. Answering null
++        // ("no organization") would turn an outage into a refusal; this loader has no database
++        // read for it, so it is a 503.
++        throw new ServiceUnavailableException('Organization context is temporarily unavailable')
++      }
++      if (cached.status === 'miss' || !cached.value) {
+         // No organization context available
+         return null
+       }
++      organizationId = cached.value
+     }
+ 
+     // Redis may retain permissions after a membership or role change. Batch a fresh
+diff --git a/libs/api/utils/src/lib/services/organization-context.service.spec.ts b/libs/api/utils/src/lib/services/organization-context.service.spec.ts
+index 0a98687..054d6c2 100644
+--- a/libs/api/utils/src/lib/services/organization-context.service.spec.ts
++++ b/libs/api/utils/src/lib/services/organization-context.service.spec.ts
+@@ -16,12 +16,15 @@ describe('OrganizationContextService', () => {
+       organizationMember: {
+         findFirst: jest.fn().mockResolvedValue(membership),
+       },
++      user: {
++        findUnique: jest.fn().mockResolvedValue({ activeOrganizationId: 'org-1' }),
++      },
+     }
+     const authCache = {
+       isEnabled: jest.fn().mockReturnValue(false),
+       getMembership: jest.fn(),
+       setMembership: jest.fn(),
+-      getUserActiveOrganization: jest.fn(),
++      lookupUserActiveOrganization: jest.fn().mockResolvedValue({ status: 'miss' }),
+     }
+ 
+     return {
+@@ -55,6 +58,42 @@ describe('OrganizationContextService', () => {
+     expect(req).toHaveProperty('organizationContext', context)
+   })
+ 
++  // A Redis failure says nothing about the user's organization. Read as "none", it sent the user to
++  // the organization picker during a Redis outage.
++  it('reads the active organization from the database when the cache is unavailable', async () => {
++    const { authCache, data, service } = createService()
++    authCache.isEnabled.mockReturnValue(true)
++    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'unavailable' })
++    // A user shape that does not carry activeOrganizationId (an app's own user, say).
++    const req = { headers: {}, user: { id: 'user-1', isSuperAdmin: false } }
++
++    const context = await service.attach(req as never)
++
++    expect(data.user.findUnique).toHaveBeenCalledWith({
++      where: { id: 'user-1' },
++      select: { activeOrganizationId: true },
++    })
++    expect(context?.organizationId).toBe('org-1')
++  })
++
++  it('does not ask the database again on a plain cache miss', async () => {
++    const { authCache, data, service } = createService()
++    authCache.isEnabled.mockReturnValue(true)
++    const req = { headers: {}, user: { id: 'user-1', isSuperAdmin: false } }
++
++    await expect(service.attach(req as never)).resolves.toBeUndefined()
++    expect(data.user.findUnique).not.toHaveBeenCalled()
++  })
++
++  it('uses a cached active organization', async () => {
++    const { authCache, service } = createService()
++    authCache.isEnabled.mockReturnValue(true)
++    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'hit', value: 'org-1' })
++    const req = { headers: {}, user: { id: 'user-1', isSuperAdmin: false } }
++
++    await expect(service.attach(req as never)).resolves.toMatchObject({ organizationId: 'org-1' })
++  })
++
+   it('falls back to the authenticated users active organization', async () => {
+     const { data, service } = createService()
+     const req = {
+diff --git a/libs/api/utils/src/lib/services/organization-context.service.ts b/libs/api/utils/src/lib/services/organization-context.service.ts
+index 35f551d..768bea8 100644
+--- a/libs/api/utils/src/lib/services/organization-context.service.ts
++++ b/libs/api/utils/src/lib/services/organization-context.service.ts
+@@ -84,12 +84,26 @@ export class OrganizationContextService {
+     if (req.user?.activeOrganizationId) return req.user.activeOrganizationId
+ 
+     if (req.user && this.authCache?.isEnabled()) {
+-      return (await this.authCache.getUserActiveOrganization(req.user.id)) ?? undefined
++      const cached = await this.authCache.lookupUserActiveOrganization(req.user.id)
++      if (cached.status === 'hit') return cached.value
++      // Redis failed: that says nothing about the user's organization. The database holds the
++      // same value (the organization switch writes it there first), so ask it rather than leave
++      // the request without an organization, which sends the user to the picker over an outage.
++      // A database failure here propagates (GqlAuthGuard answers it with a 503).
++      if (cached.status === 'unavailable') return this.activeOrganizationFromDatabase(req.user.id)
+     }
+ 
+     return undefined
+   }
+ 
++  private async activeOrganizationFromDatabase(userId: string): Promise<string | undefined> {
++    const user = await this.data.user.findUnique({
++      where: { id: userId },
++      select: { activeOrganizationId: true },
++    })
++    return user?.activeOrganizationId ?? undefined
++  }
++
+   private async cacheMembership(
+     userId: string,
+     organizationId: string,
