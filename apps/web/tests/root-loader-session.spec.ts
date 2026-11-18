@@ -94,16 +94,23 @@ describe('root loader when the Me preload throws', () => {
         errors: [{ message: 'Session expired', extensions: { code: 'UNAUTHENTICATED' } }],
       }),
     ],
-  ])('clears the cookie and redirects to login on %s', async (_label, error) => {
-    preload.error = error
+  ])(
+    'leaves the sign-out to the request decision on %s, with the cookie kept here',
+    async (_label, error) => {
+      // This loader cannot see the request's other loaders, one of which may have found the API
+      // unreachable: it throws a 401 route error, and entry.server.tsx (or, in the browser, the root
+      // ErrorBoundary) signs out only when nothing points to an outage.
+      preload.error = error
 
-    const result = await loadSignedIn()
+      const thrown = await loadSignedIn().then(
+        () => undefined,
+        (reason: unknown) => reason,
+      )
 
-    expect(result).toBeInstanceOf(Response)
-    expect((result as Response).status).toBe(302)
-    expect((result as Response).headers.get('Location')).toBe(
-      `/login?return_url=${encodeURIComponent('/members/dashboard')}&expired=1`,
-    )
-    expect(clearsTheCookie(result)).toBe(true)
-  })
+      // React Router's `data(null, { status: 401 })`, which reaches the error handling as a 401 route
+      // error response; no redirect and no Set-Cookie of its own.
+      expect(thrown).toMatchObject({ init: { status: 401 } })
+      expect(clearsTheCookie(thrown)).toBe(false)
+    },
+  )
 })

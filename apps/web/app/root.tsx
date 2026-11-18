@@ -24,6 +24,7 @@ import {
   type MetaFunction,
   Scripts,
   ScrollRestoration,
+  data,
   isRouteErrorResponse,
   useLoaderData,
 } from 'react-router'
@@ -34,6 +35,7 @@ import { isOrganizationContextRequired, OrganizationRequired } from './organizat
 import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
 import { DeferredAuthRecovery } from './deferred-auth-recovery'
 import { useRootLoaderOutage } from './loader-outage'
+import { expiredSessionCookies } from './session-cookie'
 
 export const meta: MetaFunction = () => [
   {
@@ -51,24 +53,15 @@ export const links: LinksFunction = () => [
 ]
 
 function clearSessionCookieHeaders(cookieName: string): Headers {
-  const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
-  const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
-  const domain = process.env.VITE_COOKIE_DOMAIN
   const headers = new Headers()
-  if (domain && domain !== 'localhost' && !domain.startsWith('127.')) {
-    headers.append('Set-Cookie', `${base}; Domain=${domain}`)
-  }
-  headers.append('Set-Cookie', base)
+  for (const cookie of expiredSessionCookies(cookieName)) headers.append('Set-Cookie', cookie)
   return headers
 }
 
-function buildLoginRedirect(pathname: string, opts?: { expired?: boolean }) {
+function buildLoginRedirect(pathname: string) {
   const params = new URLSearchParams()
   if (pathname && pathname !== '/') {
     params.set('return_url', pathname)
-  }
-  if (opts?.expired) {
-    params.set('expired', '1')
   }
   const qs = params.toString()
   return qs ? `/login?${qs}` : '/login'
@@ -80,12 +73,20 @@ function buildAuthRedirectResponse(cookieName: string, loginRedirect: string) {
   return new Response(null, { status: 302, headers })
 }
 
-function handlePrivateRoutePreloadError(
-  error: unknown,
-  cookieName: string,
-  pathname: string,
-  theme: string,
-) {
+/**
+ * What the root loader does when the Me query for a private route fails in the loader itself (an
+ * app that awaits Me there; the template's preload is returned unawaited, and its failure is
+ * judged in the render). Exported for such an app, and for the specs.
+ *
+ * A rejected session (an HTTP 401 or an UNAUTHENTICATED GraphQL error; the message is never read)
+ * is not signed out here: this loader cannot see the request's other loaders, and one of them may
+ * have found the API unreachable, which outranks a 401. It throws a 401 route error instead, and
+ * the request's own decision applies: the server render waits for the request's other API calls
+ * (`routeErrorOutcome` and `SSR_API_SETTLE_MS` in entry.server.tsx) and signs out through
+ * /force-logout only when none points to an outage; in the browser the root ErrorBoundary checks
+ * the app's outage evidence first. Anything else keeps the session as an outage.
+ */
+export function privateRouteMeFailure(error: unknown, theme: string) {
   console.error('[Root Loader] Error during Me query preload:', error)
 
   if (isNetworkError(error)) {
@@ -93,13 +94,9 @@ function handlePrivateRoutePreloadError(
     return { serviceUnavailable: true, theme }
   }
 
-  // Only an HTTP 401 or an UNAUTHENTICATED GraphQL error is a rejected session. The message is
-  // never read: an error that merely says "Unauthorized" or "401" keeps the session.
   if (classifyApiFailure(error) === 'unauthenticated') {
-    console.log('[Root Loader] Auth error detected, redirecting to login')
-    // Append `expired=1` so the rejected session lands on a login form that
-    // won't auto-bounce back to the dashboard (breaks the redirect loop).
-    return buildAuthRedirectResponse(cookieName, buildLoginRedirect(pathname, { expired: true }))
+    console.log('[Root Loader] Auth error detected, leaving the sign-out to the request decision')
+    throw data(null, { status: 401, statusText: 'Unauthorized' }) // NOSONAR: a route error response on purpose
   }
 
   console.log('[Root Loader] Unknown error, returning serviceUnavailable as fallback')
@@ -131,7 +128,7 @@ export const loader = apolloLoader()(({ preloadQuery, request }) => {
       const meQueryRef = preloadQuery<MeQuery>(Me)
       return { meQueryRef, theme }
     } catch (error) {
-      return handlePrivateRoutePreloadError(error, cookieName, url.pathname, theme)
+      return privateRouteMeFailure(error, theme)
     }
   }
 

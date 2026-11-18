@@ -5,6 +5,7 @@ import { FormFieldClass } from '@nestledjs/forms-core'
 import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
 import { RegisterInput, Register, type RegisterMutation } from '@nestled-template/shared/sdk'
 import { formTheme } from '@nestled-template/shared/styles'
+import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 import { useMutation } from '@apollo/client/react'
 
 interface RegisterFormInput extends RegisterInput {
@@ -55,6 +56,9 @@ export default function RegisterPage() {
 
       const token = data?.register?.token
       if (token) {
+        // The new account is signed in: forget an organization stored for a previous user, so its
+        // requests never carry another user's `x-organization-id`.
+        storeActiveOrganizationId(null)
         // Redirect to dashboard after successful registration
         // Email verification can be handled separately if needed
         navigate('/members/dashboard')

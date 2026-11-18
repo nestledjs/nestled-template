@@ -1,0 +1,241 @@
+id: 2026-11-19-session-follow-ups
+title: >-
+  Session follow-ups: forget the stored organization when a session starts or is forced out, expire
+  the session cookie on its domain and host-only, judge the root loader's own Me 401 with the whole
+  request in view, and race specs that hold for a root loader that awaits Me
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  [
+    2026-11-16-session-org-consistency,
+    2026-11-16-ssr-signout-outage,
+    2026-11-19-mutation-errorpolicy-none,
+  ]
+
+intent: >
+  Follow-up to 2026-11-16-session-org-consistency (the stored organization, the shared switch) and
+  2026-11-16-ssr-signout-outage (the server render's sign-out, `routeErrorOutcome`,
+  `SSR_API_SETTLE_MS`). Apply those first. The session rule is unchanged: log a user out only when
+  the API has definitely rejected the session (a real HTTP 401, or a GraphQL error whose
+  `extensions.code` is `UNAUTHENTICATED`) with no outage evidence; outage evidence outranks a 401;
+  message text never decides; anything else keeps the session. Five parts. No package changes and no
+  change to package.json, nx.json or tsconfig.base.json. Part 3 needs an environment variable on the
+  web service (owner action).
+
+
+  Behaviour changes, plainly: (a) signing in, registering (on their own pages and on the invitation page), and starting or
+  ending an emulation forget
+  the organization stored for `x-organization-id` (part 1); (b) the login form forgets it when it opens
+  from a rejected session (`expired=1`), which covers /force-logout (part 2); (c) every sign-out the web server performs expires the session
+  cookie both for the cookie domain and host-only, and the web server knows the domain from
+  `VITE_COOKIE_DOMAIN` or `API_COOKIE_DOMAIN` (part 3); (d) a root loader that meets Me's 401 itself
+  no longer signs out on the spot: it throws a 401 route error and the request's decision applies,
+  so an outage another loader saw in the same request keeps the session (part 4). Nothing logs out
+  more often than before.
+
+
+  1. Sign-in forgets the stored organization. The organization the browser stores for
+  `x-organization-id` (`storeActiveOrganizationId`, localStorage) was forgotten only by /logout. A
+  session that ended any other way (it expired, /force-logout, another tab of the previous user wrote
+  it back) left it stored, and the next user's first requests carried it. The API refuses an
+  organization the user is not a member of, but the browser must not send it. Template:
+  apps/web/app/routes/_public/login.tsx calls `storeActiveOrganizationId(null)` before it navigates
+  after a password sign-in and after the two-factor step (`signedIn()`);
+  apps/web/app/routes/_public/register.tsx after a registration that returns a token;
+  apps/web/app/routes/accept-invitation.tsx after its password sign-in (before it accepts the
+  invitation) and after its registration, since an invitation link opened after a session expired
+  never passes the login form;
+  apps/web/app/routes/admin/users/_index.tsx in the emulate mutation's `onCompleted`, before
+  `location.href` moves to the emulated session; libs/web/src/lib/components/emulation-banner.tsx in
+  the end-emulation `onCompleted`, before going back to the admin's session. A failed sign-in keeps
+  what is stored. The verify-email page does not sign in (it says "You can now log in"), and the
+  OAuth success route is a server redirect that cannot reach localStorage. The template has no
+  provider buttons yet; a two-factor OAuth sign-in returns to the login form and goes through
+  `signedIn()`.
+  - An app with OAuth provider buttons: forget the organization in the button's click handler,
+    before the browser leaves for the provider (the success route cannot).
+  - An app whose verify-email, magic-link or OAuth flow signs the user in on the
+    client: forget the organization there too, before navigating.
+  - An app that keeps the organization somewhere else (user-scoped storage, an httpOnly cookie the
+    API sets, a jotai atom): clear that on every sign-in instead; with an httpOnly cookie, the API
+    must clear it in the login, register and emulation resolvers.
+  - An app that sends no organization header (the API uses the user's active organization only):
+    not-applicable.
+  - An app with no emulation: skip those two sites.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (tests/routes/_public/sign-in-forgets-organization.spec.tsx:
+  password, two-factor, failed sign-in, register, invitation sign-in and registration; admin/users "forgets the admin's stored organization
+  before switching to the emulated session"); `pnpm exec nx test web-components --skip-nx-cache`
+  (emulation-banner.spec.tsx).
+
+
+  2. /force-logout forgets the stored organization. /force-logout is a server loader that answers
+  302 to `/login?expired=1`; it cannot reach localStorage, so the organization survived it. The login
+  form now forgets it when it opens with `expired=1` (a `useEffect` with
+  `storeActiveOrganizationId(null)`), as /logout does; the server render's sign-out lands there the
+  same way. Any other visit to the form keeps the stored organization (only a sign-in, part 1,
+  replaces it), so a signed-in user who reaches /login and is sent on keeps their choice. A comment
+  in apps/web/app/routes/force-logout.tsx says where the organization is forgotten.
+  - An app with no /force-logout (its server sign-out redirects straight to /login): make that
+    redirect carry `expired=1` (or its own marker) and clear on it; never clear on every visit.
+  - An app whose login is a modal or lives inside another layout: put the effect where the signed-out
+    form mounts, and keep part 1's clears on success.
+  - An app whose forced sign-out lands somewhere other than its login form: clear the organization
+    where it lands, in the browser.
+  Verification: `pnpm exec nx test web --skip-nx-cache` ("the login form forgets it as it opens
+  after a rejected session", "any other visit to the login form keeps the stored organization").
+
+
+  3. Sign-out expires the session cookie on its domain and host-only. The API sets the session
+  cookie with `Domain=API_COOKIE_DOMAIN` (and its logout already clears both). The web server's own
+  sign-outs did not: entry.server.tsx's `forceLogoutResponse` expired only the domain cookie when
+  `VITE_COOKIE_DOMAIN` was set (a host-only cookie survived) and only the host-only one otherwise
+  (a parent-domain cookie survived and signed the user straight back in), and none of them read
+  `API_COOKIE_DOMAIN`. New apps/web/app/session-cookie.ts: `sessionCookieDomain()` reads
+  `VITE_COOKIE_DOMAIN`, else `API_COOKIE_DOMAIN`, and ignores empty, `localhost`, `127.*` and
+  `[::1]` as the API does; `expiredSessionCookies(name)` returns the domain cookie's expiry (when a
+  domain is set) and the host-only one. Used by apps/web/app/routes/force-logout.tsx, the root
+  loader's redirect for a signed-out visitor (apps/web/app/root.tsx `clearSessionCookieHeaders`) and
+  entry.server.tsx `forceLogoutResponse`. docs/template/README.md and .env.example say the web
+  service needs the API's value.
+  Owner action: on each deploy whose API sets `API_COOKIE_DOMAIN` (split web and API subdomains),
+  set `API_COOKIE_DOMAIN` on the web service too, the same name the API uses; on Railway use the
+  reference `${{api.API_COOKIE_DOMAIN}}` (adjust `api` to the API service's name). Redeploy the web
+  service. `VITE_COOKIE_DOMAIN` on the web service also works, and wins if both are set.
+  - An app whose sign-out cookie code lives elsewhere (a `/logout` server action, a session helper,
+    the root boundary): use the helper there too; search for `Expires=Thu, 01 Jan 1970` and
+    `Set-Cookie` in apps/web.
+  - An app whose API never sets a cookie domain: the helper emits the host-only expiry only, as
+    before; still adopt it so a later domain change is covered.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (tests/session-cookie.spec.ts; entry-server
+  "expires both the cookie-domain cookie and the host-only one when it signs out").
+
+
+  4. The root loader's own Me 401 is judged with the whole request in view. When the root loader
+  met Me's 401 itself, it cleared the cookie and redirected to /login at once. It cannot see the
+  request's other loaders, so an outage one of them hit in the same request (outage outranks a 401)
+  was never weighed. apps/web/app/root.tsx: the Me failure handler is now the exported
+  `privateRouteMeFailure(error, theme)`; on a 401 or UNAUTHENTICATED it throws
+  `data(null, { status: 401 })` instead of returning the redirect. In the server render
+  `routeErrorOutcome` takes it with every loader's errors and recorded causes, waits for the
+  request's calls still in flight (`signOutOnceSettled`, `SSR_API_SETTLE_MS`) and signs out through
+  /force-logout (cookie cleared, `expired=1`) only when nothing points to an outage; in a browser
+  revalidation the root ErrorBoundary checks the app's outage evidence before it goes to
+  /force-logout. A connectivity failure or any other error still returns `serviceUnavailable`. The
+  template's own root loader returns Me unawaited, so this branch runs there only when the preload
+  throws at once; it matters most for apps that await Me in the root loader.
+  - An app that resolves Me in the root loader (`await makeClient().query`, `await
+    preload.toPromise`, a `requireUser` helper): route its 401 through `privateRouteMeFailure` (or
+    throw the same 401 route error) instead of redirecting. Check that its entry.server has
+    2026-11-16-ssr-signout-outage's `routeErrorOutcome` and `signOutOnceSettled`; without them a
+    thrown 401 renders the error page instead of signing out.
+  - An app whose root loader's redirect also cleared other cookies or state: /force-logout now does
+    the clearing; move anything extra there.
+  - An app with no /force-logout: have entry.server's sign-out redirect clear the cookie and go to
+    the login form with `expired=1`.
+  - Specs that expected the root loader to return a 302 on a 401 now expect it to throw a 401 route
+    error with no Set-Cookie (tests/root-loader-session.spec.ts).
+  Verification: `pnpm exec nx test web --skip-nx-cache` (entry-server-shell-error "a root loader
+  that awaits Me": its 401 before another loader's 503 serves the recovering 503, and still signs
+  out through /force-logout once the other calls are answered).
+
+
+  5. Race specs for a root loader that awaits Me. The server-render race specs used the template's
+  root loader, which returns Me unawaited, so the 401 always surfaced in the render; an app that
+  awaits Me in the root loader had to rewrite them. tests/entry-server-shell-error.spec.tsx now has
+  "a root loader that awaits Me" (a `rootLoader` override that awaits Me with `makeClient().query`
+  and hands a failure to `privateRouteMeFailure`): its 401 before another loader's 503, its 401
+  with the other calls answered, and a child loader's 401 beside the root's Me outage. The
+  browser-side specs (tests/routes/authenticated-layout-me-recovery.spec.tsx) already await Me in
+  their root loader (`await preload.toPromise(meQueryRef)`). The remaining specs that assume an
+  unawaited Me are the ones that read Apollo's redacted shell error ("server render when the Me
+  preload fails", "the shell's 401 waits too"): in an app that awaits Me they apply to its other
+  preloads, not to Me; keep them and point them at a preloaded query.
+  - An app that awaits Me: take the new describe block and replace `rootAwaitsMe` with its own root
+    loader (or keep the override if its root is the template's shape).
+  Verification: `pnpm exec nx test web --skip-nx-cache`.
+
+
+  Checked in the template and not changed (look for them in your app): (i) a network error in the
+  signed-in layout's organizations read: the template's layout reads them with `useReadQuery`, which
+  throws a connectivity failure to the root ErrorBoundary (the recovering screen), so no empty list
+  is shown; an app whose layout loader awaits `myOrganizations` and catches must return the root
+  loader's outage flag (`{ serviceUnavailable: true }`) or throw on a connectivity failure, never an
+  empty list. (ii) /logout writing the old organization back: the template's /logout route is
+  outside the signed-in layout, the only render-time writer (`useActiveOrganization`), and a switch
+  still in flight is dropped by `activeOrganizationSession()`; an app with an effect of its own that
+  repairs or re-stores the organization must skip it on /logout and after `storeActiveOrganizationId(null)`.
+  (iii) the organization switch: the template's mutation returns `User { id activeOrganizationId }`,
+  which normalizes onto the same `User` entry Me reads; an app whose switch returns another type
+  (an `Organization`, a `Boolean`) must write `activeOrganizationId` onto Me's user
+  (`cache.modify` on `cache.identify(me)`) or refetch Me after the switch. The template's error link
+  dispatches access-denied and organization-required only for queries, so a refused switch is shown
+  inline by its caller; an app whose error link reacts to mutations too must pass
+  `SKIP_AUTH_ERROR_REPORT_CONTEXT` on the switch and then treat a 401 from it as the owner rule says
+  (UNAUTHENTICATED with no outage logs out) itself.
+
+why: >
+  The 2026.11.8 fleet rollout found these: the stored organization outlived a /force-logout and a
+  session that ended without /logout, so the next user's requests could carry it; a sign-out that
+  cleared the session cookie without its domain left the parent-domain cookie in place; the root
+  loader signed out on its own Me 401 without seeing an outage a parallel loader had recorded; and
+  the template's race specs assumed an unawaited Me, so every app that awaits Me rewrote them.
+
+affectedPaths:
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/_public/register.tsx
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/app/routes/admin/users/_index.tsx
+  - apps/web/app/routes/force-logout.tsx
+  - apps/web/app/session-cookie.ts
+  - apps/web/app/root.tsx
+  - apps/web/app/entry.server.tsx
+  - libs/web/src/lib/components/emulation-banner.tsx
+  - libs/web/src/lib/components/emulation-banner.spec.tsx
+  - apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+  - apps/web/tests/routes/admin/users/_index.spec.tsx
+  - apps/web/tests/session-cookie.spec.ts
+  - apps/web/tests/root-loader-session.spec.ts
+  - apps/web/tests/entry-server-shell-error.spec.tsx
+  - docs/template/README.md
+  - .env.example
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test web-components --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Apply the parts separately; they share no logic. Parts 1 and 2 build on
+    2026-11-16-session-org-consistency (`storeActiveOrganizationId`); an app that marked its storage
+    parts not-applicable (no organization header) marks parts 1 and 2 not-applicable with the same
+    reason. Parts 4 and 5 build on 2026-11-16-ssr-signout-outage (`routeErrorOutcome`,
+    `signOutOnceSettled`); apply that first.
+  - >
+    Shapes: an app with no signed-in layout keeps the organization wherever its session helper
+    resolves it, and clears it in part 1's sign-in sites and part 2's login form all the same. An
+    app with no /force-logout puts part 2's clear on the page its server sign-out lands on, and
+    part 3's helper in that sign-out. An app with no switch mutation (the browser alone chooses) has
+    nothing to do for check (iii). An app that resolves Me in the root loader is the one part 4
+    matters most for; route its 401 through `privateRouteMeFailure` and take part 5's specs.
+  - >
+    Part 3 needs the owner: report which deploys set `API_COOKIE_DOMAIN` on the API and whether the
+    web service has the same value; do not set environment variables yourself. To check the fix
+    before the deploy, run tests/session-cookie.spec.ts; on a live deploy with a cookie domain, sign
+    in, trigger a forced sign-out, and confirm the response carries two `Set-Cookie` expiries for
+    the session cookie, one with `Domain=`.
+  - >
+    Part 4, tests: a spec that mocks the root loader's preload to throw an UNAUTHENTICATED error and
+    expected a 302 to /login now sees a thrown 401 route error (`{ init: { status: 401 } }`), with no
+    Set-Cookie. An entry.server spec that renders through `createRequestHandler` sees the
+    /force-logout 302 instead.
+  - >
+    For each of the three checks at the end of the intent, record in the report which shape the app
+    has and what was done; they have no ledger part of their own.

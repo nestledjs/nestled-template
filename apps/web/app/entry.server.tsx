@@ -29,6 +29,7 @@ import {
   organizationRequiredResponse,
 } from './organization-required'
 import { loaderReportsOutage } from './loader-outage'
+import { expiredSessionCookies } from './session-cookie'
 
 disableFragmentWarnings()
 
@@ -263,16 +264,12 @@ async function signOutOnceSettled(
 
 function forceLogoutResponse(request: Request): Response {
   const cookieName = process.env.VITE_COOKIE_NAME || '__session'
-  const cookieDomain = process.env.VITE_COOKIE_DOMAIN
-  const expired = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
-  const base = `${cookieName}=; Path=/; ${expired}; HttpOnly; SameSite=Lax`
   const url = new URL(request.url)
   const returnParam = url.pathname === '/' ? '' : `?return_url=${encodeURIComponent(url.pathname)}`
   const headers = new Headers({ Location: `/force-logout${returnParam}` })
-  headers.append(
-    'Set-Cookie',
-    cookieDomain && cookieDomain !== 'localhost' ? `${base}; Domain=${cookieDomain}` : base,
-  )
+  // Both the domain cookie and the host-only one: expiring only the domain one (as this did)
+  // left a host-only cookie in place, and the reverse a parent-domain one.
+  for (const cookie of expiredSessionCookies(cookieName)) headers.append('Set-Cookie', cookie)
   return new Response(null, { status: 302, headers })
 }
 
