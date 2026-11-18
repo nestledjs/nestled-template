@@ -1,6 +1,10 @@
 import { index, route, type RouteConfig } from '@react-router/dev/routes'
 
 export default [
+  // Web health check (Railway's web health check path). Outside every layout on purpose: a
+  // resource route here runs only its own loader, so it never calls the API or reads the session.
+  route('healthz', './routes/healthz.ts'),
+
   // Global layout - provides GlobalContextProvider and Apollo context to ALL routes
   route('', './routes/_layout.tsx', [
     // Public routes (no conflicting paths)

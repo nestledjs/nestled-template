@@ -19,7 +19,7 @@ export default function PricingPage() {
   const { user } = useGlobalCtx()
   const { plan: currentPlan } = useSubscription()
   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [createCheckoutSession, { loading: checkoutLoading }] =
     useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession, { errorPolicy: 'none' })
 

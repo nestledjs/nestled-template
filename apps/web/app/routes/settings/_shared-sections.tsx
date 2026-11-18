@@ -153,7 +153,7 @@ export function TransferOwnershipSection() {
 export function DangerZoneSection() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [deleteAccountMutation] = useMutation<DeleteUserAccountMutation>(DeleteUserAccount, {
     errorPolicy: 'none',
   })

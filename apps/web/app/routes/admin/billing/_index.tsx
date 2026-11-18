@@ -28,7 +28,7 @@ export default function AdminBillingOverview() {
     variables: { input: { take: 5 } },
   })
 
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [syncProducts] = useMutation(AdminSyncStripeProducts, { errorPolicy: 'none' })
   const [syncPrices] = useMutation(AdminSyncStripePrices, { errorPolicy: 'none' })
 

@@ -28,7 +28,8 @@ function renderSwitch(refuse: boolean) {
         observer.complete()
       }),
   )
-  // The app client's default (`makeClient`), under which a refusal resolves unless told otherwise.
+  // A client that defaults mutations to 'all' (as `makeClient` did before 2026.11.9, and as some
+  // apps still do): the hook's own 'none' must still make a refusal throw.
   const client = new ApolloClient({
     link,
     cache: new InMemoryCache(),

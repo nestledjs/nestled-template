@@ -960,7 +960,10 @@ export function makeClient(request?: Request, options?: ClientOptions) {
     defaultOptions: {
       watchQuery: { fetchPolicy: 'cache-and-network' },
       query: { errorPolicy: 'all' },
-      mutate: { errorPolicy: 'all' },
+      // A refused mutation rejects, so no caller can mistake a refusal for success: under 'all' it
+      // resolved with the error beside `data` and any caller that only awaited it moved on. A
+      // call site that really uses partial data from a failed mutation sets 'all' itself.
+      mutate: { errorPolicy: 'none' },
     },
   })
 }

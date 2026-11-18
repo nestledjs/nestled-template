@@ -1,0 +1,157 @@
+id: 2026-11-19-mutation-errorpolicy-none
+title: >-
+  Make a refused mutation reject by default (the web Apollo client's mutation errorPolicy becomes
+  'none'), audit every mutation call site for it, and give the web service its own /healthz
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+
+intent: >
+  Two parts. No package changes and no change to package.json, nx.json or tsconfig.base.json. No
+  logout path changes: the session rule is unchanged (log a user out only when the API has
+  definitely rejected the session, a real HTTP 401 or a GraphQL `UNAUTHENTICATED` with no outage
+  evidence; outage evidence outranks a 401; anything else keeps the session).
+
+
+  Behaviour changes, plainly: (a) every mutation that does not set its own `errorPolicy` now
+  rejects when the API refuses it (a GraphQL error), instead of resolving with the error beside
+  `data`; a caller that only awaited it and then showed success now reaches its `catch` (part 1).
+  Queries are unchanged ('all'). (b) The web server answers `GET /healthz` with 200 `ok` without
+  calling the API or reading the session, so the web service's health check no longer depends on
+  the API (part 2).
+
+
+  1. Mutation errorPolicy default → 'none' (owner decision 2026-11-18).
+  libs/shared/apollo/src/lib/apollo.ts `makeClient` set `defaultOptions.mutate.errorPolicy: 'all'`,
+  so a refused mutation resolved, and any caller that awaited it without reading `error` treated
+  the refusal as success. It is now `mutate: { errorPolicy: 'none' }`; `query` stays `'all'` and
+  `watchQuery` is unchanged. This supersedes part 8 of 2026-11-16-session-org-consistency, which
+  said to fix sites one by one and not change the default: keep the per-call `'none'` you added
+  there (harmless, and it holds if a client ever defaults to 'all' again).
+
+  Find the app's client first: `grep -rn "defaultOptions" apps libs --include='*.ts' --include='*.tsx'`.
+  - The app uses the shared `makeClient` with `mutate: { errorPolicy: 'all' }`: change it to
+    `'none'`, then audit (below).
+  - The app's client sets no `mutate` default (Apollo's own default is already 'none'): nothing to
+    change in the client; record the part as adapted with "no 'all' default" and skip the sweep,
+    but still check any call sites that set `errorPolicy: 'all'` themselves (last row below).
+  - The app has its own client factory or several clients: change the `mutate` default in each
+    one browser code uses for writes.
+
+  Then audit every mutation call site. Find them with:
+    grep -rnE "useMutation(<|\()|\.mutate(<|\()|use[A-Z][A-Za-z]*Mutation\(" apps libs --include='*.ts' --include='*.tsx' | grep -vE "spec|test|generated"
+  (multi-line generics such as `useMutation<\n  A,\n  B\n>(` are caught by also grepping
+  `useMutation<$`). For each site, take the verdict that matches:
+
+  | the site today | verdict under 'none' |
+  | --- | --- |
+  | reads `result.errors` / `result.error` after awaiting | now throws: move that handling into a `catch` (or wrap the call in one); keep the "no data" fallback |
+  | awaits inside `try/catch` | works as is; the catch now sees refusals (the fix) |
+  | `useMutation(..., { onError })` | works as is: Apollo 4 calls `onError` and the returned promise rejects, which Apollo marks handled; do not add `.catch` just for that |
+  | neither (awaits and moves on, or `try/finally` with no catch) | add visible error handling: catch, show the API's message, keep the form or dialog open, do not navigate or show success |
+  | sets `errorPolicy: 'all'` on purpose (it really uses partial data from a failed mutation) | keep it, and add a comment saying why |
+
+  Many apps already swept their sites with per-call `'none'` in 2026.11.8 (the lists are in their
+  PRs); those sites are already correct, so start from that list and audit only what it left.
+  Shared cards or dialog shells that run a mutation inside `try/finally` without a catch (for
+  example a guarded editor's `run()` or a card's `onSave`) must get an error state first: catch,
+  show the message, return failure to the caller. If that is more than the PR can carry, set
+  `errorPolicy: 'all'` explicitly on those hooks with a comment ("reads errors itself; give the
+  card an error state before removing") so the default change does not turn their refusals into
+  uncaught rejections, and list them as follow-ups. List every site with its verdict in the PR.
+
+  Template call sites, for reference: 57 sites in apps/web/app and libs/web/src. 53 already set
+  `'none'` and catch (or rethrow to a caller that catches, as the access-control console adapter
+  and the shared organization switch do). Two use `onError` (admin user emulation, the emulation
+  banner): unchanged. One awaits in `try/catch` (logout's `Logout` mutation, which continues on
+  failure by design): unchanged. One read the result's error (accept-invitation's
+  `RegisterWithInvitation`): it now sets `'none'` and its catch shows the API message; the dead
+  result-error read was removed. The published data-browser package's create/edit/delete pages run
+  their mutations inside `try/catch` with no `errorPolicy`, so they inherit the host's default: with
+  'none' a refusal shows the API message instead of "updated successfully" (their `result.errors`
+  read never matched Apollo 4's result shape).
+
+  Tests: a spec that mocks `@apollo/client/react`'s `useMutation` by hand and resolves it with
+  `{ errors }` or `{ error }` to simulate a refusal no longer matches the app; make the mock reject
+  instead. A spec that builds its client with `makeClient(...).defaultOptions` now gets 'none'.
+  Verification: `pnpm exec nx test apollo --skip-nx-cache` ("rejects a mutation the API refuses,
+  with the API message", "still resolves a query with its GraphQL error"); `pnpm exec nx test web
+  --skip-nx-cache` (apps/web/tests/mutation-error-policy.spec.tsx: "a try/catch caller with no
+  errorPolicy shows the API message, not success" fails before the change).
+
+
+  2. Web health route (priority medium within this note). Railway's web service had no health check
+  of its own, and anything it could probe (a page) runs the root loader, which preloads Me against
+  the API: an API outage would fail the web deploy too. apps/web/app/routes/healthz.ts is a
+  resource route (a `loader` and no default export) that returns
+  `new Response('ok', { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8',
+  'Cache-Control': 'no-store' } })`, and apps/web/app/routes.tsx registers it first and at the top
+  level, `route('healthz', './routes/healthz.ts')`, outside the global, public and signed-in
+  layouts. React Router serves a resource route by running only its own loader, so no layout
+  loader, Apollo client, cookie read or API call runs.
+  - An app with route middleware (`future.v8_middleware` or `unstable_middleware` on root or a
+    layout): middleware still runs for resource routes; make the middleware return early for
+    `/healthz`, or do the session work in loaders instead.
+  - An app whose server (server.js / Express) does auth, redirects or proxying before React Router:
+    answer `/healthz` there, before those handlers, with the same body and headers.
+  - An app using file-system routes (`flatRoutes()`): add `app/routes/healthz.ts`; a top-level file
+    is outside every pathless layout already. If a `_layout`-style parent would wrap it, move it out.
+  The Railway step is the owner's, not the PR's: set the web service's health check path to
+  `/healthz` in the Railway dashboard (Railway reads no file from the repo for this). AGENTS.md in
+  the template documents it beside the api's `/api/uptime`; AGENTS.md is not promoted, so add the
+  same line to the app's own deploy notes if it has them.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (apps/web/tests/healthz.spec.ts: 200 `ok`,
+  text/plain, no-store; no fetch and no root loader call with a session cookie; 200 while the API is
+  down); after deploy, `curl -i https://<web-domain>/healthz`.
+
+why: >
+  A mutation the API refused looked like success to every caller that did not read `error`: under
+  'all' Apollo resolves the promise. The 2026.11.8 fleet rollout found 35 to 175 such sites per app
+  and fixed them one by one; making 'none' the default closes the class for new code as well. The
+  web health check gap: with no web-only check, Railway either probed a page (which waits on the
+  API through the root loader's Me preload) or nothing.
+
+affectedPaths:
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/app/routes/**
+  - libs/web/src/lib/**
+  - apps/web/tests/mutation-error-policy.spec.tsx
+  - apps/web/tests/organization-required.spec.tsx
+  - apps/web/tests/components/TransferOwnershipModal.error-policy.spec.tsx
+  - apps/web/tests/routes/settings/members.error-policy.spec.tsx
+  - apps/web/app/routes/healthz.ts
+  - apps/web/app/routes.tsx
+  - apps/web/tests/healthz.spec.ts
+  - AGENTS.md
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Part 1: change the default and audit in the same PR; the default alone can turn a site that
+    neither catches nor reads errors into an unhandled rejection with no message. Count the sites
+    by verdict and list each one in the PR.
+  - >
+    Part 1: shapes vary. If the app wraps mutations in its own hook (`useGuardedMutation`, a
+    `useSafeMutation`, a card's `run()`), audit the wrapper once, then its callers only for how
+    they use its return value. If the app's client already has no `mutate` default, the default
+    change is not-applicable; still check explicit `errorPolicy: 'all'` sites.
+  - >
+    Part 1, tests: build the test client with the app's real client defaults
+    (`makeClient(...).defaultOptions` or the app's factory) and answer the mutation with a GraphQL
+    error; assert the page shows the API's message and no success state. Hand-mocked `useMutation`
+    specs that resolve `{ errors }` need to reject instead.
+  - >
+    Part 2 is independent of part 1. Check where the app's session work happens (root loader,
+    middleware, server.js) before deciding a resource route is enough; record which shape applied.

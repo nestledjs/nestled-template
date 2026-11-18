@@ -60,7 +60,7 @@ export default function PlatformAccessControlPage() {
         )
       },
       // Each mutation throws on a GraphQL error, so the console shows the API's reason rather than
-      // a generic "not created" (the client default is 'all').
+      // a generic "not created" (also the client default; kept explicit).
       async createRole(input) {
         const { data } = await client.mutate({
           errorPolicy: 'none',

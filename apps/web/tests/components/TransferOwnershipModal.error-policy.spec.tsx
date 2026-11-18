@@ -48,8 +48,7 @@ function renderModal(result: ApolloLink.Result) {
         observer.complete()
       }),
   )
-  // `makeClient` sets `errorPolicy: 'all'` for mutations; the modal must still treat a refusal as
-  // a failure.
+  // The app client's real defaults (`makeClient`): the modal must treat a refusal as a failure.
   const client = new ApolloClient({
     link,
     cache: new InMemoryCache(),

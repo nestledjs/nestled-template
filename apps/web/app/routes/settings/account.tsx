@@ -27,7 +27,7 @@ export default function AccountSettings() {
   // session rather than accepting one, so it cannot be pointed at anyone else. The public
   // resendVerificationEmail requires a Turnstile token and would reject this call outright on a
   // deployment with Turnstile enabled.
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [resendMyVerificationEmail] = useMutation<ResendMyVerificationEmailMutation>(
     ResendMyVerificationEmail,
     { errorPolicy: 'none' },

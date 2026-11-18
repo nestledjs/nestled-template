@@ -75,7 +75,7 @@ export default function SecuritySettings() {
   const [disablePassword, setDisablePassword] = useState('')
   const [backupCodes, setBackupCodes] = useState<string[]>([])
 
-  // Throw on a GraphQL error so the catch below sees it (the client default is 'all').
+  // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
   const [changePassword] = useMutation<ChangePasswordMutation>(ChangePassword, {
     errorPolicy: 'none',
   })
