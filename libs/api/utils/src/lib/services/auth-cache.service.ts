@@ -16,6 +16,21 @@ export const AUTH_CACHE_REDIS_TIMEOUTS = {
 } as const
 
 /**
+ * One cache read. `miss`: nothing is cached (or the cache is not configured), so read the
+ * database. `unavailable`: Redis failed (down, timed out, a value that would not parse), which says
+ * nothing about the session or the membership.
+ *
+ * The `get*` methods fold both into `null`. That is only right for a caller that reads the database
+ * on `null`. A caller that would read `null` as "no session", "not a member" or "no organization"
+ * must use the matching `lookup*` method and treat `unavailable` as an outage (fall back to the
+ * database, or answer 503), never as a refusal.
+ */
+export type AuthCacheLookup<T> =
+  { status: 'hit'; value: T } | { status: 'miss' } | { status: 'unavailable' }
+
+const CACHE_MISS = { status: 'miss' } as const
+
+/**
  * Redis cache service for authentication and organization context.
  * Implements the second tier of the three-tier caching architecture:
  * 1. Request-level cache (req.organizationContext)
@@ -101,6 +116,23 @@ export class AuthCacheService {
     return this.redis !== null
   }
 
+  /** Reads `key` and parses it; see AuthCacheLookup. */
+  private async lookup<T>(
+    key: string,
+    parse: (value: string) => T,
+    what: string,
+  ): Promise<AuthCacheLookup<T>> {
+    if (!this.redis) return CACHE_MISS
+    try {
+      const value = await this.redis.get(key)
+      if (value === null) return CACHE_MISS
+      return { status: 'hit', value: parse(value) }
+    } catch (error) {
+      this.logger.warn(`Failed to get cached ${what}: ${(error as Error).message}`)
+      return { status: 'unavailable' }
+    }
+  }
+
   // ==================== Session Methods ====================
 
   /**
@@ -125,18 +157,20 @@ export class AuthCacheService {
   }
 
   /**
-   * Get cached session validity (returns null if not cached)
+   * Cached session validity: a hit, a miss, or Redis unavailable. A caller deciding whether a
+   * session is alive reads the database on `miss` and on `unavailable`; `unavailable` is never
+   * "invalid session" (a 401 would log the user out over a Redis outage).
+   */
+  lookupSessionValid(sessionId: string): Promise<AuthCacheLookup<boolean>> {
+    return this.lookup(`${this.PREFIX.SESSION}${sessionId}`, value => value === '1', 'session')
+  }
+
+  /**
+   * Get cached session validity: null when not cached OR when Redis failed, so null means "ask the
+   * database", never "invalid". Use lookupSessionValid to tell the two apart.
    */
   async getSessionValid(sessionId: string): Promise<boolean | null> {
-    if (!this.redis) return null
-    try {
-      const value = await this.redis.get(`${this.PREFIX.SESSION}${sessionId}`)
-      if (value === null) return null
-      return value === '1'
-    } catch (error) {
-      this.logger.warn(`Failed to get cached session: ${(error as Error).message}`)
-      return null
-    }
+    return valueOrNull(await this.lookupSessionValid(sessionId))
   }
 
   /**
@@ -177,19 +211,24 @@ export class AuthCacheService {
     }
   }
 
+  /** Cached membership context: a hit, a miss, or Redis unavailable (never "not a member"). */
+  lookupMembership(
+    userId: string,
+    organizationId: string,
+  ): Promise<AuthCacheLookup<OrganizationContext>> {
+    return this.lookup(
+      `${this.PREFIX.MEMBERSHIP}${userId}:${organizationId}`,
+      value => JSON.parse(value) as OrganizationContext,
+      'membership',
+    )
+  }
+
   /**
-   * Get cached membership context (returns null if not cached)
+   * Get cached membership context: null when not cached OR when Redis failed, so null means "ask
+   * the database", never "not a member". Use lookupMembership to tell the two apart.
    */
   async getMembership(userId: string, organizationId: string): Promise<OrganizationContext | null> {
-    if (!this.redis) return null
-    try {
-      const value = await this.redis.get(`${this.PREFIX.MEMBERSHIP}${userId}:${organizationId}`)
-      if (value === null) return null
-      return JSON.parse(value) as OrganizationContext
-    } catch (error) {
-      this.logger.warn(`Failed to get cached membership: ${(error as Error).message}`)
-      return null
-    }
+    return valueOrNull(await this.lookupMembership(userId, organizationId))
   }
 
   /**
@@ -254,17 +293,17 @@ export class AuthCacheService {
     }
   }
 
+  /** The cached active organization id: a hit, a miss, or Redis unavailable. */
+  lookupUserActiveOrganization(userId: string): Promise<AuthCacheLookup<string>> {
+    return this.lookup(`${this.PREFIX.USER_ACTIVE_ORG}${userId}`, value => value, 'user active org')
+  }
+
   /**
-   * Get cached user's active organization ID
+   * Get cached user's active organization ID: null when not cached OR when Redis failed. Use
+   * lookupUserActiveOrganization where "no organization" and "could not tell" must differ.
    */
   async getUserActiveOrganization(userId: string): Promise<string | null> {
-    if (!this.redis) return null
-    try {
-      return await this.redis.get(`${this.PREFIX.USER_ACTIVE_ORG}${userId}`)
-    } catch (error) {
-      this.logger.warn(`Failed to get cached user active org: ${(error as Error).message}`)
-      return null
-    }
+    return valueOrNull(await this.lookupUserActiveOrganization(userId))
   }
 
   /**
@@ -297,19 +336,21 @@ export class AuthCacheService {
     }
   }
 
+  /** Cached user data: a hit, a miss, or Redis unavailable (never "no such user"). */
+  lookupUser(userId: string): Promise<AuthCacheLookup<Record<string, unknown>>> {
+    return this.lookup(
+      `${this.PREFIX.USER}${userId}`,
+      value => JSON.parse(value) as Record<string, unknown>,
+      'user',
+    )
+  }
+
   /**
-   * Get cached user data
+   * Get cached user data: null when not cached OR when Redis failed, so null means "ask the
+   * database", never "no such user". Use lookupUser to tell the two apart.
    */
   async getUser(userId: string): Promise<Record<string, unknown> | null> {
-    if (!this.redis) return null
-    try {
-      const value = await this.redis.get(`${this.PREFIX.USER}${userId}`)
-      if (value === null) return null
-      return JSON.parse(value)
-    } catch (error) {
-      this.logger.warn(`Failed to get cached user: ${(error as Error).message}`)
-      return null
-    }
+    return valueOrNull(await this.lookupUser(userId))
   }
 
   /**
@@ -334,4 +375,8 @@ export class AuthCacheService {
     // Role changes affect all memberships in the organization
     await this.invalidateOrganizationMemberships(organizationId)
   }
+}
+
+function valueOrNull<T>(lookup: AuthCacheLookup<T>): T | null {
+  return lookup.status === 'hit' ? lookup.value : null
 }

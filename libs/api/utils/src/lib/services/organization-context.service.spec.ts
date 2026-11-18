@@ -16,12 +16,15 @@ describe('OrganizationContextService', () => {
       organizationMember: {
         findFirst: jest.fn().mockResolvedValue(membership),
       },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ activeOrganizationId: 'org-1' }),
+      },
     }
     const authCache = {
       isEnabled: jest.fn().mockReturnValue(false),
       getMembership: jest.fn(),
       setMembership: jest.fn(),
-      getUserActiveOrganization: jest.fn(),
+      lookupUserActiveOrganization: jest.fn().mockResolvedValue({ status: 'miss' }),
     }
 
     return {
@@ -53,6 +56,42 @@ describe('OrganizationContextService', () => {
       permissions: [{ subject: 'organization', action: 'update' }],
     })
     expect(req).toHaveProperty('organizationContext', context)
+  })
+
+  // A Redis failure says nothing about the user's organization. Read as "none", it sent the user to
+  // the organization picker during a Redis outage.
+  it('reads the active organization from the database when the cache is unavailable', async () => {
+    const { authCache, data, service } = createService()
+    authCache.isEnabled.mockReturnValue(true)
+    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'unavailable' })
+    // A user shape that does not carry activeOrganizationId (an app's own user, say).
+    const req = { headers: {}, user: { id: 'user-1', isSuperAdmin: false } }
+
+    const context = await service.attach(req as never)
+
+    expect(data.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      select: { activeOrganizationId: true },
+    })
+    expect(context?.organizationId).toBe('org-1')
+  })
+
+  it('does not ask the database again on a plain cache miss', async () => {
+    const { authCache, data, service } = createService()
+    authCache.isEnabled.mockReturnValue(true)
+    const req = { headers: {}, user: { id: 'user-1', isSuperAdmin: false } }
+
+    await expect(service.attach(req as never)).resolves.toBeUndefined()
+    expect(data.user.findUnique).not.toHaveBeenCalled()
+  })
+
+  it('uses a cached active organization', async () => {
+    const { authCache, service } = createService()
+    authCache.isEnabled.mockReturnValue(true)
+    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'hit', value: 'org-1' })
+    const req = { headers: {}, user: { id: 'user-1', isSuperAdmin: false } }
+
+    await expect(service.attach(req as never)).resolves.toMatchObject({ organizationId: 'org-1' })
   })
 
   it('falls back to the authenticated users active organization', async () => {
