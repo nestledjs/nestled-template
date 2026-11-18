@@ -15,6 +15,16 @@ export const API_ERROR_CODES = {
   ORGANIZATION_CONTEXT_REQUIRED: 'ORGANIZATION_CONTEXT_REQUIRED',
   /** The OAuth provider rejected the token or code it was given. Says nothing about the session. */
   OAUTH_PROVIDER_REJECTED: 'OAUTH_PROVIDER_REJECTED',
+  /**
+   * A valid organization-scoped API token, sent with an `x-organization-id` for another
+   * organization. The token still works for its own organization; the client must keep it.
+   */
+  API_TOKEN_ORGANIZATION_MISMATCH: 'API_TOKEN_ORGANIZATION_MISMATCH',
+  /**
+   * A valid API token bound to one resource (RFC 8707: the MCP endpoint), presented anywhere else.
+   * The token still works where it is bound; the client must keep it.
+   */
+  API_TOKEN_RESOURCE_MISMATCH: 'API_TOKEN_RESOURCE_MISMATCH',
 } as const
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES]

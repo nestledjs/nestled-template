@@ -1,0 +1,321 @@
+id: 2026-11-19-api-auth-ambiguity
+title: >-
+  The API's remaining auth ambiguities: a valid API token used out of scope is a 403 with a code,
+  a failed organization or auth-cache lookup is an outage (503 or a database fallback), graphql-ws
+  refusals close with 4401 / 1013, and GraphQL stack traces stay local
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+# Builds on 2026-11-16-api-internal-errors-not-401 (the 503 for a failed API-token lookup, and the
+# list of ambiguous sites this note resolves) and 2026-11-14-api-auth-error-codes (forbiddenWithCode,
+# formatApiError).
+applyAfter: [2026-11-16-api-internal-errors-not-401]
+
+intent: >
+  Clients drop a session or an API token on an HTTP 401 or a GraphQL `UNAUTHENTICATED`. The owner
+  rule: a credential that is missing, invalid, expired or revoked is a 401; a credential that is
+  valid but not allowed is a 403; an internal failure (database, Redis, an unexpected exception) is
+  a 503 (outage evidence: the web keeps the session and retries) or a 500, never a 401.
+  2026-11-16-api-internal-errors-not-401 listed the sites it could not settle; this note settles
+  them. Eight parts. No package changes, and no change to package.json, nx.json or
+  tsconfig.base.json. Every part says, per site, what changed; ambiguous sites are listed and not
+  changed.
+
+
+  1. API: an organization-scoped API token sent with another organization's header is a real 403.
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts refused it with
+  `this.fail({ message }, 403)`. `AuthGuard` (`@nestjs/passport`) turns every `fail`, whatever its
+  status, into an `UnauthorizedException`, so the client got a 401 / `UNAUTHENTICATED` and an
+  API-token client (MCP, scripts) threw away a token that is still valid for its own organization.
+  It now calls `this.error(forbiddenWithCode(API_ERROR_CODES.API_TOKEN_ORGANIZATION_MISMATCH,
+  'API token is not scoped to the requested organization'))`: passport hands `error(err)` to
+  AuthGuard, which throws it as is, so REST answers 403 with `code` in the body and GraphQL answers
+  `extensions.code: API_TOKEN_ORGANIZATION_MISMATCH` (formatApiError restores it). The refusal still
+  happens before the user lookup.
+  Changed: jwt.strategy.ts (the scope refusal), libs/api/utils/src/lib/errors/api-error-code.ts
+  (`API_TOKEN_ORGANIZATION_MISMATCH` and `API_TOKEN_RESOURCE_MISMATCH` added to `API_ERROR_CODES`).
+  Affected paths: libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts,
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts,
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts,
+  libs/api/utils/src/lib/errors/api-error-code.ts.
+  Verification: `pnpm exec nx test api-custom --skip-nx-cache` (jwt.strategy.guard.spec.ts drives
+  the real `AuthGuard('jwt')` through passport: a scoped token with another organization's header
+  rejects with a `ForbiddenException`, status 403, code `API_TOKEN_ORGANIZATION_MISMATCH`, and no
+  user lookup; against the old code it got an `UnauthorizedException`, 401. An unknown token and a
+  token whose owner is gone still get 401, a failed lookup 503).
+
+
+  2. API: the API-token path is split out of `JwtStrategy.authenticate` (Sonar S3776).
+  The symptom is Sonar S3776 (cognitive complexity) on `jwt.strategy.ts` `authenticate`, about 25
+  against a limit of 15, which fails downstream quality gates as soon as the file is touched. The
+  split, behaviour unchanged:
+  - `authenticate(req, options)`: extracts the token; a 64-hex token goes to
+    `authenticateApiToken`, anything else to `super.authenticate` (passport-jwt) as before.
+  - `authenticateApiToken(req, token)`: calls `checkApiToken` inside the try/catch, so a thrown
+    lookup is still `this.error(new ServiceUnavailableException(…))` (503); turns the verdict into
+    `this.fail({ message }, 401)` (rejected), `this.error(forbidden)` (part 1 and part 8), or sets
+    `req.__apiTokenUser` / `apiTokenId` / `apiTokenOrganizationId`, records the use and calls
+    `this.success(user)`.
+  - `checkApiToken(req, token)`: `validateApiToken`, the resource binding, `bindOrganizationScope`,
+    `validateUser`; every refusal is a returned verdict (`{ rejected }` or `{ forbidden }`), never a
+    throw, so the catch above only ever sees a failed lookup.
+  - `bindOrganizationScope(req, result)`: the organization-scope check and the header write-back
+    (unchanged comments).
+  The brief also asked to remove an unused `Subscription` import; the template's jwt.strategy.ts
+  has none. Remove it if your copy has one.
+  Changed: jwt.strategy.ts only.
+  Affected paths: libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts.
+  Verification: `pnpm exec nx test api-custom --skip-nx-cache` (every existing jwt.strategy.spec.ts
+  case passes unchanged against the split, before parts 1 and 8 changed two expectations), and
+  Sonar shows no S3776 on the file.
+
+
+  3. API: `GqlAuthGuard` no longer swallows a failed organization-context lookup.
+  libs/api/utils/src/lib/guards/gql-auth.guard.ts caught every error from
+  `OrganizationContextService.attach` and carried on without an organization. During a database or
+  Redis outage the user got the organization picker or a "no organization" state instead of the
+  outage screen. Now: a 4xx `HttpException` is still swallowed (the request goes on without
+  context; organization-scoped operations refuse on their own); any other 5xx `HttpException` is
+  rethrown as is; anything else is logged with its stack and becomes
+  `ServiceUnavailableException('Organization context is temporarily unavailable')` (503).
+  Not being a member was never a throw (`attach` answers `undefined`) and is unchanged.
+  Changed: gql-auth.guard.ts. Listed, not changed: gql-organization-scoped.guard.ts lets an
+  `attach` error propagate as is (a 500, not a 401: within the owner rule).
+  Affected paths: libs/api/utils/src/lib/guards/gql-auth.guard.ts,
+  libs/api/utils/src/lib/guards/gql-auth.guard.spec.ts.
+  Verification: `pnpm exec nx test api-utils --skip-nx-cache` (gql-auth.guard.spec.ts: `attach`
+  rejecting with an `Error` makes `canActivate` reject with a 503 `ServiceUnavailableException`
+  (resolved `true` before the fix); `undefined` and a `ForbiddenException` still resolve `true`).
+
+
+  4. API: the auth cache tells a miss from a Redis failure.
+  libs/api/utils/src/lib/services/auth-cache.service.ts `getSessionValid`, `getMembership`,
+  `getUserActiveOrganization` and `getUser` returned `null` both when nothing was cached and when
+  Redis failed (or a value would not parse). A caller that reads `null` as "no session" answers a
+  401 over a Redis outage; one that reads it as "no organization" sends the user to the picker.
+  Chosen: fall back to the database where the caller has one, 503 where it has none, because Redis
+  is only a cache tier here and the database is the source of truth for every value it holds (the
+  organization switch writes `activeOrganizationId` to the database before the cache).
+  Changed:
+  - auth-cache.service.ts: new `AuthCacheLookup<T>` (`hit` with `value`, `miss`, `unavailable`) and
+    `lookupSessionValid`, `lookupMembership`, `lookupUserActiveOrganization`, `lookupUser`. A
+    disabled cache answers `miss`. The `get*` methods keep their `null` contract (now documented as
+    "ask the database", never "invalid") and are built on the lookups.
+  - organization-context.service.ts `resolveOrganizationId`: uses
+    `lookupUserActiveOrganization`; on `unavailable` it reads `user.activeOrganizationId` from the
+    database. A database failure there propagates (part 3 makes it a 503).
+  - auth-loader.service.ts `loadMembership` (no organization given): on `unavailable` it throws
+    `ServiceUnavailableException`, since it has no database read for the active organization; a
+    miss still answers `null`.
+  Listed, not changed: auth-loader.service.ts `batchLoadMemberships` answers `null` ("not a
+  member") for every key when the membership query fails. Nothing in the template calls
+  `AuthLoaderService`; a project that does should rethrow there.
+  Affected paths: libs/api/utils/src/lib/services/auth-cache.service.ts,
+  libs/api/utils/src/lib/services/auth-cache.service.spec.ts,
+  libs/api/utils/src/lib/services/organization-context.service.ts,
+  libs/api/utils/src/lib/services/organization-context.service.spec.ts,
+  libs/api/utils/src/lib/services/auth-loader.service.ts,
+  libs/api/utils/src/lib/services/auth-loader.service.spec.ts.
+  Verification: `pnpm exec nx test api-utils --skip-nx-cache` (auth-cache.service.spec.ts: a
+  failed or unparsable read is `unavailable`, a null read and a disabled cache are `miss`;
+  organization-context.service.spec.ts: with the cache `unavailable`, a user object without
+  `activeOrganizationId` still gets its organization from the database, and a plain miss does not
+  ask the database; auth-loader.service.spec.ts: `unavailable` rejects with a 503. All three fail
+  against the old code).
+
+
+  5. API: graphql-ws `onConnect` closes with a proper code.
+  libs/api/core/feature/src/lib/api-core-feature.module.ts `onConnect` threw
+  `new Error('Authentication token is missing')`. graphql-ws (`graphql-ws/use/ws`) turns a throw
+  into close code 4500 Internal Server Error with the message as the reason: a missing session
+  looked like a server bug, and graphql-ws clients treat 4500 as fatal. It also admitted a lone
+  session cookie without verifying it (`extractTokenFromWsContext` returns a single value
+  unverified). Now `onConnect` is `authorizeWsConnection(context.extra)` in
+  libs/api/core/feature/src/lib/ws-session-token.ts:
+  - no session cookie, or one whose signature or expiry does not verify: closes the socket with
+    4401 `Unauthorized` (graphql-ws's own code; the client does not retry it);
+  - `JWT_SECRET` unset or any unexpected throw: logs it and closes with 1013 `Try Again Later`
+    (graphql-ws clients retry it; it says nothing about the session). `verifyWithJwtSecret` now
+    answers null only for a `JsonWebTokenError` (bad signature, malformed, expired, not yet
+    valid) and rethrows anything else, so an unexpected verifier failure is 1013, also during
+    duplicate-cookie selection;
+  - it closes `extra.socket` itself (graphql-ws's recipe for a custom code) and returns `false`;
+    without a socket in `extra` (another transport) the `false` still refuses, as 4403.
+  Revocation is not checked at connect: every operation still goes through the guards.
+  Listed, not changed: the web client sends `connectionParams: { Authorization: 'Bearer …' }` while
+  `onConnect` reads only the upgrade request's cookie and the GraphQL context reads
+  `connectionParams.headers`. A browser sends the cookie on the upgrade, so the template works; a
+  bearer-only WebSocket client is refused (4401 now, 4500 before).
+  Affected paths: libs/api/core/feature/src/lib/ws-session-token.ts,
+  libs/api/core/feature/src/lib/ws-session-token.spec.ts,
+  libs/api/core/feature/src/lib/api-core-feature.module.ts.
+  Verification: `pnpm exec nx test api-core-feature --skip-nx-cache` (ws-session-token.spec.ts,
+  through graphql-ws's `makeServer` and a `connection_init`: no cookie and a forged cookie close
+  with 4401, no `JWT_SECRET` and a verifier throwing a plain `Error` (one cookie or duplicates)
+  with 1013, a verifying session is admitted with no close).
+
+
+  6. API: GraphQL stack traces only on a local opt-in.
+  api-core-feature.module.ts did not set `includeStacktraceInErrorResponses`, and Apollo's default
+  includes `extensions.stacktrace` on every NODE_ENV except `production` and `test`. A deployment
+  running `NODE_ENV=stage` sent server paths and code in every GraphQL error. New
+  libs/api/core/feature/src/lib/graphql-error-options.ts: `includeGraphqlStacktrace()` is true only
+  when `GRAPHQL_INCLUDE_STACKTRACE=true` AND `NODE_ENV=development`; `graphqlErrorOptions()` returns
+  `{ includeStacktraceInErrorResponses, formatError: formatApiError }` and the module spreads it
+  into `GraphQLModule.forRoot`, so the option is always set. The variable: `GRAPHQL_INCLUDE_STACKTRACE`
+  (exactly `true`; anything else is off), documented in .env.example. It is ignored on every
+  deployed environment, whatever its NODE_ENV, because none runs with `NODE_ENV=development`; do
+  not set it in Railway or CI.
+  Changed: api-core-feature.module.ts, graphql-error-options.ts (new), .env.example.
+  Affected paths: libs/api/core/feature/src/lib/graphql-error-options.ts,
+  libs/api/core/feature/src/lib/graphql-error-options.spec.ts,
+  libs/api/core/feature/src/lib/api-core-feature.module.ts, .env.example.
+  Verification: `pnpm exec nx test api-core-feature --skip-nx-cache` (graphql-error-options.spec.ts,
+  a real `ApolloServer` and a resolver that throws: the control shows Apollo sending a stacktrace
+  on `NODE_ENV=stage` with the option left out; with `graphqlErrorOptions()` there is none on
+  stage, staging or production even with the variable set, none in development without it, and
+  one in development with it).
+
+
+  7. API: optional-auth paths. The template has no optional-auth guard or strategy (no guard that
+  lets an anonymous request through after a failed lookup, no `handleRequest` override). Every
+  operation declares `@Public()`, `@Authenticated()` or `@AdminOnly()` (GlobalAuthGuard), and the
+  public ones do not read a session. The nearest path, mcp-oauth.controller.ts
+  `getSessionFromCookie` (an anonymous `/authorize` redirects to sign-in), catches only the
+  synchronous `jwtService.verify`; a failed `isSessionTokenCurrent` lookup propagates as a 500, not
+  as anonymous. Nothing changed in the template; see the agentHint for projects that have one.
+
+
+  8. API: the API-token path, valid-but-not-allowed answers are 403.
+  The template has no "superadmin-only" API token: `validateApiToken` does not look at the owner's
+  role, and `GqlAuthAdminGuard` already refuses a non-superadmin token owner with a
+  `ForbiddenException` (403) after authentication. Audit of every 401 on the API-token path:
+  - Changed: jwt.strategy.ts, a token bound to another resource (RFC 8707, an MCP OAuth token sent
+    to GraphQL or REST) answered `fail(…, 401)`. The token is valid at the MCP endpoint, and a 401
+    told the client to throw it away. It now answers `this.error(forbiddenWithCode(
+    API_ERROR_CODES.API_TOKEN_RESOURCE_MISMATCH, 'API token is not valid for this resource'))`, a
+    403, and still records no use.
+  - Changed: the organization-scope mismatch (part 1).
+  - Stay 401 (credential missing, invalid, expired or revoked): `validateApiToken` returning null
+    for an unknown, revoked or expired token, a stale auth generation, or a disabled owner;
+    `validateUser` finding the owner gone or inactive (jwt.strategy.ts and
+    api-token-auth.middleware.ts); mcp.controller.ts's 401 challenge when no user was attached;
+    access-policy.guard.ts and subscription.guard.ts with no `req.user`.
+  - Ambiguous, listed and not changed: (a) `validateApiToken` answers null, so 401, for an
+    organization-scoped token whose owner has left that organization. The token can do nothing any
+    more, which is close to revoked, but the credential itself was not revoked. (b)
+    api-token-auth.middleware.ts: a token bound to a different MCP resource reaches
+    mcp.controller.ts with no user and gets 401 `invalid_token`. RFC 8707 / RFC 6750 call an
+    audience mismatch `invalid_token`, and MCP clients act on that challenge, so it stays.
+  Affected paths: libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts,
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts,
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts.
+  Verification: `pnpm exec nx test api-custom --skip-nx-cache` (jwt.strategy.guard.spec.ts: a
+  resource-bound token through the real AuthGuard rejects with 403 `API_TOKEN_RESOURCE_MISMATCH`
+  and records no use; 401 before the fix).
+
+why: >
+  A 401 tells a client to drop its credential. The API still answered 401 for a valid API token
+  used outside its organization or resource (passport's `fail(…, 403)` arrives as 401), and turned
+  outages into refusals: a failed organization lookup or a Redis error left the user with no
+  organization (the picker instead of the outage screen), and a graphql-ws refusal looked like a
+  server bug. Separately, Apollo's default sent stack traces from any deployment whose NODE_ENV is
+  not exactly `production`.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+  - libs/api/utils/src/lib/errors/api-error-code.ts
+  - libs/api/utils/src/lib/guards/gql-auth.guard.ts
+  - libs/api/utils/src/lib/guards/gql-auth.guard.spec.ts
+  - libs/api/utils/src/lib/services/auth-cache.service.ts
+  - libs/api/utils/src/lib/services/auth-cache.service.spec.ts
+  - libs/api/utils/src/lib/services/organization-context.service.ts
+  - libs/api/utils/src/lib/services/organization-context.service.spec.ts
+  - libs/api/utils/src/lib/services/auth-loader.service.ts
+  - libs/api/utils/src/lib/services/auth-loader.service.spec.ts
+  - libs/api/core/feature/src/lib/ws-session-token.ts
+  - libs/api/core/feature/src/lib/ws-session-token.spec.ts
+  - libs/api/core/feature/src/lib/api-core-feature.module.ts
+  - libs/api/core/feature/src/lib/graphql-error-options.ts
+  - libs/api/core/feature/src/lib/graphql-error-options.spec.ts
+  - .env.example
+
+skipIf:
+  - The project's API answers a valid-but-not-allowed API token with a 403 that survives its
+    AuthGuard, turns every failed organization, cache or WebSocket session check into a 5xx (or a
+    database fallback), and always sets `includeStacktraceInErrorResponses` to false outside local
+    development.
+
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec nx test api-core-feature --skip-nx-cache
+  - pnpm exec nx run-many -t typecheck --skip-nx-cache
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Parts 1, 2 and 8 (jwt.strategy.ts). If your strategy already has a private
+    `authenticateApiToken` (some projects split it for Sonar earlier), keep its name and apply only
+    the verdict shape and the two 403s; do not re-split it. If your project authenticates API tokens
+    somewhere else (a separate strategy, a guard, middleware), apply the rule there: a refusal of a
+    VALID token must not go through `fail`, whatever status it carries, because AuthGuard turns any
+    `fail` into an UnauthorizedException. In a passport strategy use `this.error(forbiddenWithCode(
+    '<CODE>', message))`; in a guard or middleware throw or `next()` the ForbiddenException. Check
+    that no AuthGuard of yours overrides `handleRequest` to map every `err` to
+    UnauthorizedException; if one does, make it rethrow `err`. If your project has no
+    `forbiddenWithCode` (2026-11-14-api-auth-error-codes not applied), throw
+    `new ForbiddenException({ statusCode: 403, error: 'Forbidden', message, code })`. If your
+    project has no organization-scoped tokens or no resource binding, those refusals do not exist:
+    record the part not-applicable and say so.
+  - >
+    Part 8, a project whose `validateApiToken` (or equivalent) refuses a token because of its owner's
+    role (for example a token that only a superadmin may use, held by an owner who is not one, or
+    an owner who lost the role since): that refusal currently answers null, so 401, and the client
+    drops a token that is not revoked. Return a distinct verdict for it (do not overload null) and
+    answer 403 with a code from the strategy (`this.error(forbiddenWithCode(…))`), and at an MCP
+    endpoint a 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. Keep 401 for an
+    unknown, revoked, expired or stale-generation token and for an owner who is gone or disabled.
+    List every API-token 401 you find with its verdict in the PR; anything you cannot classify
+    (an MCP audience mismatch, a scoped token whose owner left the organization) is listed, not
+    changed.
+  - >
+    Part 3. If your project has no `GqlAuthGuard` with an organization attach, look for whatever
+    attaches the organization after authentication (a middleware, an interceptor, a root loader
+    that reads the active organization on the web side) and check its catch: a 4xx may leave the
+    request without an organization; anything else is a 503, never "no organization". If your
+    attach throws its own 4xx for "not a member", keep it swallowed there.
+  - >
+    Part 4. If your project has no auth-cache service, the part is not-applicable. If it calls
+    `getSessionValid` in its session check (an `isSessionValid` that reads the cache first), switch
+    that call to `lookupSessionValid` and read the database on `miss` AND on `unavailable`; never
+    answer "invalid" for `unavailable`. Any other caller of a `get*` method that treats null as a
+    refusal moves to the matching `lookup*`. A caller that already reads the database on null may
+    stay on `get*`. If your project's organization switch does not write the database (cache only),
+    the database fallback in organization-context.service.ts would answer the old organization:
+    answer 503 there instead and say so.
+  - >
+    Part 5. If your project has no graphql-ws subscriptions, the part is not-applicable. If your
+    `onConnect` reads `connectionParams` (a bearer token) rather than the cookie, keep that source
+    and apply the same outcomes: missing or unverifiable → `extra.socket.close(4401,
+    'Unauthorized')` and return false; internal failure → close 1013 and return false; never throw.
+    If it also checks the session against the database at connect, a failed lookup is 1013, never
+    4401. On the web side nothing is required: graphql-ws already stops retrying on 4401 and retries
+    1013; do not log the user out on a 4401 close (only an HTTP 401 or `UNAUTHENTICATED` does).
+  - >
+    Part 6. Spread `graphqlErrorOptions()` into your `GraphQLModule.forRoot` (or set
+    `includeStacktraceInErrorResponses: includeGraphqlStacktrace()` next to your own `formatError`
+    if you compose one; keep yours). Add `GRAPHQL_INCLUDE_STACKTRACE=false` to .env.example with the
+    template's comment. Do not set it on any deployed environment. If your local NODE_ENV is not
+    `development` (some projects use `local`), say so in the PR rather than widening the check.
+  - >
+    Part 7. If your project has an optional-auth path (a guard or strategy that lets an anonymous
+    request through when there is no session, an `OptionalAuthGuard`, a `handleRequest` that
+    returns null instead of throwing, a public resolver that reads the session itself): a 4xx refusal
+    of the credential (missing, invalid, expired, revoked) stays anonymous; a failed lookup
+    (database, Redis, an unexpected throw) is a 503, never silently anonymous. Add a test for each.
+    If there is none, record the part not-applicable.

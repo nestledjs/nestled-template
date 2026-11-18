@@ -1,4 +1,4 @@
-import { Injectable, Logger, Scope } from '@nestjs/common'
+import { Injectable, Logger, Scope, ServiceUnavailableException } from '@nestjs/common'
 import DataLoader from 'dataloader'
 import { OrganizationContext } from '../types/nest-context-type'
 import { AuthCacheService } from './auth-cache.service'
@@ -70,13 +70,18 @@ export class AuthLoaderService {
   ): Promise<OrganizationContext | null> {
     if (!organizationId) {
       // Try to get from Redis cache
-      const cachedOrgId = await this.authCache.getUserActiveOrganization(userId)
-      if (cachedOrgId) {
-        organizationId = cachedOrgId
-      } else {
+      const cached = await this.authCache.lookupUserActiveOrganization(userId)
+      if (cached.status === 'unavailable') {
+        // Redis failed, so whether the user has an active organization is unknown. Answering null
+        // ("no organization") would turn an outage into a refusal; this loader has no database
+        // read for it, so it is a 503.
+        throw new ServiceUnavailableException('Organization context is temporarily unavailable')
+      }
+      if (cached.status === 'miss' || !cached.value) {
         // No organization context available
         return null
       }
+      organizationId = cached.value
     }
 
     // Redis may retain permissions after a membership or role change. Batch a fresh

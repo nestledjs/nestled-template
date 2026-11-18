@@ -1,4 +1,8 @@
-import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
+import {
+  ForbiddenException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { JwtStrategy } from './jwt.strategy'
 import type { Request } from 'express'
@@ -29,7 +33,17 @@ describe('JwtStrategy API token authentication', () => {
     strategy = new JwtStrategy(auth as never, apiTokensService as never)
     ;(strategy as any).success = jest.fn()
     ;(strategy as any).fail = jest.fn()
+    ;(strategy as any).error = jest.fn()
   })
+
+  // A refusal of a valid token goes to passport's `error` as a 403 with a code; `fail` would reach
+  // the client as a 401 whatever status it carried (see jwt.strategy.guard.spec.ts).
+  const forbiddenCode = () => {
+    expect((strategy as any).fail).not.toHaveBeenCalled()
+    const error = (strategy as any).error.mock.calls[0]?.[0] as ForbiddenException
+    expect(error).toBeInstanceOf(ForbiddenException)
+    return (error.getResponse() as { code?: string }).code
+  }
 
   it('authenticates opaque API tokens before JWT parsing', async () => {
     const user = { id: 'user-1' }
@@ -80,10 +94,7 @@ describe('JwtStrategy API token authentication', () => {
 
     expect(auth.validateUser).not.toHaveBeenCalled()
     expect((strategy as any).success).not.toHaveBeenCalled()
-    expect((strategy as any).fail).toHaveBeenCalledWith(
-      { message: 'API token is not valid for this resource' },
-      401,
-    )
+    expect(forbiddenCode()).toBe('API_TOKEN_RESOURCE_MISMATCH')
     // Refused here (GraphQL and the rest of the API), so not counted as use of the token.
     expect(apiTokensService.recordTokenUse).not.toHaveBeenCalled()
   })
@@ -142,10 +153,7 @@ describe('JwtStrategy API token authentication', () => {
 
     expect(auth.validateUser).not.toHaveBeenCalled()
     expect((strategy as any).success).not.toHaveBeenCalled()
-    expect((strategy as any).fail).toHaveBeenCalledWith(
-      { message: 'API token is not scoped to the requested organization' },
-      403,
-    )
+    expect(forbiddenCode()).toBe('API_TOKEN_ORGANIZATION_MISMATCH')
   })
 
   it('rejects a mismatch even when the header arrives as an array', async () => {
@@ -161,10 +169,7 @@ describe('JwtStrategy API token authentication', () => {
 
     await strategy.authenticate(req)
 
-    expect((strategy as any).fail).toHaveBeenCalledWith(
-      { message: 'API token is not scoped to the requested organization' },
-      403,
-    )
+    expect(forbiddenCode()).toBe('API_TOKEN_ORGANIZATION_MISMATCH')
   })
 
   it('collapses a repeated matching header to a single value', async () => {

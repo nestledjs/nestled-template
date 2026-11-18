@@ -168,6 +168,53 @@ describe('AuthCacheService', () => {
     await expect(service.invalidateUserMemberships('user-1')).resolves.toBeUndefined()
   })
 
+  // null from a get* method means "ask the database"; the lookup* methods say which it was, so a
+  // caller never reads a Redis failure as "no session" or "no organization".
+  it('tells a cache miss from a failed read', async () => {
+    const redis = createRedisMock()
+    const service = new AuthCacheService(redis as never)
+
+    redis.get.mockResolvedValueOnce(null)
+    await expect(service.lookupSessionValid('session-1')).resolves.toEqual({ status: 'miss' })
+    redis.get.mockResolvedValueOnce('0')
+    await expect(service.lookupSessionValid('session-1')).resolves.toEqual({
+      status: 'hit',
+      value: false,
+    })
+
+    redis.get.mockRejectedValue(new Error('read failed'))
+    await expect(service.lookupSessionValid('session-1')).resolves.toEqual({
+      status: 'unavailable',
+    })
+    await expect(service.lookupUserActiveOrganization('user-1')).resolves.toEqual({
+      status: 'unavailable',
+    })
+    await expect(service.lookupMembership('user-1', 'org-1')).resolves.toEqual({
+      status: 'unavailable',
+    })
+    await expect(service.lookupUser('user-1')).resolves.toEqual({ status: 'unavailable' })
+  })
+
+  it('reads a value that will not parse as unavailable, not as a miss', async () => {
+    const redis = createRedisMock()
+    redis.get.mockResolvedValue('{not json')
+    const service = new AuthCacheService(redis as never)
+
+    await expect(service.lookupMembership('user-1', 'org-1')).resolves.toEqual({
+      status: 'unavailable',
+    })
+    await expect(service.getMembership('user-1', 'org-1')).resolves.toBeNull()
+  })
+
+  it('reports a disabled cache as a miss', async () => {
+    delete process.env['REDIS_URL']
+    delete process.env['REDIS_PRIVATE_URL']
+
+    await expect(new AuthCacheService().lookupSessionValid('session-1')).resolves.toEqual({
+      status: 'miss',
+    })
+  })
+
   it('invalidates organization memberships when a role changes', async () => {
     const redis = createRedisMock()
     redis.keys.mockResolvedValue(['auth:membership:user-1:org-1'])

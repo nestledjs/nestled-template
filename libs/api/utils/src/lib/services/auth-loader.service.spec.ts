@@ -1,3 +1,4 @@
+import { ServiceUnavailableException } from '@nestjs/common'
 import { AuthCacheService } from './auth-cache.service'
 import { AuthLoaderService, createAuthLoaderService } from './auth-loader.service'
 import { OrganizationContext } from '../types/nest-context-type'
@@ -5,11 +6,11 @@ import { OrganizationContext } from '../types/nest-context-type'
 function createAuthCacheMock(): jest.Mocked<
   Pick<
     AuthCacheService,
-    'getUserActiveOrganization' | 'getMembership' | 'setMembership' | 'invalidateMembership'
+    'lookupUserActiveOrganization' | 'getMembership' | 'setMembership' | 'invalidateMembership'
   >
 > {
   return {
-    getUserActiveOrganization: jest.fn().mockResolvedValue(null),
+    lookupUserActiveOrganization: jest.fn().mockResolvedValue({ status: 'miss' }),
     getMembership: jest.fn().mockResolvedValue(null),
     setMembership: jest.fn().mockResolvedValue(undefined),
     invalidateMembership: jest.fn().mockResolvedValue(undefined),
@@ -42,13 +43,28 @@ describe('AuthLoaderService', () => {
 
     await expect(service.loadMembership('user-1')).resolves.toBeNull()
 
-    expect(authCache.getUserActiveOrganization).toHaveBeenCalledWith('user-1')
+    expect(authCache.lookupUserActiveOrganization).toHaveBeenCalledWith('user-1')
+    expect(queryMemberships).not.toHaveBeenCalled()
+  })
+
+  it('answers a 503, not "no organization", when the cache cannot be read', async () => {
+    const authCache = createAuthCacheMock()
+    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'unavailable' })
+    const queryMemberships = jest.fn()
+    const service = new AuthLoaderService(
+      authCache as unknown as AuthCacheService,
+      queryMemberships,
+    )
+
+    await expect(service.loadMembership('user-1')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    )
     expect(queryMemberships).not.toHaveBeenCalled()
   })
 
   it('checks current membership despite a cached organization and permission grant', async () => {
     const authCache = createAuthCacheMock()
-    authCache.getUserActiveOrganization.mockResolvedValue('org-1')
+    authCache.lookupUserActiveOrganization.mockResolvedValue({ status: 'hit', value: 'org-1' })
     authCache.getMembership.mockResolvedValue(context)
     const queryMemberships = jest.fn().mockResolvedValue([])
     const service = new AuthLoaderService(

@@ -84,10 +84,24 @@ export class OrganizationContextService {
     if (req.user?.activeOrganizationId) return req.user.activeOrganizationId
 
     if (req.user && this.authCache?.isEnabled()) {
-      return (await this.authCache.getUserActiveOrganization(req.user.id)) ?? undefined
+      const cached = await this.authCache.lookupUserActiveOrganization(req.user.id)
+      if (cached.status === 'hit') return cached.value
+      // Redis failed: that says nothing about the user's organization. The database holds the
+      // same value (the organization switch writes it there first), so ask it rather than leave
+      // the request without an organization, which sends the user to the picker over an outage.
+      // A database failure here propagates (GqlAuthGuard answers it with a 503).
+      if (cached.status === 'unavailable') return this.activeOrganizationFromDatabase(req.user.id)
     }
 
     return undefined
+  }
+
+  private async activeOrganizationFromDatabase(userId: string): Promise<string | undefined> {
+    const user = await this.data.user.findUnique({
+      where: { id: userId },
+      select: { activeOrganizationId: true },
+    })
+    return user?.activeOrganizationId ?? undefined
   }
 
   private async cacheMembership(
