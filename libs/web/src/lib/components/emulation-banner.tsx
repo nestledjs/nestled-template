@@ -1,6 +1,6 @@
 import { useMutation } from '@apollo/client/react'
 import { EndEmulation, type EndEmulationMutation } from '@nestled-template/shared/sdk'
-import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+import { clearActiveOrganizationForSessionChange } from '@nestled-template/shared/apollo'
 import {
   ShieldExclamationIcon,
   XMarkIcon,
@@ -23,8 +23,9 @@ export function EmulationBanner() {
 
   const [endEmulation, { loading }] = useMutation<EndEmulationMutation>(EndEmulation, {
     onCompleted: () => {
-      // Back to the admin's own session: forget the emulated user's organization first.
-      storeActiveOrganizationId(null)
+      // Back to the admin's own session: forget the emulated user's organization first, and store
+      // none until the reload: the shell, still mounted meanwhile, would write it back.
+      clearActiveOrganizationForSessionChange()
       // Reload page to switch back to admin session
       globalThis.location.href = '/admin/users'
     },
