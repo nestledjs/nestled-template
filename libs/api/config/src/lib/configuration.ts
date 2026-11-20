@@ -1,4 +1,5 @@
 import { defaultOrigin, normalizeApiOrigin } from './api-url'
+import { cookieDomainFromSetting } from './cookie-domain'
 
 // Treat unset OR `.env.example` placeholder values (e.g. `your-google-client-id`) as "not
 // configured", so a plain `cp .env.example .env` does not falsely report OAuth as enabled. Trim
@@ -117,13 +118,11 @@ export const configuration = () => ({
       name: process.env['VITE_COOKIE_NAME'] ?? '__session',
       secret: process.env['API_COOKIE_SECRET'] ?? 'secret',
       options: {
-        // Only set cookie domain if it is a valid registrable domain. Avoid 'localhost' or IPs.
+        // A host-only cookie for an unset value, `localhost`, `127.0.0.1` or `[::1]`; the first
+        // entry of a comma-separated list otherwise (cookie-domain.ts).
         ...(() => {
-          const dom = (process.env['API_COOKIE_DOMAIN'] ?? '').trim()
-          if (!dom || dom === 'localhost' || dom === '127.0.0.1' || dom === '[::1]') {
-            return {}
-          }
-          return { domain: dom }
+          const domain = cookieDomainFromSetting(process.env['API_COOKIE_DOMAIN'])
+          return domain ? { domain } : {}
         })(),
         httpOnly: true,
         secure: process.env['NODE_ENV'] === 'production',

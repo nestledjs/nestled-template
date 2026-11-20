@@ -18,7 +18,7 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline'
 import { cn } from '@nestled-template/shared/utils'
-import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+import { clearActiveOrganizationForSessionChange } from '@nestled-template/shared/apollo'
 
 function formatDate(date: string | null) {
   if (!date) return 'Never'
@@ -206,8 +206,9 @@ export default function AdminUsersPage() {
   const [emulateUser, { loading: emulating }] = useMutation<EmulateUserMutation>(EmulateUser, {
     onCompleted: () => {
       // The emulated user's session starts now: forget the admin's organization, so its requests
-      // are not sent for an organization the emulated user may not belong to.
-      storeActiveOrganizationId(null)
+      // are not sent for an organization the emulated user may not belong to, and store none until
+      // the reload: the shell, still mounted meanwhile, would write the admin's back.
+      clearActiveOrganizationForSessionChange()
       // Reload the page to switch to the emulated user's session
       globalThis.location.href = '/members/dashboard'
     },

@@ -1,12 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ApolloClient } from '@apollo/client'
 import { getApolloContext } from '@apollo/client/react'
-import {
-  classifyApiFailure,
-  clearApiOutage,
-  isRetryableConnectivityError,
-  signalApiOutage,
-} from '@nestled-template/shared/apollo'
+import { isRetryableConnectivityError } from '@nestled-template/shared/apollo'
 
 /**
  * Whether the browser can reach the API, and the "API unavailable" screen's lifecycle.
@@ -215,21 +210,10 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
     optionsRef.current = options
   })
 
-  // Any phase but `available` is outage evidence: while it lasts, a 401 does not log the user out
-  // (`signalApiOutage`, keyed by this instance so several mounted checks do not clear each other).
-  const outageSignalRef = useRef({})
-  const syncOutageSignal = useCallback(() => {
-    if (phaseRef.current === 'available') clearApiOutage(outageSignalRef.current)
-    else signalApiOutage(outageSignalRef.current)
+  const changePhase = useCallback((next: ApiAvailabilityPhase) => {
+    phaseRef.current = next
+    setPhase(next)
   }, [])
-  const changePhase = useCallback(
-    (next: ApiAvailabilityPhase) => {
-      phaseRef.current = next
-      syncOutageSignal()
-      setPhase(next)
-    },
-    [syncOutageSignal],
-  )
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== undefined) {
@@ -325,8 +309,6 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
 
   useEffect(() => {
     mountedRef.current = true
-    const outageSignal = outageSignalRef.current
-    syncOutageSignal()
     // navigator.onLine is browser-only. Read during render, it would make the hydrated HTML differ
     // from the server's, so it is read once after mount and kept current by the listeners below.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs browser-only state after hydration
@@ -360,14 +342,13 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
     document.addEventListener('visibilitychange', handleVisible)
     return () => {
       mountedRef.current = false
-      clearApiOutage(outageSignal)
       clearTimer()
       globalThis.removeEventListener('online', handleOnline)
       globalThis.removeEventListener('offline', handleOffline)
       globalThis.removeEventListener('focus', handleVisible)
       document.removeEventListener('visibilitychange', handleVisible)
     }
-  }, [clearTimer, retryNow, schedule, scheduleRetry, syncOutageSignal])
+  }, [clearTimer, retryNow, schedule, scheduleRetry])
 
   return {
     phase,
@@ -387,26 +368,16 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
  * to put the screen up kept showing its error until the user navigated away.
  *
  * Anything else is left alone, because retrying it would only fail again: GraphQL errors
- * (validation, forbidden, a resolver bug), an HTTP 401 or 403 (the error link already sends the
- * user to log in, or to the access-denied screen), any other answered HTTP status, and an error
- * thrown by application code. Refetching those on every return to the tab replayed the same auth
- * failure, and with it the same logout redirect or access-denied screen, again and again.
- *
- * The one exception is `includeAuthFailures`, passed once an outage clears when the error link let
- * a 401 pass during it (`takeDeferredAuthFailure`): those queries were never sent to logout, so
- * they are refetched for a fresh answer, and a 401 then, with no outage, logs out as usual.
+ * (validation, forbidden, a resolver bug), an HTTP 401 or 403 (the error link has already asked
+ * the server to judge the session again, or put up the access-denied screen), any other answered
+ * HTTP status, and an error thrown by application code. Refetching those on every return to the
+ * tab replayed the same failure, and with it the same screen, again and again.
  */
-export function refetchFailedQueries(
-  client: Pick<ApolloClient, 'getObservableQueries'>,
-  options: { includeAuthFailures?: boolean } = {},
-): number {
+export function refetchFailedQueries(client: Pick<ApolloClient, 'getObservableQueries'>): number {
   let refetched = 0
   for (const query of client.getObservableQueries('active')) {
     const { error } = query.getCurrentResult()
-    if (
-      isRetryableConnectivityError(error) ||
-      (options.includeAuthFailures && error && classifyApiFailure(error) === 'unauthenticated')
-    ) {
+    if (isRetryableConnectivityError(error)) {
       refetched += 1
       query.refetch().catch(() => undefined)
     }
@@ -436,10 +407,8 @@ export const RETURN_TRIGGER_DEBOUNCE_MS = 250
  * the same queries were refetched straight away, forever. A request that arrives inside the
  * backoff window is deferred to the end of it, not dropped.
  */
-export function useRefetchFailedQueries(): (options?: { includeAuthFailures?: boolean }) => void {
+export function useRefetchFailedQueries(): () => void {
   const client = useContext(getApolloContext()).client
-  // Kept until the next pass runs, so a request deferred by the backoff does not lose it.
-  const includeAuthFailuresRef = useRef(false)
   const attemptRef = useRef(0)
   const nextAllowedAtRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -448,9 +417,7 @@ export function useRefetchFailedQueries(): (options?: { includeAuthFailures?: bo
   const run = useCallback(() => {
     timerRef.current = undefined
     if (!client) return
-    const includeAuthFailures = includeAuthFailuresRef.current
-    includeAuthFailuresRef.current = false
-    if (refetchFailedQueries(client, { includeAuthFailures }) === 0) {
+    if (refetchFailedQueries(client) === 0) {
       attemptRef.current = 0
       nextAllowedAtRef.current = 0
       return
@@ -459,16 +426,12 @@ export function useRefetchFailedQueries(): (options?: { includeAuthFailures?: bo
     attemptRef.current += 1
   }, [client])
 
-  const refetch = useCallback(
-    (options?: { includeAuthFailures?: boolean }) => {
-      if (options?.includeAuthFailures) includeAuthFailuresRef.current = true
-      if (timerRef.current !== undefined) return
-      const wait = nextAllowedAtRef.current - Date.now()
-      if (wait <= 0) run()
-      else timerRef.current = setTimeout(run, wait)
-    },
-    [run],
-  )
+  const refetch = useCallback(() => {
+    if (timerRef.current !== undefined) return
+    const wait = nextAllowedAtRef.current - Date.now()
+    if (wait <= 0) run()
+    else timerRef.current = setTimeout(run, wait)
+  }, [run])
 
   useEffect(() => {
     const handleReturn = () => {

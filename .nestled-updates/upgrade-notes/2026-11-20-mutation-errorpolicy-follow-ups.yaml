@@ -1,0 +1,132 @@
+id: 2026-11-20-mutation-errorpolicy-follow-ups
+title: >-
+  Mutation errorPolicy follow-ups: find the call sites that still read a refusal from the result,
+  and declare the client's default error policies to TypeScript (Apollo Client 4.2+)
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter: [2026-11-19-mutation-errorpolicy-none]
+
+intent: >
+  Follow-up to 2026-11-19-mutation-errorpolicy-none (the web client's mutation default became
+  'none'); apply that first. Two parts. No package changes and no change to package.json, nx.json or
+  tsconfig.base.json. No logout path changes: the session rule is unchanged (log a user out only
+  when the API has definitely rejected the session, a real HTTP 401 or a GraphQL `UNAUTHENTICATED`
+  with no outage evidence; outage evidence outranks a 401; anything else keeps the session).
+
+
+  Behaviour changes, plainly: none in the app itself beyond the sites part 1 finds; each one fixed
+  there now shows a refusal it used to lose. Part 2 is types only.
+
+
+  1. Sites that read a refusal from the result. Under the 'none' default a refused mutation rejects
+  and never resolves with `error`, so a site that sets no `errorPolicy` of its own and reads
+  `result.error` / `result.errors` (or destructures `{ error }`, or hands the whole result to an
+  error helper) never sees the refusal there. In a `try` with a `catch` (or with a `.catch`) the
+  catch sees it and the read is only dead code. Without one, the refusal is an unhandled rejection:
+  no message, and whatever the error branch did (stay on the form, show the API message) never
+  runs. 2026-11-19's grep finds every mutation site but does not single these out, and in a project
+  whose sweep left them on the default they can be most of what is left.
+
+  The template adds scripts/audit-mutation-error-reads.mjs (plain Node and the workspace's
+  `typescript`; no build) to list them:
+    node scripts/audit-mutation-error-reads.mjs            (scans apps and libs; or pass folders)
+    node scripts/audit-mutation-error-reads.mjs --json
+  It looks at `useMutation(doc, options)`, generated `useXxxMutation(options)` hooks and
+  `client.mutate(options)`, skips every call whose hook or executor options set `errorPolicy`
+  (`save({ errorPolicy })` wins over the hook's), follows an executor into a helper of the same
+  file it is handed to (a catch around that helper call counts), counts a `try` only when the call
+  is awaited inside it (a promise merely started there rejects after the `try` is over), and sorts
+  each read into:
+  - `uncaught`: nothing catches the rejection. Fix it: move the handling into a `catch` (show the
+    API's message, keep the form or dialog open, do not navigate or show success). The script exits
+    1 while any is left.
+  - `dead-read`: a catch already sees the refusal. Works as is; dropping the read is optional.
+  - `check-by-hand`: the options are a variable or spread another object, so `errorPolicy` may be
+    set where the script cannot see (a wrapper such as a `useGuardedMutation`). Check the wrapper
+    once, then its callers for how they use what it returns.
+  scripts/audit-mutation-error-reads.spec.mjs (run by CI's `node --test scripts/*.spec.mjs`) tests
+  the script and asserts this repository has no `uncaught` site, so a new one fails CI. A project
+  that cannot fix all of its `uncaught` sites in one PR (one needs an owner decision) fixes the rest,
+  lists the remainder in the PR, and gives those hooks `errorPolicy: 'all'` with a comment ("reads
+  the refusal from the result; move it into a catch, then drop this"), which the script skips; do
+  not weaken the spec.
+
+  Template sites: none in apps/web or libs/web. The data browser's create, edit and delete pages
+  (libs/data-browser, the published `@nestledjs/data-browser`) were `dead-read`: inside try/catch,
+  reading `result.errors`, which Apollo 4 never sets, so under a host client that defaults mutations
+  to 'all' a refusal was reported as success. They now pass `errorPolicy: 'none'` themselves and the
+  dead reads are gone. That ships with the next data-browser release; nothing to do downstream until
+  it is published (the published 1.0.29 inherits the host's 'none' default and its catch already
+  shows the message).
+
+
+  2. Declare the default error policies to TypeScript. From Apollo Client 4.2 a default
+  `errorPolicy` in `new ApolloClient({ defaultOptions })` that is not declared fails to type-check:
+  TS2322, "A default option for mutate.errorPolicy must be declared in
+  ApolloClient.DeclareDefaultOptions before usage" (the same for `query`). The template pins
+  `@apollo/client` `^4.1.8`, so a lockfile refresh or `pnpm update` that lands 4.2 or later breaks
+  `apollo:typecheck` on makeClient's explicit `query: { errorPolicy: 'all' }` and
+  `mutate: { errorPolicy: 'none' }`. libs/shared/apollo/src/lib/apollo.ts now declares both, at the
+  top of the module (so every project that imports the client sees it):
+    declare module '@apollo/client' {
+      export namespace ApolloClient {
+        export namespace DeclareDefaultOptions {
+          interface Query { errorPolicy: 'all' }
+          interface Mutate { errorPolicy: 'none' }
+        }
+      }
+    }
+  On 4.1 the interfaces are not read yet, so the declaration is harmless there. Keep each declared
+  value equal to the default it describes; libs/shared/apollo/README.md documents it.
+  - The app's client sets `query` / `mutate` `errorPolicy` defaults: add the declaration with the
+    values it sets, next to its client factory (a file the web typecheck includes).
+  - The app's client sets no `errorPolicy` default (it relies on Apollo's own 'none'): nothing to
+    declare; record part 2 as not-applicable. An app that left out the explicit 'none' because it
+    failed to type-check may now add it with the declaration; either is correct.
+  - A `watchQuery.errorPolicy` (or `returnPartialData`) default needs a `WatchQuery` interface too.
+  Declaring 'all' for queries also widens the declared result types of `client.query` to match what
+  the client already does at runtime; on 4.2+ fix any type errors that surfaces rather than dropping
+  the declaration.
+
+why: >
+  Downstream rollouts of 2026-11-19-mutation-errorpolicy-none found the sites that read a refusal
+  from a hook with no errorPolicy were the majority of what was left in one project, and the note
+  gave no way to list them. A project on Apollo Client 4.2 could not set the explicit 'none' default
+  at all: it failed to type-check, and the note did not say a declaration was needed.
+
+affectedPaths:
+  - scripts/audit-mutation-error-reads.mjs
+  - scripts/audit-mutation-error-reads.spec.mjs
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/README.md
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - node scripts/audit-mutation-error-reads.mjs
+  - node --test scripts/audit-mutation-error-reads.spec.mjs
+  - pnpm typecheck
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+
+agentHints:
+  - >
+    Part 1: copy both script files as they are; they read the TypeScript sources under the
+    folders given (default apps and libs) and need no config. Run the script before and after, and
+    put its counts by verdict (and each `uncaught` site you fixed) in the PR. For each fix, add or
+    adapt a test that answers the mutation with a GraphQL error through a client with the app's
+    real defaults and asserts the API's message shows and no success state does.
+  - >
+    Part 1: the repository-wide assertion in the spec ("finds no site in this repository that reads
+    a refusal from its result uncaught") fails until the `uncaught` sites are fixed or explicitly
+    marked; that is the point. If the project keeps generated or vendored code under apps or libs
+    with such reads, list the folders you want scanned explicitly in that one test, and say why in
+    the PR.
+  - >
+    Part 2: confirm with `node -p "require('@apollo/client/package.json').version"` which version
+    the project resolves. On 4.1 the declaration is still worth adding (the next lockfile refresh
+    lands 4.2+); prove it by running `pnpm typecheck` after `pnpm add -w @apollo/client@4.2.0` in a
+    scratch checkout if you want to, but do not commit a version bump as part of this note.

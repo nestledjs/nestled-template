@@ -3,7 +3,11 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createTestRouter } from '../../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ACTIVE_ORGANIZATION_STORAGE_KEY } from '@nestled-template/shared/apollo'
+import {
+  __resetActiveOrganizationSessionChange,
+  ACTIVE_ORGANIZATION_STORAGE_KEY,
+  rememberActiveOrganization,
+} from '@nestled-template/shared/apollo'
 import AdminUsersPage from '../../../../app/routes/admin/users/_index'
 
 // Mock Apollo Client
@@ -43,6 +47,7 @@ describe('Admin Users Management Page', () => {
   beforeEach(() => {
     user = userEvent.setup()
     vi.clearAllMocks()
+    __resetActiveOrganizationSessionChange()
     delete (window as any).location
     ;(window as any).location = { href: '' }
 
@@ -666,6 +671,10 @@ describe('Admin Users Management Page', () => {
       await waitFor(() => {
         expect(window.location.href).toBe('/members/dashboard')
       })
+      expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBeNull()
+      // The admin's shell is still mounted until the reload, and stores what it shows on every
+      // render: that write must not land, or the emulated session starts with the admin's org.
+      rememberActiveOrganization('admin-org')
       expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBeNull()
     })
 

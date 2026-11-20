@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { loader, safeReturnUrl } from '../../../app/routes/_public/login'
 import { useMutation } from '@apollo/client/react'
-import { getCookie, getJsonCookie, isJwtExpired } from '@nestled-template/shared/utils'
+import { getJsonCookie } from '@nestled-template/shared/utils'
+import type { AppSessionVerdict } from '../../../app/session'
+import {
+  NO_SESSION,
+  REJECTED,
+  SIGNED_IN,
+  UNKNOWN,
+  withSession,
+} from '../../helpers/session-context'
 
 // Mock only the essential external dependencies
-vi.mock('@nestled-template/shared/utils', () => ({
-  getCookie: vi.fn(),
+vi.mock('@nestled-template/shared/utils', async importOriginal => ({
+  ...(await importOriginal<object>()),
   getJsonCookie: vi.fn(),
-  getSessionCookieName: () => '__session',
-  isJwtExpired: vi.fn(),
 }))
 
 vi.mock('@apollo/client/react', () => ({
@@ -22,9 +28,7 @@ describe('Login Component', () => {
     mockLoginMutation = vi.fn()
 
     vi.mocked(useMutation).mockReturnValue([mockLoginMutation, { loading: false }] as any)
-    vi.mocked(getCookie).mockReturnValue(undefined)
     vi.mocked(getJsonCookie).mockReturnValue(null)
-    vi.mocked(isJwtExpired).mockReturnValue(false)
   })
 
   // Note: Component rendering tests are skipped due to complex dependency chain
@@ -32,60 +36,39 @@ describe('Login Component', () => {
   // Focus on loader function tests and E2E tests for UI validation.
 
   describe('Loader Function', () => {
-    it('should redirect authenticated users to dashboard', async () => {
-      vi.mocked(getCookie).mockReturnValue('valid-session-token')
-      vi.mocked(isJwtExpired).mockReturnValue(false)
+    const runLoader = (url: string, verdict: AppSessionVerdict) =>
+      loader({ request: new Request(url), params: {}, context: withSession(verdict) } as never)
 
-      const request = new Request('http://localhost/login')
-      const args = { request, params: {}, context: {} } as any
-
-      await expect(loader(args)).rejects.toThrow()
+    it('redirects a visitor the session middleware judged signed in to the dashboard', async () => {
+      await expect(runLoader('http://localhost/login', SIGNED_IN)).rejects.toMatchObject({
+        status: 302,
+      })
     })
 
-    it('should not redirect when the token is expired', async () => {
-      vi.mocked(getCookie).mockReturnValue('expired-session-token')
-      vi.mocked(isJwtExpired).mockReturnValue(true)
+    it.each([
+      ['no session', NO_SESSION],
+      ['a rejected session', REJECTED],
+      ['an unknown verdict (the API did not answer)', UNKNOWN],
+    ])('shows the form for %s', async (_label, verdict) => {
       vi.mocked(getJsonCookie).mockReturnValue(null)
-
-      const request = new Request('http://localhost/login')
-      const args = { request, params: {}, context: {} } as any
-
-      const result = await loader(args)
-      expect(result).toEqual({})
+      await expect(runLoader('http://localhost/login', verdict)).resolves.toEqual({})
     })
 
-    it('should not redirect when the expired query param is present even with a valid cookie', async () => {
-      vi.mocked(getCookie).mockReturnValue('valid-session-token')
-      vi.mocked(isJwtExpired).mockReturnValue(false)
+    it.each([
+      ['a rejected session', REJECTED],
+      // A parent-domain cookie that survived /force-logout and still authenticates: the form must
+      // still render, so the page's expired=1 cleanup (forget the stored organization) runs.
+      ['a surviving cookie the middleware judged signed in', SIGNED_IN],
+    ])('shows the form after a sign-out (expired=1) for %s', async (_label, verdict) => {
       vi.mocked(getJsonCookie).mockReturnValue(null)
-
-      const request = new Request('http://localhost/login?expired=1')
-      const args = { request, params: {}, context: {} } as any
-
-      const result = await loader(args)
-      expect(result).toEqual({})
+      await expect(runLoader('http://localhost/login?expired=1', verdict)).resolves.toEqual({})
     })
 
     it('should return remembered email data', async () => {
-      vi.mocked(getCookie).mockReturnValue(undefined)
       vi.mocked(getJsonCookie).mockReturnValue({ email: 'remembered@example.com' })
-
-      const request = new Request('http://localhost/login')
-      const args = { request, params: {}, context: {} } as any
-
-      const result = await loader(args)
-      expect(result).toEqual({ email: 'remembered@example.com' })
-    })
-
-    it('should return empty object when no remembered data', async () => {
-      vi.mocked(getCookie).mockReturnValue(undefined)
-      vi.mocked(getJsonCookie).mockReturnValue(null)
-
-      const request = new Request('http://localhost/login')
-      const args = { request, params: {}, context: {} } as any
-
-      const result = await loader(args)
-      expect(result).toEqual({})
+      await expect(runLoader('http://localhost/login', NO_SESSION)).resolves.toEqual({
+        email: 'remembered@example.com',
+      })
     })
   })
 

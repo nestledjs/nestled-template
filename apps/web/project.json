@@ -56,7 +56,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["typegen"],
       "cache": true,
-      "inputs": ["production", "^production"],
+      "inputs": ["production", "^production", { "env": "VITE_COOKIE_DOMAIN" }],
       "outputs": ["{projectRoot}/build"],
       "defaultConfiguration": "production",
       "options": {

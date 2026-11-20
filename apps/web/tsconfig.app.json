@@ -11,8 +11,7 @@
     "**/.client/**/*.tsx",
     ".react-router/types/**/*",
     "./public/**/*",
-    "../../vite-env.d.ts",
-    "app-load-context.d.ts"
+    "../../vite-env.d.ts"
   ],
   "exclude": [
     "tests/**/*.spec.ts",

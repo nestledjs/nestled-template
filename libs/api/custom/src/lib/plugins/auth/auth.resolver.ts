@@ -11,7 +11,7 @@ import {
   ResolveField,
   Resolver,
 } from '@nestjs/graphql'
-import { Logger, UseGuards } from '@nestjs/common'
+import { Logger, UnauthorizedException, UseGuards } from '@nestjs/common'
 import { GraphQLResolveInfo } from 'graphql/type'
 import {
   Authenticated,
@@ -78,6 +78,13 @@ export class AuthResolver {
   @Authenticated()
   async me(@CtxUser() user: User, @Info() _info: GraphQLResolveInfo) {
     const validatedUser = await this.service.validateUser(user.id)
+    // An authenticated caller always gets a user or a 401, never null. The guard has already
+    // loaded this row (JwtStrategy), so a missing one means it was deleted mid-request: the session
+    // is gone, and saying so as UNAUTHENTICATED lets the web judge it like any other rejected
+    // session. A null `me` with no error is not a verdict the web can act on (it keeps the session
+    // as unknown), so it must never stand in for "signed out". The field stays nullable in the
+    // schema so the generated SDK types do not change.
+    if (!validatedUser) throw new UnauthorizedException('User from token not found.')
 
     // The user object from @CtxUser() already has emulation fields attached by JwtStrategy
     // Preserve them in the validated user

@@ -134,4 +134,53 @@ describe('WebUiHeader', () => {
       expect(localStorage.getItem('theme')).toBe('light')
     })
   })
+
+  describe('while the session verdict is unknown (owner decision D2)', () => {
+    const header = (props: { isAuthenticated: boolean; sessionUnknown?: boolean }) => (
+      <WebUiHeader
+        logo="/logo.png"
+        icon="/icon.png"
+        siteName="Demo Site"
+        navigation={[{ name: 'Pricing', href: '/pricing' }]}
+        userName="Ada Lovelace"
+        {...props}
+      />
+    )
+
+    it('is neutral: no account menu and no "Login", only the theme toggle', () => {
+      render(header({ isAuthenticated: false, sessionUnknown: true }))
+
+      expect(screen.queryByText('Login')).toBeNull()
+      expect(screen.queryByText('Get Started')).toBeNull()
+      expect(screen.queryByLabelText('Open account menu')).toBeNull()
+      expect(screen.getAllByLabelText(/Switch to (dark|light) mode/).length).toBeGreaterThan(0)
+      expect(screen.getByText('Pricing')).toBeTruthy()
+    })
+
+    it('is neutral even if a user is somehow passed', () => {
+      render(header({ isAuthenticated: true, sessionUnknown: true }))
+
+      expect(screen.queryByLabelText('Open account menu')).toBeNull()
+      expect(screen.queryByText('Login')).toBeNull()
+    })
+
+    it('keeps the mobile menu neutral too, even if a user is somehow passed', async () => {
+      render(header({ isAuthenticated: true, sessionUnknown: true }))
+
+      fireEvent.click(screen.getByText('Open main menu'))
+
+      expect(await screen.findByText('Close menu')).toBeInTheDocument()
+      expect(screen.queryByText('Ada Lovelace')).toBeNull()
+      expect(screen.queryByRole('link', { name: /Logout/ })).toBeNull()
+      expect(screen.queryByRole('link', { name: /Settings|Billing|Profile/ })).toBeNull()
+      expect(screen.queryByText('Get Started')).toBeNull()
+      expect(screen.getAllByText('Pricing').length).toBeGreaterThan(0)
+    })
+
+    it('shows "Login" again once the verdict is signed out', () => {
+      render(header({ isAuthenticated: false, sessionUnknown: false }))
+
+      expect(screen.getAllByText('Login').length).toBeGreaterThan(0)
+    })
+  })
 })

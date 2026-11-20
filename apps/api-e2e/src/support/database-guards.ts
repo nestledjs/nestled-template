@@ -34,10 +34,15 @@ export function describeDatabase(databaseUrl: string): string {
 /**
  * Why a URL is not a disposable test database, or undefined when it is one. `overridable` says
  * whether E2E_ALLOW_NON_DISPOSABLE_DB may let it through: a remote host or another name can be a
- * deliberate choice, but a URL that could connect somewhere other than it appears to never is.
+ * deliberate choice, but a URL that could connect somewhere other than it appears to never is, and
+ * neither is one on the development server (see developmentServerReason), whatever it is named.
+ *
+ * This is the one rule for every path that writes to, resets or drops a test database: global
+ * setup's guard and its from-scratch reset both read it. `env` supplies POSTGRES_PORT.
  */
 export function nonDisposableReason(
   databaseUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): { reason: string; overridable: boolean } | undefined {
   let url: URL
   try {
@@ -69,6 +74,10 @@ export function nonDisposableReason(
       overridable: false,
     }
   }
+  // Before the name and host checks: a *_test database on the development server is still on it,
+  // and no opt-in makes the development data disposable.
+  const developmentServer = developmentServerReason(databaseUrl, env)
+  if (developmentServer) return { reason: developmentServer, overridable: false }
   if (params.includes('schema')) {
     // Prisma works in that schema, while the from-scratch reset empties public.
     return { reason: 'its ?schema= parameter moves Prisma out of public', overridable: true }
@@ -109,12 +118,16 @@ export function developmentServerReason(
 /**
  * Whether a URL names a database this suite may migrate, push, seed and wipe: a postgresql: URL on
  * this machine (the rule prisma.config.ts applies to `migrate reset`), named as a test database,
- * ending in `_test` (`nestled_template_test` by default), with no `?schema=` and no fragment. A URL
- * whose query parameters override the destination (`?host=`, `?port=`, `?dbname=` and the like) is
- * never disposable, since the client would connect there.
+ * ending in `_test` (`nestled_template_test` by default), with no `?schema=` and no fragment, and
+ * not on the development server's port (POSTGRES_PORT in `env`). A URL whose query parameters
+ * override the destination (`?host=`, `?port=`, `?dbname=` and the like) is never disposable, since
+ * the client would connect there.
  */
-export function isDisposableTestDatabase(databaseUrl: string): boolean {
-  return nonDisposableReason(databaseUrl) === undefined
+export function isDisposableTestDatabase(
+  databaseUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return nonDisposableReason(databaseUrl, env) === undefined
 }
 
 /**
@@ -124,20 +137,17 @@ export function isDisposableTestDatabase(databaseUrl: string): boolean {
  * shared host, would otherwise have its schema rewritten and its data seeded over.
  *
  * `E2E_ALLOW_NON_DISPOSABLE_DB=1` is the opt-out for a database you know is disposable under another
- * name or host (a CI service container reached by its service name, for example), or one you keep on
- * the development server deliberately. It never lets
+ * name or host (a CI service container reached by its service name, for example). It never lets
  * through a URL that could connect elsewhere (a destination override, a fragment, another
- * protocol), and the from-scratch reset still requires a disposable database. So in a setup that
- * empties the schema on every run, the opt-out changes nothing: such a setup should not offer it.
+ * protocol) or one on the development server, and the from-scratch reset still requires a
+ * disposable database. So in a setup that empties the schema on every run, the opt-out changes
+ * nothing: such a setup should not offer it.
  */
 export function assertDisposableTestDatabase(
   databaseUrl: string,
   env: NodeJS.ProcessEnv = process.env,
 ): 'disposable' | 'allowed' {
-  const developmentServer = developmentServerReason(databaseUrl, env)
-  const problem =
-    nonDisposableReason(databaseUrl) ??
-    (developmentServer ? { reason: developmentServer, overridable: true } : undefined)
+  const problem = nonDisposableReason(databaseUrl, env)
   if (!problem) return 'disposable'
   if (problem.overridable && env[ALLOW_NON_DISPOSABLE_DB] === '1') return 'allowed'
   throw new Error(
@@ -151,7 +161,8 @@ export function assertDisposableTestDatabase(
         ? `Point TEST_DATABASE_URL at a disposable database, or, if this one is disposable under ` +
           `another name, host or server, say so explicitly:  ${ALLOW_NON_DISPOSABLE_DB}=1`
         : `Point TEST_DATABASE_URL at a disposable database. ${ALLOW_NON_DISPOSABLE_DB} does not ` +
-          `apply to a URL that could connect somewhere other than it appears to.`,
+          `apply to a URL on the development server or one that could connect somewhere other ` +
+          `than it appears to.`,
     ].join('\n'),
   )
 }
@@ -253,4 +264,31 @@ export function runOnTestDatabase(
         psqlFailureDetail(result.stderr),
     )
   }
+}
+
+/**
+ * Empty the test database's schema, so migrations can build it from scratch (global setup's P3005
+ * recovery). Only for a disposable database by nonDisposableReason, the rule global setup's guard
+ * applies: local, named *_test, not on the development server. Anything else is refused before any
+ * SQL runs, whatever E2E_ALLOW_NON_DISPOSABLE_DB says.
+ */
+export function resetTestDatabase(
+  databaseUrl: string,
+  clients: DatabaseClients,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const problem = nonDisposableReason(databaseUrl, env)
+  if (problem) {
+    throw new Error(
+      `Refusing to reset ${describeDatabase(databaseUrl)}: ${problem.reason}. Only a local ` +
+        `database named *_test (e.g. nestled_template_test), not on the development server, is ` +
+        `reset by the e2e setup, ${ALLOW_NON_DISPOSABLE_DB} or not.`,
+    )
+  }
+  runOnTestDatabase(
+    databaseUrl,
+    'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;',
+    clients,
+    { env },
+  )
 }

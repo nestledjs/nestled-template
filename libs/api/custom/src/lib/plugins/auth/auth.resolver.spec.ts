@@ -100,6 +100,14 @@ describe('AuthResolver', () => {
     expect(authService.validateUser).toHaveBeenCalledWith('user-1')
   })
 
+  it('answers a deleted user with a 401, never a null me', async () => {
+    authService.validateUser.mockResolvedValue(null as any)
+
+    await expect(resolver.me({ id: 'gone' } as any, {} as any)).rejects.toMatchObject({
+      status: 401,
+    })
+  })
+
   it('logs in with session metadata and skips cookies while 2FA is pending', async () => {
     const pending2FA = { requires2FA: true, tempToken: 'temp-token' } as any
     authService.login.mockResolvedValue(pending2FA)

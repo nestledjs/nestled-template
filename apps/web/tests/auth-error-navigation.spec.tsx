@@ -47,6 +47,8 @@ function organizationsClient() {
  * an app may type it `Error`), so these tests compile against either.
  */
 type BoundaryError = Parameters<typeof ErrorBoundary>[0]['error']
+
+const SIGNED_OUT = { session: { kind: 'signed-out', reason: 'no-session' } }
 const boundaryError = (error: unknown) => error as BoundaryError
 
 describe('authentication and authorization error navigation', () => {
@@ -123,7 +125,7 @@ describe('authentication and authorization error navigation', () => {
       [
         {
           path: '/',
-          loader: () => ({}),
+          loader: () => SIGNED_OUT,
           element: <App />,
           children: [{ index: true, element: <p>Protected page</p> }],
         },
@@ -154,7 +156,7 @@ describe('authentication and authorization error navigation', () => {
       [
         {
           path: '/',
-          loader: () => ({}),
+          loader: () => SIGNED_OUT,
           element: <App />,
           children: [{ index: true, element: <p>Protected page</p> }],
         },
@@ -165,7 +167,11 @@ describe('authentication and authorization error navigation', () => {
     // App's effects before dispatching: visible outlet content alone does not prove that the
     // global event listener is installed or that the navigation-reset effect has completed.
     await act(async () => {
-      render(<RouterProvider router={router} />)
+      render(
+        <ApolloProvider client={organizationsClient()}>
+          <RouterProvider router={router} />
+        </ApolloProvider>,
+      )
     })
     expect(screen.getByText('Protected page')).toBeInTheDocument()
 

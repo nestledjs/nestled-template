@@ -1,0 +1,134 @@
+id: 2026-11-20-session-cookie-domain-rule
+title: >-
+  Session cookie domain: the web server reads the cookie domain by the API's own rule (exact
+  loopback values, a comma-separated list, the build-time VITE_COOKIE_DOMAIN), and an app whose
+  domain is derived from the request host keeps that derivation
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+applyAfter: [2026-11-19-session-follow-ups]
+
+intent: >
+  Follow-up to 2026-11-19-session-follow-ups part 3 (apps/web/app/session-cookie.ts,
+  `sessionCookieDomain`, `expiredSessionCookies`). Apply that first. The web server's sign-outs
+  must expire the session cookie on the same domain the API set it on; this note fixes four ways
+  the web helper disagreed with the API. No package changes and no change to package.json,
+  nx.json or tsconfig.base.json. No new environment variable.
+
+
+  Behaviour changes, plainly: (a) a cookie domain such as `127.example.com` is now treated as a
+  domain on the web, as the API already treated it (before, the web dropped it as loopback and a
+  sign-out left the API's domain cookie in place); (b) a comma-separated `API_COOKIE_DOMAIN` now
+  sets the cookie on its first entry on the API (before, the template's API passed the whole
+  string to the cookie serializer, which throws "option domain is invalid", so a sign-in with such
+  a value failed) and the web expires that same entry; (c) a `VITE_COOKIE_DOMAIN` inlined at build
+  time is used when the web service's runtime environment has none. Deployments with a single
+  domain, `localhost`, `127.0.0.1`, `[::1]` or nothing set get exactly the cookies they got before.
+
+
+  1. One rule, two copies with one table. New libs/api/config/src/lib/cookie-domain.ts
+  `cookieDomainFromSetting(value)` (exported from the config barrel): the first nonempty
+  comma-separated entry of the value, trimmed; undefined (host-only) for nothing, `localhost`,
+  `127.0.0.1` or `[::1]`, matched exactly. libs/api/config/src/lib/configuration.ts sets
+  `api.cookie.options.domain` through it. apps/web/app/session-cookie.ts has an identical
+  `cookieDomainFromSetting` (the web server cannot import the API's config), and both specs run the
+  same table: libs/api/config/src/lib/cookie-domain.spec.ts and apps/web/tests/session-cookie.spec.ts
+  (localhost, 127.0.0.1, [::1], 127.example.com, subdomains, comma lists, blanks). Change both
+  copies and both tables together.
+  - An app whose API already reads `API_COOKIE_DOMAIN` as a list (first entry): its API rule is
+    this one; adopt the helper or keep its own and run the table against it.
+  - An app whose API reads a list differently (every entry, or one chosen by the request host):
+    keep the API's rule and make the web helper's `cookieDomainFromSetting` match it, with the
+    table changed to that rule in both specs; do not take the template's first-entry rule.
+  - An app whose API sets no cookie domain at all: the API change is not-applicable; the web
+    change still applies.
+
+
+  2. The web's loopback rule is exact. 2026-11-19 part 3's helper dropped any value starting with
+  `127.`, while the API drops only `127.0.0.1`. `127.example.com` (or any domain whose first label
+  is `127`) lost its domain cookie expiry on the web, and the API's cookie survived a sign-out.
+  Now both drop exactly `localhost`, `127.0.0.1` and `[::1]`.
+  - An app that took part 3's `startsWith('127.')`: replace it with the exact rule. An app whose
+    API uses a wider loopback rule of its own (every 127.x address, every IP literal): keep the
+    two the same, whichever rule that is, and say so in the report.
+
+
+  3. Which setting decides, on the web. `sessionCookieDomain(options?)` takes the first of these
+  that is set (blank counts as unset): `VITE_COOKIE_DOMAIN` in the runtime environment,
+  `VITE_COOKIE_DOMAIN` inlined at build time (`import.meta.env`, restored: part 3 read only
+  `process.env`, so a deploy that gives the web service the value only at build time lost its
+  domain expiry), then `API_COOKIE_DOMAIN` in the runtime environment; that value is read by
+  `cookieDomainFromSetting`. A second parameter (`sources`) exists only so specs can pin each
+  source; callers omit it. Because the build now inlines `VITE_COOKIE_DOMAIN`, apps/web/project.json
+  adds `{ "env": "VITE_COOKIE_DOMAIN" }` to the `build` target's `inputs`, so changing or removing
+  it rebuilds the web bundle instead of reusing a cached one with the previous domain.
+  - An app whose web build target is defined elsewhere (nx.json `targetDefaults`, a plugin
+    inference): add the same env input there.
+
+
+  4. Correction to 2026-11-19 part 3's advice. Part 3 said "an app whose sign-out cookie code
+  lives elsewhere: use the helper there too". That helper read the environment only, so an app
+  whose API derives the cookie's domain from the request host (and sets no `API_COOKIE_DOMAIN`)
+  lost its domain expiry when it replaced its own host-derived code with it. Do not replace a
+  host-derived clear with an env-only one. `sessionCookieDomain` and `expiredSessionCookies` now
+  take `{ hostDerivedDomain }`: the domain the app's API derives for this request, used only when
+  no setting above is present, and checked by the same rule. The template's API never derives a
+  domain, so the template passes none and its cookies are unchanged.
+  - An app whose API derives the cookie domain from the request host: pass the same derivation
+    (for example from `new URL(request.url).hostname`) as `hostDerivedDomain` at each sign-out
+    (/force-logout, the root loader's redirect, entry.server `forceLogoutResponse`); or keep the
+    app's own host-derived helper and have it also expire the configured domain. Either way, a
+    spec with no cookie env set must still expire the derived domain.
+  - An app that already replaced its host-derived clear with part 3's helper: restore the
+    derivation this way; that is the regression this part corrects.
+  - An app whose domain comes from the environment only: nothing to do for this part.
+  Verification: `pnpm exec nx test web --skip-nx-cache` (tests/session-cookie.spec.ts "which
+  setting decides": the host-derived domain when nothing is set, a setting over it, the build-time
+  fallback).
+
+why: >
+  The 2026.11.9 fleet rollout found that the web helper from 2026-11-19-session-follow-ups part 3
+  disagreed with the API: its `127.` prefix dropped a real domain the API sets; it read a
+  comma-separated `API_COOKIE_DOMAIN` as one domain; it dropped the build-time `VITE_COOKIE_DOMAIN`
+  fallback some apps' helpers had; and its advice to replace other sign-out cookie code with an
+  env-only helper regressed apps whose cookie domain is derived from the request host. Each left the
+  API's domain cookie in place after a sign-out, which signs the user straight back in.
+
+affectedPaths:
+  - libs/api/config/src/lib/cookie-domain.ts
+  - libs/api/config/src/lib/cookie-domain.spec.ts
+  - libs/api/config/src/lib/configuration.ts
+  - libs/api/config/src/index.ts
+  - apps/web/app/session-cookie.ts
+  - apps/web/tests/session-cookie.spec.ts
+  - apps/web/project.json
+  - docs/template/README.md
+  - .env.example
+
+skipIf:
+  - The project has no web app and its API sets no cookie domain.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test config --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    Start by writing down, for this app, the rule its API uses to choose the cookie's Domain
+    (libs/api/config configuration.ts or wherever `res.cookie` gets its options): env only, a list,
+    or derived from the request host. The web helper must reproduce that rule; this note's
+    template rule is env only, first list entry, exact loopback values.
+  - >
+    Do not change which domain the API sets its cookie on beyond (b) in the intent. If adopting
+    the template's rule would change it for a working deployment (an app whose API deliberately
+    uses every list entry, or a wider loopback rule), keep the app's rule, mirror it on the web and
+    record adapted.
+  - >
+    To check a deploy with a cookie domain: sign in, trigger a forced sign-out, and confirm two
+    `Set-Cookie` expiries for the session cookie, one with `Domain=` equal to the domain the API's
+    sign-in response set.

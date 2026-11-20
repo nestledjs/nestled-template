@@ -50,6 +50,7 @@ export default function ResetPasswordPage() {
           text: 'Your password has been reset. Redirecting to login...',
         })
         // Redirect to login after 2 seconds
+        // nestled-session-allow: the end of the user's own password reset
         setTimeout(() => navigate('/login'), 2000)
       } else {
         setFormMessage({

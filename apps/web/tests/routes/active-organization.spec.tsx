@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { gql } from '@apollo/client'
 import { ApolloProvider, createQueryPreloader, useQuery } from '@apollo/client/react'
 import { makeClient } from '@nestled-template/shared/apollo'
-import { Me } from '@nestled-template/shared/sdk'
+import { Me, type MeQuery } from '@nestled-template/shared/sdk'
 import { useGlobalCtx } from '@nestled-template/web'
 import { App } from '../../app/app'
 import AuthenticatedLayout from '../../app/routes/_authenticated/_layout'
@@ -135,23 +135,21 @@ function OrganizationPage() {
   )
 }
 
-/**
- * The signed-in shell. `rootPreloadsMe: false` is the recovery path: the root loader brings no Me
- * (a preload that failed), so the layout's re-check finds the user.
- */
-async function renderShell({ rootPreloadsMe }: { rootPreloadsMe: boolean }) {
+/** The verdict the session middleware judges: the user Me answers, as the root loader returns it. */
+async function signedInSession(client: ReturnType<typeof makeClient>) {
+  const { data } = await client.query<MeQuery>({ query: Me, fetchPolicy: 'no-cache' })
+  return { session: { kind: 'signed-in' as const, user: data!.me! } }
+}
+
+/** The signed-in shell: the root loader returns the verdict, the members loader its query. */
+async function renderShell() {
   const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
   const preload = createQueryPreloader(client)
   const router = createMemoryRouter(
     [
       {
         path: '/',
-        loader: async () => {
-          if (!rootPreloadsMe) return {}
-          const meQueryRef = preload(Me)
-          await preload.toPromise(meQueryRef)
-          return { meQueryRef }
-        },
+        loader: () => signedInSession(client),
         element: <App />,
         children: [
           {
@@ -200,15 +198,14 @@ const hydratedRoots: Root[] = []
 async function reloadAndHydrate(stored: string | null) {
   const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
   const preload = createQueryPreloader(client)
-  const meQueryRef = preload(Me)
+  const rootData = await signedInSession(client)
   const myOrganizationsQueryRef = preload(MY_ORGANIZATIONS_WITH_MEMBERS)
-  await preload.toPromise(meQueryRef)
   await preload.toPromise(myOrganizationsQueryRef)
   const routes = [
     {
       id: 'root',
       path: '/',
-      loader: () => ({ meQueryRef }),
+      loader: () => rootData,
       element: <App />,
       children: [
         {
@@ -222,7 +219,7 @@ async function reloadAndHydrate(stored: string | null) {
     },
   ]
   const hydrationData = {
-    loaderData: { root: { meQueryRef }, members: { myOrganizationsQueryRef } },
+    loaderData: { root: rootData, members: { myOrganizationsQueryRef } },
   }
   const tree = () => (
     <ApolloProvider client={client}>
@@ -342,12 +339,12 @@ describe('the active organization: what the shell shows and what the requests ar
     localStorage.clear()
   })
 
-  it('after a recovery, shows and sends the active organization the re-check learned, not the first', async () => {
+  it('when the stored organization is not the server’s, shows and sends the server’s', async () => {
     // The browser still holds the first organization; the server's active one is the second.
     localStorage.setItem('activeOrganizationId', 'org-1')
     const api = fakeApi('org-2')
 
-    await renderShell({ rootPreloadsMe: false })
+    await renderShell()
 
     expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
     expect(pageRequestOrganization(api)).toBe('org-2')
@@ -358,7 +355,7 @@ describe('the active organization: what the shell shows and what the requests ar
   it('with nothing stored, shows and sends the server’s active organization', async () => {
     const api = fakeApi('org-2')
 
-    await renderShell({ rootPreloadsMe: true })
+    await renderShell()
 
     expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
     expect(pageRequestOrganization(api)).toBe('org-2')
@@ -368,23 +365,23 @@ describe('the active organization: what the shell shows and what the requests ar
     localStorage.setItem('activeOrganizationId', 'org-2')
     const api = fakeApi(null)
 
-    await renderShell({ rootPreloadsMe: true })
+    await renderShell()
 
     expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
     expect(pageRequestOrganization(api)).toBe('org-2')
     expect(screen.getByText('User active organization: org-2; shown: org-2')).toBeInTheDocument()
   })
 
-  it('after a recovery with no server organization, the re-checked user follows the restore', async () => {
-    // The re-checked user is a snapshot (no-cache); the restore still has to reach it.
+  it('with no server organization, the verdict’s user follows the restore and stays there', async () => {
+    // The verdict's user is a snapshot (judged with no-cache); the restore still has to reach it.
     localStorage.setItem('activeOrganizationId', 'org-2')
     const api = fakeApi(null)
 
-    await renderShell({ rootPreloadsMe: false })
+    await renderShell()
 
     expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
     expect(pageRequestOrganization(api)).toBe('org-2')
-    // Not a matter of time: the root loader here never brings a Me, so the snapshot stays.
+    // Not a matter of time: the shell reads the cached Me after seeding it, so the restore stays.
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 50))
     })
@@ -413,9 +410,9 @@ describe('the active organization: what the shell shows and what the requests ar
     expect(localStorage.getItem('activeOrganizationId')).toBe('org-2')
     picker.unmount()
 
-    // The reload: a fresh app, Me preloaded by the root loader.
+    // The reload: a fresh app, the session judged again.
     api.organizationHeaders.length = 0
-    await renderShell({ rootPreloadsMe: true })
+    await renderShell()
 
     expect(screen.getByText('Shown organization: Second Org')).toBeInTheDocument()
     expect(pageRequestOrganization(api)).toBe('org-2')

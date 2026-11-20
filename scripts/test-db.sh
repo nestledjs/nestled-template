@@ -87,7 +87,8 @@ is_local_test_database() {
 
 # Whether TEST_DB_URL is on this machine's development Postgres (the port POSTGRES_PORT names). A
 # test database there sits beside the development data, in a server `reset` never clears, and
-# `ensure` would create it inside that server.
+# `ensure` would create it inside that server. Nothing here acts on such a URL, whatever its name and
+# whatever E2E_ALLOW_NON_DISPOSABLE_DB says (the rule database-guards.ts applies in the e2e setup).
 on_development_server() {
   [[ -n "$DEV_DB_PORT" ]] || return 1
   [[ "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]] || return 1
@@ -114,26 +115,32 @@ own_test_container_problem() {
 # Prisma's `migrate deploy` has no guard of its own, so `migrate` refuses a URL that is not a
 # disposable test database, by the rules the e2e setup applies before it resets, migrates, pushes or
 # seeds (apps/api-e2e/src/support/database-guards.ts): a postgres(ql):// URL on this machine, named
-# *_test. E2E_ALLOW_NON_DISPOSABLE_DB=1 admits another host or name; a query string or fragment,
-# which could send the client elsewhere, is refused either way.
+# *_test, not on the development server. E2E_ALLOW_NON_DISPOSABLE_DB=1 admits another host or name;
+# a query string or fragment, which could send the client elsewhere, and a URL on the development
+# server are refused either way.
+refuse_development_server() {
+  local action="$1"
+  on_development_server || return 0
+  echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development" >&2
+  echo "   Postgres (POSTGRES_PORT). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT)." >&2
+  echo "   E2E_ALLOW_NON_DISPOSABLE_DB does not apply: a database on the development server is never" >&2
+  echo "   a disposable test database, whatever it is named." >&2
+  exit 1
+}
+
 assert_disposable_test_database() {
   local action="$1"
   if [[ ! "$TEST_DB_URL" =~ $TEST_DB_PLAIN_URL_PATTERN ]]; then
     echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: not a plain postgresql:// URL (no query or fragment)." >&2
     exit 1
   fi
-  if is_local_test_database && ! on_development_server; then
+  refuse_development_server "$action"
+  if is_local_test_database; then
     return 0
   fi
   if [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" == "1" ]]; then
     echo "⚠️  E2E_ALLOW_NON_DISPOSABLE_DB=1: running $action on $TEST_DB_DISPLAY_URL, which is not a local *_test database."
     return 0
-  fi
-  if on_development_server; then
-    echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development" >&2
-    echo "   Postgres (POSTGRES_PORT). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or" >&2
-    echo "   set E2E_ALLOW_NON_DISPOSABLE_DB=1 if sharing that server is deliberate." >&2
-    exit 1
   fi
   echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: a test database must be on this machine (localhost," >&2
   echo "   127.0.0.1 or [::1]) and named *_test. Point TEST_DATABASE_URL at one, or set" >&2
@@ -287,14 +294,9 @@ case "$COMMAND" in
 
   "verify")
     # Before a run: the database the URL names is the one this repo should test against. Not on the
-    # development server (E2E_ALLOW_NON_DISPOSABLE_DB=1 accepts that deliberately), and, for the
-    # repo's own URL, served by the repo's own test container.
-    if on_development_server && [[ "${E2E_ALLOW_NON_DISPOSABLE_DB:-}" != "1" ]]; then
-      echo "❌ $TEST_DB_DISPLAY_URL is on port $DEV_DB_PORT, the development Postgres (POSTGRES_PORT)." >&2
-      echo "   Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or set" >&2
-      echo "   E2E_ALLOW_NON_DISPOSABLE_DB=1 if sharing that server is deliberate." >&2
-      exit 1
-    fi
+    # development server (whatever E2E_ALLOW_NON_DISPOSABLE_DB says), and, for the repo's own URL,
+    # served by the repo's own test container.
+    refuse_development_server test
     VERIFY_PROBLEM="$(own_test_container_problem)"
     if [[ -n "$VERIFY_PROBLEM" ]]; then
       echo "❌ Not testing against $TEST_DB_DISPLAY_URL: $VERIFY_PROBLEM." >&2

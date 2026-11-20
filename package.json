@@ -79,6 +79,8 @@
     "sdk:update-contract-baseline": "nestled-doctor --update-sdk-contract-baseline",
     "verify:selects": "nestled-verify-selects",
     "verify:fragments": "nestled-verify-fragments",
+    "verify:session-decisions": "node scripts/audit-session-decisions.mjs",
+    "codemod:v8-middleware-context": "node scripts/codemod-v8-middleware-context.mjs",
     "verify:select-coverage": "nestled-verify-select-coverage"
   },
   "private": true,

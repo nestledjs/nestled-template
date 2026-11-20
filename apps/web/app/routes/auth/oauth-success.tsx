@@ -1,7 +1,7 @@
 import React from 'react'
 import { Link, LoaderFunctionArgs, redirect } from 'react-router'
-import { getCookie, getSessionCookieName, isJwtExpired } from '@nestled-template/shared/utils'
 import { AuthLayout } from '@nestled-template/web'
+import { getSession } from '../../session'
 
 // Where a completed OAuth sign-in lands. Mirrors login.tsx's DEFAULT_POST_LOGIN.
 const POST_LOGIN = '/members/dashboard'
@@ -12,17 +12,14 @@ const POST_LOGIN = '/members/dashboard'
  * nothing to complete client-side — resolve it on the server and bounce, which avoids showing a
  * pointless interstitial flash.
  *
- * If the cookie is somehow absent or expired by the time we get here, the sign-in did not
- * actually complete; send the user back to the form rather than to a dashboard that will bounce
- * them straight out again.
+ * The session middleware has already judged the new cookie. Signed out means the sign-in did not
+ * actually complete: send the user back to the form rather than to a dashboard that would bounce
+ * them out again. Signed in, or unknown (the API did not answer just now), goes on to the
+ * dashboard, whose own `requireSession` shows the recovering screen if it is still unknown.
  */
-export async function loader({ request }: LoaderFunctionArgs) {
-  const token = getCookie(request.headers, getSessionCookieName())
-
-  if (token && !isJwtExpired(token)) {
-    throw redirect(POST_LOGIN)
-  }
-
+export async function loader({ context }: LoaderFunctionArgs) {
+  if (getSession(context).kind !== 'signed-out') throw redirect(POST_LOGIN)
+  // nestled-session-allow: the OAuth flow's own outcome page, the session is already judged
   throw redirect('/login?error=oauth_incomplete')
 }
 

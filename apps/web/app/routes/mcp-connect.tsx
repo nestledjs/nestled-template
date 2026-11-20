@@ -7,8 +7,10 @@ import {
 } from 'react-router'
 import type { ReactNode } from 'react'
 import { ExclamationTriangleIcon, ShieldCheckIcon } from '@heroicons/react/24/outline'
-import { getCookie, getSessionCookieName } from '@nestled-template/shared/utils'
+import { narrowApiError } from '@nestled-template/shared/apollo'
 import { toApiBase } from './settings/_mcp-shared'
+import { getSession } from '../session'
+import { forwardedSessionCookie, requireSession } from '../session/session-middleware.server'
 
 /**
  * MCP OAuth consent page. The API's /api/mcp/authorize never issues a code by itself: it stores
@@ -43,14 +45,29 @@ function serverApiBase(): string {
   return toApiBase(process.env['VITE_API_URL'] || (import.meta.env.VITE_API_URL as string))
 }
 
-function loginRedirect(url: URL) {
-  // Same-origin relative path, consistent with every other return_url producer.
-  return redirect(`/login?return_url=${encodeURIComponent(url.pathname + url.search)}`)
+/**
+ * The consent page needs a signed-in user: `requireSession` sends a signed-out request to
+ * `/login?return_url=...` (this page, request id and all) and an unknown one to the recovering
+ * screen, before the loader or action runs.
+ */
+export const middleware = [requireSession]
+
+/**
+ * The session cookie for the API call. `requireSession` has already judged the request signed in,
+ * so a missing cookie here is a programming error, not a sign-out.
+ */
+function sessionCookieHeader(request: Request, context: Parameters<typeof getSession>[0]): string {
+  const cookie = getSession(context).kind === 'signed-in' ? forwardedSessionCookie(request) : null
+  if (!cookie) throw new Error('mcp-connect reached without a signed-in session')
+  return cookie
 }
 
-function sessionCookieHeader(request: Request): string | null {
-  const token = getCookie(request.headers, getSessionCookieName())
-  return token ? `${getSessionCookieName()}=${token}` : null
+/**
+ * The API refused the consent call with a 401 after the session was judged signed in. That is a
+ * suspicion, not a sign-out: the root ErrorBoundary asks the server to judge the session again.
+ */
+function refusedSession(): unknown {
+  return narrowApiError(Object.assign(new Error('MCP consent call refused'), { statusCode: 401 }))
 }
 
 async function readError(response: Response): Promise<string | null> {
@@ -76,19 +93,19 @@ export function headers() {
   }
 }
 
-export async function loader({ request }: LoaderFunctionArgs): Promise<LoaderData> {
+export async function loader({ request, context }: LoaderFunctionArgs): Promise<LoaderData> {
   const url = new URL(request.url)
   const requestId = url.searchParams.get('request')
   if (!requestId) throw redirect('/')
 
-  const cookie = sessionCookieHeader(request)
-  if (!cookie) throw loginRedirect(url)
+  const cookie = sessionCookieHeader(request, context)
 
   const response = await fetch(
     `${serverApiBase()}/api/mcp/authorize/pending?request=${encodeURIComponent(requestId)}`,
     { headers: { cookie, accept: 'application/json' } },
   )
-  if (response.status === 401) throw loginRedirect(url)
+  // nestled-session-allow: narrows the API's 401 into a route error; the middleware decides
+  if (response.status === 401) throw refusedSession()
   if (!response.ok) {
     const message = response.status === 404 ? EXPIRED_MESSAGE : await readError(response)
     return { status: 'error', message: message ?? EXPIRED_MESSAGE }
@@ -96,9 +113,11 @@ export async function loader({ request }: LoaderFunctionArgs): Promise<LoaderDat
   return { status: 'ready', consent: (await response.json()) as McpConsentDetails }
 }
 
-export async function action({ request }: ActionFunctionArgs): Promise<ActionData | Response> {
-  const cookie = sessionCookieHeader(request)
-  if (!cookie) return loginRedirect(new URL(request.url))
+export async function action({
+  request,
+  context,
+}: ActionFunctionArgs): Promise<ActionData | Response> {
+  const cookie = sessionCookieHeader(request, context)
 
   const form = await request.formData()
   const field = (name: string) => {

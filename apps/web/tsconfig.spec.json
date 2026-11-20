@@ -27,8 +27,7 @@
     "src/**/*.d.ts",
     "tests/**/*.ts",
     "tests/**/*.tsx",
-    ".react-router/types/**/*",
-    "app-load-context.d.ts"
+    ".react-router/types/**/*"
   ],
   "exclude": ["node_modules"]
 }

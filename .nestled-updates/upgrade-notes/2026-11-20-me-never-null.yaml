@@ -1,0 +1,72 @@
+id: 2026-11-20-me-never-null
+title: >-
+  API: `me` answers an authenticated caller with the user or a 401 UNAUTHENTICATED, never a null
+  `me` with no error
+priority: high
+area: auth
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-19-api-auth-ambiguity
+  - 2026-11-20-session-cookie-domain-rule
+  - 2026-11-20-mutation-errorpolicy-follow-ups
+  - 2026-11-20-emulation-organization-reload-race
+  - 2026-11-20-test-db-guard-follow-ups
+
+intent: >
+  The `me` query (libs/api/custom/src/lib/plugins/auth/auth.resolver.ts, `AuthResolver.me`) is
+  behind `GqlAuthGuard`, whose `JwtStrategy` has already loaded the caller's user row. `me` then
+  reads the row again (`AuthService.validateUser`, a `findUnique`) and returned whatever came back.
+  If the row was deleted between the guard and the resolver, that was `null`: an HTTP 200 with
+  `data.me === null` and no error. Now `me` throws `UnauthorizedException('User from token not
+  found.')` in that case, which the API's error formatting sends as a GraphQL error with
+  `extensions.code: UNAUTHENTICATED`, the same answer `JwtStrategy` gives a token whose user is
+  gone. The field stays `nullable: true` in the schema, so api-schema.graphql and the generated SDK
+  types do not change.
+
+
+  Behaviour change, plainly: one rare race (a user deleted mid-request) now gets the API's normal
+  "session rejected" answer instead of an empty one. Nothing else `me` returns changes, emulation
+  markers included. No package, schema, migration or environment change.
+
+
+  Why it matters to the web: the web's session judge (2026-11-20-session-middleware, in this release)
+  signs out only on a clean UNAUTHENTICATED that a second call confirms, and keeps the session as
+  "unknown" for a null `me` with no error, because an empty answer is not proof the session is
+  dead. With this change an authenticated caller can never produce that empty answer from the API's
+  side, so the "unknown/empty" case can only come from something between the web and the API.
+
+  - An app whose `me` resolver already throws on a missing user (any `UnauthorizedException`, or a
+    guard that refuses before the resolver): record `adapted` and say where.
+  - An app whose `me` resolver returns a different type, or builds the user some other way: add the
+    same check right after it loads the row; throw `UnauthorizedException`, never a
+    `ForbiddenException` or a plain `Error` (those are not a 401, and a plain Error is a 500).
+  - An app whose `me` is deliberately `@Public()` and answers null for an anonymous caller: keep
+    that for anonymous callers; add the throw only on the path where a user id came from the guard.
+
+why: >
+  Investigating sign-outs on the web found that an empty `me` with no error was being treated as
+  "no session" by some apps, and as an outage by others. The API should never send that shape to an
+  authenticated caller: the caller is either signed in (the user) or not (401). Removing it at the
+  source leaves one meaning for each answer.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+  - libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+
+skipIf:
+  - The project has no `me` query.
+
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx build api --skip-nx-cache
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >
+    The spec added is "answers a deleted user with a 401, never a null me": the service's
+    `validateUser` resolves null and `me` rejects with status 401. Port it beside the app's existing
+    `me` spec.
+  - >
+    Do not make the `me` field non-nullable in the schema as part of this note: that changes the
+    generated SDK types for every client and is not needed for the fix.

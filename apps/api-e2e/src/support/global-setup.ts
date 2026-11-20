@@ -12,7 +12,7 @@ import {
   ALLOW_NON_DISPOSABLE_DB,
   assertDisposableTestDatabase,
   describeDatabase,
-  isDisposableTestDatabase,
+  resetTestDatabase,
   runOnTestDatabase,
   type DatabaseClients,
 } from './database-guards'
@@ -92,25 +92,6 @@ function runMigrateDeploy(projectRoot: string, testDatabaseUrl: string) {
 }
 
 /**
- * Empty the test database's schema, so migrations can build it from scratch. Only for a disposable
- * database (local, named *_test); anything else is refused before the reset runs, whatever
- * E2E_ALLOW_NON_DISPOSABLE_DB says.
- */
-function resetTestDatabase(testDatabaseUrl: string) {
-  if (!isDisposableTestDatabase(testDatabaseUrl)) {
-    throw new Error(
-      `Refusing to reset ${describeDatabase(testDatabaseUrl)}: only a local database named *_test ` +
-        `(e.g. nestled_template_test) is reset by the e2e setup, ${ALLOW_NON_DISPOSABLE_DB} or not.`,
-    )
-  }
-  runOnTestDatabase(
-    testDatabaseUrl,
-    'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;',
-    databaseClients,
-  )
-}
-
-/**
  * Apply committed migrations to the test database.
  *
  * A test database built before the suite applied migrations (by `prisma db push` alone) has tables
@@ -131,7 +112,7 @@ function applyMigrations(projectRoot: string, testDatabaseUrl: string) {
     '♻️  The test database has tables but no migration history (it was built with `db push`).',
   )
   console.log('   Resetting the test database and applying migrations from scratch...')
-  resetTestDatabase(testDatabaseUrl)
+  resetTestDatabase(testDatabaseUrl, databaseClients)
 
   const retry = runMigrateDeploy(projectRoot, testDatabaseUrl)
   if (!retry.ok) {

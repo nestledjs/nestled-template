@@ -1,0 +1,95 @@
+id: 2026-11-20-emulation-organization-reload-race
+title: >-
+  Starting or ending an emulation stores no organization until the reload, so the still-mounted
+  shell cannot write the previous user's organization back into the next session
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter: [2026-11-19-session-follow-ups, 2026-11-20-mutation-errorpolicy-follow-ups]
+
+intent: >
+  Follow-up to 2026-11-19-session-follow-ups part 1, which made starting and ending an emulation
+  forget the stored organization (`storeActiveOrganizationId(null)`) before the page sets
+  `location.href`; apply that first. No package changes and no change to package.json, nx.json or
+  tsconfig.base.json. No logout or session change: nobody is signed out, the session cookie is not
+  touched, and the logout rule is unchanged (log a user out only when the API has definitely
+  rejected the session, a real HTTP 401 or a GraphQL `UNAUTHENTICATED` with no outage evidence;
+  outage evidence outranks a 401; anything else keeps the session).
+
+
+  Behaviour change, plainly: after starting or ending an emulation, the next session's first
+  document starts with no stored organization, every time. Until the reload the old page sends no
+  `x-organization-id` (the API answers for the user's own active organization).
+
+
+  The defect. The signed-in shell stores the organization it shows on every render
+  (`useActiveOrganization` → `rememberActiveOrganization`), and it stays mounted while the
+  emulation's document navigation is pending. Any re-render in that window (the mutation's answer
+  reaching the cache, a query settling) wrote the previous user's organization straight back after
+  the forget. The next session's first requests then carried it, and when that user's own active
+  organization was unknown, the shell's restore step could make it their active organization on the
+  API if they were also a member (an admin emulating a colleague in a shared organization).
+
+
+  The fix, in libs/shared/apollo/src/lib/apollo.ts: `clearActiveOrganizationForSessionChange()`
+  forgets the stored organization (ending the organization session, so a switch still in flight
+  stores nothing, as `storeActiveOrganizationId(null)` does) and latches this document: from then on
+  every non-null `storeActiveOrganizationId` is ignored and `getStoredActiveOrganizationId` answers
+  null, so nothing can store or send an organization before the document unloads. Nothing clears the
+  latch in the browser; the next document starts unlatched. `__resetActiveOrganizationSessionChange`
+  undoes it for tests only. The admin users page's `EmulateUser` and the emulation banner's
+  `EndEmulation` `onCompleted` now call it instead of `storeActiveOrganizationId(null)`, before
+  setting `location.href`.
+
+  Use it only before a document navigation into another user's session. A sign-in that stays in the
+  same document (login form, registration, an invitation) keeps `storeActiveOrganizationId(null)`:
+  the new session's shell must be able to store its own organization. Logout is unchanged.
+
+  - The app's emulation transitions do a client-side navigate instead of setting `location.href`:
+    do not latch (the next session renders in this document); use `storeActiveOrganizationId(null)`
+    and make sure the shell's session key (the user id) changes so it starts over.
+  - The app keeps its organization elsewhere (its own store, a cookie read by the server): put the
+    same latch on that store's writer and reader; the point is that nothing in the leaving document
+    can write or send the previous user's organization.
+  - The app has no emulation: not-applicable.
+
+why: >
+  A downstream rollout of 2026-11-19-session-follow-ups found that the shell's own storing during
+  the pending reload undid the forget, so the emulated session (or the admin's, on the way back)
+  started with the other user's organization. The template has the same shell and the same race.
+
+affectedPaths:
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/app/routes/admin/users/_index.tsx
+  - libs/web/src/lib/components/emulation-banner.tsx
+  - libs/web/src/lib/components/emulation-banner.spec.tsx
+  - apps/web/tests/routes/admin/users/_index.spec.tsx
+
+skipIf:
+  - The project has no web app.
+  - The project has no user emulation.
+
+verification:
+  - pnpm typecheck
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web-components --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+
+agentHints:
+  - >
+    The reproduction is libs/web/src/lib/components/emulation-banner.spec.tsx "does not let the
+    still-mounted shell write the emulated user's organization back before the reload": it renders
+    a shell with `useActiveOrganization` next to the banner, ends the emulation, re-renders the
+    shell, and expects nothing stored. With `storeActiveOrganizationId(null)` in the banner it fails
+    with "expected 'emulated-users-org' to be null". Port it to the app's own shell and emulation
+    exit; it needs `useApolloClient` in the spec's `@apollo/client/react` mock.
+  - >
+    Specs that run an emulation transition and later store an organization in the same file need
+    `__resetActiveOrganizationSessionChange()` in their `beforeEach`/`afterEach`, or the latch
+    carries into the next test (module state lives per spec file).
+  - >
+    Check by hand in a browser if you can: sign in as an admin with a stored organization, emulate
+    a user, and in the emulated session's devtools confirm `localStorage.activeOrganizationId` is
+    the emulated user's (or empty), never the admin's; then end the emulation and check the reverse.

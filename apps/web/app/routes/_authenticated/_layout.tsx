@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate, Outlet, useLoaderData, useLocation, useRevalidator } from 'react-router'
+import { useMemo, useState } from 'react'
+import { Outlet, useLoaderData, useLocation, useRevalidator } from 'react-router'
 import {
   GlobalContextProvider,
   useActiveOrganization,
@@ -17,12 +17,18 @@ import {
   type MyOrganizationsWithMembersQuery,
 } from '@nestled-template/shared/sdk'
 import { useReadQuery, type QueryRef } from '@apollo/client/react'
-import { browserIsOffline } from '../../api-availability'
-import { ApiUnavailableScreen } from '../../api-unavailable'
-import { useSessionRecheck } from '../../session-recheck'
-import { useRootLoaderOutage } from '../../loader-outage'
-import { OrganizationRequired } from '../../organization-required'
+import { requireSession } from '../../session/session-middleware.server'
 
+/**
+ * Every page below this layout needs a user. `requireSession` acts on the session verdict before
+ * any loader here runs: a signed-out or unknown request never reaches this loader or its
+ * children's, and the user is always present when they do.
+ */
+export const middleware = [requireSession]
+
+// Runs only for a signed-in request (`requireSession`). A failure reading the organizations is
+// never an empty list: an outage reaches the root ErrorBoundary as the recovering screen, any other
+// error as the error screen with a retry; `[]` means only that the API answered with none.
 export const loader = apolloLoader()(({ preloadQuery }) => {
   const myOrganizationsQueryRef = preloadQuery<MyOrganizationsWithMembersQuery>(
     MyOrganizationsWithMembers,
@@ -43,36 +49,16 @@ export default function AuthenticatedLayout() {
   // Read organizations from preloaded query
   const { data: orgsData } = useReadQuery(loaderData.myOrganizationsQueryRef)
 
-  // No user is not proof of a dead session (a Me preload on a public route may have failed for
-  // another reason, and the root loader does not run again on a client-side navigation here), so
-  // Me is asked again. Only a real 401 with no outage goes through force-logout, which clears the
-  // session cookie (and appends `expired=1`, so /login renders the form instead of looping). The
-  // root loader's outage flag counts as outage evidence: a 401 while it stands is retried.
-  const recheck = useSessionRecheck(!contextUser, useRootLoaderOutage())
-  const sessionUser = contextUser ?? (recheck.status === 'signed-in' ? recheck.user : null)
-
-  // The re-checked user is a snapshot (the re-check skips the cache), so once it recovers, run the
-  // root loader again for a Me query of its own: the user then comes from the cache like any other
-  // query and follows later changes (a profile edit, an organization switch). Once per recovery;
-  // if the loader still brings no Me, the snapshot stays.
+  const sessionUser = contextUser ?? null
   const revalidator = useRevalidator()
-  const recoveredUserRef = useRef<unknown>(null)
-  const recheckedUser = !contextUser && recheck.status === 'signed-in' ? recheck.user : null
-  useEffect(() => {
-    if (!recheckedUser || recoveredUserRef.current === recheckedUser) return
-    recoveredUserRef.current = recheckedUser
-    void revalidator.revalidate()
-  }, [recheckedUser, revalidator])
 
   // The organization shown, and every request's `x-organization-id`: the server's active one (from
-  // Me, the re-checked one included), else the first, identical in the server render and the
-  // hydrating one. A choice this browser stored is restored after hydration, through the shared
+  // Me), else the first, identical in the server render and the hydrating one. A choice this browser stored is restored after hydration, through the shared
   // switch, and the loaders run again for it; organization-scoped content waits meanwhile.
   const organizations = orgsData?.myOrganizations || []
   // A restored organization must reach the user the pages get too, so `user.activeOrganizationId`
-  // and `activeOrganization.id` agree. A live Me follows the switch's cache write by itself; the
-  // re-check's snapshot does not (and stays when the root loader brings no Me), so the restore is
-  // applied to it here, for the user it was restored for, and only while that user's own active
+  // and `activeOrganization.id` agree. The cached Me follows the switch's cache write by itself; the
+  // verdict's user (rendered until the cache has it) does not, so the restore is applied here, for the user it was restored for, and only while that user's own active
   // organization is unknown or not theirs: one the server knows always wins.
   const [restored, setRestored] = useState<RestoredOrganization | null>(null)
   // Memoized: a new object on every render would re-render every consumer of the shell's context.
@@ -91,22 +77,9 @@ export default function AuthenticatedLayout() {
     },
   )
 
-  if (!user) {
-    if (recheck.status === 'rejected') {
-      const returnUrl = `${location.pathname}${location.search}`
-      return <Navigate to={`/force-logout?return_url=${encodeURIComponent(returnUrl)}`} replace />
-    }
-    if (recheck.status === 'organization-required') return <OrganizationRequired />
-    if (recheck.status === 'retrying') {
-      return (
-        <ApiUnavailableScreen
-          reason={browserIsOffline() ? 'offline' : 'server'}
-          onRetry={recheck.retryNow}
-        />
-      )
-    }
-    return null
-  }
+  // `requireSession` guarantees a signed-in verdict, and App renders its user; nothing to show
+  // without one.
+  if (!user) return null
 
   const activeOrganizationMember =
     activeOrganization?.members?.find(member => member.userId === user?.id) || null

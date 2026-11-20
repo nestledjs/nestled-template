@@ -6,8 +6,10 @@ import {
   describeDatabase,
   developmentServerReason,
   isDisposableTestDatabase,
+  nonDisposableReason,
   psqlEnvironment,
   psqlProcessEnvironment,
+  resetTestDatabase,
   runOnTestDatabase,
   type DatabaseClients,
 } from './database-guards'
@@ -23,7 +25,7 @@ describe('test database guards', () => {
     'postgres://u:p@localhost/app_test',
     'postgresql://u:p@[::1]:5433/APP_TEST',
   ])('treats %s as disposable', url => {
-    expect(isDisposableTestDatabase(url)).toBe(true)
+    expect(isDisposableTestDatabase(url, {})).toBe(true)
     expect(assertDisposableTestDatabase(url, {})).toBe('disposable')
   })
 
@@ -37,7 +39,7 @@ describe('test database guards', () => {
     'mysql://u:p@localhost:5432/app_test',
     'not a url',
   ])('refuses %s before setup touches it, naming no password', url => {
-    expect(isDisposableTestDatabase(url)).toBe(false)
+    expect(isDisposableTestDatabase(url, {})).toBe(false)
     expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
     expect(() => assertDisposableTestDatabase(url, {})).not.toThrow(/u:p@/)
   })
@@ -46,8 +48,8 @@ describe('test database guards', () => {
     'refuses a URL whose %s parameter overrides the destination',
     key => {
       const url = `postgresql://u:p@localhost:5432/app_test?${key}=elsewhere`
-      expect(isDisposableTestDatabase(url)).toBe(false)
-      expect(isDisposableTestDatabase(url.replace(`?${key}=`, `?${key.toUpperCase()}=`))).toBe(
+      expect(isDisposableTestDatabase(url, {})).toBe(false)
+      expect(isDisposableTestDatabase(url.replace(`?${key}=`, `?${key.toUpperCase()}=`), {})).toBe(
         false,
       )
       expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
@@ -58,15 +60,30 @@ describe('test database guards', () => {
     ['postgresql://u:p@localhost:5432/app_test', '5432'],
     ['postgresql://u:p@127.0.0.1/app_test', '5432'],
     ['postgresql://u:p@[::1]:55460/app_test', '55460'],
-  ])('refuses %s, on the development server (POSTGRES_PORT=%s)', (url, port) => {
-    expect(developmentServerReason(url, { POSTGRES_PORT: port })).toContain('development Postgres')
-    expect(() => assertDisposableTestDatabase(url, { POSTGRES_PORT: port })).toThrow(
-      /Refusing to run e2e setup .*: it is on port \d+, where the development Postgres listens/,
-    )
-    expect(
-      assertDisposableTestDatabase(url, { POSTGRES_PORT: port, E2E_ALLOW_NON_DISPOSABLE_DB: '1' }),
-    ).toBe('allowed')
-  })
+  ])(
+    'refuses %s, on the development server (POSTGRES_PORT=%s), even with the opt-out',
+    (url, port) => {
+      expect(developmentServerReason(url, { POSTGRES_PORT: port })).toContain(
+        'development Postgres',
+      )
+      // Named *_test and local, so only the development-server rule refuses it.
+      expect(isDisposableTestDatabase(url, {})).toBe(true)
+      expect(isDisposableTestDatabase(url, { POSTGRES_PORT: port })).toBe(false)
+      expect(nonDisposableReason(url, { POSTGRES_PORT: port })).toEqual({
+        reason: expect.stringContaining('development Postgres'),
+        overridable: false,
+      })
+      expect(() => assertDisposableTestDatabase(url, { POSTGRES_PORT: port })).toThrow(
+        /Refusing to run e2e setup .*: it is on port \d+, where the development Postgres listens/,
+      )
+      expect(() =>
+        assertDisposableTestDatabase(url, {
+          POSTGRES_PORT: port,
+          E2E_ALLOW_NON_DISPOSABLE_DB: '1',
+        }),
+      ).toThrow(/does not apply to a URL on the development server/)
+    },
+  )
 
   it.each([
     ['postgresql://u:p@localhost:5433/app_test', { POSTGRES_PORT: '5432' }],
@@ -102,7 +119,7 @@ describe('test database guards', () => {
     'not a url',
   ])('refuses %s even with the opt-out, since it could connect elsewhere', url => {
     expect(() => assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toThrow(
-      /does not apply to a URL that could connect somewhere other/,
+      /does not apply to a URL on the development server or one that could connect somewhere other/,
     )
   })
 
@@ -245,5 +262,52 @@ describe('runOnTestDatabase', () => {
     expect(() =>
       runOnTestDatabase(url, 'SELECT 1', fake, { env: { E2E_DATABASE_PROBE: 'psql' } }),
     ).toThrow('psql failed against localhost:5433/app_test (exit 3)')
+  })
+})
+
+describe('resetTestDatabase', () => {
+  const reset = 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;'
+  const recording = () => {
+    const statements: string[] = []
+    const clients: DatabaseClients = {
+      pg: (_url, statement) => {
+        statements.push(statement)
+      },
+      psql: () => ({ status: 0 }),
+    }
+    return { statements, clients }
+  }
+
+  it('empties the schema of a disposable test database', () => {
+    const { statements, clients } = recording()
+    resetTestDatabase('postgresql://u:p@localhost:5433/app_test', clients, {
+      POSTGRES_PORT: '5432',
+    })
+    expect(statements).toEqual([reset])
+  })
+
+  it.each([
+    [{ POSTGRES_PORT: '5432' }],
+    [{ POSTGRES_PORT: '5432', E2E_ALLOW_NON_DISPOSABLE_DB: '1' }],
+  ])('never drops a *_test database on the development server, running no SQL (%o)', env => {
+    const { statements, clients } = recording()
+    expect(() =>
+      resetTestDatabase('postgresql://u:p@localhost:5432/app_test', clients, env),
+    ).toThrow(
+      /Refusing to reset localhost:5432\/app_test: it is on port 5432, where the development/,
+    )
+    expect(statements).toEqual([])
+  })
+
+  it.each([
+    'postgresql://u:p@localhost:5433/app',
+    'postgresql://u:p@postgres:5432/app_test',
+    'postgresql://u:p@localhost:5433/app_test?schema=other',
+  ])('refuses %s even with the opt-out, running no SQL', url => {
+    const { statements, clients } = recording()
+    expect(() => resetTestDatabase(url, clients, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toThrow(
+      /Refusing to reset/,
+    )
+    expect(statements).toEqual([])
   })
 })
