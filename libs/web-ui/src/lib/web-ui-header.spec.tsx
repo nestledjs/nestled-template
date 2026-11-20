@@ -164,6 +164,19 @@ describe('WebUiHeader', () => {
       expect(screen.queryByText('Login')).toBeNull()
     })
 
+    it('keeps the mobile menu neutral too, even if a user is somehow passed', async () => {
+      render(header({ isAuthenticated: true, sessionUnknown: true }))
+
+      fireEvent.click(screen.getByText('Open main menu'))
+
+      expect(await screen.findByText('Close menu')).toBeInTheDocument()
+      expect(screen.queryByText('Ada Lovelace')).toBeNull()
+      expect(screen.queryByRole('link', { name: /Logout/ })).toBeNull()
+      expect(screen.queryByRole('link', { name: /Settings|Billing|Profile/ })).toBeNull()
+      expect(screen.queryByText('Get Started')).toBeNull()
+      expect(screen.getAllByText('Pricing').length).toBeGreaterThan(0)
+    })
+
     it('shows "Login" again once the verdict is signed out', () => {
       render(header({ isAuthenticated: false, sessionUnknown: false }))
 

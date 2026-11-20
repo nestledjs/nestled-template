@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRevalidator } from 'react-router'
+import { useCallback, useEffect, useState } from 'react'
 import { ServiceUnavailable } from '@nestledjs/shared-components'
 import {
   retryDelayMs,
@@ -7,6 +6,7 @@ import {
   type ApiAvailabilityOptions,
   type UnavailableReason,
 } from '../api-availability'
+import { useBoundaryRecoveringRevalidate } from './boundary-recovery'
 import { ApiUnavailableScreen, RETRY_LABEL, type ApiUnavailableCopy } from '../api-unavailable'
 
 export const SESSION_UNKNOWN_TITLE = 'We couldn’t load your account'
@@ -67,19 +67,17 @@ export function SessionOutageScreen({
  * revalidates at once, for the screen's button.
  */
 function useRevalidateWithBackoff(active: boolean): () => void {
-  const revalidator = useRevalidator()
-  const revalidateRef = useRef(revalidator.revalidate)
-  useEffect(() => {
-    revalidateRef.current = revalidator.revalidate
-  })
+  // Clears the route's error boundary once the loaders recover, even when React batched away the
+  // revalidation's loading render (see useBoundaryRecoveringRevalidate).
+  const revalidate = useBoundaryRecoveringRevalidate()
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (!active) return undefined
     const timer = setTimeout(() => {
       setAttempt(current => current + 1)
-      void revalidateRef.current()
+      void revalidate()
     }, retryDelayMs(attempt))
     return () => clearTimeout(timer)
-  }, [active, attempt])
-  return useCallback(() => void revalidateRef.current(), [])
+  }, [active, attempt, revalidate])
+  return useCallback(() => void revalidate(), [revalidate])
 }

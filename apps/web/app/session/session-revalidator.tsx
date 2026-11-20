@@ -1,9 +1,10 @@
-import { type ReactNode, useCallback, useEffect, useRef } from 'react'
-import { isRouteErrorResponse, useRevalidator } from 'react-router'
+import { type ReactNode, useCallback, useEffect } from 'react'
+import { isRouteErrorResponse } from 'react-router'
 import {
   APOLLO_SESSION_SUSPECT_EVENT,
   SESSION_REVALIDATE_COOLDOWN_MS,
 } from '@nestled-template/shared/apollo'
+import { useBoundaryRecoveringRevalidate } from './boundary-recovery'
 
 // When the browser last asked the server to judge the session again. Module-level, so the App's
 // listener and the root ErrorBoundary (which renders with App unmounted) share one cooldown.
@@ -84,15 +85,15 @@ export function requestSessionRevalidation(
   return true
 }
 
-/** A hook form of `requestSessionRevalidation`, bound to the router's revalidator. */
+/**
+ * A hook form of `requestSessionRevalidation`. Inside a route ErrorBoundary it also clears the
+ * boundary once the route recovers (`useBoundaryRecoveringRevalidate`); anywhere else it is a plain
+ * revalidation.
+ */
 export function useSessionRevalidation(): () => boolean {
-  const revalidator = useRevalidator()
-  const revalidateRef = useRef(revalidator.revalidate)
-  useEffect(() => {
-    revalidateRef.current = revalidator.revalidate
-  })
+  const revalidate = useBoundaryRecoveringRevalidate()
   // Stable across renders, so a listener bound to it is added once.
-  return useCallback(() => requestSessionRevalidation(() => revalidateRef.current()), [])
+  return useCallback(() => requestSessionRevalidation(revalidate), [revalidate])
 }
 
 /**

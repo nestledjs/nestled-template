@@ -99,47 +99,105 @@ describe('SessionOutageScreen', () => {
     expect(revalidations()).toBe(0)
   })
 
-  it.each([
+  const screens: Array<[string, () => React.ReactElement]> = [
     [
       'the outage screen',
       () => <SessionOutageScreen probe={async () => true} initialReason="server" />,
     ],
     ['the "couldn’t load your account" screen', () => <SessionUnknownScreen />],
-  ])('%s gives way to the page once the loader recovers', async (_label, Screen) => {
-    // A root loader that answers SESSION_UNKNOWN three times, then succeeds: the error boundary
-    // must clear and the page render, with no reload.
-    let calls = 0
-    const router = createMemoryRouter(
-      [
-        {
-          path: '/',
-          loader: async () => {
-            calls += 1
-            // A `.data` request takes time on the wire; a synchronous loader would hide the
-            // revalidation's loading state, which the boundary needs to see to reset.
-            await new Promise(resolve => setTimeout(resolve, 50))
-            if (calls <= 3) throw data({ code: 'SESSION_UNKNOWN' }, { status: 503 })
-            return { ok: true }
+  ]
+  // `slow`: a loader that takes 50 ms, like a `.data` request on the wire. `instant`: one that
+  // settles at once, where React can batch away the revalidation's loading render and React
+  // Router's boundary would never reset by itself.
+  const loaderTimings: Array<[string, number]> = [
+    ['slow', 50],
+    ['instant', 0],
+  ]
+  // A fragment-free URL retries by navigating; one with a fragment retries by revalidating.
+  const urls = ['/settings?tab=a', '/settings?tab=a#section']
+  const cases = screens.flatMap(([name, Screen]) =>
+    loaderTimings.flatMap(([timing, delayMs]) =>
+      urls.map(url => [name, timing, url, Screen, delayMs] as const),
+    ),
+  )
+
+  it.each(cases)(
+    '%s gives way to the page once a %s loader recovers (%s), loading once per retry',
+    async (_name, _timing, url, Screen, delayMs) => {
+      // A loader that answers SESSION_UNKNOWN three times, then succeeds: the error boundary must
+      // clear and the page render, with no reload.
+      let calls = 0
+      const router = createMemoryRouter(
+        [
+          {
+            path: '/settings',
+            loader: async () => {
+              calls += 1
+              if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
+              if (calls <= 3) throw data({ code: 'SESSION_UNKNOWN' }, { status: 503 })
+              return { ok: true }
+            },
+            element: <p>the page</p>,
+            ErrorBoundary: Screen,
           },
-          element: <p>the page</p>,
-          ErrorBoundary: Screen,
-        },
-      ],
-      { initialEntries: ['/'] },
-    )
-    await act(async () => {
-      render(<RouterProvider router={router} />)
-    })
-    expect(screen.queryByText('the page')).not.toBeInTheDocument()
+        ],
+        { initialEntries: [url] },
+      )
+      await act(async () => {
+        render(<RouterProvider router={router} />)
+      })
+      expect(screen.queryByText('the page')).not.toBeInTheDocument()
 
-    await advance(60_000)
+      await advance(60_000)
 
-    expect(calls).toBe(4)
-    expect(screen.getByText('the page')).toBeInTheDocument()
-    expect(reload).not.toHaveBeenCalled()
+      expect(screen.getByText('the page')).toBeInTheDocument()
+      expect(reload).not.toHaveBeenCalled()
+      // The first load and two retries failed, the third retry recovered: four loads, no extra one
+      // to reset the boundary.
+      expect(calls).toBe(4)
+      // The URL, fragment included, is kept.
+      const kept = new URL(url, 'http://localhost')
+      expect(router.state.location).toMatchObject({
+        pathname: kept.pathname,
+        search: kept.search,
+        hash: kept.hash,
+      })
 
-    // And it stops: no revalidation keeps running behind the recovered page.
-    await advance(120_000)
-    expect(calls).toBe(4)
-  })
+      // And it stops: no revalidation keeps running behind the recovered page.
+      const settled = calls
+      await advance(120_000)
+      expect(calls).toBe(settled)
+    },
+  )
+
+  it.each(['/settings', '/settings#section'])(
+    'while the route still fails (%s), keeps the screen and loads once per retry',
+    async url => {
+      let calls = 0
+      const router = createMemoryRouter(
+        [
+          {
+            path: '/settings',
+            loader: () => {
+              calls += 1
+              throw data({ code: 'SESSION_UNKNOWN' }, { status: 503 })
+            },
+            element: <p>the page</p>,
+            ErrorBoundary: () => <SessionUnknownScreen />,
+          },
+        ],
+        { initialEntries: [url] },
+      )
+      await act(async () => {
+        render(<RouterProvider router={router} />)
+      })
+
+      // Retries at 2 s, 6 s and 14 s after the first load (2 s doubling): three in 20 s.
+      await advance(20_000)
+
+      expect(calls).toBe(4)
+      expect(screen.queryByText('the page')).not.toBeInTheDocument()
+      expect(router.state.location.hash).toBe(new URL(url, 'http://localhost').hash)
+    },
+  )
 })

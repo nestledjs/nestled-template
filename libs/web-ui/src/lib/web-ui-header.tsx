@@ -328,7 +328,9 @@ export function WebUiHeader(props: Readonly<WebUiHeaderProps>) {
           </div>
           <div className="mt-6 flow-root">
             <div className="-my-6 divide-y divide-gray-500/10">
-              {props.isAuthenticated ? (
+              {/* While the session verdict is unknown (an outage) the menu is neutral, as on
+                  desktop: no account details, account links or Logout, and no "Get Started". */}
+              {!props.sessionUnknown && props.isAuthenticated ? (
                 <div className="space-y-2 py-6">
                   <div className="mb-3 flex items-center gap-3">
                     <AccountAvatar initials={accountInitials} userAvatarUrl={props.userAvatarUrl} />
