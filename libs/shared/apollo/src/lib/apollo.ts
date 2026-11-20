@@ -69,11 +69,36 @@ import { SetContextLink } from '@apollo/client/link/context'
 import { ErrorLink } from '@apollo/client/link/error'
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
 import { getMainDefinition } from '@apollo/client/utilities'
-import { print } from 'graphql'
 import { createClient } from 'graphql-ws'
 import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
 import { decodeCookieValue, isFetchFailure, pickNewestJwt } from '@nestled-template/shared/utils'
 import { createCache } from './cache-config'
+import { recordApiOutage } from './session/outage-memory'
+
+/**
+ * The `errorPolicy` defaults `makeClient` sets, declared to TypeScript. From Apollo Client 4.2 a
+ * default `errorPolicy` that is not declared here fails to type-check (TS2322, "A default option
+ * for mutate.errorPolicy must be declared in ApolloClient.DeclareDefaultOptions before usage"),
+ * because the result types of `client.query`, `client.mutate` and the hooks depend on it. Keep
+ * these two in step with `defaultOptions` in `makeClient`: change one, change the other. On Apollo
+ * Client 4.1 the interfaces are not read yet and the declaration is harmless.
+ * See https://www.apollographql.com/docs/react/data/typescript#declaring-default-options-for-type-safety
+ */
+// Apollo declares these as namespaces; an augmentation has to use the same shape.
+/* eslint-disable @typescript-eslint/no-namespace */
+declare module '@apollo/client' {
+  export namespace ApolloClient {
+    export namespace DeclareDefaultOptions {
+      interface Query {
+        errorPolicy: 'all'
+      }
+      interface Mutate {
+        errorPolicy: 'none'
+      }
+    }
+  }
+}
+/* eslint-enable @typescript-eslint/no-namespace */
 
 export type ClientOptions = {
   token?: string
@@ -84,16 +109,10 @@ export type ClientOptions = {
   /**
    * Told what each failed operation failed with (`classifyApiFailure`), and the error itself. The
    * server render uses it to recover the real cause of a failed preload, which the streamed query
-   * ref redacts.
+   * ref redacts. Independently of it, every server-side client records an unreachable API in the
+   * process-wide outage memory (session/outage-memory.ts) that the session judge reads.
    */
   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void
-  /**
-   * Called when an operation starts; the function it returns is called once when that operation
-   * settles (answered, failed or cancelled). The server render uses it to wait, bounded, for a
-   * request's calls still in flight before it decides a sign-out (apollo-loader.ts,
-   * `waitForSsrApiCalls`).
-   */
-  onOperationStart?: () => () => void
 }
 
 /**
@@ -199,7 +218,7 @@ function resolveAuthToken(request?: Request, options?: ClientOptions): string | 
  * (owner rule, 2026-11-12), and matching it logged users out over errors that only said so.
  */
 function isAuthenticationError(extensions?: { code?: unknown }): boolean {
-  return extensions?.code === 'UNAUTHENTICATED'
+  return extensions?.code === 'UNAUTHENTICATED' // nestled-session-allow: the classification primitive
 }
 
 /**
@@ -234,18 +253,13 @@ function isForbiddenError(extensions?: { code?: unknown; originalError?: unknown
 }
 
 /**
- * Whether `operation` is a query (not a mutation or a subscription). The outage-retry link
- * (`createOutageRetryLink`) and the access-forbidden event depend on it; exported so an app with a
- * link chain of its own can use the same test.
+ * Whether `operation` is a query (not a mutation or a subscription). The access-forbidden and
+ * organization-required events depend on it; exported so an app with a link chain of its own can
+ * use the same test.
  */
 export function isQueryOperation(operation: ApolloLink.Operation): boolean {
   const definition = getMainDefinition(operation.query)
   return definition.kind === 'OperationDefinition' && definition.operation === 'query'
-}
-
-function isSubscriptionOperation(operation: ApolloLink.Operation): boolean {
-  const definition = getMainDefinition(operation.query)
-  return definition.kind === 'OperationDefinition' && definition.operation === 'subscription'
 }
 
 function handleOrganizationRequired(operation: ApolloLink.Operation): void {
@@ -268,191 +282,22 @@ function handleAuthorizationError(operation: ApolloLink.Operation): void {
   )
 }
 
-// Browser only. Whoever currently has outage evidence: in the web app, each mounted availability
-// check that is confirming a connectivity failure or showing the recovering screen. Never set
-// during a server render.
-const apiOutageSignals = new Set<object>()
-
 /**
- * Tells the error link that `source` (any object, such as a component's ref) has outage evidence,
- * until `clearApiOutage(source)`. While any source does, a 401 does not log the user out: a 401
- * alongside an outage is not proof the session is bad. The app retries once the API recovers, and
- * a 401 then, with no outage, logs out as usual. Signalling the same source twice is one signal.
+ * Dispatched on `window` when an API call made by the browser is refused with a clean 401 (an HTTP
+ * 401 or a GraphQL `UNAUTHENTICATED`). It is a suspicion, never a verdict: the browser never signs
+ * anyone out by itself. The web app's session revalidator (apps/web/app/session/
+ * session-revalidator.tsx) answers it with one debounced revalidation, whose request runs the
+ * server's session middleware again; only that middleware may decide the session is rejected.
  */
-export function signalApiOutage(source: object): void {
-  apiOutageSignals.add(source)
-}
+export const APOLLO_SESSION_SUSPECT_EVENT = 'apollo-session-suspect'
 
-/** Withdraws `source`'s outage evidence (`signalApiOutage`); other sources' evidence stays. */
-export function clearApiOutage(source: object): void {
-  apiOutageSignals.delete(source)
-}
-
-/** Whether any source has signalled an outage (`signalApiOutage`) that is still in effect. */
-export function isApiOutageSignalled(): boolean {
-  return apiOutageSignals.size > 0
-}
-
-// Set when the error link lets a 401 pass because an outage was signalled.
-let authFailureDeferred = false
-
-/**
- * Whether the error link has let a 401 pass because an outage was signalled, since the last call;
- * the call clears it. Once the outage clears, the app refetches the queries left holding such a
- * 401, so each gets a fresh answer: data, or a 401 with no outage that logs out as usual.
- */
-export function takeDeferredAuthFailure(): boolean {
-  const deferred = authFailureDeferred
-  authFailureDeferred = false
-  return deferred
-}
-
-/**
- * Whether the error link has let a 401 pass because an outage was signalled and nothing has taken
- * it yet (`takeDeferredAuthFailure`). Unlike `takeDeferredAuthFailure` it leaves the record in
- * place: the root error boundary reads it to tell a 401 that is still waiting for a fresh answer
- * from one that was judged with no outage.
- */
-export function isAuthFailureDeferred(): boolean {
-  return authFailureDeferred
-}
-
-/**
- * `outage`: the same answer carried outage evidence of its own (a GraphQL 502/503/504 beside the
- * UNAUTHENTICATED error), which nothing has signalled yet; the 401 is let pass as during any outage.
- */
-function handleAuthenticationError(outage = false): void {
-  if (outage || isApiOutageSignalled()) {
-    authFailureDeferred = true
-    console.log('[Apollo] Authentication error during an API outage, keeping the session for now')
-    return
-  }
-  console.log('[Apollo] Authentication error detected, redirecting to logout then login')
-
-  // Redirect through logout to clear server-side session (client-side only)
-  if (globalThis.window === undefined) {
-    return
-  }
-
-  const { pathname, search, hash } = globalThis.window.location
-  const currentPath = `${pathname}${search}${hash}`
-  const shouldRedirectWithReturnUrl =
-    currentPath && currentPath !== '/login' && !currentPath.startsWith('/logout')
-
-  if (shouldRedirectWithReturnUrl) {
-    globalThis.window.location.href = `/logout?return_url=${encodeURIComponent(currentPath)}`
-  } else {
-    globalThis.window.location.href = '/logout'
-  }
-}
-
-// Browser only. Operations (by name and variables) whose last attempt got no answer, or a
-// proxy's 502/503/504 (`isRetryableConnectivityError`); forgotten once one is answered.
-const unreachableOperations = new Set<string>()
-
-function operationKey(operation: ApolloLink.Operation): string {
-  const name = operation.operationName || print(operation.query)
-  return `${name}:${JSON.stringify(operation.variables ?? {})}`
-}
-
-const CANCELLED = Symbol('cancelled')
-const GATEWAY_UNAVAILABLE_ANSWER = Symbol('gateway-unavailable-answer')
-
-/**
- * Dispatched on `window` when the last outage evidence an in-flight retry held is withdrawn
- * (`createOutageRetryLink`) while the error link has let a 401 pass because of it
- * (`takeDeferredAuthFailure`). Nothing else marks the end of that evidence: the availability
- * check never left `available`, so it calls no recovery callback. The web app listens and
- * refetches the queries holding such a 401, for a fresh answer.
- */
-export const APOLLO_DEFERRED_AUTH_FAILURE_EVENT = 'apollo-deferred-auth-failure'
-
-/**
- * Withdraws `source`'s outage evidence, like `clearApiOutage`, and when that was the last evidence
- * held while the error link has let a 401 pass (`isAuthFailureDeferred`), dispatches
- * `APOLLO_DEFERRED_AUTH_FAILURE_EVENT` so the app refetches the queries holding it for a fresh
- * answer. For evidence whose end nothing else announces (an in-flight retry, a loader's outage
- * flag), where `clearApiOutage` alone would leave such a 401 waiting.
- */
-export function releaseApiOutage(source: object): void {
-  clearApiOutage(source)
-  if (isApiOutageSignalled() || !authFailureDeferred || globalThis.window === undefined) return
-  globalThis.window.dispatchEvent(new CustomEvent(APOLLO_DEFERRED_AUTH_FAILURE_EVENT))
-}
-
-/**
- * Counts a retry of an unreachable call, while it is in flight, as outage evidence
- * (`signalApiOutage`). Without it, a 401 that came back while another call was still being retried
- * after failing to reach the API (a refetch once a blip cleared, or a loader's preload when Me is
- * revalidated) logged the user out before that retry could fail again and record the outage. The
- * evidence lasts until the retry settles: an answer clears it (and the 401s after it are judged
- * as usual), and a second connectivity failure is reported by the error link in the same tick.
- *
- * Sits below the error link, so a retry's own failure clears its evidence before the error link
- * sees it: a retried call that gets a 401 is judged like any other. Queries only by default (see
- * `counts` below); never a subscription, which stays open and would hold the evidence as long as
- * it lives; never during a server render.
- *
- * `makeClient` puts it directly below the error link. Exported for an app that builds its own link
- * chain: place it below that chain's error link, and place a RetryLink of its own between the two
- * (error link, RetryLink, this link), so each attempt the RetryLink makes passes through here and
- * an attempt after an unreachable one counts as outage evidence while it is in flight. A RetryLink
- * that also retries mutations passes `counts` to widen the default (queries only); subscriptions
- * never count. Cancellation is forwarded: unsubscribing withdraws the attempt's evidence and
- * cancels the request below, so a cancelled request leaves no evidence behind.
- */
-export function createOutageRetryLink(
-  options: { counts?: (operation: ApolloLink.Operation) => boolean } = {},
-): ApolloLink {
-  const counts = options.counts ?? isQueryOperation
-  return new ApolloLink((operation, forward) => {
-    if (
-      globalThis.window === undefined ||
-      isSubscriptionOperation(operation) ||
-      !counts(operation)
-    ) {
-      return forward(operation)
-    }
-    const key = operationKey(operation)
-    return new Observable(observer => {
-      const evidence = {}
-      const retrying = unreachableOperations.has(key)
-      if (retrying) signalApiOutage(evidence)
-      let settled = false
-      // Once per attempt: the first answer, error or cancellation decides.
-      const settle = (error?: unknown) => {
-        if (settled) return
-        settled = true
-        if (error === GATEWAY_UNAVAILABLE_ANSWER || isRetryableConnectivityError(error)) {
-          unreachableOperations.add(key)
-        } else if (error !== CANCELLED) unreachableOperations.delete(key)
-        if (retrying) releaseApiOutage(evidence)
-      }
-      const subscription = forward(operation).subscribe({
-        // An answer (an HTTP 200 carrying an UNAUTHENTICATED error among them) settles the attempt
-        // before the error link above judges it, so a clean rejection is not deferred. An answer
-        // carrying a 502/503/504 of its own counts as unreachable, like a proxy's.
-        next: result => {
-          settle(
-            hasGatewayUnavailableStatus(result.errors) ? GATEWAY_UNAVAILABLE_ANSWER : undefined,
-          )
-          observer.next(result)
-        },
-        error: error => {
-          settle(error)
-          observer.error(error)
-        },
-        complete: () => {
-          settle()
-          observer.complete()
-        },
-      })
-      return () => {
-        settle(CANCELLED)
-        subscription.unsubscribe()
-      }
-    })
-  })
+function handleAuthenticationError(operation: ApolloLink.Operation): void {
+  if (globalThis.window === undefined) return
+  globalThis.window.dispatchEvent(
+    new CustomEvent(APOLLO_SESSION_SUSPECT_EVENT, {
+      detail: { operation: operation.operationName },
+    }),
+  )
 }
 
 function logDevelopmentExtensions(extensions: any): void {
@@ -491,12 +336,11 @@ export function classifyApiFailure(error: unknown): ApiFailureCause {
 
 /**
  * The operation context for a request whose caller judges its own authentication and permission
- * errors: pass it as `context` and the error link takes no action for that request (no logout, no
- * deferred 401, no access-forbidden or organization-required event); it still logs. The signed-in
- * layout's Me re-check (apps/web/app/session-recheck.tsx) uses it, since it decides the outcome
- * itself. Apps whose error link only dispatches an event need it most: without it the re-check's
- * own 401 or 403 reached that event's handler (an access-denied screen, say) before the re-check
- * could decide. An app with its own error link checks `operation.getContext().skipAuthErrorReport`.
+ * errors: pass it as `context` and the error link takes no action for that request (no session
+ * suspect event, no access-forbidden or organization-required event); it still logs. The session
+ * middleware's Me calls (apps/web/app/session/session-middleware.server.ts) use it, since the judge
+ * decides the outcome itself. An app with its own error link checks
+ * `operation.getContext().skipAuthErrorReport`.
  */
 export const SKIP_AUTH_ERROR_REPORT_CONTEXT = { skipAuthErrorReport: true } as const
 
@@ -507,10 +351,9 @@ function skipsAuthErrorReport(operation: ApolloLink.Operation): boolean {
 function reportGraphQLError(
   extensions: { code?: unknown; originalError?: unknown } | undefined,
   operation: ApolloLink.Operation,
-  outage: boolean,
 ): void {
   if (isAuthenticationError(extensions)) {
-    handleAuthenticationError(outage)
+    handleAuthenticationError(operation)
   } else if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) {
     handleOrganizationRequired(operation)
   } else if (isForbiddenError(extensions)) {
@@ -518,58 +361,26 @@ function reportGraphQLError(
   }
 }
 
-/**
- * Tells `onStart` when each operation starts, and calls the function it returns once that operation
- * settles: its first error, its completion, or its cancellation. Placed at the top of the chain, so
- * an operation counts as settled only after the error link below has seen (and reported) its
- * failure. See `ClientOptions.onOperationStart`.
- */
-export function createOperationTrackingLink(onStart: () => () => void): ApolloLink {
-  return new ApolloLink(
-    (operation, forward) =>
-      new Observable(observer => {
-        const markSettled = onStart()
-        let settled = false
-        const settle = () => {
-          if (settled) return
-          settled = true
-          markSettled()
-        }
-        const subscription = forward(operation).subscribe({
-          next: result => observer.next(result),
-          error: error => {
-            settle()
-            observer.error(error)
-          },
-          complete: () => {
-            settle()
-            observer.complete()
-          },
-        })
-        return () => {
-          subscription.unsubscribe()
-          settle()
-        }
-      }),
-  )
-}
-
 function createErrorLink(
   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
 ): ApolloLink {
   return new ErrorLink(({ error, operation }) => {
-    onApiFailure?.(classifyApiFailure(error), error)
+    const cause = classifyApiFailure(error)
+    onApiFailure?.(cause, error)
+    // Server only: remember that this instance found the API unreachable, whichever request it
+    // served, so the session judge does not trust a 401 that arrives just after (OUTAGE_MEMORY_MS).
+    if (cause === 'unavailable' && globalThis.window === undefined) recordApiOutage()
     const report = !skipsAuthErrorReport(operation)
 
     if (CombinedGraphQLErrors.is(error)) {
       // The API answered, but with a 502/503/504 (a failed lookup it could not complete): outage
-      // evidence, reported like a proxy's, and it keeps the session over a 401 in the same answer.
+      // evidence, reported like a proxy's. A 401 in the same answer is then not a session suspect.
       const outage = isGatewayUnavailableGraphQLError(error)
       if (outage) dispatchServiceUnavailableEvent(error, operation)
       for (const { message, path, extensions } of error.errors) {
         console.error(`[GraphQL error]: Message: ${message}, Path: ${path}`)
 
-        if (report) reportGraphQLError(extensions, operation, outage)
+        if (report && !outage) reportGraphQLError(extensions, operation)
 
         logDevelopmentExtensions(extensions)
       }
@@ -591,10 +402,12 @@ function handleNetworkError(
   console.error(`[Network error]: ${networkError}`)
 
   const statusCode = networkErrorStatus(networkError)
+  // nestled-session-allow: reports a suspect to the revalidator; never navigates
   if (statusCode === 401 || statusCode === 403) {
     // The caller judges these itself when it asked to (SKIP_AUTH_ERROR_REPORT_CONTEXT).
     if (!report) return
-    if (statusCode === 401) handleAuthenticationError()
+    // nestled-session-allow: reports a suspect to the revalidator; never navigates
+    if (statusCode === 401) handleAuthenticationError(operation)
     else handleAuthorizationError(operation)
     return
   }
@@ -716,6 +529,9 @@ export const ACTIVE_ORGANIZATION_STORAGE_KEY = 'activeOrganizationId'
  */
 export function getStoredActiveOrganizationId(): string | null {
   if (globalThis.window === undefined) return null
+  // This document is leaving for another user's session: it sends no organization, whatever
+  // another tab may have stored meanwhile (`clearActiveOrganizationForSessionChange`).
+  if (activeOrganizationSessionChanging) return null
   // Inside the try: where storage is blocked, reading `localStorage` itself throws.
   try {
     if (typeof localStorage === 'undefined') return null
@@ -728,6 +544,9 @@ export function getStoredActiveOrganizationId(): string | null {
 // Advanced each time the stored organization is forgotten (a logout); see
 // `activeOrganizationSession`.
 let activeOrganizationSessionGeneration = 0
+
+// Set by `clearActiveOrganizationForSessionChange`; nothing in this document clears it again.
+let activeOrganizationSessionChanging = false
 
 /**
  * The browser's current organization session: a number that changes each time the stored
@@ -750,6 +569,8 @@ export function activeOrganizationSession(): number {
  */
 export function storeActiveOrganizationId(organizationId: string | null): void {
   if (globalThis.window === undefined) return
+  // Leaving for another user's session: an organization stored now is the previous user's.
+  if (organizationId && activeOrganizationSessionChanging) return
   if (!organizationId) activeOrganizationSessionGeneration += 1
   try {
     if (typeof localStorage === 'undefined') return
@@ -758,6 +579,37 @@ export function storeActiveOrganizationId(organizationId: string | null): void {
   } catch {
     // Storage blocked: requests fall back to the user's active organization on the API.
   }
+}
+
+/**
+ * Forgets the stored organization because this document is about to load another user's session,
+ * and stores none for the rest of this document. For starting or ending an emulation, which then
+ * sets `location.href`: the next document is the other user's.
+ *
+ * `storeActiveOrganizationId(null)` alone is not enough there. The signed-in shell is still mounted
+ * while the navigation is pending, and it stores the organization it shows on every render
+ * (`rememberActiveOrganization`): any re-render in that window (the mutation's answer reaching the
+ * cache, a query settling) wrote the previous user's organization back, so the next session's
+ * first requests carried it and its shell could restore it as the user's choice. From here on,
+ * every non-null `storeActiveOrganizationId` is ignored and `getStoredActiveOrganizationId`
+ * answers null, so this document sends no organization either; the next document starts clean.
+ *
+ * Only before a document navigation. A sign-in that stays in this document (the login form, an
+ * invitation) uses `storeActiveOrganizationId(null)`, so the new session's shell can store its own
+ * organization. It never signs anyone out and does not touch the session cookie.
+ */
+export function clearActiveOrganizationForSessionChange(): void {
+  if (globalThis.window === undefined) return
+  activeOrganizationSessionChanging = true
+  storeActiveOrganizationId(null)
+}
+
+/**
+ * Test-only: undoes `clearActiveOrganizationForSessionChange` for the next test in the same module
+ * instance. A browser never needs it: the document it latched is gone.
+ */
+export function __resetActiveOrganizationSessionChange(): void {
+  activeOrganizationSessionChanging = false
 }
 
 /**
@@ -897,7 +749,6 @@ function createLinkChain(
   token: string | null,
   isDev: boolean,
   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
-  onOperationStart?: () => () => void,
 ): ApolloLink {
   const wsUri = uri.replace(/^http/, 'ws')
   const uploadLink = new UploadHttpLink({
@@ -921,9 +772,7 @@ function createLinkChain(
       )
 
   const links = [
-    ...(onOperationStart ? [createOperationTrackingLink(onOperationStart)] : []),
     createErrorLink(onApiFailure),
-    createOutageRetryLink(),
     ...(isDev ? [createLogLink()] : []),
     createAuthLink(token),
     splitLink,
@@ -950,7 +799,7 @@ export function makeClient(request?: Request, options?: ClientOptions) {
   const token = resolveAuthToken(request, options)
   const isDev = options?.environment === 'development'
 
-  const link = createLinkChain(uri, token, isDev, options?.onApiFailure, options?.onOperationStart)
+  const link = createLinkChain(uri, token, isDev, options?.onApiFailure)
 
   return new ApolloClient({
     link,

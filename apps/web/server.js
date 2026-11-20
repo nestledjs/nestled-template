@@ -1,4 +1,5 @@
 import { createRequestHandler } from '@react-router/express'
+import { RouterContextProvider } from 'react-router'
 import compression from 'compression'
 import express from 'express'
 import morgan from 'morgan'
@@ -43,10 +44,11 @@ if (DEVELOPMENT) {
 app.use(
   createRequestHandler({
     build: () => import(BUILD_PATH),
+    // With `future.v8_middleware` the load context must be a RouterContextProvider. Anything the
+    // server needs to hand to loaders goes in through a typed `createContext()` and `context.set`;
+    // the session verdict is set by the root route's middleware, never here.
     getLoadContext() {
-      return {
-        // Add any context you need
-      }
+      return new RouterContextProvider()
     },
   }),
 )

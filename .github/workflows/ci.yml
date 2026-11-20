@@ -156,6 +156,12 @@ jobs:
           pnpm verify:select-coverage
           pnpm verify:fragments
 
+      # Only the web session module decides a session (signed in, signed out, unknown). A redirect to
+      # /login, a branch on a 401 or a read of the session cookie anywhere else fails here, unless
+      # the line carries `// nestled-session-allow: <reason>`.
+      - name: Verify session decisions stay in the session module
+        run: pnpm verify:session-decisions
+
       - name: Test the workspace scripts (typecheck runner, dev checkout resolution, Sonar digest)
         run: node --test scripts/*.spec.mjs
 

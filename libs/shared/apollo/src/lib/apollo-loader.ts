@@ -1,5 +1,6 @@
 import { createApolloLoaderHandler } from '@apollo/client-integration-react-router'
 import { isOrganizationContextRequiredError, makeClient, type ApiFailureCause } from './apollo'
+import { narrowApiError } from './session/narrow-api-error'
 
 /**
  * What the API answered when a loader's preloaded query failed during a server render.
@@ -15,10 +16,6 @@ interface SsrApiFailureRecord {
   cause?: ApiFailureCause
   /** A query was refused with `ORGANIZATION_CONTEXT_REQUIRED` (by code; nothing else is kept). */
   organizationRequired?: boolean
-  /** Operations this loader's client started that have not settled yet. */
-  pending: number
-  /** Called each time `pending` returns to 0 (see `waitForSsrApiCalls`). */
-  idle: Set<() => void>
 }
 
 // Loader data -> its request's record. A side table rather than a property on the data, so frozen
@@ -53,21 +50,13 @@ function recordFailure(record: SsrApiFailureRecord, cause: ApiFailureCause, erro
   if (isOrganizationContextRequiredError(error)) record.organizationRequired = true
 }
 
-function trackOperation(record: SsrApiFailureRecord): () => void {
-  record.pending += 1
-  return () => {
-    record.pending -= 1
-    if (record.pending === 0) for (const notify of record.idle) notify()
-  }
-}
-
 // Keyed by the request the loader receives (React Router hands each loader its own copy).
 const recordsByRequest = new WeakMap<Request, SsrApiFailureRecord>()
 
 function recordFor(request: Request): SsrApiFailureRecord {
   let record = recordsByRequest.get(request)
   if (!record) {
-    record = { pending: 0, idle: new Set() }
+    record = {}
     recordsByRequest.set(request, record)
   }
   return record
@@ -86,17 +75,28 @@ const handler = createApolloLoaderHandler(req =>
   makeClient(req, {
     apiUrl: `${process.env.VITE_API_URL || 'http://localhost:3000'}/graphql`,
     onApiFailure: (cause, error) => recordFailure(recordFor(req), cause, error),
-    onOperationStart: () => trackOperation(recordFor(req)),
   }),
 )
 
+/**
+ * React Router's Apollo loader wrapper (`preloadQuery`), plus: whatever the loader throws goes
+ * through `narrowApiError`, and the failures its preloaded queries meet during a server render are
+ * recorded for entry.server.tsx (`ssrApiFailureCause`).
+ */
 export const apolloLoader: typeof handler = () => loader => args => {
   const record = recordFor(args.request)
-  const result = handler()(loader)(args)
-  if (result instanceof Promise) {
-    return result.then(data => attachRecord(data, record)) as typeof result
+  const fail = (error: unknown): never => {
+    throw narrowApiError(error)
   }
-  return attachRecord(result, record)
+  try {
+    const result = handler()(loader)(args)
+    if (result instanceof Promise) {
+      return result.then(value => attachRecord(value, record), fail) as typeof result
+    }
+    return attachRecord(result, record)
+  } catch (error) {
+    return fail(error)
+  }
 }
 
 /**
@@ -131,32 +131,4 @@ export function ssrOrganizationRequired(
   loaderData: Record<string, unknown> | null | undefined,
 ): boolean {
   return recordsOf(loaderData).some(record => record.organizationRequired)
-}
-
-/**
- * Waits until every API call the request's loaders started through `apolloLoader` has settled, so
- * its failure, if any, is in `ssrApiFailureCause`. A loader returns its preloaded query refs
- * without awaiting them (the root loader's Me among them), so a faster call can fail first:
- * deciding a sign-out on its 401 then would miss a slower call's 503. Resolves true once all have
- * settled (at once when none is in flight), false when `timeoutMs` passes first, which is no proof
- * the session is bad: the caller then keeps it.
- */
-export function waitForSsrApiCalls(
-  loaderData: Record<string, unknown> | null | undefined,
-  timeoutMs: number,
-): Promise<boolean> {
-  const records = recordsOf(loaderData).filter(record => record.pending > 0)
-  if (records.length === 0) return Promise.resolve(true)
-  return new Promise(resolve => {
-    const finish = (settled: boolean) => {
-      clearTimeout(timer)
-      for (const record of records) record.idle.delete(check)
-      resolve(settled)
-    }
-    const check = () => {
-      if (records.every(record => record.pending === 0)) finish(true)
-    }
-    const timer = setTimeout(() => finish(false), timeoutMs)
-    for (const record of records) record.idle.add(check)
-  })
 }

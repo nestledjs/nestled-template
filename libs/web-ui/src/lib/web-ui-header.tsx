@@ -22,6 +22,13 @@ interface WebUiHeaderProps {
   icon: string
   siteName: string
   isAuthenticated: boolean
+  /**
+   * The server could not confirm the session yet (its verdict is `unknown`: a session cookie the
+   * API did not answer for). The header is neutral: no account menu and no "Login" or "Get
+   * Started", so a signed-in user is neither shown as signed out nor offered a sign-in. The theme
+   * toggle and the navigation stay.
+   */
+  sessionUnknown?: boolean
   userName?: string | null
   userEmail?: string | null
   userAvatarUrl?: string | null
@@ -163,6 +170,22 @@ function DesktopAccountMenu({
   )
 }
 
+function ThemeToggleButton({
+  theme,
+  toggleTheme,
+}: Readonly<{ theme: 'light' | 'dark'; toggleTheme: () => void }>) {
+  return (
+    <button
+      type="button"
+      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      onClick={toggleTheme}
+      className="hidden lg:inline-flex items-center justify-center rounded-md border border-white/15 bg-white/50 px-3 py-2 text-sm text-zinc-700 shadow-sm backdrop-blur transition hover:bg-white/80 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+    >
+      {theme === 'dark' ? <span aria-hidden="true">☀️</span> : <span aria-hidden="true">🌙</span>}
+    </button>
+  )
+}
+
 export function WebUiHeader(props: Readonly<WebUiHeaderProps>) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [{ theme, themeLoaded }, setThemeState] = useState<{
@@ -243,7 +266,10 @@ export function WebUiHeader(props: Readonly<WebUiHeaderProps>) {
         )}
         <div className="flex flex-1 items-center justify-end gap-x-3 lg:gap-x-6">
           {props.customHeaderContent}
-          {props?.isAuthenticated ? (
+          {props.sessionUnknown && !props.isAuthenticated && (
+            <ThemeToggleButton theme={theme} toggleTheme={toggleTheme} />
+          )}
+          {!props.sessionUnknown && props?.isAuthenticated && (
             <DesktopAccountMenu
               accountInitials={accountInitials}
               accountMenuLinks={accountMenuLinks}
@@ -253,20 +279,10 @@ export function WebUiHeader(props: Readonly<WebUiHeaderProps>) {
               userEmail={props.userEmail}
               userName={props.userName}
             />
-          ) : (
+          )}
+          {!props.sessionUnknown && !props.isAuthenticated && (
             <>
-              <button
-                type="button"
-                aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                onClick={toggleTheme}
-                className="hidden lg:inline-flex items-center justify-center rounded-md border border-white/15 bg-white/50 px-3 py-2 text-sm text-zinc-700 shadow-sm backdrop-blur transition hover:bg-white/80 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
-              >
-                {theme === 'dark' ? (
-                  <span aria-hidden="true">☀️</span>
-                ) : (
-                  <span aria-hidden="true">🌙</span>
-                )}
-              </button>
+              <ThemeToggleButton theme={theme} toggleTheme={toggleTheme} />
               <Link
                 to="/login"
                 className="hidden lg:block rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-zinc-950 shadow-md shadow-emerald-500/10 transition hover:bg-emerald-400"
@@ -374,23 +390,27 @@ export function WebUiHeader(props: Readonly<WebUiHeaderProps>) {
                       </Link>
                     ))}
                   </div>
-                  <div className={'py-6'}>
-                    <Link
-                      to="/login"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="-ml-1 rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-zinc-950 shadow-md shadow-emerald-500/10 transition hover:bg-emerald-400"
-                    >
-                      Get Started
-                    </Link>
-                  </div>
+                  {!props.sessionUnknown && (
+                    <div className={'py-6'}>
+                      <Link
+                        to="/login"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="-ml-1 rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-zinc-950 shadow-md shadow-emerald-500/10 transition hover:bg-emerald-400"
+                      >
+                        Get Started
+                      </Link>
+                    </div>
+                  )}
                   <div className="py-6">
-                    <Link
-                      to="/login"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="-mx-3 mt-3 block rounded-lg px-3 py-2.5 text-base text-zinc-700 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-white/5"
-                    >
-                      Login
-                    </Link>
+                    {!props.sessionUnknown && (
+                      <Link
+                        to="/login"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="-mx-3 mt-3 block rounded-lg px-3 py-2.5 text-base text-zinc-700 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-white/5"
+                      >
+                        Login
+                      </Link>
+                    )}
                     <button
                       type="button"
                       onClick={toggleTheme}

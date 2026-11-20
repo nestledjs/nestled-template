@@ -167,6 +167,7 @@ export function DangerZoneSection() {
     try {
       await deleteAccountMutation()
       alert('Your account has been deleted. You will be logged out now.')
+      // nestled-session-allow: the user deleted their own account
       globalThis.location.href = '/login'
     } catch (error) {
       alert('Failed to delete account: ' + (error as Error).message)

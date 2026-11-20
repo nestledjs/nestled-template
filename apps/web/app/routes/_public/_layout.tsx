@@ -1,21 +1,17 @@
-import { LoaderFunctionArgs, Outlet, useLoaderData } from 'react-router'
+import { Outlet, useRouteLoaderData } from 'react-router'
 import React from 'react'
 import { WebUiFooter, WebUiHeader } from '@nestled-template/web-ui'
-import { getCookie, getSessionCookieName } from '@nestled-template/shared/utils'
 import { useGlobalCtx } from '@nestled-template/web'
-
-export async function loader({ request }: LoaderFunctionArgs) {
-  const token = getCookie(request.headers, getSessionCookieName())
-  if (token) {
-    return { isAuthenticated: true }
-  }
-  return { isAuthenticated: false }
-}
+import type { RootLoaderData } from '../../root'
 
 export default function PublicLayout() {
-  const loaderData = useLoaderData<typeof loader>()
   const { user } = useGlobalCtx()
-  const isAuthenticated = !!user || !!loaderData?.isAuthenticated
+  // The header follows the server's verdict: signed in with the user, signed out without one, and,
+  // while the verdict is `unknown` (a session cookie the API could not confirm), neutral: no
+  // account menu and no "Log in" (owner decision D2). App recovers it quietly.
+  const session = useRouteLoaderData<RootLoaderData>('root')?.session
+  const sessionUnknown = session?.kind === 'unknown'
+  const isAuthenticated = !!user
   const primaryEmail = user?.emails?.find(email => email.primary)?.email ?? user?.emails?.[0]?.email
   const userName =
     `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.displayName || primaryEmail
@@ -32,6 +28,7 @@ export default function PublicLayout() {
           { name: 'Sign Up', href: '/register' },
         ]}
         isAuthenticated={isAuthenticated}
+        sessionUnknown={sessionUnknown}
         userName={userName}
         userEmail={primaryEmail}
         userAvatarUrl={user?.avatar?.publicUrl ?? user?.avatar?.url ?? null}

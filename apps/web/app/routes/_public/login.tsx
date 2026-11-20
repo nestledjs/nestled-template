@@ -10,12 +10,8 @@ import {
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { AuthLayout } from '@nestled-template/web'
-import {
-  getCookie,
-  getJsonCookie,
-  getSessionCookieName,
-  isJwtExpired,
-} from '@nestled-template/shared/utils'
+import { getJsonCookie } from '@nestled-template/shared/utils'
+import { getSession } from '../../session'
 import {
   LoginInput,
   Login,
@@ -27,22 +23,17 @@ import { formTheme } from '@nestled-template/shared/styles'
 import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
 import { useMutation } from '@apollo/client/react'
 
-export async function loader({ request }: LoaderFunctionArgs) {
-  const url = new URL(request.url)
-
-  // Circuit breaker: force-logout and the root loader's auth-error redirect append
-  // `expired=1`. When present, never auto-redirect even if a (possibly un-clearable)
-  // session cookie is still on the browser — always render the form so the
-  // login↔dashboard loop cannot sustain itself.
-  if (url.searchParams.has('expired')) {
-    const isRemembered = getJsonCookie<{ email: string }>(request.headers, '_nestled_remember')
-    return isRemembered ?? {}
-  }
-
-  const token = getCookie(request.headers, getSessionCookieName())
-  // Only redirect a genuinely-present, non-expired token. An expired-but-present
-  // cookie must fall through to the form rather than bounce to the dashboard.
-  if (token && !isJwtExpired(token)) {
+// A request the session middleware judged signed in goes straight on; any other verdict (signed
+// out, or unknown during an outage) renders the form. The verdict is the API's own answer, so this
+// cannot loop with a sign-out the way a cookie check could.
+//
+// Except after a sign-out: /force-logout appends `expired=1`, and then the form always renders,
+// whatever the verdict. Clearing the session cookie can fail (a parent-domain cookie the web
+// host cannot expire); if that cookie still authenticates, redirecting would skip the form and
+// the stored-organization cleanup the page does for `expired=1`.
+export async function loader({ request, context }: LoaderFunctionArgs) {
+  const afterSignOut = new URL(request.url).searchParams.has('expired')
+  if (!afterSignOut && getSession(context).kind === 'signed-in') {
     throw redirect('/members/dashboard')
   }
   const isRemembered = getJsonCookie<{ email: string }>(request.headers, '_nestled_remember')

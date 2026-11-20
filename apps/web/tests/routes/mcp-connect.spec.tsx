@@ -1,12 +1,16 @@
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { API_UNAUTHENTICATED_CODE } from '@nestled-template/shared/apollo'
 import McpConnectPage, {
   action,
   headers,
   loader,
+  middleware,
   type McpConsentDetails,
 } from '../../app/routes/mcp-connect'
+import { requireSession } from '../../app/session/session-middleware.server'
+import { SIGNED_IN, withSession } from '../helpers/session-context'
 
 let loaderData: any = {}
 let actionData: any
@@ -90,16 +94,9 @@ describe('mcp-connect consent route', () => {
       expect(response.headers.get('Location')).toBe('/')
     })
 
-    it('sends a signed-out user to login and back', async () => {
-      const response = await thrown(
-        loader({
-          request: new Request('https://app.example.com/mcp-connect?request=req-1'),
-        } as any),
-      )
-      expect(response.headers.get('Location')).toBe(
-        `/login?return_url=${encodeURIComponent('/mcp-connect?request=req-1')}`,
-      )
-      expect(fetchMock).not.toHaveBeenCalled()
+    it('is guarded by requireSession, which judges a signed-out user before the loader runs', () => {
+      // The middleware sends a signed-out user to /login?return_url=... (session-middleware.spec).
+      expect(middleware).toEqual([requireSession])
     })
 
     it('loads the pending request from the API with the session cookie', async () => {
@@ -108,6 +105,7 @@ describe('mcp-connect consent route', () => {
         request: new Request('https://app.example.com/mcp-connect?request=req-1', {
           headers: { cookie: COOKIE },
         }),
+        context: withSession(SIGNED_IN),
       } as any)
 
       expect(fetchMock).toHaveBeenCalledWith(
@@ -123,6 +121,7 @@ describe('mcp-connect consent route', () => {
         request: new Request('https://app.example.com/mcp-connect?request=req-1', {
           headers: { cookie: COOKIE },
         }),
+        context: withSession(SIGNED_IN),
       } as any)
       expect(result).toEqual({ status: 'error', message: expect.stringContaining('expired') })
     })
@@ -135,20 +134,28 @@ describe('mcp-connect consent route', () => {
         request: new Request('https://app.example.com/mcp-connect?request=req-1', {
           headers: { cookie: COOKIE },
         }),
+        context: withSession(SIGNED_IN),
       } as any)
       expect(result).toEqual({ status: 'error', message: 'belongs to a different session' })
     })
 
-    it('sends the user to login when the API says the session is gone', async () => {
+    it('answers an API 401 with a 401 route error, never a sign-out of its own', async () => {
       fetchMock.mockResolvedValue(jsonResponse(401, { error: 'login_required' }))
-      const response = await thrown(
+      const error = await thrown(
         loader({
           request: new Request('https://app.example.com/mcp-connect?request=req-1', {
             headers: { cookie: COOKIE },
           }),
+          context: withSession(SIGNED_IN),
         } as any),
       )
-      expect(response.headers.get('Location')).toContain('/login?return_url=')
+      // The root ErrorBoundary revalidates once, and the session middleware decides.
+      // A `data()` route error: React Router hands it to the ErrorBoundary as a 401 response.
+      expect(error).toMatchObject({
+        type: 'DataWithResponseInit',
+        data: { code: API_UNAUTHENTICATED_CODE },
+        init: { status: 401 },
+      })
     })
   })
 
@@ -172,6 +179,7 @@ describe('mcp-connect consent route', () => {
           decision: 'approve',
           organization_id: 'org-1',
         }),
+        context: withSession(SIGNED_IN),
       } as any)) as Response
 
       const [url, init] = fetchMock.mock.calls[0]
@@ -196,15 +204,18 @@ describe('mcp-connect consent route', () => {
       )
       const result = await action({
         request: post({ request: 'req-1', csrf_token: 'nope', decision: 'approve' }),
+        context: withSession(SIGNED_IN),
       } as any)
       expect(result).toEqual({ error: 'Invalid or missing CSRF token' })
     })
 
-    it('does not call the API without a session', async () => {
-      const response = (await action({
-        request: post({ request: 'req-1', decision: 'approve' }, null),
-      } as any)) as Response
-      expect(response.headers.get('Location')).toContain('/login?return_url=')
+    it('does not call the API when it was reached without a signed-in session', async () => {
+      await expect(
+        action({
+          request: post({ request: 'req-1', decision: 'approve' }, null),
+          context: withSession(SIGNED_IN),
+        } as any),
+      ).rejects.toThrow(/without a signed-in session/)
       expect(fetchMock).not.toHaveBeenCalled()
     })
   })

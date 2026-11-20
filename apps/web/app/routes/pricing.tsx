@@ -34,6 +34,7 @@ export default function PricingPage() {
   const handleSubscribe = async (stripePriceId: string) => {
     if (!user) {
       // Redirect to login with return URL
+      // nestled-session-allow: the user pressed Subscribe while signed out
       globalThis.location.assign(`/login?returnTo=/pricing`)
       return
     }

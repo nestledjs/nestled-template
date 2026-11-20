@@ -1,17 +1,8 @@
 import { ApolloHydrationHelper } from '@apollo/client-integration-react-router'
 import '@nestled-template/shared/styles'
 import {
-  apolloLoader,
-  classifyApiFailure,
-  isApiOutageSignalled,
-  isAuthFailureDeferred,
-} from '@nestled-template/shared/apollo'
-import { Me, type MeQuery } from '@nestled-template/shared/sdk'
-import {
   getCookie,
-  getSessionCookieName,
   isFetchFailure,
-  isJwtExpired,
   isNetworkError,
   isViteCacheError,
 } from '@nestled-template/shared/utils'
@@ -20,22 +11,28 @@ import { ReactNode } from 'react'
 import {
   Links,
   type LinksFunction,
+  type LoaderFunctionArgs,
   Meta,
   type MetaFunction,
   Scripts,
   ScrollRestoration,
-  data,
   isRouteErrorResponse,
   useLoaderData,
 } from 'react-router'
 import { GTMNoScript, GTMScript } from './gtm'
-import App, { isAppCodeError } from './app'
+import App from './app'
 import { AccessDenied } from './access-denied'
 import { isOrganizationContextRequired, OrganizationRequired } from './organization-required'
 import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
-import { DeferredAuthRecovery } from './deferred-auth-recovery'
-import { useRootLoaderOutage } from './loader-outage'
-import { expiredSessionCookies } from './session-cookie'
+import {
+  getSession,
+  isUnauthenticatedRouteError,
+  RevalidateSessionOnMount,
+  type AppSessionVerdict,
+} from './session'
+import { sessionMiddleware } from './session/session-middleware.server'
+import { SESSION_UNKNOWN_CODE } from './session/session-context'
+import { SessionOutageScreen, SessionUnknownScreen } from './session/session-unknown'
 
 export const meta: MetaFunction = () => [
   {
@@ -52,98 +49,28 @@ export const links: LinksFunction = () => [
   },
 ]
 
-function clearSessionCookieHeaders(cookieName: string): Headers {
-  const headers = new Headers()
-  for (const cookie of expiredSessionCookies(cookieName)) headers.append('Set-Cookie', cookie)
-  return headers
-}
+/**
+ * The session is judged here, once per request, before any loader runs (document loads, client
+ * navigations and revalidations alike). Private layouts add `requireSession`; nothing else in the
+ * app decides a session. See apps/web/app/session/.
+ */
+export const middleware = [sessionMiddleware]
 
-function buildLoginRedirect(pathname: string) {
-  const params = new URLSearchParams()
-  if (pathname && pathname !== '/') {
-    params.set('return_url', pathname)
-  }
-  const qs = params.toString()
-  return qs ? `/login?${qs}` : '/login'
-}
-
-function buildAuthRedirectResponse(cookieName: string, loginRedirect: string) {
-  const headers = clearSessionCookieHeaders(cookieName)
-  headers.set('Location', loginRedirect)
-  return new Response(null, { status: 302, headers })
+export interface RootLoaderData {
+  session: AppSessionVerdict
+  theme: string
 }
 
 /**
- * What the root loader does when the Me query for a private route fails in the loader itself (an
- * app that awaits Me there; the template's preload is returned unawaited, and its failure is
- * judged in the render). Exported for such an app, and for the specs.
- *
- * A rejected session (an HTTP 401 or an UNAUTHENTICATED GraphQL error; the message is never read)
- * is not signed out here: this loader cannot see the request's other loaders, and one of them may
- * have found the API unreachable, which outranks a 401. It throws a 401 route error instead, and
- * the request's own decision applies: the server render waits for the request's other API calls
- * (`routeErrorOutcome` and `SSR_API_SETTLE_MS` in entry.server.tsx) and signs out through
- * /force-logout only when none points to an outage; in the browser the root ErrorBoundary checks
- * the app's outage evidence first. Anything else keeps the session as an outage.
+ * Reads the verdict the session middleware stored and hands it to the browser: App renders the
+ * user from it (no second Me request) and public pages pick their header from it.
  */
-export function privateRouteMeFailure(error: unknown, theme: string) {
-  console.error('[Root Loader] Error during Me query preload:', error)
-
-  if (isNetworkError(error)) {
-    console.log('[Root Loader] Network error detected, returning serviceUnavailable')
-    return { serviceUnavailable: true, theme }
+export function loader({ request, context }: LoaderFunctionArgs): RootLoaderData {
+  return {
+    session: getSession(context),
+    theme: getCookie(request.headers, 'theme') || 'dark',
   }
-
-  if (classifyApiFailure(error) === 'unauthenticated') {
-    console.log('[Root Loader] Auth error detected, leaving the sign-out to the request decision')
-    throw data(null, { status: 401, statusText: 'Unauthorized' }) // NOSONAR: a route error response on purpose
-  }
-
-  console.log('[Root Loader] Unknown error, returning serviceUnavailable as fallback')
-  return { serviceUnavailable: true, theme }
 }
-
-export const loader = apolloLoader()(({ preloadQuery, request }) => {
-  const url = new URL(request.url)
-  const cookieName = getSessionCookieName()
-  const token = getCookie(request.headers, cookieName)
-  // `?expired` is the circuit-breaker signal: treat the request as unauthenticated
-  // so we never re-preload `Me` with a rejected token (which would 500 the public
-  // login route and restart the loop).
-  const forceUnauthenticated = url.searchParams.has('expired')
-  const isAuthenticated = !!token && !isJwtExpired(token) && !forceUnauthenticated
-  const theme = getCookie(request.headers, 'theme') || 'dark'
-
-  const isPrivateRoute =
-    url.pathname.startsWith('/members') ||
-    url.pathname.startsWith('/admin') ||
-    url.pathname.startsWith('/leaders')
-
-  if (isPrivateRoute && !isAuthenticated) {
-    return buildAuthRedirectResponse(cookieName, buildLoginRedirect(url.pathname))
-  }
-
-  if (isPrivateRoute && isAuthenticated) {
-    try {
-      const meQueryRef = preloadQuery<MeQuery>(Me)
-      return { meQueryRef, theme }
-    } catch (error) {
-      return privateRouteMeFailure(error, theme)
-    }
-  }
-
-  if (isAuthenticated && !url.pathname.startsWith('/logout')) {
-    try {
-      const meQueryRef = preloadQuery<MeQuery>(Me)
-      return { meQueryRef, theme }
-    } catch (error) {
-      console.warn('[Root Loader] Failed to preload Me on public route:', error)
-      return { theme }
-    }
-  }
-
-  return { theme }
-})
 
 export function Layout({ children }: Readonly<{ children: ReactNode }>) {
   const gtmTrackingId = import.meta.env.VITE_GTM_TRACKING_ID
@@ -196,94 +123,39 @@ export function Layout({ children }: Readonly<{ children: ReactNode }>) {
 
 export default App
 
-type ErrorWithGraphQLErrors = Error & {
-  graphQLErrors?: Array<{ extensions?: { code?: string } }>
+function routeErrorCode(error: unknown): unknown {
+  if (!isRouteErrorResponse(error)) return undefined
+  return (error.data as { code?: unknown } | null | undefined)?.code
 }
 
 /**
- * Whether the error carries the API's rejection of a session: a route response with status 401,
- * an HTTP 401, or a GraphQL error whose `extensions.code` is `UNAUTHENTICATED`
- * (`classifyApiFailure`, plus the older `graphQLErrors` shape). The message is never read: an
- * error that merely says "Unauthorized" is not evidence of a dead session.
+ * The root error boundary. It never navigates to /login, /logout or /force-logout: only the
+ * session middleware decides a session.
+ * - `SESSION_UNKNOWN` (503 from `requireSession`): the session is kept; an outage or a timeout gets
+ *   the outage screen, which probes the API and then revalidates with backoff until the verdict is
+ *   known; an answered error or an empty Me gets "We couldn't load your account", which retries by
+ *   itself.
+ * - a route 401 (`API_UNAUTHENTICATED`: a call refused after the session was judged signed in):
+ *   one revalidation, so the middleware judges the session afresh, then the route's error screen.
+ * - 403: access denied, or the organization picker.
+ * - 502/503/504 or no answer: the self-recovering screen.
  */
-function carriesApiRejection(error: unknown, routeStatus: number | undefined): boolean {
-  if (routeStatus !== undefined) return routeStatus === 401
-  if (classifyApiFailure(error) === 'unauthenticated') return true
-  return !!(error as ErrorWithGraphQLErrors | null)?.graphQLErrors?.some?.(
-    e => e?.extensions?.code === 'UNAUTHENTICATED',
-  )
-}
-
-/**
- * Whether the error says the API rejected the session (`carriesApiRejection`). An error thrown by
- * the app's own code, below an `AppCodeErrorMarker` or passed on by the Me boundary
- * (`isAppCodeError`), never does, whatever it carries: only the session query, or a loader, may
- * decide a logout.
- */
-function isUnauthorizedError(error: unknown, routeStatus: number | undefined): boolean {
-  if (isAppCodeError(error)) return false
-  return carriesApiRejection(error, routeStatus)
-}
-
-// Errors shown with the self-recovering screen for a 401 kept during an outage. The decision
-// sticks to the error: once that screen's own outage evidence clears and it revalidates, the
-// boundary renders again while the loaders run, and judging the same 401 afresh then (no outage
-// left) would flash the error screen, or log out, before the fresh answer arrives.
-const errorsAwaitingFreshAnswer = new WeakSet<object>()
-
-function awaitsFreshAnswer(
-  error: unknown,
-  routeStatus: number | undefined,
-  loaderOutage: boolean,
-): boolean {
-  const isObject = typeof error === 'object' && error !== null
-  if (isObject && errorsAwaitingFreshAnswer.has(error)) return true
-  const awaits =
-    carriesApiRejection(error, routeStatus) &&
-    (loaderOutage || isApiOutageSignalled() || isAuthFailureDeferred())
-  if (awaits && isObject) errorsAwaitingFreshAnswer.add(error)
-  return awaits
-}
-
-// One key per error object, so each error gets a fresh recovery screen (and a fresh revalidation).
-const errorKeys = new WeakMap<object, number>()
-let lastErrorKey = 0
-function errorKey(error: unknown): number {
-  if (typeof error !== 'object' || error === null) return 0
-  let key = errorKeys.get(error)
-  if (key === undefined) {
-    lastErrorKey += 1
-    key = lastErrorKey
-    errorKeys.set(error, key)
-  }
-  return key
-}
-
 export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
-  // Auth errors should send the user through logout to clear their session
   const normalizedError = error instanceof Error ? error : new Error('An unexpected error occurred')
   const routeStatus = isRouteErrorResponse(error) ? error.status : undefined
-  const isUnauthorized = isUnauthorizedError(error, routeStatus)
-  // The root loader's own outage flag (`serviceUnavailable`) is outage evidence too. App, which
-  // otherwise turns it into a signal, has been unmounted by this error.
-  const loaderOutage = useRootLoaderOutage()
 
-  // Log out only on an unambiguous 401. While the app has outage evidence, or while the error link
-  // has let a 401 pass because of some, a 401 is not proof the session is bad, whoever threw it (a
-  // loader, the Me query, or a route's own query: the app-code marker does not matter here). Keep
-  // the session and show the self-recovering screen: once the API answers and no evidence is left
-  // it revalidates the route, which renders again with a fresh answer (data, or a clean 401 that
-  // logs out). It lives here, not in App, because the error has unmounted App.
-  if (awaitsFreshAnswer(error, routeStatus, loaderOutage)) {
-    return <DeferredAuthRecovery key={errorKey(error)} initialReason="server" />
+  if (routeErrorCode(error) === SESSION_UNKNOWN_CODE) {
+    const reason = (error as { data?: { reason?: unknown } }).data?.reason
+    if (reason === 'answered-error' || reason === 'empty') return <SessionUnknownScreen />
+    return <SessionOutageScreen initialReason="server" />
   }
 
-  if (isUnauthorized && globalThis.window !== undefined) {
-    const currentPath = `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`
-    const returnUrl =
-      currentPath && currentPath !== '/' ? `?return_url=${encodeURIComponent(currentPath)}` : ''
-    globalThis.location.assign(`/force-logout${returnUrl}`)
-    return null
+  if (isUnauthenticatedRouteError(error)) {
+    return (
+      <RevalidateSessionOnMount>
+        <RouteStatusScreen status={401} statusText={routeStatusText(error) || 'Unauthorized'} />
+      </RevalidateSessionOnMount>
+    )
   }
 
   const refusal = refusalScreen(error, routeStatus)
@@ -312,6 +184,10 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
   }
 
   return <RootErrorScreen error={normalizedError} />
+}
+
+function routeStatusText(error: unknown): string | undefined {
+  return isRouteErrorResponse(error) ? error.statusText : undefined
 }
 
 /**

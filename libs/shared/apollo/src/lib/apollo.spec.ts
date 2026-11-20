@@ -1,45 +1,34 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import {
-  ApolloLink,
-  CombinedGraphQLErrors,
-  execute,
-  gql,
-  Observable,
-  ServerError,
-  type ApolloClient,
-} from '@apollo/client'
-import { RetryLink } from '@apollo/client/link/retry'
+import { ApolloLink, CombinedGraphQLErrors, gql, ServerError } from '@apollo/client'
 import {
   APOLLO_ACCESS_FORBIDDEN_EVENT,
-  APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
   APOLLO_ORGANIZATION_REQUIRED_EVENT,
   APOLLO_SERVICE_UNAVAILABLE_EVENT,
+  APOLLO_SESSION_SUSPECT_EVENT,
+  __resetActiveOrganizationSessionChange,
   activeOrganizationSession,
   classifyApiFailure,
-  clearApiOutage,
-  createOutageRetryLink,
+  clearActiveOrganizationForSessionChange,
   getStoredActiveOrganizationId,
-  isApiOutageSignalled,
   isActiveOrganizationAmbiguous,
-  isAuthFailureDeferred,
   isOrganizationContextRequiredError,
   isQueryOperation,
   isRetryableConnectivityError,
   makeClient,
   ORGANIZATION_CONTEXT_REQUIRED_CODE,
+  rememberActiveOrganization,
   resolveActiveOrganization,
-  signalApiOutage,
   storeActiveOrganizationId,
   subscriptionRetryDelayMs,
-  takeDeferredAuthFailure,
 } from './apollo'
 import {
   apolloLoader,
   mergeApiFailureCauses,
   ssrApiFailureCause,
   ssrOrganizationRequired,
-  waitForSsrApiCalls,
 } from './apollo-loader'
+import { __resetApiOutageMemory, apiOutageSeenMsAgo } from './session/outage-memory'
+import { API_UNAUTHENTICATED_CODE, API_UNAVAILABLE_CODE } from './session/narrow-api-error'
 
 function jwtWithIssuedAt(iat: number): string {
   const payload = Buffer.from(JSON.stringify({ iat })).toString('base64url')
@@ -453,10 +442,6 @@ describe('makeClient', () => {
       }
     `
 
-    afterEach(() => {
-      takeDeferredAuthFailure()
-    })
-
     it('is reported as an outage, and a plain INTERNAL_SERVER_ERROR is not', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => undefined)
       const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
@@ -504,46 +489,60 @@ describe('makeClient', () => {
       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
 
       expect(testWindow.location.href).toBe('')
-      // Let pass like any 401 during an outage: refetched for a fresh answer once it clears.
-      expect(takeDeferredAuthFailure()).toBe(true)
+      // Outage outranks the 401: no revalidation is asked for, only the outage reported.
+      const types = testWindow.dispatchEvent.mock.calls.map(([event]) => event.type)
+      expect(types).not.toContain(APOLLO_SESSION_SUSPECT_EVENT)
+      expect(types).toContain(APOLLO_SERVICE_UNAVAILABLE_EVENT)
     })
   })
 
-  it('redirects through logout when a transport response is unauthorized', async () => {
-    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  it.each([
+    [
+      'an HTTP 401',
+      () =>
+        new Response(JSON.stringify({ errors: [{ message: 'Unauthorized' }] }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+    ],
+    [
+      'an UNAUTHENTICATED answer',
+      () =>
+        new Response(
+          JSON.stringify({
+            data: null,
+            errors: [{ message: 'x', extensions: { code: 'UNAUTHENTICATED' } }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    ],
+  ])('answers %s with a session-suspect event, never a navigation', async (_label, answer) => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const testWindow = {
-      location: {
-        pathname: '/admin/sessions',
-        search: '?view=active',
-        hash: '#recent',
-        href: '',
-      },
+      location: { pathname: '/admin/sessions', search: '?view=active', hash: '', href: '' },
+      dispatchEvent: vi.fn(),
     }
     vi.stubGlobal('window', testWindow)
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ errors: [{ message: 'Unauthorized' }] }), {
-        status: 401,
-        headers: { 'content-type': 'application/json' },
-      }),
-    )
+    globalThis.fetch = vi.fn().mockImplementation(async () => answer())
     const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
 
-    await client.query({
-      query: gql`
-        query PrivateData {
-          privateData
-        }
-      `,
-    })
+    await client
+      .query({
+        query: gql`
+          query PrivateData {
+            privateData
+          }
+        `,
+      })
+      .catch(() => undefined)
 
-    expect(consoleLog).toHaveBeenCalledWith(
-      '[Apollo] Authentication error detected, redirecting to logout then login',
+    expect(testWindow.location.href).toBe('')
+    const suspects = testWindow.dispatchEvent.mock.calls.filter(
+      ([event]) => event.type === APOLLO_SESSION_SUSPECT_EVENT,
     )
-    expect(consoleError).toHaveBeenCalled()
-    expect(testWindow.location.href).toBe(
-      '/logout?return_url=%2Fadmin%2Fsessions%3Fview%3Dactive%23recent',
-    )
+    expect(suspects).toHaveLength(1)
+    expect(suspects[0][0].detail).toEqual({ operation: 'PrivateData' })
   })
 
   it('keeps the session on a GraphQL error that only says "Unauthorized", with no code', async () => {
@@ -572,243 +571,6 @@ describe('makeClient', () => {
       .catch(() => undefined)
 
     expect(testWindow.location.href).toBe('')
-  })
-
-  describe('a 401 while a retry of an unreachable call is still in flight', () => {
-    const FLAKY = gql`
-      query Flaky {
-        flaky
-      }
-    `
-    const ME = gql`
-      query Me {
-        me {
-          id
-        }
-      }
-    `
-    const json = (status: number, body: unknown) =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { 'content-type': 'application/json' },
-      })
-
-    function setUp(flakyAttempts: Array<() => Promise<Response>>) {
-      vi.spyOn(console, 'log').mockImplementation(() => undefined)
-      vi.spyOn(console, 'error').mockImplementation(() => undefined)
-      const testWindow = {
-        location: { pathname: '/members', search: '', hash: '', href: '' },
-        dispatchEvent: vi.fn(),
-      }
-      vi.stubGlobal('window', testWindow)
-      let flakyCalls = 0
-      globalThis.fetch = vi.fn().mockImplementation(async (_url: unknown, init?: RequestInit) => {
-        const { operationName } = JSON.parse(String(init?.body))
-        if (operationName === 'Me') return json(401, { message: 'Unauthorized' })
-        const attempt = flakyAttempts[Math.min(flakyCalls, flakyAttempts.length - 1)]
-        flakyCalls += 1
-        return attempt()
-      })
-      const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
-      const run = (query: typeof ME) =>
-        client.query({ query, fetchPolicy: 'network-only' }).catch(() => undefined)
-      return { testWindow, run }
-    }
-
-    afterEach(() => {
-      takeDeferredAuthFailure()
-    })
-
-    it('keeps the session until the retry settles, then logs out on a clean 401', async () => {
-      let answerRetry: () => void = () => undefined
-      const { testWindow, run } = setUp([
-        () => Promise.reject(new TypeError('Failed to fetch')),
-        () =>
-          new Promise<Response>(resolve => {
-            answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
-          }),
-      ])
-      await run(FLAKY)
-
-      const retry = run(FLAKY)
-      await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
-      await run(ME)
-
-      // The 401 came back while the unreachable call was still being retried: kept.
-      expect(testWindow.location.href).toBe('')
-      expect(takeDeferredAuthFailure()).toBe(true)
-
-      answerRetry()
-      await retry
-      expect(isApiOutageSignalled()).toBe(false)
-
-      await run(ME)
-      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
-    })
-
-    it('counts the retry of a query answered with a GraphQL 503 as outage evidence', async () => {
-      let answerRetry: () => void = () => undefined
-      const { testWindow, run } = setUp([
-        () => Promise.resolve(json(200, { data: null, errors: [GRAPHQL_503_ERROR] })),
-        () =>
-          new Promise<Response>(resolve => {
-            answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
-          }),
-      ])
-      await run(FLAKY)
-
-      const retry = run(FLAKY)
-      await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
-      await run(ME)
-
-      // The concurrent 401 is kept, as it is beside a proxy's 503.
-      expect(testWindow.location.href).toBe('')
-      expect(takeDeferredAuthFailure()).toBe(true)
-
-      answerRetry()
-      await retry
-      expect(isApiOutageSignalled()).toBe(false)
-    })
-
-    it('announces the end of the evidence when a 401 was let pass meanwhile', async () => {
-      let answerRetry: () => void = () => undefined
-      const { testWindow, run } = setUp([
-        () => Promise.reject(new TypeError('Failed to fetch')),
-        () =>
-          new Promise<Response>(resolve => {
-            answerRetry = () => resolve(json(200, { data: { flaky: 'ok' } }))
-          }),
-      ])
-      const announced = () =>
-        testWindow.dispatchEvent.mock.calls.filter(
-          ([event]) => (event as Event).type === APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
-        )
-      await run(FLAKY)
-      const retry = run(FLAKY)
-      await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
-      await run(ME)
-      expect(announced()).toHaveLength(0)
-
-      answerRetry()
-      await retry
-
-      // Nothing else would tell the app to refetch the query left holding the deferred 401.
-      expect(announced()).toHaveLength(1)
-    })
-
-    it('does not announce anything when no 401 was let pass', async () => {
-      const { testWindow, run } = setUp([
-        () => Promise.reject(new TypeError('Failed to fetch')),
-        async () => json(200, { data: { flaky: 'ok' } }),
-      ])
-      await run(FLAKY)
-      await run(FLAKY)
-
-      expect(
-        testWindow.dispatchEvent.mock.calls.filter(
-          ([event]) => (event as Event).type === APOLLO_DEFERRED_AUTH_FAILURE_EVENT,
-        ),
-      ).toHaveLength(0)
-    })
-
-    it('logs out when the retry itself is answered 200 with an UNAUTHENTICATED error', async () => {
-      const { testWindow, run } = setUp([
-        () => Promise.reject(new TypeError('Failed to fetch')),
-        async () =>
-          json(200, {
-            data: null,
-            errors: [{ message: 'Expired', extensions: { code: 'UNAUTHENTICATED' } }],
-          }),
-      ])
-      await run(FLAKY)
-
-      await run(FLAKY)
-
-      expect(isApiOutageSignalled()).toBe(false)
-      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
-    })
-
-    it('does not count a call that never failed to reach the API', async () => {
-      let answerFirst: () => void = () => undefined
-      const { testWindow, run } = setUp([
-        () =>
-          new Promise<Response>(resolve => {
-            answerFirst = () => resolve(json(200, { data: { flaky: 'ok' } }))
-          }),
-      ])
-
-      const inFlight = run(FLAKY)
-      await run(ME)
-
-      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
-      answerFirst()
-      await inFlight
-    })
-
-    it("judges a retried call's own 401 like any other", async () => {
-      const { testWindow, run } = setUp([
-        () => Promise.reject(new TypeError('Failed to fetch')),
-        async () => json(401, { message: 'Unauthorized' }),
-      ])
-      await run(FLAKY)
-
-      await run(FLAKY)
-
-      expect(isApiOutageSignalled()).toBe(false)
-      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
-    })
-  })
-
-  it('keeps the session on a 401 while an outage is signalled, and logs out once it clears', async () => {
-    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const testWindow = { location: { pathname: '/members', search: '', hash: '', href: '' } }
-    vi.stubGlobal('window', testWindow)
-    globalThis.fetch = vi.fn().mockImplementation(
-      async () =>
-        new Response(JSON.stringify({ errors: [{ message: 'Unauthorized' }] }), {
-          status: 401,
-          headers: { 'content-type': 'application/json' },
-        }),
-    )
-    const query = gql`
-      query PrivateData {
-        privateData
-      }
-    `
-    const first = {}
-    const second = {}
-    try {
-      signalApiOutage(first)
-      signalApiOutage(second)
-      expect(isApiOutageSignalled()).toBe(true)
-      expect(takeDeferredAuthFailure()).toBe(false)
-      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
-      expect(testWindow.location.href).toBe('')
-      expect(consoleLog).toHaveBeenCalledWith(
-        '[Apollo] Authentication error during an API outage, keeping the session for now',
-      )
-      // Recorded once, for the app to refetch the query after the outage, then cleared.
-      expect(takeDeferredAuthFailure()).toBe(true)
-      expect(takeDeferredAuthFailure()).toBe(false)
-
-      // One source clearing does not clear another's evidence.
-      clearApiOutage(first)
-      expect(isApiOutageSignalled()).toBe(true)
-      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
-      expect(testWindow.location.href).toBe('')
-      expect(takeDeferredAuthFailure()).toBe(true)
-
-      clearApiOutage(second)
-      expect(isApiOutageSignalled()).toBe(false)
-      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({ query })
-      expect(testWindow.location.href).toBe('/logout?return_url=%2Fmembers')
-      expect(takeDeferredAuthFailure()).toBe(false)
-    } finally {
-      takeDeferredAuthFailure()
-      clearApiOutage(first)
-      clearApiOutage(second)
-    }
   })
 
   it('signals a friendly access-denied state for forbidden queries', async () => {
@@ -963,225 +725,6 @@ describe('isQueryOperation', () => {
     expect(isQueryOperation(operation('query Q { a }'))).toBe(true)
     expect(isQueryOperation(operation('mutation M { a }'))).toBe(false)
     expect(isQueryOperation(operation('subscription S { a }'))).toBe(false)
-  })
-})
-
-describe('isAuthFailureDeferred', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-    takeDeferredAuthFailure()
-  })
-
-  it('reports a 401 let pass during an outage without taking it', async () => {
-    vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.stubGlobal('window', { location: { pathname: '/', search: '', hash: '', href: '' } })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 401 })),
-    )
-    const outage = {}
-    signalApiOutage(outage)
-    try {
-      expect(isAuthFailureDeferred()).toBe(false)
-      await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
-        .query({ query: gql('query Q { a }') })
-        .catch(() => undefined)
-
-      expect(isAuthFailureDeferred()).toBe(true)
-      expect(isAuthFailureDeferred()).toBe(true)
-      expect(takeDeferredAuthFailure()).toBe(true)
-      expect(isAuthFailureDeferred()).toBe(false)
-    } finally {
-      clearApiOutage(outage)
-    }
-  })
-})
-
-describe('createOutageRetryLink with a RetryLink above it', () => {
-  // The placement an app with its own RetryLink uses: error link, RetryLink, this link, transport.
-  // Each attempt the RetryLink makes passes through the outage link, so the attempt after one that
-  // could not reach the API counts as outage evidence while it is in flight.
-  let releaseSecondAttempt: () => void = () => undefined
-
-  function chain(options?: Parameters<typeof createOutageRetryLink>[0]) {
-    let attempts = 0
-    const transport = new ApolloLink(
-      () =>
-        new Observable<ApolloLink.Result>(observer => {
-          attempts += 1
-          if (attempts === 1) {
-            observer.error(new TypeError('Failed to fetch'))
-            return
-          }
-          releaseSecondAttempt = () => {
-            observer.next({ data: { saved: true } })
-            observer.complete()
-          }
-        }),
-    )
-    const retry = new RetryLink({
-      delay: { initial: 1, max: 1, jitter: false },
-      attempts: { max: 2, retryIf: error => isRetryableConnectivityError(error) },
-    })
-    return ApolloLink.from([retry, createOutageRetryLink(options), transport])
-  }
-
-  function run(link: ApolloLink, source: string) {
-    const client = { queryDeduplication: false } as unknown as ApolloClient
-    return new Promise<void>((resolve, reject) => {
-      execute(link, { query: gql(source) }, { client }).subscribe({
-        complete: resolve,
-        error: reject,
-      })
-    })
-  }
-
-  beforeEach(() => {
-    vi.stubGlobal('window', { dispatchEvent: vi.fn() })
-  })
-
-  afterEach(() => {
-    releaseSecondAttempt()
-    vi.unstubAllGlobals()
-  })
-
-  it("counts a query's retry as outage evidence while it is in flight", async () => {
-    const done = run(chain(), 'query Saved { saved }')
-    await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
-
-    releaseSecondAttempt()
-    await done
-    expect(isApiOutageSignalled()).toBe(false)
-  })
-
-  it('counts a retried mutation only when told to', async () => {
-    const notCounted = run(chain(), 'mutation SaveA { saved }')
-    await new Promise(resolve => setTimeout(resolve, 20))
-    expect(isApiOutageSignalled()).toBe(false)
-    releaseSecondAttempt()
-    await notCounted
-
-    const counted = run(chain({ counts: () => true }), 'mutation SaveB { saved }')
-    await vi.waitFor(() => expect(isApiOutageSignalled()).toBe(true))
-    releaseSecondAttempt()
-    await counted
-    expect(isApiOutageSignalled()).toBe(false)
-  })
-})
-
-describe('cancelling a request through the link chain', () => {
-  // A cancelled request must not leave outage evidence behind: every link passes the
-  // unsubscription down to the transport, which aborts the fetch.
-  const FLAKY = gql`
-    query Flaky {
-      flaky
-    }
-  `
-  const signals: AbortSignal[] = []
-  let calls = 0
-
-  beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.stubGlobal('window', {
-      location: { pathname: '/', search: '', hash: '', href: '' },
-      dispatchEvent: vi.fn(),
-    })
-    signals.length = 0
-    calls = 0
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockImplementation((_url: unknown, init?: RequestInit) => {
-        calls += 1
-        const signal = init?.signal as AbortSignal
-        signals.push(signal)
-        if (calls === 1) return Promise.reject(new TypeError('Failed to fetch'))
-        // A hanging request, as to an API that is down; rejects like fetch when aborted.
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () =>
-            reject(new DOMException('This operation was aborted', 'AbortError')),
-          )
-        })
-      }),
-    )
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
-
-  async function retryInFlight() {
-    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
-    await client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
-    return client
-  }
-
-  it('withdraws the evidence and aborts the fetch when the query is unsubscribed', async () => {
-    const client = await retryInFlight()
-    const subscription = client
-      .watchQuery({ query: FLAKY, fetchPolicy: 'network-only' })
-      .subscribe(() => undefined)
-    await vi.waitFor(() => expect(calls).toBe(2))
-    expect(isApiOutageSignalled()).toBe(true)
-
-    subscription.unsubscribe()
-
-    await vi.waitFor(() => expect(signals[1].aborted).toBe(true))
-    expect(isApiOutageSignalled()).toBe(false)
-  })
-
-  it('leaves no evidence behind when the caller aborts the request', async () => {
-    const client = await retryInFlight()
-    const controller = new AbortController()
-    const aborted = client.query({
-      query: FLAKY,
-      fetchPolicy: 'network-only',
-      context: { fetchOptions: { signal: controller.signal } },
-    })
-    await vi.waitFor(() => expect(calls).toBe(2))
-    expect(isApiOutageSignalled()).toBe(true)
-
-    controller.abort()
-    await aborted.catch(() => undefined)
-
-    expect(isApiOutageSignalled()).toBe(false)
-    // The aborted attempt was not an outage either: the next one is not counted as a retry.
-    void client.query({ query: FLAKY, fetchPolicy: 'network-only' }).catch(() => undefined)
-    await vi.waitFor(() => expect(calls).toBe(3))
-    expect(isApiOutageSignalled()).toBe(false)
-  })
-})
-
-describe('signalApiOutage / clearApiOutage', () => {
-  it('signals per source, and clearing one source keeps the others', () => {
-    const first = {}
-    const second = {}
-    try {
-      expect(isApiOutageSignalled()).toBe(false)
-      signalApiOutage(first)
-      signalApiOutage(first)
-      signalApiOutage(second)
-      expect(isApiOutageSignalled()).toBe(true)
-
-      clearApiOutage(first)
-      expect(isApiOutageSignalled()).toBe(true)
-      clearApiOutage(second)
-      expect(isApiOutageSignalled()).toBe(false)
-      // Clearing a source that signalled nothing is harmless.
-      clearApiOutage({})
-      expect(isApiOutageSignalled()).toBe(false)
-    } finally {
-      clearApiOutage(first)
-      clearApiOutage(second)
-    }
-  })
-
-  it('takes the source alone: no boolean flag (Sonar S2301)', () => {
-    expect(signalApiOutage).toHaveLength(1)
-    expect(clearApiOutage).toHaveLength(1)
   })
 })
 
@@ -1584,39 +1127,6 @@ describe('apolloLoader in-flight calls and organization refusals', () => {
     vi.restoreAllMocks()
   })
 
-  it('waits for a preload still in flight, then finds its cause', async () => {
-    let answer: (response: Response) => void = () => undefined
-    globalThis.fetch = vi.fn(
-      () => new Promise<Response>(resolve => (answer = resolve)),
-    ) as typeof fetch
-    const data = apolloLoader()(({ preloadQuery }) => ({ ref: preloadQuery(query) }))(loaderArgs())
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    let settled: boolean | undefined
-    const waiting = waitForSsrApiCalls({ root: data }, 5_000).then(result => (settled = result))
-    await new Promise(resolve => setTimeout(resolve, 10))
-    expect(settled).toBeUndefined()
-    expect(ssrApiFailureCause({ root: data })).toBeUndefined()
-
-    answer(new Response('{}', { status: 503, headers: { 'content-type': 'application/json' } }))
-    await waiting
-    expect(settled).toBe(true)
-    expect(ssrApiFailureCause({ root: data })).toBe('unavailable')
-  })
-
-  it('gives up after the bound, saying the calls have not settled', async () => {
-    globalThis.fetch = vi.fn(() => new Promise<Response>(() => undefined)) as typeof fetch
-    const data = apolloLoader()(({ preloadQuery }) => ({ ref: preloadQuery(query) }))(loaderArgs())
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    expect(await waitForSsrApiCalls({ root: data }, 20)).toBe(false)
-  })
-
-  it('resolves at once when nothing is in flight', async () => {
-    expect(await waitForSsrApiCalls(undefined, 5_000)).toBe(true)
-    expect(await waitForSsrApiCalls({ root: null, child: { theme: 'dark' } }, 5_000)).toBe(true)
-  })
-
   it('records an ORGANIZATION_CONTEXT_REQUIRED refusal by code, and nothing else', async () => {
     globalThis.fetch = vi.fn(async () =>
       Response.json({
@@ -1661,52 +1171,6 @@ describe('apolloLoader in-flight calls and organization refusals', () => {
     expect(isOrganizationContextRequiredError(new Error(ORGANIZATION_CONTEXT_REQUIRED_CODE))).toBe(
       false,
     )
-  })
-})
-
-describe('releaseApiOutage', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('announces a 401 let pass during the evidence once the last evidence is released', async () => {
-    vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    // A fresh copy of the module: other tests in this file can leave a retry's evidence behind.
-    vi.resetModules()
-    const apollo = await import('./apollo')
-    const loaderFlag = {}
-    const other = {}
-    apollo.signalApiOutage(loaderFlag)
-    apollo.signalApiOutage(other)
-    const originalFetch = globalThis.fetch
-    try {
-      globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ message: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'content-type': 'application/json' },
-        }),
-      )
-      await apollo
-        .makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
-        .query({ query: gql('query Data { data }') })
-        .catch(() => undefined)
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-    expect(apollo.isAuthFailureDeferred()).toBe(true)
-    const announced = vi.fn()
-    window.addEventListener(apollo.APOLLO_DEFERRED_AUTH_FAILURE_EVENT, announced)
-    try {
-      apollo.releaseApiOutage(loaderFlag)
-      expect(announced).not.toHaveBeenCalled()
-      apollo.releaseApiOutage(other)
-      expect(announced).toHaveBeenCalledTimes(1)
-      expect(apollo.isApiOutageSignalled()).toBe(false)
-    } finally {
-      window.removeEventListener(apollo.APOLLO_DEFERRED_AUTH_FAILURE_EVENT, announced)
-      apollo.takeDeferredAuthFailure()
-    }
   })
 })
 
@@ -1755,7 +1219,6 @@ describe('SKIP_AUTH_ERROR_REPORT_CONTEXT', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
-    takeDeferredAuthFailure()
   })
 
   async function run(answer: () => Response, context?: Record<string, unknown>) {
@@ -1783,17 +1246,6 @@ describe('SKIP_AUTH_ERROR_REPORT_CONTEXT', () => {
     expect(acted).toBe(true)
   })
 
-  it('records no deferred 401 for it during an outage, since its caller decides', async () => {
-    const outage = {}
-    apollo.signalApiOutage(outage)
-    try {
-      await run(coded('UNAUTHENTICATED', 401), apollo.SKIP_AUTH_ERROR_REPORT_CONTEXT)
-      expect(apollo.isAuthFailureDeferred()).toBe(false)
-    } finally {
-      apollo.clearApiOutage(outage)
-    }
-  })
-
   it('still reports a request that never reached the API', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
     await apollo
@@ -1811,7 +1263,49 @@ describe('the stored active organization', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    __resetActiveOrganizationSessionChange()
     localStorage.clear()
+  })
+
+  it('before a session change (emulation), forgets the organization and stores none until the reload', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ data: { ping: 'pong' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+    const ping = gql`
+      query Ping {
+        ping
+      }
+    `
+    storeActiveOrganizationId('previous-users-org')
+    const before = activeOrganizationSession()
+
+    clearActiveOrganizationForSessionChange()
+
+    expect(getStoredActiveOrganizationId()).toBeNull()
+    // A switch still in flight for the previous session stores nothing.
+    expect(activeOrganizationSession()).not.toBe(before)
+    // The still-mounted shell re-renders while the reload is pending, and a late write arrives.
+    rememberActiveOrganization('previous-users-org')
+    storeActiveOrganizationId('previous-users-org')
+    expect(localStorage.getItem('activeOrganizationId')).toBeNull()
+    // Another tab storing one meanwhile is not sent from this document either.
+    localStorage.setItem('activeOrganizationId', 'other-tabs-org')
+    expect(getStoredActiveOrganizationId()).toBeNull()
+    await client.query({ query: ping, fetchPolicy: 'no-cache' })
+    expect(fetchMock.mock.calls[0][1].headers['x-organization-id']).toBeUndefined()
+  })
+
+  it('a plain forget (a sign-in in this document) lets the new session store its own organization', () => {
+    storeActiveOrganizationId('previous-users-org')
+    storeActiveOrganizationId(null)
+    rememberActiveOrganization('new-users-org')
+    expect(getStoredActiveOrganizationId()).toBe('new-users-org')
   })
 
   it('ends the organization session when forgotten (a logout), not when another is stored', () => {
@@ -1895,5 +1389,126 @@ describe('the stored active organization', () => {
     expect(getStoredActiveOrganizationId()).toBeNull()
     expect(() => storeActiveOrganizationId('org-2')).not.toThrow()
     expect(() => storeActiveOrganizationId(null)).not.toThrow()
+  })
+})
+
+describe('the server-side outage memory', () => {
+  const query = gql`
+    query Ping {
+      ping
+    }
+  `
+  const originalFetch = globalThis.fetch
+
+  beforeEach(() => {
+    __resetApiOutageMemory()
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    __resetApiOutageMemory()
+  })
+
+  async function serverQuery(answer: () => Response | Promise<Response>) {
+    vi.stubGlobal('window', undefined)
+    globalThis.fetch = vi.fn().mockImplementation(async () => answer())
+    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      .query({ query, fetchPolicy: 'no-cache' })
+      .catch(() => undefined)
+  }
+
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+  it.each([
+    ['no answer', () => Promise.reject(new TypeError('fetch failed'))],
+    ['a proxy 503', () => json(503, { message: 'down' })],
+    ['a GraphQL 503', () => json(200, { data: null, errors: [GRAPHQL_503_ERROR] })],
+  ])('is recorded by any server-side client that meets %s', async (_label, answer) => {
+    await serverQuery(answer as () => Response)
+    expect(apiOutageSeenMsAgo()).toBeLessThan(1_000)
+  })
+
+  it.each([
+    ['a 401', () => json(401, { message: 'Unauthorized' })],
+    ['a 500', () => json(500, { message: 'boom' })],
+    ['an answer', () => json(200, { data: { ping: 'pong' } })],
+  ])('is not recorded for %s', async (_label, answer) => {
+    await serverQuery(answer)
+    expect(apiOutageSeenMsAgo()).toBeUndefined()
+  })
+
+  it('is not recorded by a browser client', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+      .query({ query, fetchPolicy: 'no-cache' })
+      .catch(() => undefined)
+    expect(apiOutageSeenMsAgo()).toBeUndefined()
+  })
+})
+
+describe('apolloLoader narrows the errors a loader throws', () => {
+  const loaderArgs = () =>
+    ({ request: new Request('https://app.example.com/members'), params: {}, context: {} }) as never
+
+  async function thrownBy(loader: () => unknown) {
+    try {
+      await apolloLoader()(loader)(loaderArgs())
+    } catch (error) {
+      return error as { type?: string; data?: { code?: string }; init?: { status?: number } }
+    }
+    throw new Error('expected the loader to throw')
+  }
+
+  it('turns a 401 into a 401 route error with the API_UNAUTHENTICATED code', async () => {
+    const error = await thrownBy(() => {
+      throw new ServerError('Response not successful', {
+        response: new Response(null, { status: 401 }),
+        bodyText: '',
+      })
+    })
+    expect(error).toMatchObject({
+      type: 'DataWithResponseInit',
+      data: { code: API_UNAUTHENTICATED_CODE },
+      init: { status: 401 },
+    })
+  })
+
+  it('turns an unreachable API into a 503 route error with API_UNAVAILABLE, sync or async', async () => {
+    for (const loader of [
+      () => {
+        throw new TypeError('Failed to fetch')
+      },
+      async () => {
+        throw new TypeError('Failed to fetch')
+      },
+    ]) {
+      expect(await thrownBy(loader)).toMatchObject({
+        data: { code: API_UNAVAILABLE_CODE },
+        init: { status: 503 },
+      })
+    }
+  })
+
+  it('passes a thrown Response (a redirect) through untouched', async () => {
+    const redirect = new Response(null, { status: 302, headers: { Location: '/x' } })
+    expect(
+      await thrownBy(() => {
+        throw redirect
+      }),
+    ).toBe(redirect)
+  })
+
+  it('passes any other error through, judged by status and never by message', async () => {
+    const bug = new Error('Unauthorized 401 UNAUTHENTICATED')
+    expect(
+      await thrownBy(() => {
+        throw bug
+      }),
+    ).toBe(bug)
   })
 })

@@ -1,0 +1,315 @@
+id: 2026-11-20-session-middleware
+title: >-
+  Web: one server-side session verdict, judged by a root session middleware before any loader,
+  replaces every sign-out path the app had; a browser 401 only asks for that verdict again
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+# The session code those notes added is what this replaces; the API change makes `me` answer a
+# deleted user with a 401 the judge can read.
+applyAfter:
+  - 2026-11-16-ssr-signout-outage
+  - 2026-11-19-session-follow-ups
+  - 2026-11-19-api-auth-ambiguity
+  - 2026-11-20-session-cookie-domain-rule
+  - 2026-11-20-mutation-errorpolicy-follow-ups
+  - 2026-11-20-emulation-organization-reload-race
+  - 2026-11-20-test-db-guard-follow-ups
+  - 2026-11-20-me-never-null
+
+intent: >
+  The rule does not change: sign a user out only on an unambiguous 401 (an HTTP 401, or a GraphQL
+  error whose `extensions.code` is `UNAUTHENTICATED`) with no outage evidence; outage evidence
+  always outranks a 401; message text never decides. What changes is where it is decided. Before,
+  seven places each decided it with their own view of the evidence (the root loader, the server
+  render's shell and route error handlers, the root ErrorBoundary, the signed-in layout's Me
+  re-check, the browser error link, `RequireAuth`, and a deferred-401 recovery), and every
+  follow-up since 2026-11-14 closed a gap between two of them. Now one function decides, once per
+  request, on the server, before any loader runs, and everything else reads its answer.
+
+
+  Behaviour changes, plainly:
+  (a) A document load, a client navigation (`.data`) and a revalidation are judged the same way, by
+  the same code, before any loader. A private loader never runs for a request that is not signed in.
+  (b) A rejected session (a 401 that a second Me call confirms, with no outage seen) goes to
+  /force-logout once: a 302 for a document load, a single-fetch redirect with `reload` for `.data`.
+  On a public page it is not redirected: the page renders signed out and the response expires both
+  session cookies (the cookie-domain one and the host-only one) in place.
+  (c) An outage keeps the session: no answer, a 502/503/504, a GraphQL 503, Me taking longer than
+  3 s, or any server-side API call of this web instance finding the API down in the last 30 s. A
+  private page shows the "server trouble" (or "you're offline") screen (503), which probes the API
+  and, once it answers, revalidates with backoff until the verdict is known, never reloading; a
+  public page renders with
+  a neutral header (no account menu and no "Log in") and recovers silently.
+  (d) Me answering anything else (a 500, `me: null` with no error, an error with no code) keeps the
+  session and shows "We couldn't load your account" on a private page, retrying by itself.
+  (e) In the browser a 401 or UNAUTHENTICATED (from the error link, or a loader's route error) only
+  asks the server to judge again: one revalidation, at most one per 5 s, never while offline. A 401
+  that arrives during the 5 s cooldown or while offline is held, not dropped: one coalesced
+  revalidation runs when the cooldown ends or the browser reconnects. The browser never navigates
+  to /logout, /login or /force-logout on its own.
+  (f) The Me query is no longer preloaded by the root loader: the verdict carries the user, which the
+  app writes into the Apollo cache as Me's answer, so pages reading Me through Apollo get it with no
+  second request and profile edits still show.
+  Nothing here signs out in a case that did not sign out before; several cases that did (a 401
+  during a deploy, a 401 beside a slow 503, a 401 from a mutation's retry) no longer do.
+
+
+  What a downstream changes. The template's files are the reference for each; port the behaviour,
+  keeping the app's own routes, copy and design.
+
+  1. Turn on React Router middleware (the codemod does 1a to 1e; run it first, with --dry-run to see
+  the plan): `node scripts/codemod-v8-middleware-context.mjs --dry-run`, then without --dry-run.
+  Copy scripts/codemod-v8-middleware-context.mjs from the template first if promotion did not bring
+  it. It exits 1 and lists what it could not change.
+  - 1a. apps/web/react-router.config.ts: `future: { v8_middleware: true }`.
+  - 1b. apps/web/server.js: `getLoadContext` returns `new RouterContextProvider()` (imported from
+    'react-router'). If the app's load context returned keys, the codemod reports them: server.js
+    cannot share a context object with the app build, so set each in a root middleware with its own
+    `createContext()` instead.
+  - 1c. apps/web/app/entry.server.tsx: the load-context parameter is a `RouterContextProvider`.
+  - 1d. The `AppLoadContext` augmentation (apps/web/app-load-context.d.ts) is deleted and dropped from
+    tsconfig.app.json and tsconfig.spec.json includes. A loader still reading `context.<key>` is
+    reported; read it with `context.get(<key>Context)`.
+  - 1e. Specs calling a loader with `context: {}` get `new RouterContextProvider()`. A spec whose
+    loader now reads the verdict uses apps/web/tests/helpers/session-context.ts
+    (`withSession(SIGNED_IN)` and friends).
+
+  2. The session verdict, in libs/shared/apollo/src/lib/session/ (new; exported from the lib):
+  `judgeSession(evidence)` (the pure rule), `meOutcomeFromResult` / `meOutcomeFromError`,
+  `recordApiOutage` / `apiOutageSeenMsAgo` (process-wide outage memory), `narrowApiError`, and the
+  constants `SESSION_TIMEOUT_MS = 3000`, `OUTAGE_MEMORY_MS = 30000`,
+  `SESSION_REVALIDATE_COOLDOWN_MS = 5000`. Copy the folder as is, with judge-session.spec.ts.
+
+  3. The web session module, apps/web/app/session/ (new): session-context.ts (`sessionContext`,
+  `getSession(context)`, `requireUser(context)`), session-middleware.server.ts (`sessionMiddleware`
+  for the root, `requireSession` for signed-in layouts, `resolveSession`, `sessionRejectedPath`,
+  `forwardedSessionCookie`, `refusedCallResponse`), session-revalidator.tsx, session-unknown.tsx,
+  and session-cookie.ts (moved from apps/web/app/session-cookie.ts; update its importers).
+  `SESSION_REJECTED_PATH` (optional, web env) sets where a rejected session lands; it defaults to
+  /force-logout, must be a local path, and that route must expire the cookie as /force-logout does.
+  Paths the middleware must not judge (the web health check, the sitemap) are in
+  `SESSIONLESS_PATTERNS`; add the app's own sessionless resource routes there.
+
+  4. Wire it in:
+  - root.tsx: `export const middleware = [sessionMiddleware]`; the loader returns
+    `{ session: getSession(context), theme }` and nothing else about the session (no cookie read, no
+    Me preload, no redirect). The ErrorBoundary shows `SessionUnknownScreen` for a 503
+    `SESSION_UNKNOWN` route error with reason `answered-error` or `empty`, `SessionOutageScreen`
+    (from session-unknown.tsx; not `RecoveringApiUnavailable`, whose rate-limited reload can stick
+    inside the 30 s outage memory) for the other unknown reasons, and for a 401 route error renders `RevalidateSessionOnMount` (one
+    revalidation) beside the route error screen; it no longer signs out.
+  - app.tsx: reads `session` from the root loader data; writes the verdict's user into the cache as
+    Me and renders the cached Me (`useSessionUser`); revalidates quietly with backoff while the
+    verdict is unknown on a public page; forgets the stored active organization on a rejected
+    verdict; renders `<SessionRevalidator />` inside `GlobalContextProvider`.
+  - Every signed-in layout (routes/_authenticated/_layout.tsx, and any other private layout or
+    route outside it, such as mcp-connect.tsx): `export const middleware = [requireSession]`, and
+    no session logic of its own (no Me re-check, no `<Navigate to="/login">`, no outage check).
+  - routes/_public/_layout.tsx: no loader; passes `sessionUnknown` (the root verdict is `unknown`)
+    to the header. libs/web-ui's `WebUiHeader` takes `sessionUnknown` and then shows only the
+    theme toggle.
+  - routes/_public/login.tsx, routes/auth/oauth-success.tsx: read `getSession(context)` instead of
+    the cookie. Keep login's `expired=1` override: with it the form always renders, even for a
+    signed-in verdict (a parent-domain cookie that survived /force-logout), so the page's
+    stored-organization cleanup runs.
+  - entry.server.tsx: `handleError` only logs; the shell error path serves 503 for an outage,
+    `refusedCallResponse()` for a 401 and the organization picker for ORGANIZATION_CONTEXT_REQUIRED.
+    It never signs out.
+  - libs/shared/apollo: the error link dispatches `APOLLO_SESSION_SUSPECT_EVENT` for a 401 in the
+    browser and records the outage memory on the server; `apolloLoader` throws `narrowApiError(e)`,
+    so a loader's 401 reaches the browser as a 401 `API_UNAUTHENTICATED` route error and an outage
+    as a 503 `API_UNAVAILABLE` one, whatever React Router's production sanitization does. Its
+    precedence is outage, then 401, then the organization-required 403: a combined GraphQL response
+    carrying ORGANIZATION_CONTEXT_REQUIRED beside a 503 or UNAUTHENTICATED is the outage or the 401,
+    never the organization picker. An app that narrowed errors itself checks the same order.
+
+  5. Delete the old paths (each is replaced above): apps/web/app/session-recheck.tsx,
+  deferred-auth-recovery.tsx, loader-outage.ts, app-code-error-marker.tsx, app-load-context.d.ts;
+  libs/web's `RequireAuth` (components/require-auth.tsx and its export); from
+  libs/shared/apollo `signalApiOutage`, `clearApiOutage`, `isApiOutageSignalled`,
+  `releaseApiOutage`, `takeDeferredAuthFailure`, `isAuthFailureDeferred`,
+  `APOLLO_DEFERRED_AUTH_FAILURE_EVENT`, `createOutageRetryLink`, `createOperationTrackingLink`, the
+  `onOperationStart` client option and `waitForSsrApiCalls`; from entry.server.tsx
+  `routeErrorOutcome`, `recordedLoaderCause`, `SSR_API_SETTLE_MS`, `signOutOnceSettled`,
+  `shellErrorForErrorPage` and the force-logout response; from api-availability.ts the
+  `includeAuthFailures` refetch option. An app-specific caller of any of them reads
+  `getSession(context)` in a loader, or lets the 401 reach the root ErrorBoundary.
+
+  6. The check that keeps it that way: scripts/audit-session-decisions.mjs (copy it and its spec).
+  package.json is not mirrored by promotion, so add the script by hand:
+  `"verify:session-decisions": "node scripts/audit-session-decisions.mjs"`, and run it in CI next to
+  "Verify SDK selects" (.github/workflows/ci.yml: a step `run: pnpm verify:session-decisions`). It
+  fails on a navigation to /login, /logout or /force-logout, a branch on a 401 or UNAUTHENTICATED,
+  a hand-made 401, a read of the session cookie, or a failed organizations read answered with `[]`,
+  anywhere outside the session module and the two sign-out routes. A deliberate one (the user
+  pressed "Sign in", deleted their account, finished a password reset) takes
+  `// nestled-session-allow: <reason>` on its line or the line above; the template has 8. Optionally
+  add `"codemod:v8-middleware-context": "node scripts/codemod-v8-middleware-context.mjs"` too.
+
+
+  Adapting:
+  - An app with private routes outside `_authenticated`: give each private layout `requireSession`.
+    A route that must work signed out keeps none and reads `getSession(context)`.
+  - An app whose own code redirects to /login or /logout on a 401 (a custom loader, a hook, a
+    resource route): the audit lists each. Remove the decision; throw `narrowApiError(error)` from a
+    loader, or let the error link's suspect event revalidate.
+  - An app with its own sign-out landing page: set `SESSION_REJECTED_PATH` rather than redirecting
+    to it from code.
+  - An app with extra resource routes that must not call the API (a health probe, a webhook proxy):
+    add their patterns to `SESSIONLESS_PATTERNS`.
+
+why: >
+  Every sign-out defect since 2026-11-10 (a sign-out during a deploy, a sign-out loop, a session kept
+  after a revoke, a 401 judged before the 503 beside it) came from two of the seven deciders seeing
+  different evidence or deciding in a different order, and every fix added a channel between them.
+  Production-mode tests of the old code also showed a loader's 401 reaching the browser as a
+  sanitized 500, and client navigations skipping the root loader's check entirely. One verdict
+  judged before any loader, with the evidence in one place and the browser only asking again,
+  removes the class instead of the next instance.
+
+affectedPaths:
+  - libs/shared/apollo/src/lib/session/session-verdict.ts
+  - libs/shared/apollo/src/lib/session/judge-session.ts
+  - libs/shared/apollo/src/lib/session/judge-session.spec.ts
+  - libs/shared/apollo/src/lib/session/outage-memory.ts
+  - libs/shared/apollo/src/lib/session/narrow-api-error.ts
+  - libs/shared/apollo/src/lib/session/index.ts
+  - libs/shared/apollo/src/index.ts
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo-loader.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - libs/shared/apollo/README.md
+  - apps/web/react-router.config.ts
+  - apps/web/server.js
+  - apps/web/tsconfig.app.json
+  - apps/web/tsconfig.spec.json
+  - apps/web/app/session/session-context.ts
+  - apps/web/app/session/session-middleware.server.ts
+  - apps/web/app/session/session-revalidator.tsx
+  - apps/web/app/session/session-unknown.tsx
+  - apps/web/app/session/session-cookie.ts
+  - apps/web/app/session/index.ts
+  - apps/web/app/root.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/entry.server.tsx
+  - apps/web/app/api-availability.ts
+  - apps/web/app/routes/_authenticated/_layout.tsx
+  - apps/web/app/routes/_public/_layout.tsx
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/auth/oauth-success.tsx
+  - apps/web/app/routes/mcp-connect.tsx
+  - apps/web/app/routes/force-logout.tsx
+  - apps/web/app/routes/pricing.tsx
+  - apps/web/app/routes/_public/reset-password.tsx
+  - apps/web/app/routes/settings/_shared-sections.tsx
+  - libs/web-ui/src/lib/web-ui-header.tsx
+  - libs/web/src/lib/components/index.ts
+  - apps/web/tests/session/session-middleware.spec.tsx
+  - apps/web/tests/session/session-middleware-unit.spec.ts
+  - apps/web/tests/session/session-revalidator.spec.tsx
+  - apps/web/tests/helpers/session-context.ts
+  - apps/web/tests/routes/authenticated-layout.spec.tsx
+  - scripts/audit-session-decisions.mjs
+  - scripts/audit-session-decisions.spec.mjs
+  - scripts/codemod-v8-middleware-context.mjs
+  - scripts/codemod-v8-middleware-context.spec.mjs
+  - .github/workflows/ci.yml
+  - package.json
+  - docs/security/auth-invariants.md
+
+skipIf:
+  - The project has no web app.
+
+verification:
+  - node scripts/codemod-v8-middleware-context.mjs --dry-run (reports "Nothing to change" and exits 0)
+  - pnpm verify:session-decisions (no findings; every allowed site has a reason)
+  - node --test scripts/*.spec.mjs
+  - pnpm typecheck
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web-ui --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx build web --skip-nx-cache
+  - >
+    In a real browser, against the app's production build (`pnpm exec nx build web` then the app's
+    usual start, with the API running), in this order. Keep the devtools Network tab open with
+    "Preserve log" on; "the session cookie" is the app's VITE_COOKIE_NAME (default __session).
+  - >
+    1. Sign in. You land on the dashboard. Reload it: no flash of the login page and the header
+    shows your name. In the API log, the reload made one `Me` call for the session (a page that
+    reads Me for its own content may make one more).
+  - >
+    2. Client navigation: click through three signed-in pages from the menu. Each is a `.data`
+    request answered 200; none is a full page load, none goes to /login.
+  - >
+    3. Revalidation: on a settings page, save a profile change. The page revalidates (a `.data`
+    request with `_routes=`) and the header shows the new name without a reload.
+  - >
+    4. API down, private page: stop the API (keep the web running). Reload a signed-in page: the
+    "server trouble" screen appears (HTTP 503), not the login page, and the session cookie is still
+    there. Click a menu link: still that screen, no redirect. Start the API again: within a minute
+    the page recovers by itself (or at once on "Try again"), still signed in, with no sign-in.
+  - >
+    5. API down, public page: with the API stopped and still signed in, open a public page (the home
+    page, /pricing). It renders; the header shows neither your account menu nor "Log in", only the
+    theme toggle. Start the API again and stay on the page: the account menu appears by itself
+    within about 30 s, with no reload.
+  - >
+    6. API down, then a 401 just after: stop the API, reload a private page (the 503 screen), start
+    the API, then within 30 s revoke the session (as in step 7) and reload. The session is kept
+    (the 503 screen again, or the page); only a reload more than 30 s after the API came back signs
+    out. This is the outage memory: a 401 just after an outage is not trusted.
+  - >
+    7. Revoked session signs out once: sign in, then revoke that session from outside this browser
+    (sign in as the same user in a private window or another browser and change the password, which
+    ends the user's other sessions; or delete the session's row in the API's database). Do not sign
+    out in another tab of the same browser: that clears the shared cookie, which is "no session",
+    not a rejected one. Wait 30 s after any API restart, then click a menu link. You land on /force-logout and then /login
+    (or SESSION_REJECTED_PATH), exactly once: one 202 `.data` redirect with reload, one document
+    load of /force-logout, then /login. No loop, no second redirect, and the session cookie is gone
+    (both the domain one and the host-only one, in Application > Cookies). Do the same with a
+    reload instead of a click: one 302 to /force-logout.
+  - >
+    8. Revoked session on a public page: revoke as in step 7, then open a public page. It
+    renders signed out (the "Log in" link shows) with no redirect, and the response's Set-Cookie
+    expires the session cookie.
+  - >
+    9. Emulation start and end (skip if the app has no emulation): as a super admin, emulate a user
+    from the admin users page. The page reloads into the emulated session: the header shows the
+    emulated user and the emulation banner, with no visit to /login or /force-logout. End the
+    emulation from the banner: back as the admin, signed in, on the admin page, again with no
+    sign-in and no /force-logout in the Network log.
+  - >
+    10. Offline: with devtools set to Offline, click a menu link: the "you're offline" screen, no
+    redirect; back online, the page recovers.
+
+agentHints:
+  - >
+    Port in the order of the intent: the codemod first (it is mechanical, and the rest typechecks
+    against RouterContextProvider), then the lib's session folder, then the web session module,
+    then the wiring, then the deletions; run `pnpm verify:session-decisions` last and work through
+    its list. Do not keep any of the old deciders "for safety": two deciders are the defect.
+  - >
+    apps/web/tests/session/session-middleware.spec.tsx is the proof: it runs the real root module
+    and entry.server through React Router's request handler in production mode, with the production
+    Apollo client against a stubbed fetch, for document, `.data` and both revalidation shapes. Port
+    it first and make it pass against the app's own root; its `build()` helper names the routes
+    (private, members, public) so add the app's own private layout in place of 'routes/private'.
+  - >
+    `getSession(context)` throws if the middleware did not run (a spec calling a loader with a bare
+    context, or a route whose module the root does not wrap): give the spec `withSession(...)` from
+    apps/web/tests/helpers/session-context.ts. `requireUser(context)` throws outside
+    `requireSession`; that is a programming error, never a sign-out.
+  - >
+    Route middleware also runs for resource routes. If the app has a resource route that is called
+    without a session and must not wait for Me (a health probe), add its pattern to
+    `SESSIONLESS_PATTERNS`, or its latency gains a Me call.
+  - >
+    The outage memory is per web instance: with several replicas, a 401 just after an outage may be
+    trusted by a replica that did not see the outage. That only removes the extra guard; the
+    confirming second Me call still applies.
+  - >
+    A loader of the app's own that catches an API error and returns a fallback (`[]`, `null`) for a
+    failed read hides an outage as "nothing there". The audit flags it for organizations; check the
+    app's other list loaders by hand and let them throw `narrowApiError(error)`.

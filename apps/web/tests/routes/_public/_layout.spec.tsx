@@ -2,23 +2,21 @@ import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import { createTestRouter } from '../../helpers/createTestRouter'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { AppSessionVerdict } from '../../../app/session'
+import { NO_SESSION, REJECTED, SIGNED_IN, UNKNOWN } from '../../helpers/session-context'
 
-import PublicLayout, { loader } from '../../../app/routes/_public/_layout'
+import PublicLayout from '../../../app/routes/_public/_layout'
 
 // Mock dependencies BEFORE importing the component
-const mockGetCookie = vi.fn()
 const mockUseGlobalCtx = vi.fn()
 
-vi.mock('@nestled-template/shared/utils', () => ({
-  getCookie: (...args: unknown[]) => mockGetCookie(...args),
-  getSessionCookieName: () => '__session',
-}))
-
 vi.mock('@nestled-template/web-ui', () => ({
-  WebUiHeader: ({ isAuthenticated, navigation, siteName }: any) => (
+  WebUiHeader: ({ isAuthenticated, sessionUnknown, navigation, siteName }: any) => (
     <header data-testid="public-header">
       <div data-testid="site-name">{siteName}</div>
-      <div data-testid="auth-status">{isAuthenticated ? 'authenticated' : 'unauthenticated'}</div>
+      <div data-testid="auth-status">
+        {sessionUnknown ? 'unknown' : isAuthenticated ? 'authenticated' : 'unauthenticated'}
+      </div>
       <nav data-testid="navigation">
         {navigation?.map((item: any) => (
           <a key={item.href} href={item.href}>
@@ -38,20 +36,26 @@ vi.mock('@nestled-template/web', () => ({
 describe('Public Layout (_public/_layout)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockGetCookie.mockReturnValue(null)
     mockUseGlobalCtx.mockReturnValue({ user: null })
   })
 
-  const renderPublicLayout = () => {
+  // The root route's loader returns the session middleware's verdict; the layout reads it.
+  const renderPublicLayout = (session: AppSessionVerdict = NO_SESSION) => {
     const ReactRouterStub = createTestRouter([
       {
+        id: 'root',
         path: '/',
-        Component: PublicLayout,
-        loader: loader,
+        loader: () => ({ session, theme: 'light' }),
         children: [
           {
-            index: true,
-            Component: () => <div data-testid="child-content">Child Page</div>,
+            path: '',
+            Component: PublicLayout,
+            children: [
+              {
+                index: true,
+                Component: () => <div data-testid="child-content">Child Page</div>,
+              },
+            ],
           },
         ],
       },
@@ -59,37 +63,6 @@ describe('Public Layout (_public/_layout)', () => {
 
     return render(<ReactRouterStub initialEntries={['/']} />)
   }
-
-  describe('Debug', () => {
-    it('should render something', () => {
-      const { container } = renderPublicLayout()
-      console.log('Container HTML:', container.innerHTML)
-      expect(container).toBeTruthy()
-    })
-  })
-
-  describe('Loader Function', () => {
-    it('should return isAuthenticated: true when session token exists', async () => {
-      mockGetCookie.mockReturnValue('valid-session-token')
-
-      const request = new Request('http://localhost/')
-      const args = { request, params: {}, context: {} } as any
-
-      const result = await loader(args)
-      expect(result).toEqual({ isAuthenticated: true })
-      expect(mockGetCookie).toHaveBeenCalledWith(request.headers, '__session')
-    })
-
-    it('should return isAuthenticated: false when no session token', async () => {
-      mockGetCookie.mockReturnValue(null)
-
-      const request = new Request('http://localhost/')
-      const args = { request, params: {}, context: {} } as any
-
-      const result = await loader(args)
-      expect(result).toEqual({ isAuthenticated: false })
-    })
-  })
 
   describe('Layout Structure', () => {
     it('should render header, main content, and footer', async () => {
@@ -176,56 +149,43 @@ describe('Public Layout (_public/_layout)', () => {
   })
 
   describe('Authentication Status', () => {
-    it('should show unauthenticated when no user and no token', async () => {
+    it('shows signed out with no user and a signed-out verdict', async () => {
       mockUseGlobalCtx.mockReturnValue({ user: null })
-      mockGetCookie.mockReturnValue(null)
+      renderPublicLayout(NO_SESSION)
 
-      renderPublicLayout()
-
-      await waitFor(() => {
-        expect(screen.getByTestId('auth-status')).toBeInTheDocument()
-      })
-      expect(screen.getByTestId('auth-status')).toHaveTextContent('unauthenticated')
+      expect(await screen.findByTestId('auth-status')).toHaveTextContent('unauthenticated')
     })
 
-    it('should show authenticated when user exists', async () => {
-      mockUseGlobalCtx.mockReturnValue({
-        user: { id: '1', email: 'user@example.com' },
-      })
-      mockGetCookie.mockReturnValue(null)
-
-      renderPublicLayout()
-
-      await waitFor(() => {
-        expect(screen.getByTestId('auth-status')).toBeInTheDocument()
-      })
-      expect(screen.getByTestId('auth-status')).toHaveTextContent('authenticated')
-    })
-
-    it('should show authenticated when loader returns isAuthenticated: true', async () => {
+    it('shows signed out after the server rejected the session', async () => {
       mockUseGlobalCtx.mockReturnValue({ user: null })
-      mockGetCookie.mockReturnValue('valid-token')
+      renderPublicLayout(REJECTED)
 
-      renderPublicLayout()
-
-      await waitFor(() => {
-        expect(screen.getByTestId('auth-status')).toBeInTheDocument()
-      })
-      expect(screen.getByTestId('auth-status')).toHaveTextContent('authenticated')
+      expect(await screen.findByTestId('auth-status')).toHaveTextContent('unauthenticated')
     })
 
-    it('should prioritize user context over loader data', async () => {
-      mockUseGlobalCtx.mockReturnValue({
-        user: { id: '1', email: 'user@example.com' },
-      })
-      mockGetCookie.mockReturnValue(null)
+    it('shows signed in with the verdict user in context', async () => {
+      mockUseGlobalCtx.mockReturnValue({ user: { id: '1', emails: [] } })
+      renderPublicLayout(SIGNED_IN)
 
-      renderPublicLayout()
+      expect(await screen.findByTestId('auth-status')).toHaveTextContent('authenticated')
+    })
 
-      await waitFor(() => {
-        expect(screen.getByTestId('auth-status')).toBeInTheDocument()
-      })
-      expect(screen.getByTestId('auth-status')).toHaveTextContent('authenticated')
+    it('is neutral (no account menu, no "Log in") while the verdict is unknown (D2)', async () => {
+      mockUseGlobalCtx.mockReturnValue({ user: null })
+      renderPublicLayout(UNKNOWN)
+
+      expect(await screen.findByTestId('auth-status')).toHaveTextContent('unknown')
+    })
+
+    it('no longer reads the session cookie: a cookie alone never shows signed in', async () => {
+      mockUseGlobalCtx.mockReturnValue({ user: null })
+      document.cookie = '__session=header.payload.signature'
+      try {
+        renderPublicLayout(NO_SESSION)
+        expect(await screen.findByTestId('auth-status')).toHaveTextContent('unauthenticated')
+      } finally {
+        document.cookie = '__session=; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+      }
     })
   })
 
