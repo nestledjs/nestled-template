@@ -1,0 +1,46 @@
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+index 1688c12..1e49989 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.spec.ts
+@@ -100,6 +100,14 @@ describe('AuthResolver', () => {
+     expect(authService.validateUser).toHaveBeenCalledWith('user-1')
+   })
+ 
++  it('answers a deleted user with a 401, never a null me', async () => {
++    authService.validateUser.mockResolvedValue(null as any)
++
++    await expect(resolver.me({ id: 'gone' } as any, {} as any)).rejects.toMatchObject({
++      status: 401,
++    })
++  })
++
+   it('logs in with session metadata and skips cookies while 2FA is pending', async () => {
+     const pending2FA = { requires2FA: true, tempToken: 'temp-token' } as any
+     authService.login.mockResolvedValue(pending2FA)
+diff --git a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+index 3cc428e..50458c3 100644
+--- a/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
++++ b/libs/api/custom/src/lib/plugins/auth/auth.resolver.ts
+@@ -11,7 +11,7 @@ import {
+   ResolveField,
+   Resolver,
+ } from '@nestjs/graphql'
+-import { Logger, UseGuards } from '@nestjs/common'
++import { Logger, UnauthorizedException, UseGuards } from '@nestjs/common'
+ import { GraphQLResolveInfo } from 'graphql/type'
+ import {
+   Authenticated,
+@@ -78,6 +78,13 @@ export class AuthResolver {
+   @Authenticated()
+   async me(@CtxUser() user: User, @Info() _info: GraphQLResolveInfo) {
+     const validatedUser = await this.service.validateUser(user.id)
++    // An authenticated caller always gets a user or a 401, never null. The guard has already
++    // loaded this row (JwtStrategy), so a missing one means it was deleted mid-request: the session
++    // is gone, and saying so as UNAUTHENTICATED lets the web judge it like any other rejected
++    // session. A null `me` with no error is not a verdict the web can act on (it keeps the session
++    // as unknown), so it must never stand in for "signed out". The field stays nullable in the
++    // schema so the generated SDK types do not change.
++    if (!validatedUser) throw new UnauthorizedException('User from token not found.')
+ 
+     // The user object from @CtxUser() already has emulation fields attached by JwtStrategy
+     // Preserve them in the validated user

@@ -1,0 +1,1197 @@
+diff --git a/libs/shared/apollo/README.md b/libs/shared/apollo/README.md
+index 37e3bdb..7967bcb 100644
+--- a/libs/shared/apollo/README.md
++++ b/libs/shared/apollo/README.md
+@@ -9,3 +9,67 @@ Run `nx build apollo` to build the library.
+ ## Running unit tests
+ 
+ Run `nx test apollo` to execute the unit tests via [Vitest](https://vitest.dev/).
++
++## Default error policies
++
++`makeClient` sets `defaultOptions.query.errorPolicy: 'all'` and `defaultOptions.mutate.errorPolicy:
++'none'`: a query resolves with its GraphQL error beside `data`, and a refused mutation rejects.
++From Apollo Client 4.2, every default `errorPolicy` must also be declared to TypeScript, because
++the result types of `client.query`, `client.mutate` and the hooks depend on it; an undeclared one
++fails to type-check with TS2322 ("A default option for mutate.errorPolicy must be declared in
++ApolloClient.DeclareDefaultOptions before usage"). `apollo.ts` declares both:
++
++```ts
++declare module '@apollo/client' {
++  export namespace ApolloClient {
++    export namespace DeclareDefaultOptions {
++      interface Query {
++        errorPolicy: 'all'
++      }
++      interface Mutate {
++        errorPolicy: 'none'
++      }
++    }
++  }
++}
++```
++
++Change a default and its declaration together. On Apollo Client 4.1 the declaration is not read yet
++and is harmless. See
++[declaring default options for type safety](https://www.apollographql.com/docs/react/data/typescript#declaring-default-options-for-type-safety).
++
++To find mutation call sites that still read a refusal from the result (`result.error`), which a
++mutation under the `'none'` default never resolves with, run
++`node scripts/audit-mutation-error-reads.mjs`.
++
++## The session verdict
++
++Whether a web request is signed in is decided in one place: the web app's session middleware
++(`apps/web/app/session/session-middleware.server.ts`), with `judgeSession()` from
++`src/lib/session/`. Everything else reads its verdict, `getSession(context)`. Its rule:
++
++- sign out only on an unambiguous `401` (an HTTP 401 or the `UNAUTHENTICATED` code), confirmed by a
++  second `Me` call, with no outage evidence;
++- outage evidence always outranks a 401: no answer, a 502/503/504, a GraphQL 503, a call that timed
++  out, or any server-side client of this instance finding the API unreachable in the last
++  `OUTAGE_MEMORY_MS` (30 s);
++- message text never decides.
++
++What this library gives the rest of the app:
++
++- `judgeSession(evidence)`: the pure verdict, with a test table over every case.
++- `recordApiOutage` / `apiOutageSeenMsAgo`: the process-wide outage memory every server-side
++  `makeClient` client records into from its error link.
++- `narrowApiError(error)`: what `apolloLoader` turns a thrown error into, so its status and code
++  survive React Router's production error sanitization: no answer becomes a 503 `API_UNAVAILABLE`
++  route error, a 401 a 401 `API_UNAUTHENTICATED` one. A 401 route error is not a sign-out: the root
++  ErrorBoundary asks the server to judge the session again.
++- `APOLLO_SESSION_SUSPECT_EVENT`: what the browser error link dispatches for a 401 or
++  `UNAUTHENTICATED`. The web app's `SessionRevalidator` answers it with one revalidation (at most one
++  per `SESSION_REVALIDATE_COOLDOWN_MS`, never while offline). The error link never navigates.
++
++`pnpm verify:session-decisions` (`scripts/audit-session-decisions.mjs`, run in CI) fails on a
++session decision anywhere else: a navigation to `/login`, `/logout` or `/force-logout`, a branch on
++a 401 or `UNAUTHENTICATED`, a hand-made 401, a read of the session cookie, or a failed organizations
++read answered with `[]`. A deliberate one (a user pressing "Sign in", say) takes
++`// nestled-session-allow: <reason>` on its line or the line above.
+diff --git a/libs/shared/apollo/src/lib/apollo.ts b/libs/shared/apollo/src/lib/apollo.ts
+index 2eff804..678ba9a 100644
+--- a/libs/shared/apollo/src/lib/apollo.ts
++++ b/libs/shared/apollo/src/lib/apollo.ts
+@@ -69,11 +69,36 @@ import { SetContextLink } from '@apollo/client/link/context'
+ import { ErrorLink } from '@apollo/client/link/error'
+ import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
+ import { getMainDefinition } from '@apollo/client/utilities'
+-import { print } from 'graphql'
+ import { createClient } from 'graphql-ws'
+ import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
+ import { decodeCookieValue, isFetchFailure, pickNewestJwt } from '@nestled-template/shared/utils'
+ import { createCache } from './cache-config'
++import { recordApiOutage } from './session/outage-memory'
++
++/**
++ * The `errorPolicy` defaults `makeClient` sets, declared to TypeScript. From Apollo Client 4.2 a
++ * default `errorPolicy` that is not declared here fails to type-check (TS2322, "A default option
++ * for mutate.errorPolicy must be declared in ApolloClient.DeclareDefaultOptions before usage"),
++ * because the result types of `client.query`, `client.mutate` and the hooks depend on it. Keep
++ * these two in step with `defaultOptions` in `makeClient`: change one, change the other. On Apollo
++ * Client 4.1 the interfaces are not read yet and the declaration is harmless.
++ * See https://www.apollographql.com/docs/react/data/typescript#declaring-default-options-for-type-safety
++ */
++// Apollo declares these as namespaces; an augmentation has to use the same shape.
++/* eslint-disable @typescript-eslint/no-namespace */
++declare module '@apollo/client' {
++  export namespace ApolloClient {
++    export namespace DeclareDefaultOptions {
++      interface Query {
++        errorPolicy: 'all'
++      }
++      interface Mutate {
++        errorPolicy: 'none'
++      }
++    }
++  }
++}
++/* eslint-enable @typescript-eslint/no-namespace */
+ 
+ export type ClientOptions = {
+   token?: string
+@@ -84,16 +109,10 @@ export type ClientOptions = {
+   /**
+    * Told what each failed operation failed with (`classifyApiFailure`), and the error itself. The
+    * server render uses it to recover the real cause of a failed preload, which the streamed query
+-   * ref redacts.
++   * ref redacts. Independently of it, every server-side client records an unreachable API in the
++   * process-wide outage memory (session/outage-memory.ts) that the session judge reads.
+    */
+   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void
+-  /**
+-   * Called when an operation starts; the function it returns is called once when that operation
+-   * settles (answered, failed or cancelled). The server render uses it to wait, bounded, for a
+-   * request's calls still in flight before it decides a sign-out (apollo-loader.ts,
+-   * `waitForSsrApiCalls`).
+-   */
+-  onOperationStart?: () => () => void
+ }
+ 
+ /**
+@@ -199,7 +218,7 @@ function resolveAuthToken(request?: Request, options?: ClientOptions): string |
+  * (owner rule, 2026-11-12), and matching it logged users out over errors that only said so.
+  */
+ function isAuthenticationError(extensions?: { code?: unknown }): boolean {
+-  return extensions?.code === 'UNAUTHENTICATED'
++  return extensions?.code === 'UNAUTHENTICATED' // nestled-session-allow: the classification primitive
+ }
+ 
+ /**
+@@ -234,20 +253,15 @@ function isForbiddenError(extensions?: { code?: unknown; originalError?: unknown
+ }
+ 
+ /**
+- * Whether `operation` is a query (not a mutation or a subscription). The outage-retry link
+- * (`createOutageRetryLink`) and the access-forbidden event depend on it; exported so an app with a
+- * link chain of its own can use the same test.
++ * Whether `operation` is a query (not a mutation or a subscription). The access-forbidden and
++ * organization-required events depend on it; exported so an app with a link chain of its own can
++ * use the same test.
+  */
+ export function isQueryOperation(operation: ApolloLink.Operation): boolean {
+   const definition = getMainDefinition(operation.query)
+   return definition.kind === 'OperationDefinition' && definition.operation === 'query'
+ }
+ 
+-function isSubscriptionOperation(operation: ApolloLink.Operation): boolean {
+-  const definition = getMainDefinition(operation.query)
+-  return definition.kind === 'OperationDefinition' && definition.operation === 'subscription'
+-}
+-
+ function handleOrganizationRequired(operation: ApolloLink.Operation): void {
+   if (globalThis.window === undefined || !isQueryOperation(operation)) return
+ 
+@@ -268,191 +282,22 @@ function handleAuthorizationError(operation: ApolloLink.Operation): void {
+   )
+ }
+ 
+-// Browser only. Whoever currently has outage evidence: in the web app, each mounted availability
+-// check that is confirming a connectivity failure or showing the recovering screen. Never set
+-// during a server render.
+-const apiOutageSignals = new Set<object>()
+-
+-/**
+- * Tells the error link that `source` (any object, such as a component's ref) has outage evidence,
+- * until `clearApiOutage(source)`. While any source does, a 401 does not log the user out: a 401
+- * alongside an outage is not proof the session is bad. The app retries once the API recovers, and
+- * a 401 then, with no outage, logs out as usual. Signalling the same source twice is one signal.
+- */
+-export function signalApiOutage(source: object): void {
+-  apiOutageSignals.add(source)
+-}
+-
+-/** Withdraws `source`'s outage evidence (`signalApiOutage`); other sources' evidence stays. */
+-export function clearApiOutage(source: object): void {
+-  apiOutageSignals.delete(source)
+-}
+-
+-/** Whether any source has signalled an outage (`signalApiOutage`) that is still in effect. */
+-export function isApiOutageSignalled(): boolean {
+-  return apiOutageSignals.size > 0
+-}
+-
+-// Set when the error link lets a 401 pass because an outage was signalled.
+-let authFailureDeferred = false
+-
+-/**
+- * Whether the error link has let a 401 pass because an outage was signalled, since the last call;
+- * the call clears it. Once the outage clears, the app refetches the queries left holding such a
+- * 401, so each gets a fresh answer: data, or a 401 with no outage that logs out as usual.
+- */
+-export function takeDeferredAuthFailure(): boolean {
+-  const deferred = authFailureDeferred
+-  authFailureDeferred = false
+-  return deferred
+-}
+-
+-/**
+- * Whether the error link has let a 401 pass because an outage was signalled and nothing has taken
+- * it yet (`takeDeferredAuthFailure`). Unlike `takeDeferredAuthFailure` it leaves the record in
+- * place: the root error boundary reads it to tell a 401 that is still waiting for a fresh answer
+- * from one that was judged with no outage.
+- */
+-export function isAuthFailureDeferred(): boolean {
+-  return authFailureDeferred
+-}
+-
+ /**
+- * `outage`: the same answer carried outage evidence of its own (a GraphQL 502/503/504 beside the
+- * UNAUTHENTICATED error), which nothing has signalled yet; the 401 is let pass as during any outage.
++ * Dispatched on `window` when an API call made by the browser is refused with a clean 401 (an HTTP
++ * 401 or a GraphQL `UNAUTHENTICATED`). It is a suspicion, never a verdict: the browser never signs
++ * anyone out by itself. The web app's session revalidator (apps/web/app/session/
++ * session-revalidator.tsx) answers it with one debounced revalidation, whose request runs the
++ * server's session middleware again; only that middleware may decide the session is rejected.
+  */
+-function handleAuthenticationError(outage = false): void {
+-  if (outage || isApiOutageSignalled()) {
+-    authFailureDeferred = true
+-    console.log('[Apollo] Authentication error during an API outage, keeping the session for now')
+-    return
+-  }
+-  console.log('[Apollo] Authentication error detected, redirecting to logout then login')
++export const APOLLO_SESSION_SUSPECT_EVENT = 'apollo-session-suspect'
+ 
+-  // Redirect through logout to clear server-side session (client-side only)
+-  if (globalThis.window === undefined) {
+-    return
+-  }
+-
+-  const { pathname, search, hash } = globalThis.window.location
+-  const currentPath = `${pathname}${search}${hash}`
+-  const shouldRedirectWithReturnUrl =
+-    currentPath && currentPath !== '/login' && !currentPath.startsWith('/logout')
+-
+-  if (shouldRedirectWithReturnUrl) {
+-    globalThis.window.location.href = `/logout?return_url=${encodeURIComponent(currentPath)}`
+-  } else {
+-    globalThis.window.location.href = '/logout'
+-  }
+-}
+-
+-// Browser only. Operations (by name and variables) whose last attempt got no answer, or a
+-// proxy's 502/503/504 (`isRetryableConnectivityError`); forgotten once one is answered.
+-const unreachableOperations = new Set<string>()
+-
+-function operationKey(operation: ApolloLink.Operation): string {
+-  const name = operation.operationName || print(operation.query)
+-  return `${name}:${JSON.stringify(operation.variables ?? {})}`
+-}
+-
+-const CANCELLED = Symbol('cancelled')
+-const GATEWAY_UNAVAILABLE_ANSWER = Symbol('gateway-unavailable-answer')
+-
+-/**
+- * Dispatched on `window` when the last outage evidence an in-flight retry held is withdrawn
+- * (`createOutageRetryLink`) while the error link has let a 401 pass because of it
+- * (`takeDeferredAuthFailure`). Nothing else marks the end of that evidence: the availability
+- * check never left `available`, so it calls no recovery callback. The web app listens and
+- * refetches the queries holding such a 401, for a fresh answer.
+- */
+-export const APOLLO_DEFERRED_AUTH_FAILURE_EVENT = 'apollo-deferred-auth-failure'
+-
+-/**
+- * Withdraws `source`'s outage evidence, like `clearApiOutage`, and when that was the last evidence
+- * held while the error link has let a 401 pass (`isAuthFailureDeferred`), dispatches
+- * `APOLLO_DEFERRED_AUTH_FAILURE_EVENT` so the app refetches the queries holding it for a fresh
+- * answer. For evidence whose end nothing else announces (an in-flight retry, a loader's outage
+- * flag), where `clearApiOutage` alone would leave such a 401 waiting.
+- */
+-export function releaseApiOutage(source: object): void {
+-  clearApiOutage(source)
+-  if (isApiOutageSignalled() || !authFailureDeferred || globalThis.window === undefined) return
+-  globalThis.window.dispatchEvent(new CustomEvent(APOLLO_DEFERRED_AUTH_FAILURE_EVENT))
+-}
+-
+-/**
+- * Counts a retry of an unreachable call, while it is in flight, as outage evidence
+- * (`signalApiOutage`). Without it, a 401 that came back while another call was still being retried
+- * after failing to reach the API (a refetch once a blip cleared, or a loader's preload when Me is
+- * revalidated) logged the user out before that retry could fail again and record the outage. The
+- * evidence lasts until the retry settles: an answer clears it (and the 401s after it are judged
+- * as usual), and a second connectivity failure is reported by the error link in the same tick.
+- *
+- * Sits below the error link, so a retry's own failure clears its evidence before the error link
+- * sees it: a retried call that gets a 401 is judged like any other. Queries only by default (see
+- * `counts` below); never a subscription, which stays open and would hold the evidence as long as
+- * it lives; never during a server render.
+- *
+- * `makeClient` puts it directly below the error link. Exported for an app that builds its own link
+- * chain: place it below that chain's error link, and place a RetryLink of its own between the two
+- * (error link, RetryLink, this link), so each attempt the RetryLink makes passes through here and
+- * an attempt after an unreachable one counts as outage evidence while it is in flight. A RetryLink
+- * that also retries mutations passes `counts` to widen the default (queries only); subscriptions
+- * never count. Cancellation is forwarded: unsubscribing withdraws the attempt's evidence and
+- * cancels the request below, so a cancelled request leaves no evidence behind.
+- */
+-export function createOutageRetryLink(
+-  options: { counts?: (operation: ApolloLink.Operation) => boolean } = {},
+-): ApolloLink {
+-  const counts = options.counts ?? isQueryOperation
+-  return new ApolloLink((operation, forward) => {
+-    if (
+-      globalThis.window === undefined ||
+-      isSubscriptionOperation(operation) ||
+-      !counts(operation)
+-    ) {
+-      return forward(operation)
+-    }
+-    const key = operationKey(operation)
+-    return new Observable(observer => {
+-      const evidence = {}
+-      const retrying = unreachableOperations.has(key)
+-      if (retrying) signalApiOutage(evidence)
+-      let settled = false
+-      // Once per attempt: the first answer, error or cancellation decides.
+-      const settle = (error?: unknown) => {
+-        if (settled) return
+-        settled = true
+-        if (error === GATEWAY_UNAVAILABLE_ANSWER || isRetryableConnectivityError(error)) {
+-          unreachableOperations.add(key)
+-        } else if (error !== CANCELLED) unreachableOperations.delete(key)
+-        if (retrying) releaseApiOutage(evidence)
+-      }
+-      const subscription = forward(operation).subscribe({
+-        // An answer (an HTTP 200 carrying an UNAUTHENTICATED error among them) settles the attempt
+-        // before the error link above judges it, so a clean rejection is not deferred. An answer
+-        // carrying a 502/503/504 of its own counts as unreachable, like a proxy's.
+-        next: result => {
+-          settle(
+-            hasGatewayUnavailableStatus(result.errors) ? GATEWAY_UNAVAILABLE_ANSWER : undefined,
+-          )
+-          observer.next(result)
+-        },
+-        error: error => {
+-          settle(error)
+-          observer.error(error)
+-        },
+-        complete: () => {
+-          settle()
+-          observer.complete()
+-        },
+-      })
+-      return () => {
+-        settle(CANCELLED)
+-        subscription.unsubscribe()
+-      }
+-    })
+-  })
++function handleAuthenticationError(operation: ApolloLink.Operation): void {
++  if (globalThis.window === undefined) return
++  globalThis.window.dispatchEvent(
++    new CustomEvent(APOLLO_SESSION_SUSPECT_EVENT, {
++      detail: { operation: operation.operationName },
++    }),
++  )
+ }
+ 
+ function logDevelopmentExtensions(extensions: any): void {
+@@ -491,12 +336,11 @@ export function classifyApiFailure(error: unknown): ApiFailureCause {
+ 
+ /**
+  * The operation context for a request whose caller judges its own authentication and permission
+- * errors: pass it as `context` and the error link takes no action for that request (no logout, no
+- * deferred 401, no access-forbidden or organization-required event); it still logs. The signed-in
+- * layout's Me re-check (apps/web/app/session-recheck.tsx) uses it, since it decides the outcome
+- * itself. Apps whose error link only dispatches an event need it most: without it the re-check's
+- * own 401 or 403 reached that event's handler (an access-denied screen, say) before the re-check
+- * could decide. An app with its own error link checks `operation.getContext().skipAuthErrorReport`.
++ * errors: pass it as `context` and the error link takes no action for that request (no session
++ * suspect event, no access-forbidden or organization-required event); it still logs. The session
++ * middleware's Me calls (apps/web/app/session/session-middleware.server.ts) use it, since the judge
++ * decides the outcome itself. An app with its own error link checks
++ * `operation.getContext().skipAuthErrorReport`.
+  */
+ export const SKIP_AUTH_ERROR_REPORT_CONTEXT = { skipAuthErrorReport: true } as const
+ 
+@@ -507,10 +351,9 @@ function skipsAuthErrorReport(operation: ApolloLink.Operation): boolean {
+ function reportGraphQLError(
+   extensions: { code?: unknown; originalError?: unknown } | undefined,
+   operation: ApolloLink.Operation,
+-  outage: boolean,
+ ): void {
+   if (isAuthenticationError(extensions)) {
+-    handleAuthenticationError(outage)
++    handleAuthenticationError(operation)
+   } else if (extensions?.code === ORGANIZATION_CONTEXT_REQUIRED_CODE) {
+     handleOrganizationRequired(operation)
+   } else if (isForbiddenError(extensions)) {
+@@ -518,58 +361,26 @@ function reportGraphQLError(
+   }
+ }
+ 
+-/**
+- * Tells `onStart` when each operation starts, and calls the function it returns once that operation
+- * settles: its first error, its completion, or its cancellation. Placed at the top of the chain, so
+- * an operation counts as settled only after the error link below has seen (and reported) its
+- * failure. See `ClientOptions.onOperationStart`.
+- */
+-export function createOperationTrackingLink(onStart: () => () => void): ApolloLink {
+-  return new ApolloLink(
+-    (operation, forward) =>
+-      new Observable(observer => {
+-        const markSettled = onStart()
+-        let settled = false
+-        const settle = () => {
+-          if (settled) return
+-          settled = true
+-          markSettled()
+-        }
+-        const subscription = forward(operation).subscribe({
+-          next: result => observer.next(result),
+-          error: error => {
+-            settle()
+-            observer.error(error)
+-          },
+-          complete: () => {
+-            settle()
+-            observer.complete()
+-          },
+-        })
+-        return () => {
+-          subscription.unsubscribe()
+-          settle()
+-        }
+-      }),
+-  )
+-}
+-
+ function createErrorLink(
+   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
+ ): ApolloLink {
+   return new ErrorLink(({ error, operation }) => {
+-    onApiFailure?.(classifyApiFailure(error), error)
++    const cause = classifyApiFailure(error)
++    onApiFailure?.(cause, error)
++    // Server only: remember that this instance found the API unreachable, whichever request it
++    // served, so the session judge does not trust a 401 that arrives just after (OUTAGE_MEMORY_MS).
++    if (cause === 'unavailable' && globalThis.window === undefined) recordApiOutage()
+     const report = !skipsAuthErrorReport(operation)
+ 
+     if (CombinedGraphQLErrors.is(error)) {
+       // The API answered, but with a 502/503/504 (a failed lookup it could not complete): outage
+-      // evidence, reported like a proxy's, and it keeps the session over a 401 in the same answer.
++      // evidence, reported like a proxy's. A 401 in the same answer is then not a session suspect.
+       const outage = isGatewayUnavailableGraphQLError(error)
+       if (outage) dispatchServiceUnavailableEvent(error, operation)
+       for (const { message, path, extensions } of error.errors) {
+         console.error(`[GraphQL error]: Message: ${message}, Path: ${path}`)
+ 
+-        if (report) reportGraphQLError(extensions, operation, outage)
++        if (report && !outage) reportGraphQLError(extensions, operation)
+ 
+         logDevelopmentExtensions(extensions)
+       }
+@@ -591,10 +402,12 @@ function handleNetworkError(
+   console.error(`[Network error]: ${networkError}`)
+ 
+   const statusCode = networkErrorStatus(networkError)
++  // nestled-session-allow: reports a suspect to the revalidator; never navigates
+   if (statusCode === 401 || statusCode === 403) {
+     // The caller judges these itself when it asked to (SKIP_AUTH_ERROR_REPORT_CONTEXT).
+     if (!report) return
+-    if (statusCode === 401) handleAuthenticationError()
++    // nestled-session-allow: reports a suspect to the revalidator; never navigates
++    if (statusCode === 401) handleAuthenticationError(operation)
+     else handleAuthorizationError(operation)
+     return
+   }
+@@ -716,6 +529,9 @@ export const ACTIVE_ORGANIZATION_STORAGE_KEY = 'activeOrganizationId'
+  */
+ export function getStoredActiveOrganizationId(): string | null {
+   if (globalThis.window === undefined) return null
++  // This document is leaving for another user's session: it sends no organization, whatever
++  // another tab may have stored meanwhile (`clearActiveOrganizationForSessionChange`).
++  if (activeOrganizationSessionChanging) return null
+   // Inside the try: where storage is blocked, reading `localStorage` itself throws.
+   try {
+     if (typeof localStorage === 'undefined') return null
+@@ -729,6 +545,9 @@ export function getStoredActiveOrganizationId(): string | null {
+ // `activeOrganizationSession`.
+ let activeOrganizationSessionGeneration = 0
+ 
++// Set by `clearActiveOrganizationForSessionChange`; nothing in this document clears it again.
++let activeOrganizationSessionChanging = false
++
+ /**
+  * The browser's current organization session: a number that changes each time the stored
+  * organization is forgotten (`storeActiveOrganizationId(null)`, which every logout calls). A switch
+@@ -750,6 +569,8 @@ export function activeOrganizationSession(): number {
+  */
+ export function storeActiveOrganizationId(organizationId: string | null): void {
+   if (globalThis.window === undefined) return
++  // Leaving for another user's session: an organization stored now is the previous user's.
++  if (organizationId && activeOrganizationSessionChanging) return
+   if (!organizationId) activeOrganizationSessionGeneration += 1
+   try {
+     if (typeof localStorage === 'undefined') return
+@@ -760,6 +581,37 @@ export function storeActiveOrganizationId(organizationId: string | null): void {
+   }
+ }
+ 
++/**
++ * Forgets the stored organization because this document is about to load another user's session,
++ * and stores none for the rest of this document. For starting or ending an emulation, which then
++ * sets `location.href`: the next document is the other user's.
++ *
++ * `storeActiveOrganizationId(null)` alone is not enough there. The signed-in shell is still mounted
++ * while the navigation is pending, and it stores the organization it shows on every render
++ * (`rememberActiveOrganization`): any re-render in that window (the mutation's answer reaching the
++ * cache, a query settling) wrote the previous user's organization back, so the next session's
++ * first requests carried it and its shell could restore it as the user's choice. From here on,
++ * every non-null `storeActiveOrganizationId` is ignored and `getStoredActiveOrganizationId`
++ * answers null, so this document sends no organization either; the next document starts clean.
++ *
++ * Only before a document navigation. A sign-in that stays in this document (the login form, an
++ * invitation) uses `storeActiveOrganizationId(null)`, so the new session's shell can store its own
++ * organization. It never signs anyone out and does not touch the session cookie.
++ */
++export function clearActiveOrganizationForSessionChange(): void {
++  if (globalThis.window === undefined) return
++  activeOrganizationSessionChanging = true
++  storeActiveOrganizationId(null)
++}
++
++/**
++ * Test-only: undoes `clearActiveOrganizationForSessionChange` for the next test in the same module
++ * instance. A browser never needs it: the document it latched is gone.
++ */
++export function __resetActiveOrganizationSessionChange(): void {
++  activeOrganizationSessionChanging = false
++}
++
+ /**
+  * The organization a signed-in shell shows, from the user's organizations:
+  * 1. the server's active organization (`User.activeOrganizationId`, from Me), when the user is
+@@ -897,7 +749,6 @@ function createLinkChain(
+   token: string | null,
+   isDev: boolean,
+   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
+-  onOperationStart?: () => () => void,
+ ): ApolloLink {
+   const wsUri = uri.replace(/^http/, 'ws')
+   const uploadLink = new UploadHttpLink({
+@@ -921,9 +772,7 @@ function createLinkChain(
+       )
+ 
+   const links = [
+-    ...(onOperationStart ? [createOperationTrackingLink(onOperationStart)] : []),
+     createErrorLink(onApiFailure),
+-    createOutageRetryLink(),
+     ...(isDev ? [createLogLink()] : []),
+     createAuthLink(token),
+     splitLink,
+@@ -950,7 +799,7 @@ export function makeClient(request?: Request, options?: ClientOptions) {
+   const token = resolveAuthToken(request, options)
+   const isDev = options?.environment === 'development'
+ 
+-  const link = createLinkChain(uri, token, isDev, options?.onApiFailure, options?.onOperationStart)
++  const link = createLinkChain(uri, token, isDev, options?.onApiFailure)
+ 
+   return new ApolloClient({
+     link,
+diff --git a/scripts/audit-mutation-error-reads.mjs b/scripts/audit-mutation-error-reads.mjs
+new file mode 100644
+index 0000000..9a98c5d
+--- /dev/null
++++ b/scripts/audit-mutation-error-reads.mjs
+@@ -0,0 +1,382 @@
++// Lists the mutation call sites that read a refusal from the mutation's result (`result.error`,
++// `result.errors`, `const { error } = await mutate(...)`) while setting no `errorPolicy` of their
++// own.
++//
++// Under the web client's mutation default, `errorPolicy: 'none'` (libs/shared/apollo makeClient), a
++// refused mutation rejects: the promise never resolves with an `error`, so such a read never sees
++// the refusal. Where the call sits in a `try` with a `catch` (or has a `.catch`), the catch sees
++// it and the read is only dead code. Where it does not, the refusal is an unhandled rejection: no
++// message, and whatever the error branch did (stay on the form, show the API message) never runs.
++// Those are the sites to fix: move the handling into a catch.
++//
++//   node scripts/audit-mutation-error-reads.mjs [dir...]          list the sites (default: apps libs)
++//   node scripts/audit-mutation-error-reads.mjs --json [dir...]   the same, as JSON
++//
++// It exits 1 when a site reads the result with nothing to catch the rejection, 0 otherwise.
++//
++// What counts as a mutation call site: `useMutation(document, options)`, a generated
++// `useXxxMutation(options)` hook, and `client.mutate(options)` / `apollo.mutate(options)`. A site
++// whose options are not an object literal (a variable, or an object that spreads another) may set
++// `errorPolicy` where this cannot see; it is listed as "check by hand" and never fails the run.
++// Reads are found within the function that calls the executor. A wrapper hook (a `run()` that
++// awaits the executor and returns the result to its callers) is listed where it reads the result,
++// not at each caller: audit the wrapper's callers for how they use what it returns.
++
++import { existsSync, readdirSync, readFileSync } from 'node:fs'
++import { dirname, join, relative, sep } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import ts from 'typescript'
++
++const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)))
++const ERROR_FIELDS = new Set(['error', 'errors'])
++// A helper handed the whole result is taken to read its error when its name says so.
++const ERROR_HELPER = /error|fail|refus/i
++const SKIPPED_FOLDERS = new Set([
++  'node_modules',
++  'generated',
++  '__generated__',
++  'dist',
++  'build',
++  'coverage',
++  '.nx',
++  '.react-router',
++])
++const SKIPPED_FILE = /\.(spec|test|stories)\.[cm]?tsx?$|\.d\.ts$/
++
++/** `errorPolicy` in an options argument: 'set', 'unset', or 'unknown' (not a plain literal). */
++function errorPolicyIn(options) {
++  if (!options) return 'unset'
++  if (!ts.isObjectLiteralExpression(options)) return 'unknown'
++  let spread = false
++  for (const property of options.properties) {
++    if (ts.isSpreadAssignment(property)) spread = true
++    else if (property.name?.getText() === 'errorPolicy') return 'set'
++  }
++  return spread ? 'unknown' : 'unset'
++}
++
++function calleeName(call) {
++  const callee = call.expression
++  if (ts.isIdentifier(callee)) return callee.text
++  if (ts.isPropertyAccessExpression(callee)) return callee.name.text
++  return null
++}
++
++/** The mutation hook or direct `.mutate` call `call` is, with its options, or null. */
++function mutationSite(call) {
++  const name = calleeName(call)
++  if (name === 'useMutation') return { kind: 'hook', options: call.arguments[1] }
++  if (name && /^use[A-Z]\w*Mutation$/.test(name))
++    return { kind: 'hook', options: call.arguments[0] }
++  if (name === 'mutate' && ts.isPropertyAccessExpression(call.expression)) {
++    return { kind: 'direct', options: call.arguments[0] }
++  }
++  return null
++}
++
++function enclosingFunction(node) {
++  let current = node.parent
++  while (current && !ts.isFunctionLike(current) && !ts.isSourceFile(current))
++    current = current.parent
++  return current
++}
++
++function isCatchCall(node, child) {
++  return (
++    ts.isPropertyAccessExpression(node) && node.expression === child && node.name.text === 'catch'
++  )
++}
++
++/**
++ * Whether a rejection of `node` reaches a catch within its function: a `.catch` on its chain, or a
++ * `try` with a `catch` around it that it is awaited in. A promise only started in a `try` (not
++ * awaited there) rejects after the `try` has finished, so that `catch` never sees it.
++ */
++function isCaught(node) {
++  let awaited = false
++  let child = node
++  let current = node.parent
++  while (current && !ts.isFunctionLike(current) && !ts.isSourceFile(current)) {
++    if (isCatchCall(current, child)) return true
++    if (ts.isAwaitExpression(current)) awaited = true
++    if (ts.isTryStatement(current) && current.catchClause && current.tryBlock === child) {
++      return awaited
++    }
++    child = current
++    current = current.parent
++  }
++  return false
++}
++
++function bindsErrorField(pattern) {
++  return (
++    ts.isObjectBindingPattern(pattern) &&
++    pattern.elements.some(element =>
++      ERROR_FIELDS.has((element.propertyName ?? element.name).getText()),
++    )
++  )
++}
++
++/**
++ * How `scope` reads a refusal off the variable `name`: `.error` / `.errors`, or by handing the whole
++ * result to a helper named for errors (`mutationErrorMessage(result)`), which reads it there. Null
++ * when it does not.
++ */
++function errorReadOf(scope, name) {
++  let found = null
++  const visit = node => {
++    if (found) return
++    if (
++      ts.isPropertyAccessExpression(node) &&
++      ERROR_FIELDS.has(node.name.text) &&
++      ts.isIdentifier(node.expression) &&
++      node.expression.text === name
++    ) {
++      found = `reads ${name}.${node.name.text}`
++      return
++    }
++    if (
++      ts.isCallExpression(node) &&
++      ERROR_HELPER.test(node.expression.getText()) &&
++      node.arguments.some(argument => ts.isIdentifier(argument) && argument.text === name)
++    ) {
++      found = `passes ${name} to ${node.expression.getText()}()`
++      return
++    }
++    ts.forEachChild(node, visit)
++  }
++  visit(scope)
++  return found
++}
++
++function unwrap(node) {
++  let current = node
++  while (current.parent && ts.isParenthesizedExpression(current.parent)) current = current.parent
++  return current
++}
++
++/** A read off `result.<member>`: `.error` itself, or the result handed to a `.then` callback. */
++function memberRead(member) {
++  if (ERROR_FIELDS.has(member.name.text)) return `reads .${member.name.text}`
++  if (member.name.text !== 'then') return null
++  const callback = member.parent?.arguments?.[0]
++  const param = callback && ts.isFunctionLike(callback) ? callback.parameters?.[0] : undefined
++  if (!param) return null
++  if (bindsErrorField(param.name)) return 'destructures error in .then'
++  const read = ts.isIdentifier(param.name) && errorReadOf(callback, param.name.text)
++  return read ? `${read} in .then` : null
++}
++
++function declarationRead(declaration) {
++  if (bindsErrorField(declaration.name)) return 'destructures error'
++  return ts.isIdentifier(declaration.name)
++    ? errorReadOf(enclosingFunction(declaration), declaration.name.text)
++    : null
++}
++
++/** How the result of the executor call `call` is read for a refusal, or null when it is not. */
++function errorRead(call) {
++  let result = unwrap(call)
++  if (result.parent && ts.isAwaitExpression(result.parent)) result = unwrap(result.parent)
++  const parent = result.parent
++  if (!parent) return null
++  if (ts.isPropertyAccessExpression(parent) && parent.expression === result) {
++    return memberRead(parent)
++  }
++  if (ts.isVariableDeclaration(parent) && parent.initializer === result) {
++    return declarationRead(parent)
++  }
++  if (
++    ts.isBinaryExpression(parent) &&
++    parent.right === result &&
++    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
++    ts.isIdentifier(parent.left)
++  ) {
++    return errorReadOf(enclosingFunction(parent), parent.left.text)
++  }
++  return null
++}
++
++/** The executor names a hook call is destructured into (`const [run] = useMutation(...)`). */
++function executorName(hookCall) {
++  const declaration = unwrap(hookCall).parent
++  if (!declaration || !ts.isVariableDeclaration(declaration)) return null
++  if (!ts.isArrayBindingPattern(declaration.name)) return null
++  const first = declaration.name.elements[0]
++  return first && ts.isBindingElement(first) && ts.isIdentifier(first.name) ? first.name.text : null
++}
++
++/** The functions declared in `source` by name (`function f() {}`, `const f = () => {}`). */
++function functionsByName(source) {
++  const functions = new Map()
++  const visit = node => {
++    if (ts.isFunctionDeclaration(node) && node.name) functions.set(node.name.text, node)
++    if (
++      ts.isVariableDeclaration(node) &&
++      ts.isIdentifier(node.name) &&
++      node.initializer &&
++      (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
++    ) {
++      functions.set(node.name.text, node.initializer)
++    }
++    ts.forEachChild(node, visit)
++  }
++  visit(source)
++  return functions
++}
++
++/** The helper of this file `call` hands the executor `name` to, and the parameter it lands in. */
++function helperTakingExecutor(call, name, functions) {
++  const helper = functions.get(call.expression.text)
++  const index = call.arguments.findIndex(
++    argument => ts.isIdentifier(argument) && argument.text === name,
++  )
++  const param = helper && index >= 0 ? helper.parameters[index] : undefined
++  return param && ts.isIdentifier(param.name) ? { helper, param: param.name.text } : null
++}
++
++/**
++ * The calls of the executor `name` in `scope`, each with `via`: the helper calls it was reached
++ * through. It follows the executor into a helper of the same file it is handed to
++ * (`runUpdate(updateMutation, ...)`, called there as its parameter); a catch around that helper
++ * call sees what the helper lets through.
++ */
++function callsTo(scope, name, functions, via = [], followed = new Set()) {
++  const calls = []
++  const visit = node => {
++    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
++      if (node.expression.text === name) calls.push({ call: node, via })
++      const taken = helperTakingExecutor(node, name, functions)
++      if (taken && !followed.has(taken.helper)) {
++        followed.add(taken.helper)
++        calls.push(...callsTo(taken.helper, taken.param, functions, [...via, node], followed))
++      }
++    }
++    ts.forEachChild(node, visit)
++  }
++  visit(scope)
++  return calls
++}
++
++/**
++ * The errorPolicy that applies to one executor call: one passed to the executor itself
++ * (`save({ errorPolicy })`) wins over the hook's.
++ */
++function effectivePolicy(hookPolicy, executorCall) {
++  const own = errorPolicyIn(executorCall.arguments[0])
++  return own === 'unset' ? hookPolicy : own
++}
++
++function verdictFor(policy, executorCall, via) {
++  if (policy === 'unknown') return 'check-by-hand'
++  return isCaught(executorCall) || via.some(isCaught) ? 'dead-read' : 'uncaught'
++}
++
++/** The findings in one source text. */
++export function auditSource(fileName, text) {
++  const kind = fileName.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
++  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, kind)
++  const findings = []
++  const functions = functionsByName(source)
++  const line = node => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
++
++  const report = (site, executorCall, policy, via = []) => {
++    if (policy === 'set') return
++    const read = errorRead(executorCall)
++    if (!read) return
++    findings.push({
++      file: fileName,
++      line: line(executorCall),
++      siteLine: line(site),
++      read,
++      verdict: verdictFor(policy, executorCall, via),
++    })
++  }
++
++  const auditHook = (hookCall, hookPolicy) => {
++    const name = executorName(hookCall)
++    const scope = name && enclosingFunction(hookCall)
++    if (!scope) return
++    for (const { call, via } of callsTo(scope, name, functions)) {
++      report(hookCall, call, effectivePolicy(hookPolicy, call), via)
++    }
++  }
++
++  const visit = node => {
++    const site = ts.isCallExpression(node) ? mutationSite(node) : null
++    if (site?.kind === 'direct') report(node, node, errorPolicyIn(site.options))
++    else if (site) auditHook(node, errorPolicyIn(site.options))
++    ts.forEachChild(node, visit)
++  }
++  visit(source)
++  return findings
++}
++
++function walk(folder, files) {
++  for (const entry of readdirSync(folder, { withFileTypes: true })) {
++    const path = join(folder, entry.name)
++    if (entry.isDirectory()) {
++      if (!SKIPPED_FOLDERS.has(entry.name)) walk(path, files)
++    } else if (/\.tsx?$/.test(entry.name) && !SKIPPED_FILE.test(entry.name)) {
++      files.push(path)
++    }
++  }
++  return files
++}
++
++/**
++ * The TypeScript source files under `dirs` that can hold application mutation sites, relative to
++ * `root` (build output, dependencies, generated code, specs and stories left out).
++ */
++export function sourceFiles(root, dirs) {
++  return dirs
++    .map(dir => join(root, dir))
++    .filter(folder => existsSync(folder))
++    .flatMap(folder => walk(folder, []))
++    .map(path => relative(root, path).split(sep).join('/'))
++    .sort((left, right) => left.localeCompare(right))
++}
++
++export function auditFiles(root, dirs) {
++  return sourceFiles(root, dirs).flatMap(path =>
++    auditSource(path, readFileSync(join(root, path), 'utf8')),
++  )
++}
++
++const VERDICTS = {
++  uncaught:
++    'nothing catches the rejection: a refusal is lost (unhandled), and the error branch never runs. Move the handling into a catch.',
++  'dead-read':
++    'a catch sees the refusal; the result read is dead code. Optional: drop it, keep the catch.',
++  'check-by-hand':
++    'the options are not a plain object literal, so errorPolicy may be set elsewhere. Check it.',
++}
++
++export function formatFindings(findings) {
++  if (findings.length === 0) return 'No mutation site reads a refusal from its result.\n'
++  const lines = []
++  for (const verdict of Object.keys(VERDICTS)) {
++    const group = findings.filter(finding => finding.verdict === verdict)
++    if (group.length === 0) continue
++    lines.push(`${verdict} (${group.length}): ${VERDICTS[verdict]}`)
++    for (const finding of group) {
++      const site =
++        finding.siteLine === finding.line ? '' : ` (mutation set up at line ${finding.siteLine})`
++      lines.push(`  ${finding.file}:${finding.line}  ${finding.read}${site}`)
++    }
++    lines.push('')
++  }
++  return `${lines.join('\n')}\n`
++}
++
++export function main(argv, root = workspaceRoot) {
++  const json = argv.includes('--json')
++  const dirs = argv.filter(arg => !arg.startsWith('--'))
++  const findings = auditFiles(root, dirs.length > 0 ? dirs : ['apps', 'libs'])
++  process.stdout.write(json ? `${JSON.stringify(findings, null, 2)}\n` : formatFindings(findings))
++  return findings.some(finding => finding.verdict === 'uncaught') ? 1 : 0
++}
++
++if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
++  process.exitCode = main(process.argv.slice(2))
++}
+diff --git a/scripts/audit-mutation-error-reads.spec.mjs b/scripts/audit-mutation-error-reads.spec.mjs
+new file mode 100644
+index 0000000..048c441
+--- /dev/null
++++ b/scripts/audit-mutation-error-reads.spec.mjs
+@@ -0,0 +1,228 @@
++import assert from 'node:assert/strict'
++import { dirname, join } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++import { auditFiles, auditSource, formatFindings } from './audit-mutation-error-reads.mjs'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++
++const verdicts = (text, fileName = 'page.tsx') =>
++  auditSource(fileName, text).map(({ line, read, verdict }) => ({ line, read, verdict }))
++
++describe('audit-mutation-error-reads', () => {
++  it('flags a hook with no errorPolicy whose result error is read with nothing to catch it', () => {
++    const text = [
++      'export function Page() {',
++      '  const [save] = useMutation(Save)',
++      '  const onSubmit = async () => {',
++      '    const result = await save({ variables: {} })',
++      '    if (result.error) setMessage(result.error.message)',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(verdicts(text), [{ line: 4, read: 'reads result.error', verdict: 'uncaught' }])
++  })
++
++  it('flags a destructured error, a generated hook and a .then read', () => {
++    const text = [
++      'export function Page() {',
++      '  const [save] = useSaveThingMutation()',
++      '  const [remove] = useMutation<RemoveMutation>(',
++      '    Remove,',
++      '    { refetchQueries: [List] },',
++      '  )',
++      '  const a = async () => {',
++      '    const { data, errors } = await save()',
++      '  }',
++      '  const b = () => remove().then(({ error }) => error && show(error))',
++      '}',
++    ].join('\n')
++    assert.deepEqual(verdicts(text), [
++      { line: 8, read: 'destructures error', verdict: 'uncaught' },
++      { line: 10, read: 'destructures error in .then', verdict: 'uncaught' },
++    ])
++  })
++
++  it('calls the read dead when a try/catch or a .catch sees the rejection', () => {
++    const text = [
++      'export function Page() {',
++      '  const [save] = useMutation(Save)',
++      '  const a = async () => {',
++      '    try {',
++      '      const result = await save()',
++      '      if (result.errors) return',
++      '    } catch (error) {',
++      '      show(error)',
++      '    }',
++      '  }',
++      '  const b = () => save().then(r => r.error).catch(show)',
++      '}',
++    ].join('\n')
++    assert.deepEqual(
++      verdicts(text).map(finding => finding.verdict),
++      ['dead-read', 'dead-read'],
++    )
++  })
++
++  it('follows the executor into a helper of the same file, and a result handed to an error helper', () => {
++    const text = [
++      'async function runUpdate(update: any, id: string) {',
++      '  const result = await update({ variables: { id } })',
++      '  if (result.errors) return false',
++      '  return true',
++      '}',
++      'export function Page() {',
++      '  const [update] = useMutation(Update)',
++      '  const [create] = useMutation(Create)',
++      '  const a = () => runUpdate(update, "1")',
++      '  const b = async () => {',
++      '    const result = await create()',
++      '    const message = mutationErrorMessage(result)',
++      '    setData(result)',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(verdicts(text), [
++      { line: 2, read: 'reads result.errors', verdict: 'uncaught' },
++      { line: 11, read: 'passes result to mutationErrorMessage()', verdict: 'uncaught' },
++    ])
++  })
++
++  it('flags client.mutate with no errorPolicy, and skips every call that sets one', () => {
++    const text = [
++      'export async function run(client: any) {',
++      '  const { error } = await client.mutate({ mutation: Save })',
++      "  const r = await client.mutate({ mutation: Save, errorPolicy: 'all' })",
++      '  if (r.error) return',
++      '}',
++      'export function Page() {',
++      "  const [save] = useMutation(Save, { errorPolicy: 'all' })",
++      "  const [other] = useOtherMutation({ errorPolicy: 'none' })",
++      '  const a = async () => {',
++      '    const result = await save()',
++      '    if (result.error) return',
++      '    const { error } = await other()',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(verdicts(text, 'run.ts'), [
++      { line: 2, read: 'destructures error', verdict: 'uncaught' },
++    ])
++  })
++
++  it('counts a try only when the promise is awaited inside it', () => {
++    const text = [
++      'export function Page() {',
++      '  const [save] = useMutation(Save)',
++      '  const a = () => {',
++      '    try {',
++      '      save().then(result => show(result.error))',
++      '    } catch (error) {',
++      '      show(error)',
++      '    }',
++      '  }',
++      '  const b = async () => {',
++      '    try {',
++      '      await save().then(result => show(result.error))',
++      '    } catch (error) {',
++      '      show(error)',
++      '    }',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(
++      verdicts(text).map(finding => finding.verdict),
++      ['uncaught', 'dead-read'],
++    )
++  })
++
++  it('counts a catch around the helper call that the executor was handed to', () => {
++    const text = [
++      'async function runUpdate(update: any, id: string) {',
++      '  const result = await update({ variables: { id } })',
++      '  return !result.errors',
++      '}',
++      'export function Page() {',
++      '  const [update] = useMutation(Update)',
++      '  const a = async () => {',
++      '    try {',
++      '      await runUpdate(update, "1")',
++      '    } catch (error) {',
++      '      show(error)',
++      '    }',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(verdicts(text), [
++      { line: 2, read: 'reads result.errors', verdict: 'dead-read' },
++    ])
++  })
++
++  it('reads an errorPolicy passed to the executor itself', () => {
++    const text = [
++      'export function Page(options: any) {',
++      '  const [save] = useMutation(Save)',
++      "  const [keep] = useMutation(Keep, { errorPolicy: 'none' })",
++      '  const a = async () => {',
++      "    const result = await save({ errorPolicy: 'all' })",
++      '    if (result.error) return',
++      '    const second = await save(options)',
++      '    if (second.error) return',
++      "    const third = await keep({ variables: {}, errorPolicy: 'all' })",
++      '    if (third.error) return',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(verdicts(text), [
++      { line: 7, read: 'reads second.error', verdict: 'check-by-hand' },
++    ])
++  })
++
++  it('asks for a hand check when the options may set errorPolicy where it cannot see', () => {
++    const text = [
++      'export function useGuarded(doc: any, options: any) {',
++      '  const [run] = useMutation(doc, options)',
++      '  const [other] = useMutation(doc, { ...options, refetchQueries: [] })',
++      '  return async () => {',
++      '    const result = await run()',
++      '    const second = await other()',
++      '    return !result.error && !second.error',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(
++      verdicts(text, 'guarded.ts').map(finding => finding.verdict),
++      ['check-by-hand', 'check-by-hand'],
++    )
++  })
++
++  it('ignores reads of data, and calls whose result is not kept', () => {
++    const text = [
++      'export function Page() {',
++      '  const [save] = useMutation(Save)',
++      '  const a = async () => {',
++      '    const result = await save()',
++      '    if (result.data?.save) done()',
++      '    await save()',
++      '  }',
++      '}',
++    ].join('\n')
++    assert.deepEqual(verdicts(text), [])
++  })
++
++  it('formats findings by verdict, and says so when there are none', () => {
++    assert.equal(formatFindings([]), 'No mutation site reads a refusal from its result.\n')
++    const out = formatFindings([
++      { file: 'a.tsx', line: 9, siteLine: 2, read: 'reads result.error', verdict: 'uncaught' },
++    ])
++    assert.match(out, /^uncaught \(1\): nothing catches the rejection/)
++    assert.match(out, /a\.tsx:9 {2}reads result\.error \(mutation set up at line 2\)/)
++  })
++
++  it('finds no site in this repository that reads a refusal from its result uncaught', () => {
++    const uncaught = auditFiles(root, ['apps', 'libs']).filter(
++      finding => finding.verdict === 'uncaught',
++    )
++    assert.deepEqual(uncaught, [], formatFindings(uncaught))
++  })
++})
