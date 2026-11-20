@@ -1,6 +1,7 @@
 export * from './lib/api-url'
 export * from './lib/config.module'
 export * from './lib/config.service'
+export * from './lib/cookie-domain'
 export * from './lib/configuration'
 export * from './lib/public-url.service'
 export * from './lib/validation'
