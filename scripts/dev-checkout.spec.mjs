@@ -721,27 +721,33 @@ void describe('scripts/test-db.sh ensure creates only a local *_test database', 
     assert.equal(node.calls(), '')
   })
 
-  void it('refuses a test database on the development server, POSTGRES_PORT in .env', () => {
+  void it('refuses a test database on the development server, POSTGRES_PORT in .env, opt-out or not', () => {
     const { main, bin } = checkouts()
     const node = nodeStub(main)
     const docker = dockerStub(main, '0.0.0.0:55450')
     const { bin: recording, calls } = recordingStubs(join(main, '..'))
     const path = `${node.bin}:${docker}:${recording}:${bin}`
     writeFileSync(join(main, '.env'), 'POSTGRES_PORT=55450\nPOSTGRES_TEST_PORT=55450\n')
-    const ensured = testDb(main, path, 'ensure')
-    assert.notEqual(ensured.status, 0)
-    assert.match(ensured.stderr, /on port 55450, the development Postgres/)
-    for (const command of ['verify', 'migrate']) {
-      const refused = testDb(main, path, command)
-      assert.notEqual(refused.status, 0, command)
-      assert.match(refused.stderr, /the development\s+Postgres \(POSTGRES_PORT\)/, command)
-      const allowed = testDb(main, path, command, {
-        E2E_ALLOW_NON_DISPOSABLE_DB: '1',
-      })
-      assert.equal(allowed.status, 0, `${command}: ${allowed.stderr}`)
+    for (const allow of ['', '1']) {
+      const ensured = testDb(main, path, 'ensure', { E2E_ALLOW_NON_DISPOSABLE_DB: allow })
+      assert.notEqual(ensured.status, 0)
+      assert.match(ensured.stderr, /on port 55450, the development Postgres/)
+      for (const command of ['verify', 'migrate']) {
+        // The repo's own *_test URL, and one of your own: the name does not make it disposable.
+        for (const url of ['', urlWithPassword('127.0.0.1:55450/other_test')]) {
+          const refused = testDb(main, path, command, {
+            E2E_ALLOW_NON_DISPOSABLE_DB: allow,
+            TEST_DATABASE_URL: url,
+          })
+          assert.notEqual(refused.status, 0, `${command} ${allow} ${url}`)
+          assert.match(refused.stderr, /the development\s+Postgres \(POSTGRES_PORT\)/, command)
+          assert.match(refused.stderr, /E2E_ALLOW_NON_DISPOSABLE_DB does not apply/, command)
+          assert.ok(!refused.stderr.includes(FIXTURE_PASSWORD), command)
+        }
+      }
     }
     assert.equal(node.calls(), '')
-    assert.equal(calls().match(/prisma migrate deploy/g)?.length, 1, calls())
+    assert.equal(calls().match(/prisma migrate deploy/g)?.length ?? 0, 0, calls())
   })
 
   void it('verifies a URL of your own on another port without asking Docker', () => {

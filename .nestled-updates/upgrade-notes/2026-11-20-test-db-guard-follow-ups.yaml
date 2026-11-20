@@ -1,0 +1,149 @@
+id: 2026-11-20-test-db-guard-follow-ups
+title: >-
+  Test database guard follow-ups: a database on the development server is never disposable, the
+  e2e schema reset uses the same rule as the guard, run-tests specs stub every test-db.sh command,
+  and the GRAPHQL_INCLUDE_STACKTRACE comment states the real condition
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  Follow-ups to part 4 of 2026-11-19-dev-tooling (apply that first). Four parts; 1 and 2 go
+  together, 3 and 4 are independent. No package is added, removed or bumped, and package.json,
+  nx.json and tsconfig.base.json are unchanged. No API or product behaviour changes: part 4 is a
+  comment.
+
+
+  1. One rule for every path that can write to, reset or drop a test database, and a database on
+  the development server is never disposable. In 2026-11-19-dev-tooling the development-server
+  check (a local URL on POSTGRES_PORT) lived only in `assertDisposableTestDatabase`, as an
+  overridable reason, while `isDisposableTestDatabase`, which global setup's P3005 recovery uses
+  before `DROP SCHEMA public CASCADE`, ignored it. So a TEST_DATABASE_URL named `*_test` on the
+  development server passed the reset's own check, and under `E2E_ALLOW_NON_DISPOSABLE_DB=1` setup
+  migrated, pushed, seeded and could drop the schema of a database that lives beside the
+  development data. apps/api-e2e/src/support/database-guards.ts: `nonDisposableReason(url, env)`
+  now takes `env` (default process.env) and returns the development-server reason itself, with
+  `overridable: false`, after the destination-override checks and before the schema, host and name
+  checks. `isDisposableTestDatabase(url, env)` and `assertDisposableTestDatabase(url, env)` both
+  read it, so the opt-out no longer admits the development server and its refusal says so ("does
+  not apply to a URL on the development server or one that could connect somewhere other than it
+  appears to"). New exported `resetTestDatabase(url, clients, env)` holds the from-scratch reset:
+  it refuses, with the reason and before any SQL runs, anything `nonDisposableReason` refuses,
+  whatever the opt-out says. global-setup.ts drops its local `resetTestDatabase` and calls the
+  exported one with its database clients; the guard call before any write is unchanged.
+  scripts/test-db.sh: new `refuse_development_server <action>`; `migrate` and `verify` call it
+  and refuse a URL on the development server whether or not E2E_ALLOW_NON_DISPOSABLE_DB=1
+  (`ensure` already refused it). New cases: database-guards.spec.ts (a local `*_test` URL on
+  POSTGRES_PORT is disposable without POSTGRES_PORT and refused with it, opt-out or not;
+  `resetTestDatabase` runs no SQL for it, nor for another name, host or `?schema=`, with the
+  opt-out) and scripts/dev-checkout.spec.mjs (`ensure`, `verify` and `migrate` refuse the repo's
+  own URL and a URL of your own named `*_test` on the development port, with and without the
+  opt-out, printing no password and running no `prisma migrate deploy`).
+
+
+  2. Behaviour change to check before taking part 1: a project that deliberately ran its tests in
+  the development Postgres with E2E_ALLOW_NON_DISPOSABLE_DB=1 is now refused. Its fix is to run
+  the test database in its own server (`pnpm test:db:start`, on POSTGRES_TEST_PORT) and point
+  TEST_DATABASE_URL there. The opt-out still admits another host, another name or `?schema=` (a
+  CI service container reached by its service name, for example).
+
+
+  3. Specs that run run-tests.sh against a stub scripts/test-db.sh. 2026-11-19-dev-tooling part
+  4(b) made apps/api-e2e/run-tests.sh call `./scripts/test-db.sh url` (when a URL is supplied) and
+  `./scripts/test-db.sh verify` (always, before Vitest), and it did not mention specs that copy the
+  wrapper into a temporary directory with a stub test-db.sh. Under `set -euo pipefail` a stub that
+  lacks `verify`, or a temporary directory with no scripts/test-db.sh at all, aborts the wrapper
+  before Vitest: the spec fails with an exit code and no message about why. The template's
+  apps/api-e2e/src/support/e2e-runner.spec.ts stubs are now a `case` over exactly the commands
+  each wrapper calls (run-tests.sh: url, ensure, start, verify, stop; scripts/run-e2e-tests.sh:
+  url, start, stop), and any other command prints `test-db.sh stub: unexpected command: <name>`
+  and exits 97, so the next new call names itself. The `verify` stub records the URL it was given
+  and prints "verify refused" only when it refuses (it printed it on every call). New cases:
+  verify runs last among the test-db.sh calls, with the URL the suite runs against, and no path
+  through the wrapper (supplied URL, own container started, database created, ensure failing, stop
+  failing) calls a command the stub does not stand in for.
+
+
+  4. .env.example, GRAPHQL_INCLUDE_STACKTRACE. The comment said the variable is ignored on every
+  deployed environment whatever its NODE_ENV. The code (`includeGraphqlStacktrace` in
+  libs/api/core/feature/src/lib/graphql-error-options.ts) only checks
+  `GRAPHQL_INCLUDE_STACKTRACE === 'true' && NODE_ENV === 'development'`; nothing detects a
+  deployed environment. The comment now says it is honoured whenever NODE_ENV=development,
+  wherever the API runs, so a deployment with NODE_ENV=development and the variable true sends
+  stack traces to every client; leave it unset in Railway and CI. Comment only; behaviour unchanged.
+
+why: >
+  The guard against testing on the development database was added in one place and the most
+  destructive path, the schema reset, kept the older rule that only looks at the host and the name.
+  A `*_test` database on the development server passed it, and the documented opt-out let setup
+  write to and drop the schema of a database sitting beside the development data. Downstream, the
+  dev-tooling rollout also broke repo-local specs that run the e2e wrapper against a stub
+  test-db.sh, because the note did not say the wrapper now calls `verify`; the failures gave no
+  reason. And the .env.example comment promised a protection the code does not have.
+
+affectedPaths:
+  - apps/api-e2e/src/support/database-guards.ts
+  - apps/api-e2e/src/support/database-guards.spec.ts
+  - apps/api-e2e/src/support/global-setup.ts
+  - apps/api-e2e/src/support/e2e-runner.spec.ts
+  - apps/api-e2e/README.md
+  - scripts/test-db.sh
+  - scripts/dev-checkout.spec.mjs
+  - .env.example
+
+skipIf:
+  - >-
+    Parts 1 to 3: the project's e2e suite does not use the template harness (no
+    apps/api-e2e/src/support/database-guards.ts or global-setup.ts that resets the schema, no
+    scripts/test-db.sh; e2e on Testcontainers, for example). Record them not-applicable after
+    checking that the project's own harness never resets or drops a database on the development
+    server's port.
+
+verification:
+  - node --test scripts/dev-checkout.spec.mjs
+  - pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx run api-e2e:lint --skip-nx-cache
+  - git grep -nE "run-tests\.sh|test-db\.sh" -- '*.spec.*' '*.test.*'
+  - pnpm run nestled-doctor
+
+agentHints:
+  - >-
+    Part 1: search the project for every place a test database is reset, dropped or truncated
+    (`git grep -niE "drop schema|drop database|truncate|migrate reset" -- apps/api-e2e scripts`)
+    and make each one decide with `nonDisposableReason(url, env)` / `isDisposableTestDatabase(url,
+    env)`, or call `resetTestDatabase`. A project whose global setup has no guard call before its
+    first write (`assertDisposableTestDatabase(testDatabaseUrl)` before migrate, push and seed) is
+    missing 2026-11-19-dev-tooling part 4(c) too; add both. If your copy of database-guards.ts
+    differs, port the rule, not the file: the development-server reason is not overridable and
+    every disposability check reads it.
+  - >-
+    Part 1: POSTGRES_PORT reaches global setup only through Nx loading the repo-root .env (and
+    test-db.sh reads .env itself). If your e2e target is not run through Nx, or your development
+    Postgres port lives under another name, pass that port as POSTGRES_PORT in the env given to
+    the guard; without it the development-server check is inactive, as in CI.
+  - >-
+    Part 1, your own specs: an existing case that expects `'allowed'` for a URL on POSTGRES_PORT
+    with E2E_ALLOW_NON_DISPOSABLE_DB=1 now fails by design; change it to expect the refusal. A case
+    that calls `isDisposableTestDatabase(url)` with no `env` reads process.env, where Nx's .env
+    may set POSTGRES_PORT=5432; pass `{}` (or the env the case means) so it does not depend on the
+    machine.
+  - >-
+    Part 3: find every spec that runs run-tests.sh or scripts/run-e2e-tests.sh from a temporary
+    directory (the verification grep lists them; look for copyFileSync of run-tests.sh, a written
+    scripts/test-db.sh, or a lifecycle harness that stubs psql or the pg runner). Each needs a
+    scripts/test-db.sh stub that answers every command the wrapper calls: `url` (print the URL),
+    `verify` (exit 0 unless the case is about a refusal), and `ensure`, `start`, `stop` where your
+    wrapper calls them. Make an unknown command fail with its name, as the template's stub does. A
+    harness whose temporary directory has no scripts/ at all needs the stub added.
+  - >-
+    Part 3: if your run-tests.sh does not call `test-db.sh verify` (you recorded 2026-11-19-dev-tooling
+    part 4(b) not-applicable or adapted it away), the stub still should not accept commands the
+    wrapper never calls; list the ones yours does.
+  - >-
+    Part 4: .env.example is repo-owned; replace the comment above GRAPHQL_INCLUDE_STACKTRACE with
+    the template's wording, or your own words for the same condition. Check your deployed
+    environments do not run with NODE_ENV=development; if one does, make sure
+    GRAPHQL_INCLUDE_STACKTRACE is unset there.
+
+applyAfter: [2026-11-19-dev-tooling, 2026-11-19-api-auth-ambiguity]

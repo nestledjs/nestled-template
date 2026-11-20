@@ -18,8 +18,13 @@ const run = (exitCode: number, suppliedUrl?: string, args: string[] = [], urlExi
   )
   writeFileSync(
     join(root, 'scripts/test-db.sh'),
+    // Every command scripts/run-e2e-tests.sh calls; any other fails loudly (see runWrapper's stub).
     '#!/bin/bash\necho "$1" >> db-calls\n' +
-      `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n`,
+      'case "$1" in\n' +
+      `  url) echo postgresql://local/test; exit ${urlExit} ;;\n` +
+      '  start | stop) exit 0 ;;\n' +
+      '  *) echo "test-db.sh stub: unexpected command: $1" >&2; exit 97 ;;\n' +
+      'esac\n',
     { mode: 0o755 },
   )
   writeFileSync(join(root, 'bin/docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 })
@@ -109,13 +114,22 @@ const runWrapper = (
   mkdirSync(join(root, 'bin'))
   mkdirSync(join(root, 'apps/api-e2e/src/support'), { recursive: true })
   copyFileSync(resolve(__dirname, '../../run-tests.sh'), join(root, 'apps/api-e2e/run-tests.sh'))
+  // Stands in for scripts/test-db.sh with every command run-tests.sh calls: url, ensure, start,
+  // verify and stop. Any other command fails loudly, so a wrapper that starts calling a new one
+  // breaks here with its name, not with an unexplained exit (a stub without `verify` aborted the
+  // wrapper under set -e once it began to call it).
   writeFileSync(
     join(root, 'scripts/test-db.sh'),
     '#!/bin/bash\necho "$1" >> db-calls\n' +
-      `if [[ "$1" == url ]]; then echo postgresql://local/test; exit ${urlExit}; fi\n` +
-      `if [[ "$1" == stop ]]; then exit ${stopExit}; fi\n` +
-      `if [[ "$1" == ensure ]]; then echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit}; fi\n` +
-      `if [[ "$1" == verify ]]; then echo "verify refused" >&2; exit ${verifyExit}; fi\n`,
+      'case "$1" in\n' +
+      `  url) echo postgresql://local/test; exit ${urlExit} ;;\n` +
+      `  stop) exit ${stopExit} ;;\n` +
+      '  start) exit 0 ;;\n' +
+      `  ensure) echo "ensure output for ${'$'}TEST_DATABASE_URL"; exit ${ensureExit} ;;\n` +
+      `  verify) echo "verify for ${'$'}TEST_DATABASE_URL" >> verify-calls\n` +
+      `    if [[ ${verifyExit} -ne 0 ]]; then echo "verify refused" >&2; fi; exit ${verifyExit} ;;\n` +
+      '  *) echo "test-db.sh stub: unexpected command: $1" >&2; exit 97 ;;\n' +
+      'esac\n',
     { mode: 0o755 },
   )
   // Stands in for the pg runner: records the probe request and answers each probe in turn with the
@@ -160,6 +174,7 @@ const runWrapper = (
     probes: Number(read('probe-count') || 0),
     dbCalls: read('db-calls'),
     npxCalls: read('npx-calls'),
+    verifyCalls: read('verify-calls'),
   }
 }
 
@@ -302,6 +317,11 @@ describe('api-e2e test wrapper', () => {
   it('verifies the database before testing, and runs no test when it is not the one to use', () => {
     const verified = runWrapper(summary('5 passed (5)'), 0)
     expect(verified.dbCalls).toContain('verify')
+    // verify checks the URL the suite then runs against, after the probe.
+    expect(verified.verifyCalls).toBe(`verify for ${SUPPLIED_URL}\n`)
+    expect(verified.dbCalls.trim().split('\n').pop()).toBe('verify')
+    expect(verified.result.stderr).not.toContain('verify refused')
+    expect(verified.result.stderr).not.toContain('unexpected command')
     const { result, npxCalls } = runWrapper(summary('5 passed (5)'), 0, 0, 0, SUPPLIED_URL, 0, {
       verifyExit: 1,
     })
@@ -309,6 +329,19 @@ describe('api-e2e test wrapper', () => {
     expect(result.stderr).toContain('verify refused')
     expect(npxCalls).toBe('')
     expect(result.stdout).not.toContain('PASSED')
+  })
+  it('calls no test-db.sh command its stub does not stand in for, on any path', () => {
+    const paths = [
+      runWrapper(summary('5 passed (5)'), 0),
+      runWrapper(summary('5 passed (5)'), 0, 1, 0, ''),
+      runWrapper(summary('5 passed (5)'), 0, 1, 0, '', 0, { probeExits: [1, 0] }),
+      runWrapper(summary('5 passed (5)'), 0, 1, 0, '', 0, { ensureExit: 1 }),
+      runWrapper(summary('5 passed (5)'), 0, 1, 1, ''),
+    ]
+    for (const { result } of paths) {
+      expect(result.stderr).not.toContain('unexpected command')
+      expect(result.status).toBe(0)
+    }
   })
   it('finds a failure in the summary of a long log', () => {
     const log = `${'✓ a passing test\n'.repeat(20000)}${summary('1 failed | 4 passed (5)')}`

@@ -36,11 +36,14 @@ one test passed. A filter that matches nothing, or a run in which every test is 
    whose `start` creates the database the same way. It then runs Vitest and checks the summary.
 2. **Global setup** (`src/support/global-setup.ts`):
    - refuses a test database that is not disposable (a `postgresql:` URL on this machine, named
-     `*_test`, with no `?schema=`, fragment or destination-override parameter) before anything is
-     reset, migrated, pushed or seeded, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set. The wrapper's
-     read-only `SELECT 1` probe has already connected by then; nothing writes before this check.
+     `*_test`, with no `?schema=`, fragment or destination-override parameter, and not on the
+     development server's port, `POSTGRES_PORT`) before anything is reset, migrated, pushed or
+     seeded, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set. The opt-out never admits a URL on the
+     development server, whatever it is named. The wrapper's read-only `SELECT 1` probe has already
+     connected by then; nothing writes before this check.
    - applies migrations with `prisma migrate deploy`. A local test database built by `db push` alone
-     has no migration history; it is emptied and migrated from scratch.
+     has no migration history; it is emptied and migrated from scratch, by the same rule (the reset
+     never runs on a database the guard would refuse, opt-out or not).
    - runs `prisma db push` and the seed
    - starts the API with `nx serve api` on `E2E_API_PORT`, and refuses to run against an API it did
      not start unless `E2E_ALLOW_EXISTING_API=1` is set
@@ -67,9 +70,11 @@ one test passed. A filter that matches nothing, or a run in which every test is 
   example). Setup migrates, pushes and seeds it; the from-scratch reset still requires a disposable
   database. It never lets through a URL that could connect somewhere other than it appears to: a
   query parameter that overrides the destination (`?host=`, `?port=`, `?dbname=`...), a fragment,
-  or a protocol other than `postgresql:`. A setup that empties the schema on every run gains nothing
+  or a protocol other than `postgresql:`; nor one on the development server (a local URL on
+  `POSTGRES_PORT`), whatever it is named. A setup that empties the schema on every run gains nothing
   from it and should not offer it. `scripts/test-db.sh migrate` applies the same rule before
-  `prisma migrate deploy`, except that it accepts no query string at all.
+  `prisma migrate deploy`, except that it accepts no query string at all, and so does
+  `scripts/test-db.sh verify`, which the wrapper runs before Vitest, for the development server.
 - `E2E_DATABASE_PROBE`: the client global setup's own SQL (the `SELECT 1` probe and the
   from-scratch reset) runs through. `pg` (default) uses the pg runner; `psql` runs `psql` from PATH,
   for a repo whose lifecycle tests stub psql.
