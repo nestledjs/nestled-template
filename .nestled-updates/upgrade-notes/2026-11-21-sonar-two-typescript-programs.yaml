@@ -107,13 +107,15 @@ skipIf:
     every project (check with the coverage comparison below).
 
 verification:
-  - pnpm prisma:generate
-  - pnpm exec tsc -p sonar/tsconfig.api.json --noEmit --extendedDiagnostics
-  - pnpm exec tsc -p sonar/tsconfig.web.json --noEmit --extendedDiagnostics
   - node --test scripts/sonar-tsconfig-coverage.spec.mjs
   - pnpm exec prettier --check sonar scripts
 
 agentHints:
+  - >
+    Measure each program, but not as a verification command: it exits non-zero on the handful of
+    expected type errors, and a failing verification makes `apply` roll back a correct upgrade.
+    `pnpm exec tsc -p sonar/tsconfig.api.json --noEmit --extendedDiagnostics` (and the same for the
+    web config) gives the file count, error count and memory figure for the pull request.
   - >
     Generate the Prisma client first (`pnpm prisma:generate`), and React Router's route types
     (`pnpm exec react-router typegen` in apps/web) if the web config includes them. Without the
