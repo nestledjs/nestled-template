@@ -31,7 +31,7 @@ import { useMutation } from '@apollo/client/react'
 // whatever the verdict. Clearing the session cookie can fail (a parent-domain cookie the web
 // host cannot expire); if that cookie still authenticates, redirecting would skip the form and
 // the stored-organization cleanup the page does for `expired=1`.
-export async function loader({ request, context }: LoaderFunctionArgs) {
+export function loader({ request, context }: LoaderFunctionArgs) {
   const afterSignOut = new URL(request.url).searchParams.has('expired')
   if (!afterSignOut && getSession(context).kind === 'signed-in') {
     throw redirect('/members/dashboard')

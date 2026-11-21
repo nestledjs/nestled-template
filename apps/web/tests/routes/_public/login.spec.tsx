@@ -36,7 +36,8 @@ describe('Login Component', () => {
   // Focus on loader function tests and E2E tests for UI validation.
 
   describe('Loader Function', () => {
-    const runLoader = (url: string, verdict: AppSessionVerdict) =>
+    // async, so the loader's thrown redirect arrives as a rejection
+    const runLoader = async (url: string, verdict: AppSessionVerdict) =>
       loader({ request: new Request(url), params: {}, context: withSession(verdict) } as never)
 
     it('redirects a visitor the session middleware judged signed in to the dashboard', async () => {
