@@ -1,0 +1,216 @@
+diff --git a/apps/web/app/routes/_public/login.tsx b/apps/web/app/routes/_public/login.tsx
+index d6edcb9..705edf5 100644
+--- a/apps/web/app/routes/_public/login.tsx
++++ b/apps/web/app/routes/_public/login.tsx
+@@ -31,7 +31,7 @@ import { useMutation } from '@apollo/client/react'
+ // whatever the verdict. Clearing the session cookie can fail (a parent-domain cookie the web
+ // host cannot expire); if that cookie still authenticates, redirecting would skip the form and
+ // the stored-organization cleanup the page does for `expired=1`.
+-export async function loader({ request, context }: LoaderFunctionArgs) {
++export function loader({ request, context }: LoaderFunctionArgs) {
+   const afterSignOut = new URL(request.url).searchParams.has('expired')
+   if (!afterSignOut && getSession(context).kind === 'signed-in') {
+     throw redirect('/members/dashboard')
+diff --git a/apps/web/app/routes/auth/oauth-success.tsx b/apps/web/app/routes/auth/oauth-success.tsx
+index 74d0f79..d1eb70e 100644
+--- a/apps/web/app/routes/auth/oauth-success.tsx
++++ b/apps/web/app/routes/auth/oauth-success.tsx
+@@ -17,7 +17,7 @@ const POST_LOGIN = '/members/dashboard'
+  * them out again. Signed in, or unknown (the API did not answer just now), goes on to the
+  * dashboard, whose own `requireSession` shows the recovering screen if it is still unknown.
+  */
+-export async function loader({ context }: LoaderFunctionArgs) {
++export function loader({ context }: LoaderFunctionArgs) {
+   if (getSession(context).kind !== 'signed-out') throw redirect(POST_LOGIN)
+   // nestled-session-allow: the OAuth flow's own outcome page, the session is already judged
+   throw redirect('/login?error=oauth_incomplete')
+diff --git a/apps/web/tests/routes/_public/login.spec.tsx b/apps/web/tests/routes/_public/login.spec.tsx
+index e1b8f5d..e069a6d 100644
+--- a/apps/web/tests/routes/_public/login.spec.tsx
++++ b/apps/web/tests/routes/_public/login.spec.tsx
+@@ -36,7 +36,8 @@ describe('Login Component', () => {
+   // Focus on loader function tests and E2E tests for UI validation.
+ 
+   describe('Loader Function', () => {
+-    const runLoader = (url: string, verdict: AppSessionVerdict) =>
++    // async, so the loader's thrown redirect arrives as a rejection
++    const runLoader = async (url: string, verdict: AppSessionVerdict) =>
+       loader({ request: new Request(url), params: {}, context: withSession(verdict) } as never)
+ 
+     it('redirects a visitor the session middleware judged signed in to the dashboard', async () => {
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+index d7d369d..69551f9 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+@@ -45,6 +45,17 @@ describe('JwtStrategy API token authentication', () => {
+     return (error.getResponse() as { code?: string }).code
+   }
+ 
++  it('authenticate returns nothing and passes an unexpected rejection to error', async () => {
++    const failure = new Error('unexpected')
++    jest.spyOn(strategy, 'authenticateAsync').mockRejectedValue(failure)
++
++    const returned = strategy.authenticate({ headers: {} } as any)
++    await new Promise(resolve => setImmediate(resolve))
++
++    expect(returned).toBeUndefined()
++    expect((strategy as any).error).toHaveBeenCalledWith(failure)
++  })
++
+   it('authenticates opaque API tokens before JWT parsing', async () => {
+     const user = { id: 'user-1' }
+     const req = { headers: { authorization: `Bearer ${token}` } } as any
+@@ -56,7 +67,7 @@ describe('JwtStrategy API token authentication', () => {
+     })
+     auth.validateUser.mockResolvedValue(user)
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect(apiTokensService.validateApiToken).toHaveBeenCalledWith(token)
+     expect(auth.validateUser).toHaveBeenCalledWith('user-1')
+@@ -70,7 +81,7 @@ describe('JwtStrategy API token authentication', () => {
+     const req = { headers: { authorization: `Bearer ${token}` } } as any
+     apiTokensService.validateApiToken.mockResolvedValue(null)
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect(auth.validateUser).not.toHaveBeenCalled()
+     expect((strategy as any).fail).toHaveBeenCalledWith(
+@@ -90,7 +101,7 @@ describe('JwtStrategy API token authentication', () => {
+       resource: 'https://api.example.com/api/mcp',
+     })
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect(auth.validateUser).not.toHaveBeenCalled()
+     expect((strategy as any).success).not.toHaveBeenCalled()
+@@ -110,7 +121,7 @@ describe('JwtStrategy API token authentication', () => {
+     })
+     auth.validateUser.mockResolvedValue(user)
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect((strategy as any).success).toHaveBeenCalledWith(user)
+     expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('api-token-1')
+@@ -132,7 +143,7 @@ describe('JwtStrategy API token authentication', () => {
+     })
+     auth.validateUser.mockResolvedValue(user)
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect((strategy as any).success).toHaveBeenCalledWith(user)
+     expect(req.headers['x-organization-id']).toBe('org-1')
+@@ -149,7 +160,7 @@ describe('JwtStrategy API token authentication', () => {
+       organizationId: 'org-1',
+     })
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect(auth.validateUser).not.toHaveBeenCalled()
+     expect((strategy as any).success).not.toHaveBeenCalled()
+@@ -167,7 +178,7 @@ describe('JwtStrategy API token authentication', () => {
+       organizationId: 'org-1',
+     })
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect(forbiddenCode()).toBe('API_TOKEN_ORGANIZATION_MISMATCH')
+   })
+@@ -185,7 +196,7 @@ describe('JwtStrategy API token authentication', () => {
+     })
+     auth.validateUser.mockResolvedValue(user)
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     // A consumer reading the header naively must not receive an array.
+     expect(req.headers['x-organization-id']).toBe('org-1')
+@@ -203,7 +214,7 @@ describe('JwtStrategy API token authentication', () => {
+     })
+     auth.validateUser.mockResolvedValue(user)
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect(req.headers['x-organization-id']).toBe('org-1')
+     expect((strategy as any).success).toHaveBeenCalledWith(user)
+@@ -222,7 +233,7 @@ describe('JwtStrategy API token authentication', () => {
+     })
+     auth.validateUser.mockResolvedValue(user)
+ 
+-    await strategy.authenticate(req)
++    await strategy.authenticateAsync(req)
+ 
+     expect(req.headers['x-organization-id']).toBe('org-7')
+     expect(req.apiTokenOrganizationId).toBeNull()
+@@ -389,7 +400,9 @@ describe('JwtStrategy inactive accounts', () => {
+       organizationId: null,
+     })
+ 
+-    await strategy.authenticate({ headers: { authorization: `Bearer ${'a'.repeat(64)}` } } as any)
++    await strategy.authenticateAsync({
++      headers: { authorization: `Bearer ${'a'.repeat(64)}` },
++    } as any)
+ 
+     expect((strategy as any).success).not.toHaveBeenCalled()
+     expect((strategy as any).fail).toHaveBeenCalledWith(
+@@ -428,7 +441,7 @@ describe('JwtStrategy API token internal failures', () => {
+   it('answers a failed token lookup with a 503, not a 401', async () => {
+     apiTokensService.validateApiToken.mockRejectedValue(new Error('database unavailable'))
+ 
+-    await strategy.authenticate(req())
++    await strategy.authenticateAsync(req())
+ 
+     expect(outcome.fail).not.toHaveBeenCalled()
+     expect(passedError()).toBeInstanceOf(ServiceUnavailableException)
+@@ -444,7 +457,7 @@ describe('JwtStrategy API token internal failures', () => {
+     })
+     auth.validateUser.mockRejectedValue(new Error('connection terminated'))
+ 
+-    await strategy.authenticate(req())
++    await strategy.authenticateAsync(req())
+ 
+     expect(outcome.fail).not.toHaveBeenCalled()
+     expect(outcome.success).not.toHaveBeenCalled()
+@@ -455,7 +468,7 @@ describe('JwtStrategy API token internal failures', () => {
+   it('still answers a genuinely invalid, expired or revoked token with a 401', async () => {
+     apiTokensService.validateApiToken.mockResolvedValue(null)
+ 
+-    await strategy.authenticate(req())
++    await strategy.authenticateAsync(req())
+ 
+     expect(outcome.error).not.toHaveBeenCalled()
+     expect(outcome.fail).toHaveBeenCalledWith({ message: 'Invalid or expired API token' }, 401)
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+index 56f91d7..2c05ef5 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+@@ -128,11 +128,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
+     return user
+   }
+ 
++  /**
++   * Passport calls this and ignores its return value, so it stays a void method: a promise it
++   * returned would be dropped, and a rejection in it would leave the request with no answer.
++   * Anything that escapes `authenticateAsync` is passed to `this.error` instead.
++   */
++  override authenticate(req: Request, options?: object): void {
++    this.authenticateAsync(req, options).catch((error: unknown) => this.error(error as Error))
++  }
++
+   /**
+    * API tokens are opaque 64-character hex strings, not JWTs. Check them before
+    * passport-jwt attempts to parse the bearer value as a JWT.
+    */
+-  override async authenticate(req: Request, options?: object): Promise<void> {
++  async authenticateAsync(req: Request, options?: object): Promise<void> {
+     const token = this.extractToken(req)
+ 
+     if (token && API_TOKEN_PATTERN.test(token)) {

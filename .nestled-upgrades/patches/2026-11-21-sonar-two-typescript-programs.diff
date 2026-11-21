@@ -1,0 +1,352 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index d0d750e..6921e7c 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -447,6 +447,7 @@ This repository is kept clean under SonarQube. When editing code, proactively av
+ - Do not rely on default object stringification. Before converting unknown values to strings, explicitly handle objects with `JSON.stringify`, domain labels, or selected fields.
+ - Avoid dead fallback branches such as `typeof value === 'object' ? ... : String(value)` after an object branch already returned; Sonar may still flag these as unclear.
+ - Keep generated, doctor, script, and test-support code clean too. Do not exclude files from Sonar just because they are internal unless there is a deliberate project decision.
++- A new library or app goes in the `include` of one of Sonar's two TypeScript programs, `sonar/tsconfig.api.json` (Jest, CommonJS) or `sonar/tsconfig.web.json` (Vitest, Vite), as well as in `sonar.sources`. Otherwise its files are analysed without type information. `scripts/sonar-tsconfig-coverage.spec.mjs` fails when a `sonar.sources` folder is in neither. Never add a project's own tsconfig to `sonar.typescript.tsconfigPaths`: one program per project is what exhausted the analyser's heap.
+ 
+ Before finishing non-trivial changes, run the relevant local checks:
+ 
+diff --git a/SONARCLOUD_SETUP.md b/SONARCLOUD_SETUP.md
+index 0becebc..c37d375 100644
+--- a/SONARCLOUD_SETUP.md
++++ b/SONARCLOUD_SETUP.md
+@@ -136,6 +136,35 @@ are intentionally not suppressed.
+ 
+ ---
+ 
++## TypeScript Programs (Type Information)
++
++`sonar.typescript.tsconfigPaths` names exactly two configs, written for analysis only (nothing
++builds from them):
++
++- `sonar/tsconfig.api.json`: `apps/api`, `apps/api-e2e`, `libs/api/**` and `scripts` (Jest,
++  CommonJS, `moduleResolution: node10`).
++- `sonar/tsconfig.web.json`: `apps/web`, `libs/web`, `libs/web-ui`, `libs/shared/**` and the other
++  Vite libraries (Vitest, `moduleResolution: bundler`).
++
++Do not go back to listing each project's own app, lib and spec config, and do not leave the property
++unset (discovery takes every `tsconfig*.json` in the tree). Those programs overlap almost entirely,
++and since SonarCloud's JS/TS analyser 14.6.0 the overlap exhausts the Node heap.
++
++**Adding a library or app:** add its folders to the `include` of whichever config matches how it
++runs, as well as to `sonar.sources` (and its coverage report to `sonar.javascript.lcov.reportPaths`
++if it has tests). `scripts/sonar-tsconfig-coverage.spec.mjs` fails when a `sonar.sources` folder is
++in neither config. Neither config sets `lib`; keep it that way, so Sonar only suggests APIs the build
++can type-check.
++
++To check a change to either config, generate the Prisma client first (`pnpm prisma:generate`), then
++`pnpm exec tsc -p sonar/tsconfig.api.json --noEmit --extendedDiagnostics` (and the same for the web
++config) for the memory figure and error count. A handful of errors is expected (e2e specs are
++checked more strictly than their own config asks); thousands mean a wrong option or a missing
++generated client. A pull request's analysis only covers changed files, so the real peak shows on the
++main-branch scan after merge.
++
++---
++
+ ## Important Notes on Suppression Methods
+ 
+ **Prefer scanner configuration over inline suppression.**
+diff --git a/scripts/sonar-tsconfig-coverage.spec.mjs b/scripts/sonar-tsconfig-coverage.spec.mjs
+new file mode 100644
+index 0000000..d90e452
+--- /dev/null
++++ b/scripts/sonar-tsconfig-coverage.spec.mjs
+@@ -0,0 +1,115 @@
++import assert from 'node:assert/strict'
++import { existsSync, readdirSync, readFileSync } from 'node:fs'
++import { createRequire } from 'node:module'
++import { dirname, join, relative, sep } from 'node:path'
++import { describe, it } from 'node:test'
++import { fileURLToPath } from 'node:url'
++
++const root = join(dirname(fileURLToPath(import.meta.url)), '..')
++const require = createRequire(import.meta.url)
++
++/**
++ * Every analysed project is in one of the TypeScript programs SonarCloud builds.
++ *
++ * sonar.typescript.tsconfigPaths names the programs (sonar/tsconfig.api.json and
++ * sonar/tsconfig.web.json). A project whose files are in sonar.sources but in neither program's
++ * "include" is still analysed, only without type information: its type-aware rules go quiet and
++ * nothing says so. So a new library or app has to be added to one of the two lists, and this is
++ * the check that it was. It expands each config's include and exclude the way tsc does (no type
++ * check, so it is fast) and asks that every sonar.sources folder holding TypeScript has at least
++ * one file in some program.
++ */
++const TS_FILE = /\.(c|m)?tsx?$/
++
++/** Each property of a .properties file, with backslash-continued lines joined, as a list of values. */
++export function propertyLists(source) {
++  const lists = {}
++  const logical = source.replace(/\\\r?\n[ \t]*/g, '').split(/\r?\n/)
++  for (const line of logical) {
++    const match = /^\s*([\w.]+)\s*=\s*(.*)$/.exec(line)
++    if (match) {
++      lists[match[1]] = match[2]
++        .split(',')
++        .map(value => value.trim())
++        .filter(Boolean)
++    }
++  }
++  return lists
++}
++
++function hasTypeScript(directory) {
++  for (const entry of readdirSync(directory, { withFileTypes: true })) {
++    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue
++    const path = join(directory, entry.name)
++    if (entry.isDirectory() ? hasTypeScript(path) : TS_FILE.test(entry.name)) return true
++  }
++  return false
++}
++
++/** The workspace-relative files a tsconfig's include/exclude select, as tsc expands them. */
++function programFiles(ts, configPath) {
++  const { config, error } = ts.readConfigFile(configPath, ts.sys.readFile)
++  if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, '\n'))
++  const parsed = ts.parseJsonConfigFileContent(config, ts.sys, dirname(configPath))
++  return { config, files: parsed.fileNames.map(file => relative(root, file).split(sep).join('/')) }
++}
++
++/** The sonar.sources folders that hold TypeScript but have no file in any of the programs. */
++export function uncoveredSources(sources, files) {
++  return sources.filter(source => {
++    const prefix = `${source.replace(/\/$/, '')}/`
++    return !files.some(file => file.startsWith(prefix))
++  })
++}
++
++describe('Sonar TypeScript programs', () => {
++  const propertiesPath = join(root, 'sonar-project.properties')
++  const properties = existsSync(propertiesPath)
++    ? propertyLists(readFileSync(propertiesPath, 'utf8'))
++    : null
++  const configs = properties?.['sonar.typescript.tsconfigPaths'] ?? []
++
++  it('are named, not discovered', { skip: !properties }, () => {
++    assert.ok(
++      configs.length > 0,
++      'Set sonar.typescript.tsconfigPaths: unset, Sonar builds one program per tsconfig*.json in the tree.',
++    )
++    for (const config of configs) assert.ok(existsSync(join(root, config)), `${config} is missing`)
++  })
++
++  it('cover every sonar.sources folder that holds TypeScript', { skip: !properties }, () => {
++    const ts = require('typescript')
++    const files = configs.flatMap(config => programFiles(ts, join(root, config)).files)
++    const sources = (properties['sonar.sources'] ?? []).filter(source => {
++      const path = join(root, source)
++      return existsSync(path) && hasTypeScript(path)
++    })
++    assert.deepEqual(
++      uncoveredSources(sources, files),
++      [],
++      'Add these to the "include" of sonar/tsconfig.api.json (Jest, CommonJS) or sonar/tsconfig.web.json (Vitest, Vite).',
++    )
++  })
++
++  it('written for Sonar inherit lib from tsconfig.base.json', { skip: !properties }, () => {
++    const ts = require('typescript')
++    for (const config of configs.filter(path => path.startsWith('sonar/'))) {
++      const { config: raw } = programFiles(ts, join(root, config))
++      assert.equal(
++        raw.compilerOptions?.lib,
++        undefined,
++        `${config} sets "lib": Sonar would suggest APIs the build cannot type-check.`,
++      )
++    }
++  })
++
++  it('flags a source folder that no program includes', () => {
++    assert.deepEqual(
++      uncoveredSources(
++        ['apps/api/src', 'libs/new-lib/src', 'libs/web/src/'],
++        ['apps/api/src/main.ts', 'libs/web/src/index.ts', 'libs/new-lib-two/src/index.ts'],
++      ),
++      ['libs/new-lib/src'],
++    )
++  })
++})
+diff --git a/sonar-project.properties b/sonar-project.properties
+index 9519e56..9312218 100644
+--- a/sonar-project.properties
++++ b/sonar-project.properties
+@@ -126,42 +126,27 @@ sonar.coverage.exclusions=\
+   libs/web-ui/src/lib/**,\
+   libs/web-ui/setupTests.ts
+ 
+-# The TypeScript programs SonarCloud builds, named rather than discovered. Discovery takes every
+-# tsconfig*.json in the tree (solution configs, storybook, tools, the base), one program each, and a
+-# full analysis of a larger clone ran out of heap once scripts/tsconfig.json was added. A PR analysis
+-# only covers changed files and cannot show this. Changing the list can re-baseline existing issues
+-# on the long-lived branch, since files may be analysed with different type information.
++# The TypeScript programs SonarCloud builds: two, written for it, rather than each project's own.
++#
++# This used to name every project's app, lib and spec config (plus the api-e2e support config and
++# scripts/tsconfig.json). Those programs overlap almost entirely, because each one pulls in the
++# source of every library it imports, and the analyser holds the whole list at once. Since
++# SonarCloud's JS/TS analyser 14.6.0 that exhausts the Node heap in larger clones, and dropping the
++# small programs does not help: the large ones are the overlap.
++#
++# sonar/tsconfig.api.json covers apps/api, apps/api-e2e, libs/api and scripts (Jest, CommonJS);
++# sonar/tsconfig.web.json covers apps/web, libs/web, libs/web-ui, libs/shared and the api-e2e Vitest
++# configs (Vitest, bundler resolution). They are for analysis only and nothing builds from them.
++#
++# A new project must be added to one of their "include" lists (or given a third config), or its
++# files are analysed without type information; scripts/sonar-tsconfig-coverage.spec.mjs fails when
++# a sonar.sources entry is in neither. Do not rely on discovery either: with this property unset,
++# Sonar takes every tsconfig*.json in the tree, one program each, which is the same problem.
++# Neither config sets `lib`, so both inherit tsconfig.base.json's: declaring a newer one makes Sonar
++# suggest APIs the real build cannot type-check. A PR analysis only covers changed files and cannot
++# show a heap problem; the main-branch scan after merge does. Changing these files can re-baseline
++# existing issues on the long-lived branch, since files may be analysed with different type
++# information.
+ sonar.typescript.tsconfigPaths=\
+-  apps/api/tsconfig.app.json,\
+-  apps/api-e2e/tsconfig.spec.json,\
+-  apps/api-e2e/tsconfig.support.json,\
+-  apps/web/tsconfig.app.json,\
+-  apps/web/tsconfig.spec.json,\
+-  libs/api/config/tsconfig.lib.json,\
+-  libs/api/config/tsconfig.spec.json,\
+-  libs/api/core/data-access/tsconfig.lib.json,\
+-  libs/api/core/data-access/tsconfig.spec.json,\
+-  libs/api/core/feature/tsconfig.lib.json,\
+-  libs/api/core/feature/tsconfig.spec.json,\
+-  libs/api/core/models/tsconfig.lib.json,\
+-  libs/api/core/models/tsconfig.spec.json,\
+-  libs/api/custom/tsconfig.lib.json,\
+-  libs/api/custom/tsconfig.spec.json,\
+-  libs/api/integrations/tsconfig.lib.json,\
+-  libs/api/integrations/tsconfig.spec.json,\
+-  libs/api/prisma/tsconfig.lib.json,\
+-  libs/api/prisma/tsconfig.spec.json,\
+-  libs/api/utils/tsconfig.lib.json,\
+-  libs/api/utils/tsconfig.spec.json,\
+-  libs/shared/apollo/tsconfig.lib.json,\
+-  libs/shared/apollo/tsconfig.spec.json,\
+-  libs/shared/sdk/tsconfig.lib.json,\
+-  libs/shared/sdk/tsconfig.spec.json,\
+-  libs/shared/styles/tsconfig.lib.json,\
+-  libs/shared/utils/tsconfig.lib.json,\
+-  libs/shared/utils/tsconfig.spec.json,\
+-  libs/web/tsconfig.lib.json,\
+-  libs/web/tsconfig.spec.json,\
+-  libs/web-ui/tsconfig.lib.json,\
+-  libs/web-ui/tsconfig.spec.json,\
+-  scripts/tsconfig.json
++  sonar/tsconfig.api.json,\
++  sonar/tsconfig.web.json
+diff --git a/sonar/tsconfig.api.json b/sonar/tsconfig.api.json
+new file mode 100644
+index 0000000..470f9d6
+--- /dev/null
++++ b/sonar/tsconfig.api.json
+@@ -0,0 +1,33 @@
++{
++  // SonarCloud's API program, for analysis only: nothing builds from this file. See the comment
++  // above sonar.typescript.tsconfigPaths in sonar-project.properties. A new API-side project
++  // (Jest, CommonJS) goes in "include" here. Do not set "lib": the one from tsconfig.base.json is
++  // what the build type-checks against.
++  "extends": "../tsconfig.base.json",
++  "compilerOptions": {
++    "noEmit": true,
++    "module": "commonjs",
++    "moduleResolution": "node10",
++    "target": "es2021",
++    "types": ["jest", "node"],
++    "strict": true,
++    "importHelpers": true,
++    "esModuleInterop": true,
++    "noImplicitOverride": true,
++    "noImplicitReturns": true,
++    "noFallthroughCasesInSwitch": true,
++    "noPropertyAccessFromIndexSignature": true,
++    "forceConsistentCasingInFileNames": true,
++    "ignoreDeprecations": "6.0"
++  },
++  "include": [
++    "../apps/api/src/**/*.ts",
++    "../apps/api-e2e/src/**/*.ts",
++    "../libs/api/*/src/**/*.ts",
++    "../libs/api/*/jest*.config.ts",
++    "../libs/api/core/*/src/**/*.ts",
++    "../libs/api/core/*/jest*.config.ts",
++    "../scripts/**/*.ts"
++  ],
++  "exclude": ["../**/node_modules", "../libs/api/generated-crud"]
++}
+diff --git a/sonar/tsconfig.web.json b/sonar/tsconfig.web.json
+new file mode 100644
+index 0000000..208e2e3
+--- /dev/null
++++ b/sonar/tsconfig.web.json
+@@ -0,0 +1,64 @@
++{
++  // SonarCloud's web program, for analysis only: nothing builds from this file. See the comment
++  // above sonar.typescript.tsconfigPaths in sonar-project.properties. A new browser-side or Vite
++  // project (Vitest, bundler resolution) goes in "include" here. Do not set "lib": the one from
++  // tsconfig.base.json is what the build type-checks against.
++  "extends": "../tsconfig.base.json",
++  "compilerOptions": {
++    "noEmit": true,
++    "jsx": "react-jsx",
++    "module": "esnext",
++    "moduleResolution": "bundler",
++    "allowJs": false,
++    "esModuleInterop": false,
++    "allowSyntheticDefaultImports": true,
++    "allowImportingTsExtensions": true,
++    "strict": true,
++    "types": [
++      "vitest/globals",
++      "vitest/importMeta",
++      "vite/client",
++      "node",
++      "vitest",
++      "@react-router/node",
++      "@nx/react/typings/cssmodule.d.ts",
++      "@nx/react/typings/image.d.ts"
++    ],
++    "rootDirs": ["../apps/web", "../apps/web/.react-router/types"],
++    "ignoreDeprecations": "6.0"
++  },
++  "include": [
++    "../vite-env.d.ts",
++    "../apps/web/react-router.config.ts",
++    "../apps/web/vite.config.ts",
++    "../apps/web/.react-router/types/**/*",
++    "../apps/web/app/**/*.ts",
++    "../apps/web/app/**/*.tsx",
++    "../apps/web/tests/**/*.ts",
++    "../apps/web/tests/**/*.tsx",
++    "../apps/api-e2e/*.config.mts",
++    "../libs/web/src/**/*.ts",
++    "../libs/web/src/**/*.tsx",
++    "../libs/web/vitest.config.mts",
++    "../libs/web-ui/setupTests.ts",
++    "../libs/web-ui/src/**/*.ts",
++    "../libs/web-ui/src/**/*.tsx",
++    "../libs/web-ui/vite*.config.mts",
++    "../libs/shared/*/src/**/*.ts",
++    "../libs/shared/*/src/**/*.tsx",
++    "../libs/shared/*/vite.config.ts",
++    "../libs/shared/*/vitest.config.mts",
++    "../libs/access-control/src/**/*.ts",
++    "../libs/access-control/src/**/*.tsx",
++    "../libs/access-control/*.mts",
++    "../libs/data-browser/src/**/*.ts",
++    "../libs/data-browser/src/**/*.tsx",
++    "../libs/data-browser/vite.config.ts",
++    "../libs/data-browser/vitest.config.mts",
++    "../libs/shared-components/src/**/*.ts",
++    "../libs/shared-components/src/**/*.tsx",
++    "../libs/shared-components/vite.config.ts",
++    "../libs/shared-components/vitest.config.mts"
++  ],
++  "exclude": ["../**/node_modules"]
++}
