@@ -369,7 +369,9 @@ export function useApiAvailability(options: ApiAvailabilityOptions = {}): ApiAva
  *
  * Anything else is left alone, because retrying it would only fail again: GraphQL errors
  * (validation, forbidden, a resolver bug), an HTTP 401 or 403 (the error link has already asked
- * the server to judge the session again, or put up the access-denied screen), any other answered
+ * the server to judge the session again, or put up the access-denied screen; a query refused with
+ * a 401 is refetched once by the session revalidator, `retryUnauthenticatedQueries`, if the server
+ * then judges the session signed in), any other answered
  * HTTP status, and an error thrown by application code. Refetching those on every return to the
  * tab replayed the same failure, and with it the same screen, again and again.
  */

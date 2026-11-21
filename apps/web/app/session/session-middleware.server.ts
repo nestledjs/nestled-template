@@ -189,7 +189,8 @@ export function returnPath(url: URL): string {
   params.delete('index')
   const pathname = url.pathname.replace(/\.data$/, '').replace(/^\/_root$/, '/')
   const search = params.toString()
-  return `${pathname}${search ? `?${search}` : ''}`
+  const query = search ? `?${search}` : ''
+  return `${pathname}${query}`
 }
 
 function withReturnUrl(target: string, path: string): string {

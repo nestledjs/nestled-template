@@ -2,7 +2,7 @@
  * Values that mean "no `Domain` attribute" (a host-only cookie). Matched exactly, as the API
  * matches them: a host such as `127.example.com` is an ordinary domain, not a loopback address.
  */
-const HOST_ONLY_COOKIE_DOMAINS: readonly string[] = ['localhost', '127.0.0.1', '[::1]']
+const HOST_ONLY_COOKIE_DOMAINS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /**
  * The API's rule for the session cookie's `Domain` (libs/api/config cookie-domain.ts
@@ -17,7 +17,7 @@ export function cookieDomainFromSetting(value: string | undefined): string | und
     .split(',')
     .map(entry => entry.trim())
     .find(Boolean)
-  if (!domain || HOST_ONLY_COOKIE_DOMAINS.includes(domain)) return undefined
+  if (!domain || HOST_ONLY_COOKIE_DOMAINS.has(domain)) return undefined
   return domain
 }
 

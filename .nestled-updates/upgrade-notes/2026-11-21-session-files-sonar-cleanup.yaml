@@ -1,0 +1,87 @@
+id: 2026-11-21-session-files-sonar-cleanup
+title: >-
+  Clear the 20 SonarCloud findings in the 2026.11.10 session files (the v8_middleware codemod, the
+  session-decision audit, judgeSession, the session middleware and cookie helpers, useSessionUser)
+priority: normal
+area: web
+type: cleanup
+delivery: code-patch
+applyAfter:
+  - 2026-11-20-session-middleware
+
+intent: >
+  The defect. A downstream SonarCloud quality gate that counts every new issue (new_violations)
+  failed on 20 findings, all in files 2026-11-20-session-middleware brought in and that are
+  byte-identical to the template. Every project that took that note carries the same 20. This note
+  clears them in the template. No behaviour changes: every rule, verdict, cookie and report is
+  the same as before.
+
+
+  The fix, by file:
+
+  1. scripts/codemod-v8-middleware-context.mjs: S6557 (`endsWith` instead of a regex), S3358
+  (nested ternaries: `parse` gets a `scriptKind` helper, `formatReport` names its verb), S3776
+  (cognitive complexity of `importEdit`, `configObject`, `transformConfig`,
+  `transformEntryServer`, `routeFunctions` and `run`, each now at most 15, by extracting
+  `valueNamedImportsFromReactRouter`, `unwrapAssertions`, `objectBoundTo`, `flagInFuture`,
+  `futureAdded`, `importRemovalEdits`, `routeFunctionsIn`, `declarationFilesUnder`,
+  `contextReadTodos` and `handleAugmentations`), S1874 (the deprecated `ImportClause.isTypeOnly`
+  becomes `phaseModifier === ts.SyntaxKind.TypeKeyword`, which is how TypeScript computes
+  `isTypeOnly`), S3735 (an unused variable kept alive with `void` is removed), S7780 (`String.raw`
+  for the tsconfig include pattern, through a new `escapeRegExp`) and S7778 (two consecutive
+  `changes.push` calls merged). The codemod's output is unchanged: run against the template with
+  `--dry-run` it still reports "Nothing to change", and its spec passes unchanged.
+
+  2. scripts/audit-session-decisions.mjs: S3776 in `isNavigation`, split into
+  `isNavigatingCall`, `isHrefAssignment` and `isNavigateElement`. The same navigations are
+  findings; its spec passes unchanged and `pnpm run verify:session-decisions` reports the same
+  findings and allowances as before.
+
+  3. libs/shared/apollo/src/lib/session/judge-session.ts: S3776 in `judgeSession`. Step 4 (Me
+  answered a clean 401: outage memory, then the confirmation call) moves verbatim into
+  `judgeCleanUnauthenticated`. Who is signed out, and when, is unchanged; judge-session.spec.ts
+  checks every combination of evidence and passes unchanged.
+
+  4. apps/web/app/session/session-middleware.server.ts: S4624 (a nested template literal in
+  `returnPath`).
+
+  5. apps/web/app/session/session-cookie.ts: S7776 (`HOST_ONLY_COOKIE_DOMAINS` is a `Set`, read
+  with `.has()`; the same three values, matched exactly).
+
+  6. apps/web/app/app.tsx `useSessionUser`: S6582 (an optional chain for the cached user's id).
+
+why: >
+  These files are template-owned and identical in every project that took the session
+  middleware, so each finding shows on every downstream analysis, and a gate that counts new
+  issues fails on them until the template's version arrives.
+
+affectedPaths:
+  - scripts/codemod-v8-middleware-context.mjs
+  - scripts/audit-session-decisions.mjs
+  - libs/shared/apollo/src/lib/session/judge-session.ts
+  - apps/web/app/session/session-middleware.server.ts
+  - apps/web/app/session/session-cookie.ts
+  - apps/web/app/app.tsx
+
+skipIf:
+  - The project has not taken 2026-11-20-session-middleware (it has none of these files).
+
+verification:
+  - node --test scripts/codemod-v8-middleware-context.spec.mjs scripts/audit-session-decisions.spec.mjs
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+
+agentHints:
+  - >
+    The first five files are template-owned and should be byte-identical to the template: take
+    them from the template as they are. If a project's copy differs, diff it against the
+    template's previous version first; keep any local change and reapply it to the new version,
+    and record adapted.
+  - >
+    apps/web/app/app.tsx is often changed locally. Change only the one line in `useSessionUser`
+    (`cachedUser && cachedUser.id === verdictUser.id` becomes `cachedUser?.id === verdictUser.id`)
+    rather than copying the file.
+  - >
+    Do not change judge-session.ts beyond moving step 4 into the helper. If the project's
+    judge-session.spec.ts fails after the change, the move was not verbatim: compare it with the
+    template's.

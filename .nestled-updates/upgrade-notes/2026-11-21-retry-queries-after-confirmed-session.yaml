@@ -1,0 +1,89 @@
+id: 2026-11-21-retry-queries-after-confirmed-session
+title: >-
+  After a transient browser 401, retry once the active queries that failed with it when the server
+  confirms the session is signed in
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-20-session-middleware
+
+intent: >
+  The defect. Since 2026-11-20-session-middleware, a browser query refused with a clean 401 (an
+  HTTP 401 or a GraphQL `UNAUTHENTICATED`) only asks the server to judge the session again: the
+  session revalidator (apps/web/app/session/session-revalidator.tsx) revalidates, and a
+  signed-in verdict reruns the route loaders. Apollo queries mounted on the page that failed
+  with that 401 were never retried: `refetchFailedQueries` in apps/web/app/api-availability.ts
+  deliberately leaves authentication failures alone, so focus and online recovery skip them as
+  well. A list rendered from a client query stayed empty or errored until the user navigated or
+  reloaded, although the server had just confirmed the session.
+
+
+  The fix, in apps/web/app/session/session-revalidator.tsx only. Who is signed out, and when, is
+  unchanged: only the server decides a session, the browser never signs anyone out, and a browser
+  401 still only requests a revalidation (5 s cooldown, held while offline).
+
+  1. New exported `retryUnauthenticatedQueries(client)`: refetches every active query whose last
+  result `classifyApiFailure` calls `unauthenticated` (a 401 with outage evidence beside it is
+  `unavailable`, and stays with the connectivity refetch). A 403 or any other error is left
+  alone, and mutations are never replayed (`getObservableQueries` holds only queries). Exported
+  from apps/web/app/session/index.ts.
+
+  2. `SessionRevalidator` arms a one-shot callback when it answers `APOLLO_SESSION_SUSPECT_EVENT`.
+  `requestSessionRevalidation` hands it to the next revalidation that starts (now, or the held one
+  after the cooldown or reconnect) and runs it once that revalidation resolves. It reads the root
+  route's loader data from the router state (`UNSAFE_DataRouterContext`, as boundary-recovery.ts
+  already does): only a `signed-in` verdict calls `retryUnauthenticatedQueries`. A rejected
+  verdict (the server has already sent the browser to the sign-out route) or an unknown one
+  retries nothing.
+
+  3. Once, never a loop, tracked per query: a query whose retry is in flight is not retried again,
+  and each retry records the error it ended with. A later pass skips a query while its current
+  error is that same one, so a retry that gets a 401 again only asks for one more revalidation
+  (under the cooldown). A different query's 401, or a fresh 401 on the same query after its retry
+  succeeded, is a new failure and gets its own one retry. Overlapping 401s are each retried once.
+
+  4. The `refetchFailedQueries` doc comment in apps/web/app/api-availability.ts points at the new
+  retry; its behaviour is unchanged.
+
+
+  Specs (apps/web/tests/session/session-revalidator.spec.tsx, real ApolloClient and router): a
+  query that got a 401 is refetched exactly once after a signed-in verdict and a 403 beside it is
+  not; nothing is refetched after a rejected or unknown verdict; a mutation that got a 401 is never
+  replayed; a retry that gets a 401 again asks for one more revalidation and is not refetched
+  again; two overlapping 401s whose retries both 401 are each refetched once; a query whose first
+  401 arrives while another query's retry is in flight is still retried; a query is retried again
+  after a later, separate 401; `retryUnauthenticatedQueries` skips a 403, a 401 beside a 503 and a
+  healthy query.
+
+why: >
+  After a transient 401 (a token refresh racing a request, a brief proxy hiccup) the server
+  confirms the session, but parts of the page fed by client queries stay empty or show an error
+  until the user navigates or reloads, which looks like data loss.
+
+affectedPaths:
+  - apps/web/app/session/session-revalidator.tsx
+  - apps/web/app/session/index.ts
+  - apps/web/app/api-availability.ts
+  - apps/web/tests/session/session-revalidator.spec.tsx
+
+skipIf:
+  - The project has not taken 2026-11-20-session-middleware (it has no session revalidator).
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+
+agentHints:
+  - >
+    session-revalidator.tsx, session/index.ts and the spec are template-owned: take them from the
+    template. If the project's copy differs, keep its local change and reapply it, and record
+    adapted. In api-availability.ts only the `refetchFailedQueries` doc comment changes; leave
+    the function itself as it is, since it must still not refetch a 401.
+  - >
+    The retry reads the verdict from the root route's loader data (`session.kind`). If the
+    project's root loader returns the verdict under another key, change `rootVerdictIsSignedIn` to
+    read it there, and keep the specs' root loader in step.
+  - >
+    Do not make the browser retry on a 401 by itself, or retry after anything but a signed-in
+    verdict: the server alone decides the session.

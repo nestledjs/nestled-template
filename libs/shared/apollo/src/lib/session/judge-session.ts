@@ -35,8 +35,14 @@ export function judgeSession<User>(evidence: SessionEvidence<User>): SessionVerd
   if (me.kind === 'null') return { kind: 'unknown', reason: 'empty' }
   if (me.cause === 'unavailable') return { kind: 'unknown', reason: 'outage' }
   if (me.cause === 'other') return { kind: 'unknown', reason: 'answered-error' }
+  return judgeCleanUnauthenticated(evidence)
+}
 
-  // A clean 401. Trusted only when nothing points to an outage and a second call agrees.
+/**
+ * Step 4 of `judgeSession`: Me answered a clean 401. Trusted only when nothing points to an outage
+ * and a second call agrees.
+ */
+function judgeCleanUnauthenticated<User>(evidence: SessionEvidence<User>): SessionVerdict<User> {
   const { outageSeenMsAgo, confirm } = evidence
   if (outageSeenMsAgo !== undefined && outageSeenMsAgo < OUTAGE_MEMORY_MS) {
     return { kind: 'unknown', reason: 'outage' }

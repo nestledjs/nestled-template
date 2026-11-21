@@ -45,13 +45,14 @@ const SKIPPED_FOLDERS = new Set([
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/
 const SPEC_FILE = /\.(spec|test)\.[cm]?[jt]sx?$/
 
+function scriptKind(fileName) {
+  if (fileName.endsWith('x')) return ts.ScriptKind.TSX
+  if (/\.[cm]?js$/.test(fileName)) return ts.ScriptKind.JS
+  return ts.ScriptKind.TS
+}
+
 function parse(fileName, text) {
-  const kind = /x$/.test(fileName)
-    ? ts.ScriptKind.TSX
-    : /\.[cm]?js$/.test(fileName)
-      ? ts.ScriptKind.JS
-      : ts.ScriptKind.TS
-  return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, kind)
+  return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, scriptKind(fileName))
 }
 
 /** Applies non-overlapping [start, end, replacement] edits to `text`. */
@@ -80,36 +81,39 @@ function walkFiles(folder, files = []) {
 }
 
 /**
+ * The `{ ... }` of an `import { ... } from 'react-router'` that imports values (not
+ * `import type { ... }`), or null for any other statement.
+ */
+function valueNamedImportsFromReactRouter(statement) {
+  if (
+    !ts.isImportDeclaration(statement) ||
+    !ts.isStringLiteral(statement.moduleSpecifier) ||
+    statement.moduleSpecifier.text !== 'react-router'
+  ) {
+    return null
+  }
+  const clause = statement.importClause
+  const bindings = clause?.namedBindings
+  if (!bindings || !ts.isNamedImports(bindings)) return null
+  return clause.phaseModifier === ts.SyntaxKind.TypeKeyword ? null : bindings
+}
+
+/**
  * An edit adding `name` to the file's `import { ... } from 'react-router'` (a value import), or a
  * new import line, unless it is already imported. Returns null when nothing is needed.
  */
 function importEdit(source, name) {
-  let typeOnlyClause = null
   for (const statement of source.statements) {
-    if (
-      !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== 'react-router'
-    ) {
-      continue
-    }
-    const clause = statement.importClause
-    const bindings = clause?.namedBindings
-    if (!bindings || !ts.isNamedImports(bindings)) continue
+    const bindings = valueNamedImportsFromReactRouter(statement)
+    if (!bindings) continue
     const existing = bindings.elements.find(element => element.name.text === name)
-    if (existing && !existing.isTypeOnly && !clause.isTypeOnly) return null
-    if (clause.isTypeOnly) {
-      typeOnlyClause ??= bindings
-      continue
-    }
     if (existing) {
       // `type X` inside a value import: drop the `type` keyword.
-      return [existing.getStart(source), existing.getEnd(), name]
+      return existing.isTypeOnly ? [existing.getStart(source), existing.getEnd(), name] : null
     }
     const last = bindings.elements.at(-1)
     return last ? [last.getEnd(), last.getEnd(), `, ${name}`] : null
   }
-  void typeOnlyClause
   const imports = source.statements.filter(ts.isImportDeclaration)
   const at = imports.length > 0 ? imports.at(-1).getEnd() : 0
   const line = `import { ${name} } from 'react-router'`
@@ -126,37 +130,99 @@ function propertyNamed(object, name) {
 
 // --- react-router.config ---------------------------------------------------------------------
 
-function configObject(source) {
+/** `expression` without any `satisfies T` / `as T` wrapped around it. */
+function unwrapAssertions(expression) {
+  let current = expression
+  while (current && (ts.isSatisfiesExpression(current) || ts.isAsExpression(current))) {
+    current = current.expression
+  }
+  return current
+}
+
+/** The object literal a top-level `const <name> = { ... }` binds, or null. */
+function objectBoundTo(source, name) {
   for (const statement of source.statements) {
-    if (!ts.isExportAssignment(statement)) continue
-    let expression = statement.expression
-    while (ts.isSatisfiesExpression(expression) || ts.isAsExpression(expression)) {
-      expression = expression.expression
-    }
-    if (ts.isObjectLiteralExpression(expression)) return expression
-    if (ts.isIdentifier(expression)) {
-      for (const other of source.statements) {
-        if (!ts.isVariableStatement(other)) continue
-        for (const declaration of other.declarationList.declarations) {
-          let initializer = declaration.initializer
-          while (
-            initializer &&
-            (ts.isSatisfiesExpression(initializer) || ts.isAsExpression(initializer))
-          ) {
-            initializer = initializer.expression
-          }
-          if (
-            declaration.name.getText() === expression.text &&
-            initializer &&
-            ts.isObjectLiteralExpression(initializer)
-          ) {
-            return initializer
-          }
-        }
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = unwrapAssertions(declaration.initializer)
+      if (
+        declaration.name.getText() === name &&
+        initializer &&
+        ts.isObjectLiteralExpression(initializer)
+      ) {
+        return initializer
       }
     }
   }
   return null
+}
+
+function configObject(source) {
+  for (const statement of source.statements) {
+    if (!ts.isExportAssignment(statement)) continue
+    const expression = unwrapAssertions(statement.expression)
+    if (ts.isObjectLiteralExpression(expression)) return expression
+    if (ts.isIdentifier(expression)) {
+      const object = objectBoundTo(source, expression.text)
+      if (object) return object
+    }
+  }
+  return null
+}
+
+/** Sets `v8_middleware` inside an existing `future: { ... }` object. */
+function flagInFuture(fileName, text, source, inner) {
+  const flag = propertyNamed(inner, 'v8_middleware')
+  if (flag && ts.isPropertyAssignment(flag)) {
+    if (flag.initializer.kind === ts.SyntaxKind.TrueKeyword) return { text, changes: [], todos: [] }
+    return {
+      text: applyEdits(text, [
+        [flag.initializer.getStart(source), flag.initializer.getEnd(), 'true'],
+      ]),
+      changes: [{ file: fileName, change: 'set future.v8_middleware to true' }],
+      todos: [],
+    }
+  }
+  const edit =
+    inner.properties.length === 0
+      ? [inner.getStart(source), inner.getEnd(), '{ v8_middleware: true }']
+      : [
+          inner.properties.at(-1).getEnd(),
+          inner.properties.at(-1).getEnd(),
+          ', v8_middleware: true',
+        ]
+  return {
+    text: applyEdits(text, [edit]),
+    changes: [{ file: fileName, change: 'added v8_middleware to future' }],
+    todos: [],
+  }
+}
+
+/** Adds a `future: { v8_middleware: true }` property to a config object that has no `future`. */
+function futureAdded(fileName, text, source, object) {
+  const indent =
+    /\n([ \t]*)\S[^\n]*$/.exec(
+      text.slice(0, object.properties.at(-1)?.getStart(source) ?? 0),
+    )?.[1] ?? '  '
+  const flag =
+    `${indent}// Route middleware, and a RouterContextProvider as every loader's \`context\`\n` +
+    `${indent}// (the session middleware in app/session/ needs it).\n` +
+    `${indent}future: { v8_middleware: true },`
+  const last = object.properties.at(-1)
+  let edit
+  if (last) {
+    const after = text.slice(last.getEnd())
+    const comma = after.trimStart().startsWith(',') ? after.indexOf(',') + 1 : 0
+    const at = last.getEnd() + comma
+    edit = [at, at, `${comma ? '' : ','}\n${flag}`]
+  } else {
+    edit = [object.getStart(source), object.getEnd(), `{\n${flag}\n}`]
+  }
+  return {
+    text: applyEdits(text, [edit]),
+    changes: [{ file: fileName, change: 'added future: { v8_middleware: true }' }],
+    todos: [],
+  }
 }
 
 export function transformConfig(fileName, text) {
@@ -170,73 +236,20 @@ export function transformConfig(fileName, text) {
     }
   }
   const future = propertyNamed(object, 'future')
-  if (
-    future &&
-    ts.isPropertyAssignment(future) &&
-    ts.isObjectLiteralExpression(future.initializer)
-  ) {
-    const flag = propertyNamed(future.initializer, 'v8_middleware')
-    if (flag && ts.isPropertyAssignment(flag)) {
-      if (flag.initializer.kind === ts.SyntaxKind.TrueKeyword)
-        return { text, changes: [], todos: [] }
-      return {
-        text: applyEdits(text, [
-          [flag.initializer.getStart(source), flag.initializer.getEnd(), 'true'],
-        ]),
-        changes: [{ file: fileName, change: 'set future.v8_middleware to true' }],
-        todos: [],
-      }
-    }
-    const inner = future.initializer
-    const edit =
-      inner.properties.length === 0
-        ? [inner.getStart(source), inner.getEnd(), '{ v8_middleware: true }']
-        : [
-            inner.properties.at(-1).getEnd(),
-            inner.properties.at(-1).getEnd(),
-            ', v8_middleware: true',
-          ]
-    return {
-      text: applyEdits(text, [edit]),
-      changes: [{ file: fileName, change: 'added v8_middleware to future' }],
-      todos: [],
-    }
-  }
-  if (future) {
-    return {
-      text,
-      changes: [],
-      todos: [
-        {
-          file: fileName,
-          line: lineOf(source, future),
-          todo: 'add v8_middleware: true to `future` by hand',
-        },
-      ],
-    }
-  }
-  const indent =
-    /\n([ \t]*)\S[^\n]*$/.exec(
-      text.slice(0, object.properties.at(-1)?.getStart(source) ?? 0),
-    )?.[1] ?? '  '
-  const flag =
-    `${indent}// Route middleware, and a RouterContextProvider as every loader's \`context\`\n` +
-    `${indent}// (the session middleware in app/session/ needs it).\n` +
-    `${indent}future: { v8_middleware: true },`
-  const last = object.properties.at(-1)
-  let edit
-  if (!last) {
-    edit = [object.getStart(source), object.getEnd(), `{\n${flag}\n}`]
-  } else {
-    const after = text.slice(last.getEnd())
-    const comma = after.trimStart().startsWith(',') ? after.indexOf(',') + 1 : 0
-    const at = last.getEnd() + comma
-    edit = [at, at, `${comma ? '' : ','}\n${flag}`]
+  if (!future) return futureAdded(fileName, text, source, object)
+  if (ts.isPropertyAssignment(future) && ts.isObjectLiteralExpression(future.initializer)) {
+    return flagInFuture(fileName, text, source, future.initializer)
   }
   return {
-    text: applyEdits(text, [edit]),
-    changes: [{ file: fileName, change: 'added future: { v8_middleware: true }' }],
-    todos: [],
+    text,
+    changes: [],
+    todos: [
+      {
+        file: fileName,
+        line: lineOf(source, future),
+        todo: 'add v8_middleware: true to `future` by hand',
+      },
+    ],
   }
 }
 
@@ -317,6 +330,28 @@ export function transformLoadContext(fileName, text) {
 
 // --- entry.server ------------------------------------------------------------------------------
 
+/** Edits removing `name` from every `import { ... } from 'react-router'` in the file. */
+function importRemovalEdits(source, name) {
+  const edits = []
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || statement.moduleSpecifier.text !== 'react-router')
+      continue
+    const bindings = statement.importClause?.namedBindings
+    if (!bindings || !ts.isNamedImports(bindings)) continue
+    const element = bindings.elements.find(item => item.name.text === name)
+    if (!element) continue
+    const index = bindings.elements.indexOf(element)
+    if (bindings.elements.length === 1) {
+      edits.push([statement.getFullStart(), statement.getEnd(), ''])
+    } else if (index === 0) {
+      edits.push([element.getStart(source), bindings.elements[1].getStart(source), ''])
+    } else {
+      edits.push([bindings.elements[index - 1].getEnd(), element.getEnd(), ''])
+    }
+  }
+  return edits
+}
+
 export function transformEntryServer(fileName, text) {
   if (!text.includes('AppLoadContext')) return { text, changes: [], todos: [] }
   const source = parse(fileName, text)
@@ -337,22 +372,7 @@ export function transformEntryServer(fileName, text) {
   visit(source)
   if (!replaced) return { text, changes: [], todos: [] }
   // Drop the AppLoadContext import specifier when it is no longer used.
-  for (const statement of source.statements) {
-    if (!ts.isImportDeclaration(statement) || statement.moduleSpecifier.text !== 'react-router')
-      continue
-    const bindings = statement.importClause?.namedBindings
-    if (!bindings || !ts.isNamedImports(bindings) || otherUse) continue
-    const element = bindings.elements.find(item => item.name.text === 'AppLoadContext')
-    if (!element) continue
-    const index = bindings.elements.indexOf(element)
-    if (bindings.elements.length === 1) {
-      edits.push([statement.getFullStart(), statement.getEnd(), ''])
-    } else {
-      const start = index === 0 ? element.getStart(source) : bindings.elements[index - 1].getEnd()
-      const end = index === 0 ? bindings.elements[1].getStart(source) : element.getEnd()
-      edits.push([start, end, ''])
-    }
-  }
+  if (!otherUse) edits.push(...importRemovalEdits(source, 'AppLoadContext'))
   let next = applyEdits(text, edits)
   const edit = importEdit(parse(fileName, next), 'RouterContextProvider')
   if (edit) next = applyEdits(next, [edit])
@@ -368,21 +388,24 @@ export function transformEntryServer(fileName, text) {
 const ROUTE_EXPORTS = new Set(['loader', 'action', 'clientLoader', 'clientAction'])
 const CONTEXT_METHODS = new Set(['get', 'set'])
 
+/** The loaders and actions one exported statement declares. */
+function routeFunctionsIn(statement, source) {
+  if (ts.isFunctionDeclaration(statement)) {
+    return ROUTE_EXPORTS.has(statement.name?.text) ? [statement] : []
+  }
+  if (!ts.isVariableStatement(statement)) return []
+  return statement.declarationList.declarations
+    .filter(
+      declaration => ROUTE_EXPORTS.has(declaration.name.getText(source)) && declaration.initializer,
+    )
+    .map(declaration => declaration.initializer)
+}
+
 function routeFunctions(source) {
   const functions = []
   for (const statement of source.statements) {
     const exported = statement.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)
-    if (!exported) continue
-    if (ts.isFunctionDeclaration(statement) && ROUTE_EXPORTS.has(statement.name?.text)) {
-      functions.push(statement)
-    }
-    if (ts.isVariableStatement(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (ROUTE_EXPORTS.has(declaration.name.getText(source)) && declaration.initializer) {
-          functions.push(declaration.initializer)
-        }
-      }
-    }
+    if (exported) functions.push(...routeFunctionsIn(statement, source))
   }
   return functions
 }
@@ -497,16 +520,17 @@ export function transformSpecContext(fileName, text) {
 
 // --- the run -------------------------------------------------------------------------------------
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
+}
+
 function removeFromTsconfigs(appDir, relativeFile, write) {
   const changes = []
   for (const name of readdirSync(appDir)) {
     if (!/^tsconfig.*\.json$/.test(name)) continue
     const path = join(appDir, name)
     const text = readFileSync(path, 'utf8')
-    const pattern = new RegExp(
-      `\\s*"${relativeFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}",?`,
-      'g',
-    )
+    const pattern = new RegExp(String.raw`\s*"${escapeRegExp(relativeFile)}",?`, 'g')
     if (!pattern.test(text)) continue
     const next = text.replace(pattern, '').replace(/,(\s*\])/g, '$1')
     if (write) writeFileSync(path, next)
@@ -515,46 +539,24 @@ function removeFromTsconfigs(appDir, relativeFile, write) {
   return changes
 }
 
-export function run({ root = workspaceRoot, app = 'apps/web', write = true } = {}) {
-  const appDir = join(root, app)
-  const rel = path => relative(root, path)
-  const changes = []
-  const todos = []
-  const save = (path, before, result) => {
-    changes.push(...result.changes.map(change => ({ ...change, file: rel(path) })))
-    todos.push(...result.todos.map(todo => ({ ...todo, file: rel(path) })))
-    if (write && result.text !== before) writeFileSync(path, result.text)
-  }
+const CONFIG_FILES = ['react-router.config.ts', 'react-router.config.js', 'react-router.config.mjs']
+const ENTRY_SERVER_FILES = ['entry.server.tsx', 'entry.server.ts', 'entry.server.jsx']
 
-  for (const name of [
-    'react-router.config.ts',
-    'react-router.config.js',
-    'react-router.config.mjs',
-  ]) {
-    const path = join(appDir, name)
-    if (!existsSync(path)) continue
-    const text = readFileSync(path, 'utf8')
-    save(path, text, transformConfig(path, text))
+/** Every `.d.ts` file under `folder`, skipping build and dependency folders. */
+function declarationFilesUnder(folder, files = []) {
+  if (!existsSync(folder)) return files
+  for (const entry of readdirSync(folder, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (!SKIPPED_FOLDERS.has(entry.name)) declarationFilesUnder(join(folder, entry.name), files)
+    } else if (entry.name.endsWith('.d.ts')) {
+      files.push(join(folder, entry.name))
+    }
   }
+  return files
+}
 
-  const files = [
-    ...walkFiles(appDir).filter(
-      path =>
-        !path.includes(`${join(appDir, 'app')}/`) && !path.includes(`${join(appDir, 'tests')}/`),
-    ),
-  ].filter(path => !SPEC_FILE.test(path))
-  for (const path of files) {
-    const text = readFileSync(path, 'utf8')
-    save(path, text, transformLoadContext(path, text))
-  }
-
-  for (const name of ['entry.server.tsx', 'entry.server.ts', 'entry.server.jsx']) {
-    const path = join(appDir, 'app', name)
-    if (!existsSync(path)) continue
-    const text = readFileSync(path, 'utf8')
-    save(path, text, transformEntryServer(path, text))
-  }
-
+/** Context reads in the app's loaders and actions, as todos with workspace-relative files. */
+function contextReadTodos(appDir, rel) {
   const appFiles = walkFiles(join(appDir, 'app')).filter(path => !SPEC_FILE.test(path))
   const reads = []
   for (const path of appFiles) {
@@ -565,30 +567,20 @@ export function run({ root = workspaceRoot, app = 'apps/web', write = true } = {
       })),
     )
   }
-  todos.push(...reads)
+  return reads
+}
 
-  // AppLoadContext augmentations: .d.ts files anywhere under the app.
-  const declarationFiles = []
-  const findDeclarations = folder => {
-    if (!existsSync(folder)) return
-    for (const entry of readdirSync(folder, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (!SKIPPED_FOLDERS.has(entry.name)) findDeclarations(join(folder, entry.name))
-      } else if (entry.name.endsWith('.d.ts')) {
-        declarationFiles.push(join(folder, entry.name))
-      }
-    }
-  }
-  findDeclarations(appDir)
-  for (const path of declarationFiles) {
+/** Deletes AppLoadContext augmentations nothing reads; reports the rest as todos. */
+function handleAugmentations({ appDir, rel, reads, write, changes, todos }) {
+  for (const path of declarationFilesUnder(appDir)) {
     const text = readFileSync(path, 'utf8')
     const keys = augmentationKeys(path, text)
     if (keys === null) continue
     const stillRead = reads.some(read => keys.some(key => read.todo.includes(`context.${key}`)))
     if (!stillRead && isAugmentationOnly(path, text)) {
       if (write) rmSync(path)
-      changes.push({ file: rel(path), change: 'deleted the unused AppLoadContext augmentation' })
       changes.push(
+        { file: rel(path), change: 'deleted the unused AppLoadContext augmentation' },
         ...removeFromTsconfigs(appDir, relative(appDir, path), write).map(change => ({
           ...change,
           file: rel(change.file),
@@ -602,22 +594,65 @@ export function run({ root = workspaceRoot, app = 'apps/web', write = true } = {
       })
     }
   }
+}
 
-  const specFiles = walkFiles(appDir).filter(path => SPEC_FILE.test(path))
-  for (const path of specFiles) {
-    const text = readFileSync(path, 'utf8')
-    save(path, text, transformSpecContext(path, text))
+export function run({ root = workspaceRoot, app = 'apps/web', write = true } = {}) {
+  const appDir = join(root, app)
+  const rel = path => relative(root, path)
+  const changes = []
+  const todos = []
+  const save = (path, before, result) => {
+    changes.push(...result.changes.map(change => ({ ...change, file: rel(path) })))
+    todos.push(...result.todos.map(todo => ({ ...todo, file: rel(path) })))
+    if (write && result.text !== before) writeFileSync(path, result.text)
   }
+  const transformEach = (paths, transform) => {
+    for (const path of paths) {
+      if (!existsSync(path)) continue
+      const text = readFileSync(path, 'utf8')
+      save(path, text, transform(path, text))
+    }
+  }
+
+  transformEach(
+    CONFIG_FILES.map(name => join(appDir, name)),
+    transformConfig,
+  )
+
+  const serverFiles = walkFiles(appDir).filter(
+    path =>
+      !path.includes(`${join(appDir, 'app')}/`) &&
+      !path.includes(`${join(appDir, 'tests')}/`) &&
+      !SPEC_FILE.test(path),
+  )
+  transformEach(serverFiles, transformLoadContext)
+
+  transformEach(
+    ENTRY_SERVER_FILES.map(name => join(appDir, 'app', name)),
+    transformEntryServer,
+  )
+
+  const reads = contextReadTodos(appDir, rel)
+  todos.push(...reads)
+
+  // AppLoadContext augmentations: .d.ts files anywhere under the app.
+  handleAugmentations({ appDir, rel, reads, write, changes, todos })
+
+  transformEach(
+    walkFiles(appDir).filter(path => SPEC_FILE.test(path)),
+    transformSpecContext,
+  )
 
   return { changes, todos }
 }
 
 export function formatReport({ changes, todos }, { write }) {
   const lines = []
+  const verb = write ? 'Changed' : 'Would change'
   lines.push(
     changes.length === 0
       ? 'Nothing to change: already on v8_middleware contexts.'
-      : `${write ? 'Changed' : 'Would change'} ${changes.length}:`,
+      : `${verb} ${changes.length}:`,
   )
   for (const change of changes) lines.push(`  ${change.file}  ${change.change}`)
   if (todos.length > 0) {
