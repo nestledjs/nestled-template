@@ -181,45 +181,54 @@ function isSessionCookieRead(node) {
   return !!name && ts.isCallExpression(name) && calleeName(name) === 'getSessionCookieName'
 }
 
-function isNavigation(node) {
-  if (ts.isCallExpression(node)) {
-    const name = calleeName(node)
-    if (NAVIGATING_CALLS.has(name) && isSignOutTarget(node.arguments[0])) {
-      // `replace` only as a router call or location.replace, never String#replace('/login', ...)
-      if (name === 'replace' && ts.isPropertyAccessExpression(node.expression)) {
-        return isLocationAccess(node.expression.expression)
-      }
-      return true
+/** `navigate('/login')`, `redirect(...)`, `location.replace(...)`, `location.assign(...)`. */
+function isNavigatingCall(node) {
+  const name = calleeName(node)
+  if (NAVIGATING_CALLS.has(name) && isSignOutTarget(node.arguments[0])) {
+    // `replace` only as a router call or location.replace, never String#replace('/login', ...)
+    if (name === 'replace' && ts.isPropertyAccessExpression(node.expression)) {
+      return isLocationAccess(node.expression.expression)
     }
-    if (
-      name === 'assign' &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      isLocationAccess(node.expression.expression)
-    ) {
-      return isSignOutTarget(node.arguments[0])
-    }
-    return false
+    return true
   }
   if (
-    ts.isBinaryExpression(node) &&
+    name === 'assign' &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    isLocationAccess(node.expression.expression)
+  ) {
+    return isSignOutTarget(node.arguments[0])
+  }
+  return false
+}
+
+/** `location.href = '/login'`. */
+function isHrefAssignment(node) {
+  return (
     node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isPropertyAccessExpression(node.left) &&
     node.left.name.text === 'href' &&
-    isLocationAccess(node.left.expression)
-  ) {
-    return isSignOutTarget(node.right)
-  }
-  if (
-    (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
-    node.tagName.getText() === 'Navigate'
-  ) {
-    const to = node.attributes.properties.find(
-      attribute => ts.isJsxAttribute(attribute) && attribute.name.getText() === 'to',
-    )
-    const initializer = to?.initializer
-    if (!initializer) return false
-    if (ts.isStringLiteral(initializer)) return isSignOutTarget(initializer)
-    return ts.isJsxExpression(initializer) && isSignOutTarget(initializer.expression)
+    isLocationAccess(node.left.expression) &&
+    isSignOutTarget(node.right)
+  )
+}
+
+/** `<Navigate to="/login" />`. */
+function isNavigateElement(node) {
+  if (node.tagName.getText() !== 'Navigate') return false
+  const to = node.attributes.properties.find(
+    attribute => ts.isJsxAttribute(attribute) && attribute.name.getText() === 'to',
+  )
+  const initializer = to?.initializer
+  if (!initializer) return false
+  if (ts.isStringLiteral(initializer)) return isSignOutTarget(initializer)
+  return ts.isJsxExpression(initializer) && isSignOutTarget(initializer.expression)
+}
+
+function isNavigation(node) {
+  if (ts.isCallExpression(node)) return isNavigatingCall(node)
+  if (ts.isBinaryExpression(node)) return isHrefAssignment(node)
+  if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+    return isNavigateElement(node)
   }
   return false
 }

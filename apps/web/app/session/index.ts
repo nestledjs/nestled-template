@@ -12,6 +12,7 @@ export {
   isUnauthenticatedRouteError,
   requestSessionRevalidation,
   RevalidateSessionOnMount,
+  retryUnauthenticatedQueries,
   SessionRevalidator,
   useSessionRevalidation,
 } from './session-revalidator'

@@ -34,7 +34,7 @@ function useSessionUser(session: AppSessionVerdict): SessionUser | null {
   const cached = useQuery<MeQuery>(Me, { fetchPolicy: 'cache-only', skip: !verdictUser })
   const cachedUser = cached.data?.me
   if (!verdictUser) return null
-  return cachedUser && cachedUser.id === verdictUser.id ? cachedUser : verdictUser
+  return cachedUser?.id === verdictUser.id ? cachedUser : verdictUser
 }
 
 /**
