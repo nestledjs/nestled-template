@@ -1,0 +1,64 @@
+id: 2026-11-21-sonar-rebaseline-findings
+title: >-
+  Fix the three reliability findings the first full Sonar scan surfaced: JwtStrategy.authenticate
+  returns a promise Passport drops, and two loaders are async with nothing to await
+priority: normal
+area: auth
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-21-sonar-two-typescript-programs
+
+intent: >
+  The defect. Once Sonar's scan stopped running out of memory (see
+  2026-11-21-sonar-two-typescript-programs), the first complete main-branch analysis failed the
+  quality gate on reliability with three findings in code from the previous few days that earlier,
+  failed scans had never reported.
+
+
+  1. `JwtStrategy.authenticate` (libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts)
+  was `override async authenticate(...): Promise<void>`. Passport's `Strategy.authenticate` returns
+  void and Passport calls it without awaiting, so the promise is dropped: if anything inside it
+  rejected, the rejection was unhandled and the request got no answer (Sonar typescript:S6544). In
+  practice the API-token path already turns lookup failures into a 503 through `this.error`, so this
+  is hardening, not a change to any answer the API gives today.
+
+  The fix: `authenticate` is a plain void method that calls a new `async authenticateAsync(req,
+  options)` holding the previous body unchanged, and passes anything that escapes it to
+  `this.error`. The spec calls `await strategy.authenticateAsync(...)` where it used to await
+  `authenticate`, and gains one test: `authenticate` returns undefined and an unexpected rejection
+  reaches `error`.
+
+
+  2. The loaders in apps/web/app/routes/_public/login.tsx and apps/web/app/routes/auth/oauth-success.tsx
+  were `async` with no `await` (typescript:S7503). Both are now plain functions; they still return
+  or throw exactly as before, and React Router accepts either. login.spec.tsx's `runLoader` helper
+  is made `async` so the thrown redirect still arrives as a rejection for `.rejects`.
+
+why: >
+  The quality gate fails on new-code reliability until these are fixed, in every project that
+  adopts the two-program Sonar fix, and the first one is a real (if unlikely) way for a request to
+  hang.
+
+affectedPaths:
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.spec.ts
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/auth/oauth-success.tsx
+  - apps/web/tests/routes/_public/login.spec.tsx
+
+skipIf:
+  - The project's JwtStrategy does not override `authenticate` (then only the loader part applies).
+
+verification:
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+
+agentHints:
+  - >
+    Search the project for any other caller of `strategy.authenticate(` that awaits it (specs, or a
+    project-specific strategy subclass) and point it at `authenticateAsync`. Do not await
+    `authenticate` anywhere: it returns nothing.
+  - >
+    If the project has its own loaders flagged by S7503 in the same way, drop `async` the same way,
+    and make any spec helper that relies on `.rejects`/`.resolves` async.

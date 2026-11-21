@@ -45,6 +45,17 @@ describe('JwtStrategy API token authentication', () => {
     return (error.getResponse() as { code?: string }).code
   }
 
+  it('authenticate returns nothing and passes an unexpected rejection to error', async () => {
+    const failure = new Error('unexpected')
+    jest.spyOn(strategy, 'authenticateAsync').mockRejectedValue(failure)
+
+    const returned = strategy.authenticate({ headers: {} } as any)
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(returned).toBeUndefined()
+    expect((strategy as any).error).toHaveBeenCalledWith(failure)
+  })
+
   it('authenticates opaque API tokens before JWT parsing', async () => {
     const user = { id: 'user-1' }
     const req = { headers: { authorization: `Bearer ${token}` } } as any
@@ -56,7 +67,7 @@ describe('JwtStrategy API token authentication', () => {
     })
     auth.validateUser.mockResolvedValue(user)
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect(apiTokensService.validateApiToken).toHaveBeenCalledWith(token)
     expect(auth.validateUser).toHaveBeenCalledWith('user-1')
@@ -70,7 +81,7 @@ describe('JwtStrategy API token authentication', () => {
     const req = { headers: { authorization: `Bearer ${token}` } } as any
     apiTokensService.validateApiToken.mockResolvedValue(null)
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect(auth.validateUser).not.toHaveBeenCalled()
     expect((strategy as any).fail).toHaveBeenCalledWith(
@@ -90,7 +101,7 @@ describe('JwtStrategy API token authentication', () => {
       resource: 'https://api.example.com/api/mcp',
     })
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect(auth.validateUser).not.toHaveBeenCalled()
     expect((strategy as any).success).not.toHaveBeenCalled()
@@ -110,7 +121,7 @@ describe('JwtStrategy API token authentication', () => {
     })
     auth.validateUser.mockResolvedValue(user)
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect((strategy as any).success).toHaveBeenCalledWith(user)
     expect(apiTokensService.recordTokenUse).toHaveBeenCalledWith('api-token-1')
@@ -132,7 +143,7 @@ describe('JwtStrategy API token authentication', () => {
     })
     auth.validateUser.mockResolvedValue(user)
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect((strategy as any).success).toHaveBeenCalledWith(user)
     expect(req.headers['x-organization-id']).toBe('org-1')
@@ -149,7 +160,7 @@ describe('JwtStrategy API token authentication', () => {
       organizationId: 'org-1',
     })
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect(auth.validateUser).not.toHaveBeenCalled()
     expect((strategy as any).success).not.toHaveBeenCalled()
@@ -167,7 +178,7 @@ describe('JwtStrategy API token authentication', () => {
       organizationId: 'org-1',
     })
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect(forbiddenCode()).toBe('API_TOKEN_ORGANIZATION_MISMATCH')
   })
@@ -185,7 +196,7 @@ describe('JwtStrategy API token authentication', () => {
     })
     auth.validateUser.mockResolvedValue(user)
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     // A consumer reading the header naively must not receive an array.
     expect(req.headers['x-organization-id']).toBe('org-1')
@@ -203,7 +214,7 @@ describe('JwtStrategy API token authentication', () => {
     })
     auth.validateUser.mockResolvedValue(user)
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect(req.headers['x-organization-id']).toBe('org-1')
     expect((strategy as any).success).toHaveBeenCalledWith(user)
@@ -222,7 +233,7 @@ describe('JwtStrategy API token authentication', () => {
     })
     auth.validateUser.mockResolvedValue(user)
 
-    await strategy.authenticate(req)
+    await strategy.authenticateAsync(req)
 
     expect(req.headers['x-organization-id']).toBe('org-7')
     expect(req.apiTokenOrganizationId).toBeNull()
@@ -389,7 +400,9 @@ describe('JwtStrategy inactive accounts', () => {
       organizationId: null,
     })
 
-    await strategy.authenticate({ headers: { authorization: `Bearer ${'a'.repeat(64)}` } } as any)
+    await strategy.authenticateAsync({
+      headers: { authorization: `Bearer ${'a'.repeat(64)}` },
+    } as any)
 
     expect((strategy as any).success).not.toHaveBeenCalled()
     expect((strategy as any).fail).toHaveBeenCalledWith(
@@ -428,7 +441,7 @@ describe('JwtStrategy API token internal failures', () => {
   it('answers a failed token lookup with a 503, not a 401', async () => {
     apiTokensService.validateApiToken.mockRejectedValue(new Error('database unavailable'))
 
-    await strategy.authenticate(req())
+    await strategy.authenticateAsync(req())
 
     expect(outcome.fail).not.toHaveBeenCalled()
     expect(passedError()).toBeInstanceOf(ServiceUnavailableException)
@@ -444,7 +457,7 @@ describe('JwtStrategy API token internal failures', () => {
     })
     auth.validateUser.mockRejectedValue(new Error('connection terminated'))
 
-    await strategy.authenticate(req())
+    await strategy.authenticateAsync(req())
 
     expect(outcome.fail).not.toHaveBeenCalled()
     expect(outcome.success).not.toHaveBeenCalled()
@@ -455,7 +468,7 @@ describe('JwtStrategy API token internal failures', () => {
   it('still answers a genuinely invalid, expired or revoked token with a 401', async () => {
     apiTokensService.validateApiToken.mockResolvedValue(null)
 
-    await strategy.authenticate(req())
+    await strategy.authenticateAsync(req())
 
     expect(outcome.error).not.toHaveBeenCalled()
     expect(outcome.fail).toHaveBeenCalledWith({ message: 'Invalid or expired API token' }, 401)

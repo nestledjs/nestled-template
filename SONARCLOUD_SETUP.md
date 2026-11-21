@@ -136,6 +136,35 @@ are intentionally not suppressed.
 
 ---
 
+## TypeScript Programs (Type Information)
+
+`sonar.typescript.tsconfigPaths` names exactly two configs, written for analysis only (nothing
+builds from them):
+
+- `sonar/tsconfig.api.json`: `apps/api`, `apps/api-e2e`, `libs/api/**` and `scripts` (Jest,
+  CommonJS, `moduleResolution: node10`).
+- `sonar/tsconfig.web.json`: `apps/web`, `libs/web`, `libs/web-ui`, `libs/shared/**` and the other
+  Vite libraries (Vitest, `moduleResolution: bundler`).
+
+Do not go back to listing each project's own app, lib and spec config, and do not leave the property
+unset (discovery takes every `tsconfig*.json` in the tree). Those programs overlap almost entirely,
+and since SonarCloud's JS/TS analyser 14.6.0 the overlap exhausts the Node heap.
+
+**Adding a library or app:** add its folders to the `include` of whichever config matches how it
+runs, as well as to `sonar.sources` (and its coverage report to `sonar.javascript.lcov.reportPaths`
+if it has tests). `scripts/sonar-tsconfig-coverage.spec.mjs` fails when a `sonar.sources` folder is
+in neither config. Neither config sets `lib`; keep it that way, so Sonar only suggests APIs the build
+can type-check.
+
+To check a change to either config, generate the Prisma client first (`pnpm prisma:generate`), then
+`pnpm exec tsc -p sonar/tsconfig.api.json --noEmit --extendedDiagnostics` (and the same for the web
+config) for the memory figure and error count. A handful of errors is expected (e2e specs are
+checked more strictly than their own config asks); thousands mean a wrong option or a missing
+generated client. A pull request's analysis only covers changed files, so the real peak shows on the
+main-branch scan after merge.
+
+---
+
 ## Important Notes on Suppression Methods
 
 **Prefer scanner configuration over inline suppression.**

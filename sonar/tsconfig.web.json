@@ -1,0 +1,64 @@
+{
+  // SonarCloud's web program, for analysis only: nothing builds from this file. See the comment
+  // above sonar.typescript.tsconfigPaths in sonar-project.properties. A new browser-side or Vite
+  // project (Vitest, bundler resolution) goes in "include" here. Do not set "lib": the one from
+  // tsconfig.base.json is what the build type-checks against.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowJs": false,
+    "esModuleInterop": false,
+    "allowSyntheticDefaultImports": true,
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "types": [
+      "vitest/globals",
+      "vitest/importMeta",
+      "vite/client",
+      "node",
+      "vitest",
+      "@react-router/node",
+      "@nx/react/typings/cssmodule.d.ts",
+      "@nx/react/typings/image.d.ts"
+    ],
+    "rootDirs": ["../apps/web", "../apps/web/.react-router/types"],
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "../vite-env.d.ts",
+    "../apps/web/react-router.config.ts",
+    "../apps/web/vite.config.ts",
+    "../apps/web/.react-router/types/**/*",
+    "../apps/web/app/**/*.ts",
+    "../apps/web/app/**/*.tsx",
+    "../apps/web/tests/**/*.ts",
+    "../apps/web/tests/**/*.tsx",
+    "../apps/api-e2e/*.config.mts",
+    "../libs/web/src/**/*.ts",
+    "../libs/web/src/**/*.tsx",
+    "../libs/web/vitest.config.mts",
+    "../libs/web-ui/setupTests.ts",
+    "../libs/web-ui/src/**/*.ts",
+    "../libs/web-ui/src/**/*.tsx",
+    "../libs/web-ui/vite*.config.mts",
+    "../libs/shared/*/src/**/*.ts",
+    "../libs/shared/*/src/**/*.tsx",
+    "../libs/shared/*/vite.config.ts",
+    "../libs/shared/*/vitest.config.mts",
+    "../libs/access-control/src/**/*.ts",
+    "../libs/access-control/src/**/*.tsx",
+    "../libs/access-control/*.mts",
+    "../libs/data-browser/src/**/*.ts",
+    "../libs/data-browser/src/**/*.tsx",
+    "../libs/data-browser/vite.config.ts",
+    "../libs/data-browser/vitest.config.mts",
+    "../libs/shared-components/src/**/*.ts",
+    "../libs/shared-components/src/**/*.tsx",
+    "../libs/shared-components/vite.config.ts",
+    "../libs/shared-components/vitest.config.mts"
+  ],
+  "exclude": ["../**/node_modules"]
+}

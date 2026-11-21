@@ -17,7 +17,7 @@ const POST_LOGIN = '/members/dashboard'
  * them out again. Signed in, or unknown (the API did not answer just now), goes on to the
  * dashboard, whose own `requireSession` shows the recovering screen if it is still unknown.
  */
-export async function loader({ context }: LoaderFunctionArgs) {
+export function loader({ context }: LoaderFunctionArgs) {
   if (getSession(context).kind !== 'signed-out') throw redirect(POST_LOGIN)
   // nestled-session-allow: the OAuth flow's own outcome page, the session is already judged
   throw redirect('/login?error=oauth_incomplete')

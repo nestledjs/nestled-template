@@ -129,10 +129,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   /**
+   * Passport calls this and ignores its return value, so it stays a void method: a promise it
+   * returned would be dropped, and a rejection in it would leave the request with no answer.
+   * Anything that escapes `authenticateAsync` is passed to `this.error` instead.
+   */
+  override authenticate(req: Request, options?: object): void {
+    this.authenticateAsync(req, options).catch((error: unknown) => this.error(error as Error))
+  }
+
+  /**
    * API tokens are opaque 64-character hex strings, not JWTs. Check them before
    * passport-jwt attempts to parse the bearer value as a JWT.
    */
-  override async authenticate(req: Request, options?: object): Promise<void> {
+  async authenticateAsync(req: Request, options?: object): Promise<void> {
     const token = this.extractToken(req)
 
     if (token && API_TOKEN_PATTERN.test(token)) {
