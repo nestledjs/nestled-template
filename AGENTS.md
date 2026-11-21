@@ -447,6 +447,7 @@ This repository is kept clean under SonarQube. When editing code, proactively av
 - Do not rely on default object stringification. Before converting unknown values to strings, explicitly handle objects with `JSON.stringify`, domain labels, or selected fields.
 - Avoid dead fallback branches such as `typeof value === 'object' ? ... : String(value)` after an object branch already returned; Sonar may still flag these as unclear.
 - Keep generated, doctor, script, and test-support code clean too. Do not exclude files from Sonar just because they are internal unless there is a deliberate project decision.
+- A new library or app goes in the `include` of one of Sonar's two TypeScript programs, `sonar/tsconfig.api.json` (Jest, CommonJS) or `sonar/tsconfig.web.json` (Vitest, Vite), as well as in `sonar.sources`. Otherwise its files are analysed without type information. `scripts/sonar-tsconfig-coverage.spec.mjs` fails when a `sonar.sources` folder is in neither. Never add a project's own tsconfig to `sonar.typescript.tsconfigPaths`: one program per project is what exhausted the analyser's heap.
 
 Before finishing non-trivial changes, run the relevant local checks:
 

@@ -1,0 +1,33 @@
+{
+  // SonarCloud's API program, for analysis only: nothing builds from this file. See the comment
+  // above sonar.typescript.tsconfigPaths in sonar-project.properties. A new API-side project
+  // (Jest, CommonJS) goes in "include" here. Do not set "lib": the one from tsconfig.base.json is
+  // what the build type-checks against.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "target": "es2021",
+    "types": ["jest", "node"],
+    "strict": true,
+    "importHelpers": true,
+    "esModuleInterop": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": true,
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "../apps/api/src/**/*.ts",
+    "../apps/api-e2e/src/**/*.ts",
+    "../libs/api/*/src/**/*.ts",
+    "../libs/api/*/jest*.config.ts",
+    "../libs/api/core/*/src/**/*.ts",
+    "../libs/api/core/*/jest*.config.ts",
+    "../scripts/**/*.ts"
+  ],
+  "exclude": ["../**/node_modules", "../libs/api/generated-crud"]
+}

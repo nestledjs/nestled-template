@@ -1,0 +1,147 @@
+id: 2026-11-21-sonar-two-typescript-programs
+title: >-
+  SonarCloud: build two TypeScript programs written for analysis instead of one per project, so the
+  scan stops running out of Node heap
+priority: high
+area: infra
+type: infra
+delivery: code-patch
+
+intent: >
+  The defect. `sonar.typescript.tsconfigPaths` in sonar-project.properties named every project's own
+  app, lib and spec config (39 in the template), one TypeScript program each. Those programs overlap
+  almost entirely, because each one pulls in the source of every library it imports, and Sonar's
+  analyser holds the whole list in memory at once. In the template the 39 loaded 819 analysable
+  files 2,500 times between them (48,123 file loads counting node_modules). Since SonarCloud moved
+  its JS/TS analyser from 14.4.0 to 14.6.0 (2026-11-19), larger downstream projects fail every scan,
+  on the main branch and on pull requests, with "the Node.js process running out of memory (heap
+  size limit 4288 MB)". Raising `sonar.javascript.node.maxspace` runs out of runner memory first,
+  and dropping the small programs from the list does not help: the large ones are the overlap.
+
+
+  The fix, in the template:
+
+  1. Two configs for analysis only, in a new `sonar/` folder at the workspace root. Nothing builds
+  from them; both extend `../tsconfig.base.json`, so the path aliases come with it.
+  - `sonar/tsconfig.api.json`: apps/api, apps/api-e2e, libs/api/** (not generated-crud) and
+    scripts/*.ts. Jest, `module: commonjs`, `moduleResolution: node10`, `target: es2021`,
+    `types: ["jest", "node"]`, plus the strictness flags the API libraries' own tsconfig.json sets
+    (`strict`, `importHelpers`, `esModuleInterop`, `noImplicitOverride`, `noImplicitReturns`,
+    `noFallthroughCasesInSwitch`, `noPropertyAccessFromIndexSignature`,
+    `forceConsistentCasingInFileNames`).
+  - `sonar/tsconfig.web.json`: apps/web (app, tests, its vite and react-router configs, the
+    generated `.react-router/types`), libs/web, libs/web-ui (stories and setupTests included),
+    libs/shared/**, the other Vite libraries and apps/api-e2e's `*.config.mts`. `jsx: react-jsx`,
+    `module: esnext`, `moduleResolution: bundler`, `allowImportingTsExtensions` (a vitest config
+    imports './vite.config.mts'), the Vitest, Vite, React Router and Nx React typings in `types`,
+    and `rootDirs: ["../apps/web", "../apps/web/.react-router/types"]` for React Router's generated
+    route types.
+
+  2. sonar-project.properties: `sonar.typescript.tsconfigPaths` names only those two
+  (`sonar/tsconfig.api.json,sonar/tsconfig.web.json`), and the comment above it is replaced with
+  one explaining why. `sonar.sources`, `sonar.tests`, the exclusions, the coverage paths and
+  `sonar.javascript.node.maxspace` are unchanged: the same files are analysed with the same rules,
+  only the type information is loaded differently.
+
+  3. New `scripts/sonar-tsconfig-coverage.spec.mjs` (run by CI's `node --test scripts/*.spec.mjs`):
+  fails when the property is unset or names a missing file, when a `sonar.sources` folder that
+  holds TypeScript has no file in any listed program, and when a config under `sonar/` sets `lib`.
+  It expands each config's include and exclude with the TypeScript API and does no type check.
+
+  4. AGENTS.md ("SonarQube Quality Expectations") and SONARCLOUD_SETUP.md (new "TypeScript
+  Programs" section) say that a new library or app goes in one of the two configs' `include` as
+  well as `sonar.sources`. These two files are not mirrored by promotion; edit the project's own
+  copies by hand if it has them. The template's docs/dev/framework-conventions.md carries the same
+  step; it is a dev-template-only file and needs no downstream action.
+
+
+  Measured in the template with `tsc -p <config> --noEmit --extendedDiagnostics`, Prisma client
+  generated: about 1.1 GB (api) and 0.9 GB (web), against 12.6 GB summed over the 39 programs.
+  Downstream projects measured about 2.4 GB and 1.4 to 1.6 GB, from programs that held over 5 GB
+  and over 14 GB.
+
+
+  What a downstream changes. Do not copy the template's `include` lists as they are: build them from
+  the project's own projects.
+  - Copy `sonar/tsconfig.api.json` and `sonar/tsconfig.web.json` if promotion did not bring them.
+  - List every Jest/CommonJS project (API apps and libraries, e2e specs, and `scripts` if
+    sonar.sources has it) in the api config's `include`, and every Vite/Vitest or browser project
+    (web apps, React libraries, a CLI built with Vite, libs/shared/**) in the web config's. Use the
+    old `tsconfigPaths` list and `sonar.sources` as the inventory. Drop globs for folders the
+    project does not have (for example libs/data-browser, libs/shared-components and
+    libs/access-control, which most projects consume as packages).
+  - Include test and story files. The per-project lib configs excluded stories, so no program
+    covered them before; expect findings there on the first scan.
+  - Copy the strictness flags from the project's own API library tsconfig.json, not the template's,
+    if they differ.
+  - Point `sonar.typescript.tsconfigPaths` at the two configs and replace its comment. Never leave
+    it unset: discovery takes every tsconfig*.json in the tree, one program each, which is the same
+    problem.
+
+  Rules that each cost a downstream project a rerun:
+  - Do not set `lib` in either config; inherit tsconfig.base.json's. One that declared es2022/es2023
+    where the build uses es2021 made Sonar report 19 findings suggesting APIs (`.at()`,
+    `structuredClone`, `Object.hasOwn`) the build cannot type-check.
+  - Leave `sonar.javascript.node.maxspace` (and `sonar.javascript.node.debugMemory`, if set) as it
+    is in this change. Lower it in a later change, from the peak the main-branch scan logs.
+  - A project added later must go in one of the two `include` lists, or its files are analysed
+    without type information.
+
+why: >
+  Every template-based repository scanned by SonarCloud runs the same 14.6 analyser, and in larger
+  projects the scan fails outright, so the quality gate reports nothing. One program per project
+  was always mostly overlap; the analyser upgrade made it fatal. Two programs, one per runtime,
+  load each file about once, with the same rules, sources and gate.
+
+affectedPaths:
+  - sonar/tsconfig.api.json
+  - sonar/tsconfig.web.json
+  - sonar-project.properties
+  - scripts/sonar-tsconfig-coverage.spec.mjs
+  - AGENTS.md
+  - SONARCLOUD_SETUP.md
+
+skipIf:
+  - The project does not use SonarCloud or SonarQube.
+  - sonar.typescript.tsconfigPaths already names a small set of analysis-only configs that cover
+    every project (check with the coverage comparison below).
+
+verification:
+  - pnpm prisma:generate
+  - pnpm exec tsc -p sonar/tsconfig.api.json --noEmit --extendedDiagnostics
+  - pnpm exec tsc -p sonar/tsconfig.web.json --noEmit --extendedDiagnostics
+  - node --test scripts/sonar-tsconfig-coverage.spec.mjs
+  - pnpm exec prettier --check sonar scripts
+
+agentHints:
+  - >
+    Generate the Prisma client first (`pnpm prisma:generate`), and React Router's route types
+    (`pnpm exec react-router typegen` in apps/web) if the web config includes them. Without the
+    client every API program reports thousands of errors and the memory figure is wrong. A few
+    dozen errors from the merged programs are expected and harmless (e2e specs checked more
+    strictly than their own config asks; a script using an API newer than the base `lib`).
+    Thousands mean a wrong option or a missing generated file.
+  - >
+    Compare coverage, old list against new, before opening the pull request. Put the old
+    `tsconfigPaths` entries in old-configs.txt, one per line, then:
+    `while read c; do pnpm exec tsc -p "$c" --listFilesOnly; done < old-configs.txt | grep -v
+    node_modules | sort -u > old-files.txt`;
+    `for c in sonar/tsconfig.api.json sonar/tsconfig.web.json; do pnpm exec tsc -p "$c"
+    --listFilesOnly; done | grep -v node_modules | sort -u > new-files.txt`;
+    `comm -23 old-files.txt new-files.txt` (covered before, not now) must be empty or explained in
+    the pull request; `comm -13 old-files.txt new-files.txt` lists what is newly covered. In the
+    template the only files lost were two .mjs e2e support files, which are in neither sonar.sources
+    nor sonar.test.inclusions, and the gain was the web-ui stories.
+  - >
+    Put the per-config memory figures and the coverage result in the pull request. A pull request's
+    analysis covers changed files only and cannot prove the fix; the real peak shows on the
+    main-branch scan after merge (`sonar.javascript.node.debugMemory=true` logs it).
+  - >
+    Expect a small re-baseline on that first main-branch scan: findings in old code, because files
+    are analysed with slightly different type information, and first findings in stories that no
+    program covered before. Triage them; do not revert the configs over them. If the findings
+    suggest APIs the build cannot type-check, a config is setting `lib`.
+  - >
+    If the project has no `scripts/sonar-tsconfig-coverage.spec.mjs` runner in CI (CI's static job
+    runs `node --test scripts/*.spec.mjs` in the template), add the spec to whatever runs the
+    project's other script specs.
