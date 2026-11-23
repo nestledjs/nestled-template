@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-11-21
+generatedAt: 2026-11-23
 channels:
-  canary: 2026.11.11
+  canary: 2026.11.12
   stable: 2026.11.9
 releases:
   - id: 2026.08.0
@@ -2642,3 +2642,54 @@ releases:
         applyAfter:
           - 2026-11-21-sonar-two-typescript-programs
         patch: patches/2026-11-21-sonar-rebaseline-findings.diff
+  - id: 2026.11.12
+    date: 2026-11-23
+    title: "2026.11.12: session files Sonar cleanup; failed queries retried once the server confirms the session"
+    templateCommit: c97a757
+    notes:
+      - id: 2026-11-21-retry-queries-after-confirmed-session
+        title: After a transient browser 401, retry once the active queries that failed with it when the server confirms the session is signed in
+        delivery: code-patch
+        intent: "The defect. Since 2026-11-20-session-middleware, a browser query refused with a clean 401 (an HTTP 401 or a GraphQL `UNAUTHENTICATED`) only asks the server to judge the session again: the session revalidator (apps/web/app/session/session-revalidator.tsx) revalidates, and a signed-in verdict reruns the route loaders. Apollo queries mounted on the page that failed with that 401 were never retried: `refetchFailedQueries` in apps/web/app/api-availability.ts deliberately leaves authentication failures alone, so focus and online recovery skip them as well. A list rendered from a client query stayed empty or errored until the user navigated or reloaded, although the server had just confirmed the session. The fix, in apps/web/app/session/session-revalidator.tsx only. Who is signed out, and when, is unchanged: only the server decides a session, the browser never signs anyone out, and a browser 401 still only requests a revalidation (5 s cooldown, held while offline). 1. New exported `retryUnauthenticatedQueries(client)`: refetches every active query whose last result `classifyApiFailure` calls `unauthenticated` (a 401 with outage evidence beside it is `unavailable`, and stays with the connectivity refetch). A 403 or any other error is left alone, and mutations are never replayed (`getObservableQueries` holds only queries). Exported from apps/web/app/session/index.ts. 2. `SessionRevalidator` arms a one-shot callback when it answers `APOLLO_SESSION_SUSPECT_EVENT`. `requestSessionRevalidation` hands it to the next revalidation that starts (now, or the held one after the cooldown or reconnect) and runs it once that revalidation resolves. It reads the root route's loader data from the router state (`UNSAFE_DataRouterContext`, as boundary-recovery.ts already does): only a `signed-in` verdict calls `retryUnauthenticatedQueries`. A rejected verdict (the server has already sent the browser to the sign-out route) or an unknown one retries nothing. 3. Once, never a loop, tracked per query: a query whose retry is in flight is not retried again, and each retry records the error it ended with. A later pass skips a query while its current error is that same one, so a retry that gets a 401 again only asks for one more revalidation (under the cooldown). A different query's 401, or a fresh 401 on the same query after its retry succeeded, is a new failure and gets its own one retry. Overlapping 401s are each retried once. 4. The `refetchFailedQueries` doc comment in apps/web/app/api-availability.ts points at the new retry; its behaviour is unchanged. Specs (apps/web/tests/session/session-revalidator.spec.tsx, real ApolloClient and router): a query that got a 401 is refetched exactly once after a signed-in verdict and a 403 beside it is not; nothing is refetched after a rejected or unknown verdict; a mutation that got a 401 is never replayed; a retry that gets a 401 again asks for one more revalidation and is not refetched again; two overlapping 401s whose retries both 401 are each refetched once; a query whose first 401 arrives while another query's retry is in flight is still retried; a query is retried again after a later, separate 401; `retryUnauthenticatedQueries` skips a 403, a 401 beside a 503 and a healthy query."
+        area: web
+        affectedPaths:
+          - apps/web/app/session/session-revalidator.tsx
+          - apps/web/app/session/index.ts
+          - apps/web/app/api-availability.ts
+          - apps/web/tests/session/session-revalidator.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+        skipIf:
+          - The project has not taken 2026-11-20-session-middleware (it has no session revalidator).
+        agentHints:
+          - "session-revalidator.tsx, session/index.ts and the spec are template-owned: take them from the template. If the project's copy differs, keep its local change and reapply it, and record adapted. In api-availability.ts only the `refetchFailedQueries` doc comment changes; leave the function itself as it is, since it must still not refetch a 401."
+          - The retry reads the verdict from the root route's loader data (`session.kind`). If the project's root loader returns the verdict under another key, change `rootVerdictIsSignedIn` to read it there, and keep the specs' root loader in step.
+          - "Do not make the browser retry on a 401 by itself, or retry after anything but a signed-in verdict: the server alone decides the session."
+        applyAfter:
+          - 2026-11-20-session-middleware
+        patch: patches/2026-11-21-retry-queries-after-confirmed-session.diff
+      - id: 2026-11-21-session-files-sonar-cleanup
+        title: Clear the 20 SonarCloud findings in the 2026.11.10 session files (the v8_middleware codemod, the session-decision audit, judgeSession, the session middleware and cookie helpers, useSessionUser)
+        delivery: code-patch
+        intent: "The defect. A downstream SonarCloud quality gate that counts every new issue (new_violations) failed on 20 findings, all in files 2026-11-20-session-middleware brought in and that are byte-identical to the template. Every project that took that note carries the same 20. This note clears them in the template. No behaviour changes: every rule, verdict, cookie and report is the same as before. The fix, by file: 1. scripts/codemod-v8-middleware-context.mjs: S6557 (`endsWith` instead of a regex), S3358 (nested ternaries: `parse` gets a `scriptKind` helper, `formatReport` names its verb), S3776 (cognitive complexity of `importEdit`, `configObject`, `transformConfig`, `transformEntryServer`, `routeFunctions` and `run`, each now at most 15, by extracting `valueNamedImportsFromReactRouter`, `unwrapAssertions`, `objectBoundTo`, `flagInFuture`, `futureAdded`, `importRemovalEdits`, `routeFunctionsIn`, `declarationFilesUnder`, `contextReadTodos` and `handleAugmentations`), S1874 (the deprecated `ImportClause.isTypeOnly` becomes `phaseModifier === ts.SyntaxKind.TypeKeyword`, which is how TypeScript computes `isTypeOnly`), S3735 (an unused variable kept alive with `void` is removed), S7780 (`String.raw` for the tsconfig include pattern, through a new `escapeRegExp`) and S7778 (two consecutive `changes.push` calls merged). The codemod's output is unchanged: run against the template with `--dry-run` it still reports \"Nothing to change\", and its spec passes unchanged. 2. scripts/audit-session-decisions.mjs: S3776 in `isNavigation`, split into `isNavigatingCall`, `isHrefAssignment` and `isNavigateElement`. The same navigations are findings; its spec passes unchanged and `pnpm run verify:session-decisions` reports the same findings and allowances as before. 3. libs/shared/apollo/src/lib/session/judge-session.ts: S3776 in `judgeSession`. Step 4 (Me answered a clean 401: outage memory, then the confirmation call) moves verbatim into `judgeCleanUnauthenticated`. Who is signed out, and when, is unchanged; judge-session.spec.ts checks every combination of evidence and passes unchanged. 4. apps/web/app/session/session-middleware.server.ts: S4624 (a nested template literal in `returnPath`). 5. apps/web/app/session/session-cookie.ts: S7776 (`HOST_ONLY_COOKIE_DOMAINS` is a `Set`, read with `.has()`; the same three values, matched exactly). 6. apps/web/app/app.tsx `useSessionUser`: S6582 (an optional chain for the cached user's id)."
+        area: web
+        affectedPaths:
+          - scripts/codemod-v8-middleware-context.mjs
+          - scripts/audit-session-decisions.mjs
+          - libs/shared/apollo/src/lib/session/judge-session.ts
+          - apps/web/app/session/session-middleware.server.ts
+          - apps/web/app/session/session-cookie.ts
+          - apps/web/app/app.tsx
+        verification:
+          - node --test scripts/codemod-v8-middleware-context.spec.mjs scripts/audit-session-decisions.spec.mjs
+          - pnpm exec nx test apollo --skip-nx-cache
+          - pnpm exec nx test web --skip-nx-cache
+        skipIf:
+          - The project has not taken 2026-11-20-session-middleware (it has none of these files).
+        agentHints:
+          - "The first five files are template-owned and should be byte-identical to the template: take them from the template as they are. If a project's copy differs, diff it against the template's previous version first; keep any local change and reapply it to the new version, and record adapted."
+          - apps/web/app/app.tsx is often changed locally. Change only the one line in `useSessionUser` (`cachedUser && cachedUser.id === verdictUser.id` becomes `cachedUser?.id === verdictUser.id`) rather than copying the file.
+          - "Do not change judge-session.ts beyond moving step 4 into the helper. If the project's judge-session.spec.ts fails after the change, the move was not verbatim: compare it with the template's."
+        applyAfter:
+          - 2026-11-20-session-middleware
+        patch: patches/2026-11-21-session-files-sonar-cleanup.diff
