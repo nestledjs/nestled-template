@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
 import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
 import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
+import { useGlobalCtx } from '@nestled-template/web'
 import { App } from '../../app/app'
 import AuthenticatedLayout, { middleware } from '../../app/routes/_authenticated/_layout'
 import { requireSession } from '../../app/session/session-middleware.server'
@@ -26,8 +27,15 @@ vi.mock('@nestled-template/web', async importOriginal => ({
 }))
 
 const operations: string[] = []
+// The organizations the page was given, one entry per render of it.
+const givenOrganizations: unknown[] = []
 
-function organizationsLink(organizations: unknown[]) {
+function MembersPage() {
+  givenOrganizations.push(useGlobalCtx().organizations)
+  return <p>Members page</p>
+}
+
+function organizationsLink(organizations: unknown[] | null) {
   return new ApolloLink(
     operation =>
       new Observable<ApolloLink.Result>(observer => {
@@ -49,7 +57,7 @@ const ORGANIZATION = {
   members: [],
 }
 
-async function renderMembers(organizations: unknown[] = [ORGANIZATION]) {
+async function renderMembers(organizations: unknown[] | null = [ORGANIZATION]) {
   const client = new ApolloClient({
     link: organizationsLink(organizations),
     cache: new InMemoryCache(),
@@ -71,7 +79,7 @@ async function renderMembers(organizations: unknown[] = [ORGANIZATION]) {
               return { myOrganizationsQueryRef }
             },
             element: <AuthenticatedLayout />,
-            children: [{ index: true, element: <p>Members page</p> }],
+            children: [{ index: true, element: <MembersPage /> }],
           },
         ],
       },
@@ -85,10 +93,12 @@ async function renderMembers(organizations: unknown[] = [ORGANIZATION]) {
       </ApolloProvider>,
     )
   })
+  return router
 }
 
 beforeEach(() => {
   operations.length = 0
+  givenOrganizations.length = 0
   localStorage.clear()
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
   vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -119,5 +129,19 @@ describe('the signed-in layout', () => {
 
     expect(await screen.findByText('Members page')).toBeInTheDocument()
     expect(screen.getByText(/^Header user:/)).toBeInTheDocument()
+  })
+
+  it('gives the page the same empty list on every render when the answer holds none', async () => {
+    const router = await renderMembers(null)
+    expect(await screen.findByText('Members page')).toBeInTheDocument()
+
+    // A new location renders the layout again.
+    await act(async () => {
+      await router.navigate('/members?tab=2')
+    })
+
+    expect(givenOrganizations.length).toBeGreaterThan(1)
+    expect(givenOrganizations[0]).toEqual([])
+    expect(new Set(givenOrganizations).size).toBe(1)
   })
 })

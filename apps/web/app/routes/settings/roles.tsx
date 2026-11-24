@@ -203,7 +203,7 @@ export default function OrganizationRolesSettings() {
   const organizations = organizationData?.myOrganizations ?? []
   const activeOrganization = resolveActiveOrganization(organizations, user?.activeOrganizationId)
   const activeMember = activeOrganization?.members?.find(member => member.userId === user?.id)
-  const { data, loading, refetch } = useQuery<OrganizationRolesQuery>(OrganizationRoles, {
+  const { data, loading, refetch } = useQuery(OrganizationRoles, {
     variables: { organizationId: activeOrganization?.id ?? '' },
     skip: !activeOrganization?.id,
   })

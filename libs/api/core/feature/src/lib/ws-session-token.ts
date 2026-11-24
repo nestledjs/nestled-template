@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common'
 import { JsonWebTokenError, JwtService } from '@nestjs/jwt'
+import { sessionCookieName } from '@nestled-template/api/config'
 import { rawHeaderCookieValues, selectSessionToken } from '@nestled-template/api/utils'
 
 type WsContextExtra = {
@@ -40,7 +41,7 @@ export function extractTokenFromWsContext(extra: unknown): string {
     'rawHeaders' in extra.request
   ) {
     const rawHeaders = (extra as WsContextExtra).request?.rawHeaders
-    const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
+    const cookieName = sessionCookieName()
     if (!rawHeaders) return ''
     return (
       selectSessionToken(rawHeaderCookieValues(rawHeaders, cookieName), verifyWithJwtSecret) ?? ''

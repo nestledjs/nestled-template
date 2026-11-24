@@ -83,10 +83,10 @@ describe('expiring the session cookie on sign-out', () => {
     },
   )
 
-  it('/force-logout expires both when only the API variable is set', async () => {
+  it('/force-logout expires both when only the API variable is set', () => {
     vi.stubEnv('API_COOKIE_DOMAIN', '.example.com')
 
-    const response = await forceLogoutLoader({
+    const response = forceLogoutLoader({
       request: new Request('https://app.example.com/force-logout'),
     })
 

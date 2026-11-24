@@ -12,7 +12,11 @@ import { __resetApiOutageMemory, apolloLoader } from '@nestled-template/shared/a
 import * as entryServer from '../../app/entry.server'
 import * as rootModule from '../../app/root'
 import { getSession, requireUser } from '../../app/session'
-import { requireSession } from '../../app/session/session-middleware.server'
+import {
+  forwardedSessionCookie,
+  requireSession,
+  sessionToken,
+} from '../../app/session/session-middleware.server'
 import { SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
 import { SESSION_UNKNOWN_TITLE } from '../../app/session/session-unknown'
 import { UNAUTHENTICATED_RESULT } from '../helpers/api-rejection'
@@ -309,24 +313,26 @@ describe('signed out: no session', () => {
   it.each([
     ['no cookie', null],
     ['a JWT whose exp has passed', expiredJwt()],
-  ])('%s: a redirect to /login with no Me call', async (_label, cookie) => {
+  ])('%s: a document redirect to /login with no Me call', async (_label, cookie) => {
     meAnswers(signedIn)
     const response = await request('/members', cookie)
 
     expect(response.status).toBe(302)
+    // A plain 302 to a document request, with or without JavaScript.
     expect(response.headers.get('Location')).toBe('/login?return_url=%2Fmembers')
     expect(meCalls()).toBe(0)
     expect(privateLoader).not.toHaveBeenCalled()
     expect(expiredCookies(response)).toHaveLength(0)
   })
 
-  it('.data navigation: a single-fetch redirect to /login, without a reload', async () => {
+  it('.data navigation: a single-fetch redirect to /login that loads a document', async () => {
     const response = await request('/members.data', null)
     const body = await response.text()
 
     expect(response.status).toBe(202)
     expect(body).toContain('/login?return_url=%2Fmembers')
-    expect(body).not.toMatch(/"reload",true/)
+    // Nothing the ended session left in the tab's memory survives.
+    expect(body).toMatch(/"reload",true/)
     expect(privateLoader).not.toHaveBeenCalled()
   })
 
@@ -334,6 +340,128 @@ describe('signed out: no session', () => {
     const response = await request('/public', null)
     expect(response.status).toBe(200)
     expect(publicLoader).toHaveBeenCalledWith('signed-out')
+  })
+})
+
+describe('duplicate session cookies', () => {
+  // The browser can hold several (a host-only one and a parent-domain one). Only the API can tell
+  // which verifies: none is dropped here, and no single one is put in front as a bearer token.
+  function requestWith(cookie: string, path = '/members') {
+    return handler(
+      new Request(`http://localhost${path}`, { headers: { cookie } }),
+      new RouterContextProvider(),
+    )
+  }
+
+  function sentToApi() {
+    return fetchMock.mock.calls
+      .filter(([, init]) => isMeCall(init))
+      .map(([, init]) => init.headers as Record<string, string>)
+  }
+
+  const newer = unexpiredJwt()
+  const older = `${unexpiredJwt()}-older`
+
+  it.each(PRIVATE_REQUESTS)(
+    '%s: every candidate reaches the API, with no bearer',
+    async (_k, path) => {
+      meAnswers(signedIn)
+      const response = await requestWith(
+        `${COOKIE_NAME}=${newer}; theme=dark; ${COOKIE_NAME}=${older}`,
+        path,
+      )
+
+      expect(response.status).toBe(200)
+      expect(sentToApi()).toHaveLength(1)
+      expect(sentToApi()[0].cookie).toBe(`${COOKIE_NAME}=${newer}; ${COOKIE_NAME}=${older}`)
+      expect(sentToApi()[0]).not.toHaveProperty('authorization')
+    },
+  )
+
+  it('one session cookie is sent as a bearer token, and no Cookie header, as before', async () => {
+    meAnswers(signedIn)
+    await requestWith(`${COOKIE_NAME}=${newer}; theme=dark`)
+
+    expect(sentToApi()).toHaveLength(1)
+    expect(sentToApi()[0].authorization).toBe(`Bearer ${newer}`)
+    expect(sentToApi()[0]).not.toHaveProperty('cookie')
+  })
+
+  // Issued after the live one, as a shorter-lived duplicate is: the newest by issue time is dead.
+  const now = Math.floor(Date.now() / 1000)
+  const issued = (iat: number, exp: number) =>
+    `h.${Buffer.from(JSON.stringify({ sub: 'user-1', iat, exp })).toString('base64url')}.s`
+  const live = issued(now - 1000, now + 3600)
+  const dead = issued(now - 100, now - 60)
+  // From an API whose clock is ahead of this server's, so its age says nothing here.
+  const ahead = issued(now + 3600, now + 7200)
+
+  it.each([
+    ['first', [dead, live]],
+    ['last', [live, dead]],
+    ['beside one from a clock ahead', [dead, ahead]],
+  ])('an expired candidate %s does not end a session another one holds', async (_where, tokens) => {
+    meAnswers(signedIn)
+    const response = await requestWith(tokens.map(value => `${COOKIE_NAME}=${value}`).join('; '))
+
+    expect(response.status).toBe(200)
+    expect(meCalls()).toBe(1)
+  })
+
+  it('is signed out without a Me call only when every candidate expired', async () => {
+    meAnswers(signedIn)
+    const response = await requestWith(
+      `${COOKIE_NAME}=${expiredJwt()}; ${COOKIE_NAME}=${expiredJwt()}2`,
+    )
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get('Location')).toBe('/login?return_url=%2Fmembers')
+    expect(meCalls()).toBe(0)
+  })
+
+  it('is absent only with no nonempty session cookie', async () => {
+    meAnswers(signedIn)
+    const response = await requestWith(`${COOKIE_NAME}=; ${COOKIE_NAME}=; theme=dark`)
+
+    expect(response.headers.get('Location')).toBe('/login?return_url=%2Fmembers')
+    expect(meCalls()).toBe(0)
+  })
+
+  it('an outage with duplicates keeps the session', async () => {
+    meAnswers(unreachable)
+    const response = await requestWith(`${COOKIE_NAME}=${newer}; ${COOKIE_NAME}=${older}`)
+
+    expect(response.status).toBe(503)
+    expect(expiredCookies(response)).toEqual([])
+  })
+
+  it('forwardedSessionCookie forwards every candidate and nothing else', () => {
+    const forwarded = (cookie?: string) =>
+      forwardedSessionCookie(
+        new Request('http://localhost/', { headers: cookie ? { cookie } : {} }),
+      )
+    expect(forwarded(`${COOKIE_NAME}=a; theme=dark; ${COOKIE_NAME}=b`)).toBe(
+      `${COOKIE_NAME}=a; ${COOKIE_NAME}=b`,
+    )
+    expect(forwarded(`theme=dark; ${COOKIE_NAME}=a`)).toBe(`${COOKIE_NAME}=a`)
+    expect(forwarded('theme=dark')).toBeNull()
+    expect(forwarded()).toBeNull()
+  })
+
+  it('sessionToken is the only candidate, or the newest by issue time', () => {
+    const issued = (iat: number) =>
+      `h.${Buffer.from(JSON.stringify({ iat })).toString('base64url')}.s`
+    const token = (...values: string[]) =>
+      sessionToken(
+        new Request('http://localhost/', {
+          headers: { cookie: values.map(value => `${COOKIE_NAME}=${value}`).join('; ') },
+        }),
+      )
+    expect(token('opaque')).toBe('opaque')
+    expect(token(issued(2), issued(1))).toBe(issued(2))
+    expect(token(issued(1), issued(2))).toBe(issued(2))
+    expect(token('')).toBeNull()
+    expect(sessionToken(new Request('http://localhost/'))).toBeNull()
   })
 })
 

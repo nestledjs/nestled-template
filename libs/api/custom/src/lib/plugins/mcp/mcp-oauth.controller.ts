@@ -16,6 +16,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Request, Response } from 'express'
 import { ConfigService } from '@nestjs/config'
 import { McpOAuthService, OAuthClientError, PKCE_METHOD } from './mcp-oauth.service'
+import { sessionCookieName } from '@nestled-template/api/config'
 import {
   orderSessionTokensNewestFirst,
   Public,
@@ -517,8 +518,7 @@ export class McpOAuthController {
    * forged one with a far-future `iat` can shadow the valid session.
    */
   private async getSessionFromCookie(req: Request): Promise<AuthTokenClaims | null> {
-    const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
-    const candidates = orderSessionTokensNewestFirst(requestCookieValues(req, cookieName))
+    const candidates = orderSessionTokensNewestFirst(requestCookieValues(req, sessionCookieName()))
     for (const cookieToken of candidates) {
       let payload: AuthTokenClaims
       try {

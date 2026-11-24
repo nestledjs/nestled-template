@@ -1,0 +1,125 @@
+id: 2026-11-24-security-pages-typed-variables
+title: >-
+  The security settings pages failed on variables the API does not have, which typecheck could not
+  see: loader queries were untyped, and one type argument leaves an operation's variables untyped
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-19-mutation-errorpolicy-none
+  - 2026-11-19-session-follow-ups
+  - 2026-11-20-session-middleware
+  - 2026-11-20-emulation-organization-reload-race
+  - 2026-11-21-sonar-rebaseline-findings
+  - 2026-11-24-session-starts-in-fresh-document
+  - 2026-11-24-session-hardening-follow-ups
+
+intent: >
+  1. The loaders of apps/web/app/routes/settings/security.tsx and security.events.tsx sent
+  `orderBy: 'createdAt', orderDirection: 'desc'`. The template's `SecurityEventPagingInput` has
+  `take`, `skip` and `orderDirection` only, and the enum's GraphQL names are ASC and DESC, so both
+  values were refused: a document load answered 500, and a client navigation showed
+  `Field "orderBy" is not defined by type "SecurityEventPagingInput"`. Both are dropped; newest
+  first is the API's default. apps/web/tests/routes/settings/security-events-variables.spec.ts runs
+  both loaders and checks every variable against api-schema.graphql.
+
+
+  2. Typecheck missed it for two reasons.
+
+
+  First, `preloadQuery` was `any` in every loader. `@apollo/client-integration-react-router` types
+  its loader arguments from 'react-router/route-module', a path React Router does not export, and
+  an unresolved type is `any`. apps/web/app/react-router-route-module.d.ts declares the one type the
+  package imports from there, and `apolloLoader` (libs/shared/apollo/src/lib/apollo-loader.ts) passes
+  its argument type on: `handler<typeof args>()(loader)(args)`. No runtime change.
+
+
+  Second, a call with one type argument, `preloadQuery<MySecurityEventsQuery>(...)` or
+  `useMutation<LoginMutation>(...)`, types the result only: TypeScript does not infer the rest, so
+  the variables fall back to any object. Every such call that passes variables (56 in the template)
+  drops its type argument, and the generated document types both. Nothing else in the template
+  turned out to be wrong.
+
+
+  3. Two guards. apps/web/tests/apollo-loader-types.spec.ts fails `nx typecheck web` when
+  `preloadQuery` is `any` again. scripts/apollo-operation-types.spec.mjs fails on an operation that
+  passes variables with a single type argument, and when React Router starts exporting the path or
+  the package stops importing it, since an ambient declaration would then hide the real types.
+
+why: >
+  /settings/security, where a user changes the password, sets up two-factor authentication and ends
+  other sessions, did not load at all. The same gap hid any other wrong variable until a user met it.
+
+affectedPaths:
+  - apps/web/app/routes/settings/security.tsx
+  - apps/web/app/routes/settings/security.events.tsx
+  - apps/web/app/react-router-route-module.d.ts
+  - libs/shared/apollo/src/lib/apollo-loader.ts
+  - apps/web/tests/routes/settings/security-events-variables.spec.ts
+  - apps/web/tests/apollo-loader-types.spec.ts
+  - scripts/apollo-operation-types.spec.mjs
+  - apps/web/app/components/audit-log-entity-filters.tsx
+  - apps/web/app/routes/_public/forgot-password.tsx
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/_public/register.tsx
+  - apps/web/app/routes/_public/resend-verification.tsx
+  - apps/web/app/routes/_public/reset-password.tsx
+  - apps/web/app/routes/_public/verify-email.tsx
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/app/routes/admin/audit-logs/_index.tsx
+  - apps/web/app/routes/admin/organizations/_index.tsx
+  - apps/web/app/routes/admin/security-events/_index.tsx
+  - apps/web/app/routes/admin/users/_index.tsx
+  - apps/web/app/routes/pricing.tsx
+  - apps/web/app/routes/settings/_shared-sections.tsx
+  - apps/web/app/routes/settings/account.tsx
+  - apps/web/app/routes/settings/billing.tsx
+  - apps/web/app/routes/settings/members.tsx
+  - apps/web/app/routes/settings/notifications.tsx
+  - apps/web/app/routes/settings/organization.tsx
+  - apps/web/app/routes/settings/profile.tsx
+  - apps/web/app/routes/settings/roles.tsx
+  - libs/web/src/lib/components/emulation-banner.tsx
+  - libs/web/src/lib/components/upgrade-modal.tsx
+  - libs/web/src/lib/modals/transfer-ownership-modal.tsx
+
+skipIf:
+  - >-
+    Part 1: the project's security pages send only fields its own schema has, under whatever names.
+    The type fix in part 2 and the guards still apply.
+
+verification:
+  - pnpm exec nx typecheck web --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - node --test scripts/apollo-operation-types.spec.mjs
+  - pnpm exec nx build web --skip-nx-cache
+  - >-
+    Signed in, load /settings/security and /settings/security/events as documents (reload each):
+    both answer 200 and list the latest events first.
+
+agentHints:
+  - >-
+    The input type's name and fields differ per app. Look up the argument of the project's own
+    security-events query in its api-schema.graphql before changing the loader: if it has an
+    `orderBy`, keep it, and write the direction with the enum the generated SDK exports. Adjust the
+    expected variables in security-events-variables.spec.ts to match.
+  - >-
+    Apply part 2 in this order: the declaration, the apollo-loader.ts line, then typecheck, then the
+    type arguments. New type errors are real mismatches between what a page sends and what the
+    project's API accepts: fix the variables. Do not cast them away, widen the type or add the type
+    argument back. A required variable that is optional on the page needs a real check or `skip`.
+  - >-
+    Drop the type argument and its type import rather than adding the variables type as a second
+    one: a document from the generated SDK carries both. A document built with `gql` in the page
+    carries neither, so give that call both type arguments, or move the operation into the SDK.
+  - >-
+    The declaration needs no package.json or tsconfig change as long as apps/web/tsconfig.app.json
+    includes `app/**/*.ts` (the template's always has, and the guard spec checks). Where the web app
+    lives elsewhere, put the file inside that program and adjust the paths in both specs.
+  - >-
+    In scripts/apollo-operation-types.spec.mjs, add the project's own client folders to
+    CLIENT_FOLDERS; a folder that does not exist is skipped.
+  - >-
+    The latest @apollo/client-integration-react-router (0.14.5-alpha.0 when this was written) still
+    imports the missing path, so bumping it does not replace the declaration.

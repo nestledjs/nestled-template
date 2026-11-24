@@ -32,6 +32,11 @@ let afterNextRevalidation: (() => void) | undefined
 // came later, on that query or any other, is a new 401 and gets its one retry.
 let retrying = new WeakSet<object>()
 let retryEndedWith = new WeakMap<object, unknown>()
+// When a refused render last asked (RevalidateSessionOnRefusedRender).
+let lastRefusedRenderAt = Number.NEGATIVE_INFINITY
+
+/** How long a refused render waits before it may ask the server to judge the session again. */
+export const REFUSED_RENDER_INTERVAL_MS = 60_000
 
 function clearPending(): void {
   pendingRevalidate = undefined
@@ -69,6 +74,7 @@ export function __resetSessionRevalidation(): void {
   afterNextRevalidation = undefined
   retrying = new WeakSet<object>()
   retryEndedWith = new WeakMap<object, unknown>()
+  lastRefusedRenderAt = Number.NEGATIVE_INFINITY
 }
 
 function browserIsOffline(): boolean {
@@ -216,6 +222,36 @@ export function isUnauthenticatedRouteError(error: unknown): boolean {
 export function RevalidateSessionOnMount({ children }: Readonly<{ children: ReactNode }>) {
   const request = useSessionRevalidation()
   useEffect(() => {
+    request()
+  }, [request])
+  return children
+}
+
+/**
+ * Whether an error thrown while rendering is an API call's clean 401, by code and status only: what
+ * `useReadQuery` throws for a preload the API refused after the request was judged signed in. The
+ * answer reached the browser in the loader data stream, not through its error link, so no
+ * `APOLLO_SESSION_SUSPECT_EVENT` was dispatched for it. (An HTTP failure does not travel that way: the
+ * browser's client sends that query again itself, and its own error is what is thrown.) Outage
+ * evidence beside the 401 outranks it
+ * (`classifyApiFailure`). Never a sign-out.
+ */
+export function isRefusedRenderError(error: unknown): boolean {
+  return classifyApiFailure(error) === 'unauthenticated'
+}
+
+/**
+ * `RevalidateSessionOnMount` for a refused render (`isRefusedRenderError`). The revalidation loads
+ * the page's data again, so a transient 401 recovers by itself. If the API refuses it again although
+ * the server judges the session signed in, the page throws again and this mounts again: it asks at
+ * most once per `REFUSED_RENDER_INTERVAL_MS`, so that never becomes a request loop.
+ */
+export function RevalidateSessionOnRefusedRender({ children }: Readonly<{ children: ReactNode }>) {
+  const request = useSessionRevalidation()
+  useEffect(() => {
+    const now = Date.now()
+    if (now - lastRefusedRenderAt < REFUSED_RENDER_INTERVAL_MS) return
+    lastRefusedRenderAt = now
     request()
   }, [request])
   return children

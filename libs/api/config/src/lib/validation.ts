@@ -1,4 +1,5 @@
 import * as Joi from 'joi'
+import { DEFAULT_SESSION_COOKIE_NAME } from './cookie-name'
 import { defaultApiOrigin, defaultOrigin, isHttpOrigin, normalizeApiOrigin } from './api-url'
 
 export const validationSchema = Joi.object({
@@ -17,7 +18,19 @@ export const validationSchema = Joi.object({
   // Supply the 4200 fallback here — same defect (and same fix) as the API_URL default below.
   WEB_URL: Joi.string().default(defaultOrigin(process.env['HOST'], process.env['WEB_PORT'], 4200)),
   API_COOKIE_DOMAIN: Joi.string().default('localhost'),
-  VITE_COOKIE_NAME: Joi.string().default('__session'),
+  VITE_COOKIE_NAME: Joi.string().default(DEFAULT_SESSION_COOKIE_NAME),
+  // Not read anywhere (cookie-name.ts). A project that sets it to another name had parts that set
+  // the session cookie under one name and parts that read another; picking one for it could sign
+  // every user out, so starting is refused until the two say the same.
+  API_COOKIE_NAME: Joi.string()
+    .valid('', Joi.ref('VITE_COOKIE_NAME'))
+    .messages({
+      'any.only':
+        '{{#label}} must be empty or the same as VITE_COOKIE_NAME, which names the session cookie ' +
+        '(unset: "__session"). Received {{:#value}}. Before changing either, look up the name of ' +
+        'the session cookie in a signed-in browser: that name belongs in VITE_COOKIE_NAME, on the ' +
+        'web service too (it is read at build time), and another one signs every user out.',
+    }),
   // API_URL is the origin only, WITHOUT the `/api` global prefix. The prefix is appended by the
   // URL-building code (OAuth redirect_uri, MCP base URL, upload public URLs). Keep this consistent
   // with .env.example and docs/template/README.md — a `/api` suffix here breaks all of those.

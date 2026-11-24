@@ -35,10 +35,24 @@ TEST_DB_PORT="${TEST_DB_PORT:-5433}"
 # Any other URL names a database you chose, on a server you vouch for.
 TEST_DB_OWN_URL="postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test"
 TEST_DB_URL="${TEST_DATABASE_URL:-$TEST_DB_OWN_URL}"
-# The development Postgres's host port: POSTGRES_PORT from the environment, else .env. Empty when
-# neither sets it (CI has no .env), which skips the development-server check below.
-DEV_DB_PORT="${POSTGRES_PORT:-}"
+# CI providers set CI to `true` or `1`; `false`, `0` and an empty value mean it is not CI.
+in_ci() {
+  case "$(printf '%s' "${CI:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" in
+    '' | 0 | false) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# The development Postgres's host port: POSTGRES_PORT from the environment, else .env, else the port
+# compose defaults to. Empty in CI when neither sets it (CI has no development Postgres), which skips
+# the development-server check below.
+DEV_DB_PORT="$(printf '%s' "${POSTGRES_PORT:-}" | tr -d '[:space:]')"
 [[ -n "$DEV_DB_PORT" ]] || DEV_DB_PORT="$(read_env POSTGRES_PORT)" || exit 1
+DEV_DB_PORT_SOURCE="POSTGRES_PORT"
+if [[ -z "$DEV_DB_PORT" ]] && ! in_ci; then
+  DEV_DB_PORT=5432
+  DEV_DB_PORT_SOURCE="POSTGRES_PORT is unset; set it if yours listens elsewhere"
+fi
 # The resolved URL is the single source of truth for the port we report. When a caller supplies
 # TEST_DATABASE_URL (e.g. a block-specific port), TEST_DB_PORT still holds the .env/default value, so
 # echoing it would claim "ready on port 5433" while actually using the URL's port. Read the port back
@@ -85,7 +99,7 @@ is_local_test_database() {
   return 1
 }
 
-# Whether TEST_DB_URL is on this machine's development Postgres (the port POSTGRES_PORT names). A
+# Whether TEST_DB_URL is on this machine's development Postgres (DEV_DB_PORT). A
 # test database there sits beside the development data, in a server `reset` never clears, and
 # `ensure` would create it inside that server. Nothing here acts on such a URL, whatever its name and
 # whatever E2E_ALLOW_NON_DISPOSABLE_DB says (the rule database-guards.ts applies in the e2e setup).
@@ -122,7 +136,7 @@ refuse_development_server() {
   local action="$1"
   on_development_server || return 0
   echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development" >&2
-  echo "   Postgres (POSTGRES_PORT). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT)." >&2
+  echo "   Postgres ($DEV_DB_PORT_SOURCE). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT)." >&2
   echo "   E2E_ALLOW_NON_DISPOSABLE_DB does not apply: a database on the development server is never" >&2
   echo "   a disposable test database, whatever it is named." >&2
   exit 1
@@ -161,7 +175,7 @@ ensure_test_database() {
   fi
   if on_development_server; then
     echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development Postgres" >&2
-    echo "   (POSTGRES_PORT), so it would be created beside the development data. Point" >&2
+    echo "   ($DEV_DB_PORT_SOURCE), so it would be created beside the development data. Point" >&2
     echo "   TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or create it yourself." >&2
     return 1
   fi

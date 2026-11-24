@@ -3,10 +3,7 @@ import { Link } from 'react-router'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
-import {
-  ResendVerificationEmail,
-  type ResendVerificationEmailMutation,
-} from '@nestled-template/shared/sdk'
+import { ResendVerificationEmail } from '@nestled-template/shared/sdk'
 import { formTheme } from '@nestled-template/shared/styles'
 import { useMutation } from '@apollo/client/react'
 
@@ -20,10 +17,9 @@ export default function ResendVerification() {
   // failed/retried resend must not reuse a spent token. See register.tsx for the same pattern.
   const [captchaKey, setCaptchaKey] = useState(0)
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [resendMutation, { loading }] = useMutation<ResendVerificationEmailMutation>(
-    ResendVerificationEmail,
-    { errorPolicy: 'none' },
-  )
+  const [resendMutation, { loading }] = useMutation(ResendVerificationEmail, {
+    errorPolicy: 'none',
+  })
   const captchaRequired = Boolean(turnstileSiteKey())
 
   function resetCaptcha() {

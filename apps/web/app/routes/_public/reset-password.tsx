@@ -3,11 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { AuthLayout } from '@nestled-template/web'
-import {
-  ResetPasswordInput,
-  ResetPassword,
-  type ResetPasswordMutation,
-} from '@nestled-template/shared/sdk'
+import { ResetPasswordInput, ResetPassword } from '@nestled-template/shared/sdk'
 import { formTheme } from '@nestled-template/shared/styles'
 import { useMutation } from '@apollo/client/react'
 
@@ -19,7 +15,7 @@ export default function ResetPasswordPage() {
     text: string
   } | null>(null)
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [resetPasswordMutation, { loading }] = useMutation<ResetPasswordMutation>(ResetPassword, {
+  const [resetPasswordMutation, { loading }] = useMutation(ResetPassword, {
     errorPolicy: 'none',
   })
   const token = params.get('token') || ''

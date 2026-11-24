@@ -19,19 +19,16 @@ export default function AdminOrganizationsPage() {
   const [page, setPage] = useState(0)
   const pageSize = 50
 
-  const { data, loading, error } = useQuery<AdminPlatformOrganizationsQuery>(
-    AdminPlatformOrganizations,
-    {
-      variables: {
-        filters: {
-          take: pageSize,
-          skip: page * pageSize,
-          search: search || undefined,
-        },
+  const { data, loading, error } = useQuery(AdminPlatformOrganizations, {
+    variables: {
+      filters: {
+        take: pageSize,
+        skip: page * pageSize,
+        search: search || undefined,
       },
-      fetchPolicy: 'network-only',
     },
-  )
+    fetchPolicy: 'network-only',
+  })
 
   type Organization = AdminPlatformOrganizationsQuery['adminOrganizations']['organizations'][number]
 

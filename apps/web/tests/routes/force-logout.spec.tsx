@@ -6,9 +6,9 @@ vi.mock('@nestled-template/shared/utils', () => ({
 }))
 
 describe('Force Logout Loader', () => {
-  it('should return a 302 redirect to /login', async () => {
+  it('should return a 302 redirect to /login', () => {
     const request = new Request('http://localhost/force-logout')
-    const response = await loader({ request })
+    const response = loader({ request })
 
     expect(response.status).toBe(302)
     const location = response.headers.get('Location')
@@ -16,19 +16,19 @@ describe('Force Logout Loader', () => {
     expect(location?.startsWith('/login')).toBe(true)
   })
 
-  it('should append expired=1 to the login redirect', async () => {
+  it('should append expired=1 to the login redirect', () => {
     const request = new Request('http://localhost/force-logout')
-    const response = await loader({ request })
+    const response = loader({ request })
 
     const location = response.headers.get('Location') ?? ''
     expect(new URL(location, 'http://localhost').searchParams.get('expired')).toBe('1')
   })
 
-  it('should preserve return_url when provided', async () => {
+  it('should preserve return_url when provided', () => {
     const request = new Request(
       'http://localhost/force-logout?return_url=' + encodeURIComponent('/members/billing'),
     )
-    const response = await loader({ request })
+    const response = loader({ request })
 
     const location = response.headers.get('Location') ?? ''
     const params = new URL(location, 'http://localhost').searchParams
@@ -36,9 +36,9 @@ describe('Force Logout Loader', () => {
     expect(params.get('expired')).toBe('1')
   })
 
-  it('should clear the session cookie', async () => {
+  it('should clear the session cookie', () => {
     const request = new Request('http://localhost/force-logout')
-    const response = await loader({ request })
+    const response = loader({ request })
 
     // The loader can set multiple Set-Cookie headers (host-only + domain-scoped),
     // so read them all via getSetCookie() and assert on the __session clear.

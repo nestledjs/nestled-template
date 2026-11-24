@@ -84,7 +84,7 @@ describe('NotificationsSettings', () => {
     )
   })
 
-  it('creates a new preference and writes it into the Apollo cache', async () => {
+  it('creates a preference that is not saved yet', async () => {
     renderRoute()
 
     fireEvent.click(screen.getByRole('switch', { name: 'Toggle Product Updates' }))
@@ -102,28 +102,10 @@ describe('NotificationsSettings', () => {
       )
     })
 
-    const options = createPreference.mock.calls[0][0]
-    const cache = {
-      modify: vi.fn(({ fields }) => fields.userPreferences(['existing-ref'])),
-      writeFragment: vi.fn(() => 'new-ref'),
-    }
-    options.update(cache, {
-      data: {
-        userCreateUserPreference: {
-          __typename: 'UserPreference',
-          id: 'pref-new',
-          key: 'notif_product_updates',
-          value: 'true',
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        },
-      },
-    })
-    expect(cache.writeFragment).toHaveBeenCalled()
     expect(screen.getByText('Notification preferences saved!')).toBeInTheDocument()
   })
 
-  it('updates an existing preference and patches the Apollo cache', async () => {
+  it('updates an existing preference', async () => {
     renderRoute()
 
     fireEvent.click(screen.getByRole('switch', { name: 'Toggle Weekly Digest' }))
@@ -138,24 +120,6 @@ describe('NotificationsSettings', () => {
         }),
       )
     })
-
-    const options = updatePreference.mock.calls[0][0]
-    const cache = {
-      identify: vi.fn(() => 'UserPreference:pref-1'),
-      modify: vi.fn(({ fields }) =>
-        fields.userPreferences([{ __ref: 'UserPreference:pref-1' }, { __ref: 'Other:pref-2' }]),
-      ),
-    }
-    options.update(cache, {
-      data: {
-        userUpdateUserPreference: {
-          __typename: 'UserPreference',
-          id: 'pref-1',
-          value: 'false',
-        },
-      },
-    })
-    expect(cache.modify).toHaveBeenCalled()
   })
 
   it('shows mutation errors', async () => {

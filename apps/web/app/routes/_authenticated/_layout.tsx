@@ -39,6 +39,10 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
   return { myOrganizationsQueryRef }
 })
 
+// One array for every render: a new one each time would change the memo below and the shell's
+// context with it.
+const NO_ORGANIZATIONS: MyOrganizationsWithMembersQuery['myOrganizations'] = []
+
 export default function AuthenticatedLayout() {
   const { user: contextUser } = useGlobalCtx()
   const location = useLocation()
@@ -55,7 +59,7 @@ export default function AuthenticatedLayout() {
   // The organization shown, and every request's `x-organization-id`: the server's active one (from
   // Me), else the first, identical in the server render and the hydrating one. A choice this browser stored is restored after hydration, through the shared
   // switch, and the loaders run again for it; organization-scoped content waits meanwhile.
-  const organizations = orgsData?.myOrganizations || []
+  const organizations = orgsData?.myOrganizations ?? NO_ORGANIZATIONS
   // A restored organization must reach the user the pages get too, so `user.activeOrganizationId`
   // and `activeOrganization.id` agree. The cached Me follows the switch's cache write by itself; the
   // verdict's user (rendered until the cache has it) does not, so the restore is applied here, for the user it was restored for, and only while that user's own active

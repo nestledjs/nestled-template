@@ -56,7 +56,17 @@
       "executor": "nx:run-commands",
       "dependsOn": ["typegen"],
       "cache": true,
-      "inputs": ["production", "^production", { "env": "VITE_COOKIE_DOMAIN" }],
+      "inputs": [
+        "production",
+        "^production",
+        { "env": "NODE_ENV" },
+        { "env": "VITE_API_URL" },
+        { "env": "VITE_COOKIE_DOMAIN" },
+        { "env": "VITE_COOKIE_NAME" },
+        { "env": "VITE_GTM_TRACKING_ID" },
+        { "env": "VITE_MODE" },
+        { "env": "VITE_TURNSTILE_SITE_KEY" }
+      ],
       "outputs": ["{projectRoot}/build"],
       "defaultConfiguration": "production",
       "options": {

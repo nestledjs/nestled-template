@@ -167,7 +167,7 @@ export function UserFilterCombobox({ value, onChange }: FilterProps) {
   useResetQueryOnClear(value, setQuery)
 
   const searchTerm = debouncedQuery.trim()
-  const { data, loading } = useQuery<AdminUserPickerQuery>(AdminUserPicker, {
+  const { data, loading } = useQuery(AdminUserPicker, {
     variables: { filters: { search: searchTerm, take: 20 } },
     skip: searchTerm.length === 0,
   })
@@ -203,7 +203,7 @@ export function OrganizationFilterCombobox({ value, onChange }: FilterProps) {
   useResetQueryOnClear(value, setQuery)
 
   const searchTerm = debouncedQuery.trim()
-  const { data, loading } = useQuery<AdminOrganizationPickerQuery>(AdminOrganizationPicker, {
+  const { data, loading } = useQuery(AdminOrganizationPicker, {
     variables: { filters: { search: searchTerm, take: 20 } },
     skip: searchTerm.length === 0,
   })

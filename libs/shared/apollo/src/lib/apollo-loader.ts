@@ -89,7 +89,7 @@ export const apolloLoader: typeof handler = () => loader => args => {
     throw narrowApiError(error)
   }
   try {
-    const result = handler()(loader)(args)
+    const result = handler<typeof args>()(loader)(args)
     if (result instanceof Promise) {
       return result.then(value => attachRecord(value, record), fail) as typeof result
     }

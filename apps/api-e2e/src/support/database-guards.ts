@@ -19,6 +19,12 @@ export const DESTINATION_OVERRIDES = [
 /** The opt-out for a test database that does not look disposable. */
 export const ALLOW_NON_DISPOSABLE_DB = 'E2E_ALLOW_NON_DISPOSABLE_DB'
 
+// The port .dev/docker-compose.yml publishes the development Postgres on when POSTGRES_PORT is unset.
+const DEFAULT_DEVELOPMENT_PORT = '5432'
+
+// The from-scratch reset drops a schema; a lock held elsewhere would otherwise block it forever.
+const RESET_TIMEOUT_MS = 30_000
+
 const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:'])
 
 /** A URL's host, port and database name, without its credentials, for messages and logs. */
@@ -38,7 +44,7 @@ export function describeDatabase(databaseUrl: string): string {
  * neither is one on the development server (see developmentServerReason), whatever it is named.
  *
  * This is the one rule for every path that writes to, resets or drops a test database: global
- * setup's guard and its from-scratch reset both read it. `env` supplies POSTGRES_PORT.
+ * setup's guard and its from-scratch reset both read it. `env` supplies POSTGRES_PORT and CI.
  */
 export function nonDisposableReason(
   databaseUrl: string,
@@ -91,18 +97,23 @@ export function nonDisposableReason(
   return undefined
 }
 
+// CI providers set CI to `true` or `1`; `false`, `0` and an empty value mean it is not CI.
+function isCi(env: NodeJS.ProcessEnv): boolean {
+  return !['', '0', 'false'].includes((env.CI ?? '').trim().toLowerCase())
+}
+
 /**
  * Why a URL reaches this machine's development Postgres, or undefined. POSTGRES_PORT, from the
- * repo-root .env that Nx loads, is the port it listens on; a local URL on that port puts the test
- * database beside the development data, however it is named. CI sets no POSTGRES_PORT, and then
- * there is nothing to compare with.
+ * repo-root .env that Nx loads, is the port it listens on; unset, it is Compose's default. A local
+ * URL on that port puts the test database beside the development data, however it is named. CI sets
+ * no POSTGRES_PORT and has no development Postgres, so there is then nothing to compare with.
  */
 export function developmentServerReason(
   databaseUrl: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   const developmentPort = env.POSTGRES_PORT?.trim()
-  if (!developmentPort) return undefined
+  if (!developmentPort && isCi(env)) return undefined
   let url: URL
   try {
     url = new URL(databaseUrl)
@@ -111,15 +122,18 @@ export function developmentServerReason(
   }
   if (!LOCAL_DATABASE_HOSTS.has(url.hostname)) return undefined
   const port = url.port || '5432'
-  if (port !== developmentPort) return undefined
-  return `it is on port ${port}, where the development Postgres listens (POSTGRES_PORT)`
+  if (port !== (developmentPort || DEFAULT_DEVELOPMENT_PORT)) return undefined
+  const listens = `it is on port ${port}, where the development Postgres listens`
+  return developmentPort
+    ? `${listens} (POSTGRES_PORT)`
+    : `${listens} by default (POSTGRES_PORT is unset; set it if yours listens elsewhere)`
 }
 
 /**
  * Whether a URL names a database this suite may migrate, push, seed and wipe: a postgresql: URL on
  * this machine (the rule prisma.config.ts applies to `migrate reset`), named as a test database,
  * ending in `_test` (`nestled_template_test` by default), with no `?schema=` and no fragment, and
- * not on the development server's port (POSTGRES_PORT in `env`). A URL whose query parameters
+ * not on the development server's port (see developmentServerReason). A URL whose query parameters
  * override the destination (`?host=`, `?port=`, `?dbname=` and the like) is never disposable, since
  * the client would connect there.
  */
@@ -281,14 +295,14 @@ export function resetTestDatabase(
   if (problem) {
     throw new Error(
       `Refusing to reset ${describeDatabase(databaseUrl)}: ${problem.reason}. Only a local ` +
-        `database named *_test (e.g. nestled_template_test), not on the development server, is ` +
-        `reset by the e2e setup, ${ALLOW_NON_DISPOSABLE_DB} or not.`,
+        `database named *_test, not on the development server, is reset by the e2e setup, ` +
+        `${ALLOW_NON_DISPOSABLE_DB} or not.`,
     )
   }
   runOnTestDatabase(
     databaseUrl,
     'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;',
     clients,
-    { env },
+    { env, timeout: RESET_TIMEOUT_MS },
   )
 }

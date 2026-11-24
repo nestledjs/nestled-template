@@ -31,7 +31,7 @@ function useSessionUser(session: AppSessionVerdict): SessionUser | null {
   useLayoutEffect(() => {
     if (verdictUser) client.writeQuery<MeQuery>({ query: Me, data: { me: verdictUser } })
   }, [client, verdictUser])
-  const cached = useQuery<MeQuery>(Me, { fetchPolicy: 'cache-only', skip: !verdictUser })
+  const cached = useQuery(Me, { fetchPolicy: 'cache-only', skip: !verdictUser })
   const cachedUser = cached.data?.me
   if (!verdictUser) return null
   return cachedUser?.id === verdictUser.id ? cachedUser : verdictUser

@@ -3,7 +3,7 @@ import { cookieDomainFromSetting } from './cookie-domain'
 
 // The rule the API sets its session cookie's `Domain` with. apps/web/tests/session-cookie.spec.ts
 // runs the same table against the web server's copy (`cookieDomainFromSetting` in
-// apps/web/app/session-cookie.ts); keep the two tables identical.
+// apps/web/app/session/session-cookie.ts); keep the two tables identical.
 const SETTING_CASES: ReadonlyArray<[string | undefined, string | undefined]> = [
   [undefined, undefined],
   ['', undefined],

@@ -1,0 +1,92 @@
+id: 2026-11-24-forward-duplicate-session-cookies
+title: >-
+  With several same-name session cookies, the web server forwards all of them and lets the API
+  choose the one that verifies
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-20-session-middleware
+  - 2026-11-24-session-starts-in-fresh-document
+
+intent: >
+  The defect. A browser can hold several cookies with the session cookie's name (a host-only and a
+  parent-domain one, after a domain change or from a sibling site). The API already handles that:
+  it takes the newest one whose signature verifies. But the web server picked one itself, by issue
+  time, and sent it as a bearer token, which the API reads first. The web server cannot verify a
+  signature, so a newer cookie that does not verify hid a valid session.
+
+
+  The fix.
+
+  1. libs/shared/utils/src/lib/cookies.tsx: new `cookieCandidates(cookieHeader, name)` (every
+  distinct, nonempty value, in order, as sent) and `cookiePairs(name, values)`.
+
+  2. libs/shared/apollo/src/lib/apollo.ts: `resolveAuthToken` becomes `resolveCredentials`. For a
+  server-side client whose request carries several candidates, it returns a Cookie header with
+  those candidates and nothing else of the request's cookies, and no bearer token. One candidate
+  keeps the bearer token exactly as before. An explicit token option or the request's own
+  Authorization header still comes first. The browser's client is unchanged.
+
+  3. apps/web/app/session/session-middleware.server.ts: the cookie evidence is `expired` only when
+  every candidate is, and `absent` only with none. `forwardedSessionCookie(request)` forwards every
+  candidate. New `sessionToken(request)` for a server-side call that can only take a bearer token
+  (a file proxy, an export): the only candidate, or the newest by issue time of several, which is a
+  guess. Prefer `forwardedSessionCookie`.
+
+
+  The API is unchanged, and needs nothing: checked that its CSRF check is the
+  `apollo-require-preflight` header, sent both ways; that CORS admits a request without an Origin;
+  that throttling is by IP; and that a query behaves the same with a bearer token or a cookie (only
+  the sign-out and emulation mutations, which the server never sends, differ).
+
+
+  Specs: libs/shared/utils/src/lib/cookies.spec.ts, libs/shared/apollo/src/lib/apollo.spec.ts,
+  apps/web/tests/session/session-middleware.spec.tsx,
+  apps/web/tests/session/forwarded-session-cookies.spec.ts (a real HTTP request) and
+  libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts (the real JwtStrategy
+  behind the real guard).
+
+why: >
+  A user with a stale or foreign duplicate cookie could not use the app: every server render was
+  refused while the API would have accepted the session beside it.
+
+affectedPaths:
+  - libs/shared/utils/src/lib/cookies.tsx
+  - libs/shared/utils/src/lib/cookies.spec.ts
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/app/session/session-middleware.server.ts
+  - apps/web/tests/session/session-middleware.spec.tsx
+  - apps/web/tests/session/forwarded-session-cookies.spec.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+
+skipIf:
+  - The project's API does not read the session from the Cookie header (see agentHints) and cannot
+    be changed to.
+
+verification:
+  - pnpm exec nx test utils --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test api-custom --skip-nx-cache
+
+agentHints:
+  - >
+    Before taking this note, confirm that the project's JWT extractor reads the Cookie header and
+    chooses with `selectSessionToken` (jwt.strategy.ts). A project with a custom extractor that
+    reads only the bearer token, or takes the first cookie, must take the template's first. The new
+    specs in jwt.strategy.guard.spec.ts fail there.
+  - >
+    The web server and the API must agree on the cookie's name. The API reads `VITE_COOKIE_NAME`,
+    then `API_COOKIE_NAME`; the web reads `VITE_COOKIE_NAME`. A project that sets only
+    `API_COOKIE_NAME` is already broken: apply `2026-11-24-one-session-cookie-name`, after which
+    only `VITE_COOKIE_NAME` is read.
+  - >
+    Grep server code for `getCookie(..., getSessionCookieName())` outside the session module: a
+    loader that calls a REST endpoint itself uses `forwardedSessionCookie(request)`, and one that
+    really needs a raw token `sessionToken(request)`. Do not decide a session from either: only the
+    verdict does that.
+  - >
+    Do not forward the request's whole Cookie header: only the session candidates go to the API.

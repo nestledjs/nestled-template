@@ -9,9 +9,9 @@ export const HOST_ONLY_COOKIE_DOMAINS: readonly string[] = ['localhost', '127.0.
  * comma-separated list; the first nonempty entry is the cookie's domain. Undefined (a host-only
  * cookie) when nothing is set or the entry is `localhost`, `127.0.0.1` or `[::1]`.
  *
- * The web server applies the same rule (apps/web/app/session-cookie.ts `cookieDomainFromSetting`)
- * to know which cookie a sign-out must expire; the two share the table in their specs. Change
- * both together.
+ * The web server applies the same rule (apps/web/app/session/session-cookie.ts
+ * `cookieDomainFromSetting`) to know which cookie a sign-out must expire; the two share the table
+ * in their specs. Change both together.
  */
 export function cookieDomainFromSetting(value: string | undefined): string | undefined {
   const domain = (value ?? '')

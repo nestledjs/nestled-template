@@ -105,6 +105,65 @@ describe('Login Component', () => {
       expect(safeReturnUrl('https://example.com//evil.com')).toBe(DEFAULT)
     })
 
+    it('never leaves the origin through characters the URL parser drops', () => {
+      // It drops tabs and newlines, so these are protocol-relative to the browser.
+      expect(safeReturnUrl('/\t/evil.com')).toBe(DEFAULT)
+      expect(safeReturnUrl('/\n/evil.com')).toBe(DEFAULT)
+      expect(safeReturnUrl('/.//evil.com')).toBe(DEFAULT)
+      expect(safeReturnUrl('/x/..//evil.com')).toBe(DEFAULT)
+    })
+
+    it.each([
+      '/logout',
+      '/force-logout',
+      '/logout/',
+      '/logout//',
+      '/LogOut',
+      '/FORCE-LOGOUT/',
+      '/logout?return_url=/members',
+      '/force-logout#x',
+      '/./logout',
+      '/members/../logout',
+      '/members//../../logout',
+      '/members/%2e%2e/logout',
+      '/members/.%2E/logout',
+      '/members%2f..%2flogout',
+      '/%6cogout',
+      '/%6Cog%6Fut',
+      '/force%2dlogout',
+      '/%256cogout',
+      '/%25256cogout',
+      '/%2flogout',
+      '/logout%2f',
+      '/logout%3Freturn_url=x',
+      '/logout%23x',
+      '/%2e/logout',
+      '/logout;a=b',
+      '/members;x/../logout',
+      '/members;x/%252e%252e/logout',
+      '/logout.data',
+      '/force-logout.data',
+      '/force-logout/_.data',
+      '/logout%zz/../logout',
+      '/%zz/%2e%2e/%6cogout',
+      'https://app.example.com/force-logout',
+      'https://app.example.com/%66orce-logout/',
+    ])('refuses the sign-out route %s', raw => {
+      expect(safeReturnUrl(raw)).toBe(DEFAULT)
+    })
+
+    it.each([
+      '/settings/profile?next=%2Flogout',
+      '/settings/profile#/logout',
+      '/logout-history',
+      '/members/logout',
+      '/docs/force-logout/notes',
+      '/members/caf%C3%A9?q=a%20b',
+      '/mcp-connect?request=%25252525252525abc',
+    ])('keeps the ordinary path %s', raw => {
+      expect(safeReturnUrl(raw)).toBe(raw)
+    })
+
     it('falls back for non-path schemes like javascript:', () => {
       expect(safeReturnUrl('javascript:alert(1)')).toBe(DEFAULT)
     })

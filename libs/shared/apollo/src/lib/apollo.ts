@@ -71,7 +71,13 @@ import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
 import { getMainDefinition } from '@apollo/client/utilities'
 import { createClient } from 'graphql-ws'
 import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
-import { decodeCookieValue, isFetchFailure, pickNewestJwt } from '@nestled-template/shared/utils'
+import {
+  cookieCandidates,
+  cookiePairs,
+  decodeCookieValue,
+  isFetchFailure,
+  pickNewestJwt,
+} from '@nestled-template/shared/utils'
 import { createCache } from './cache-config'
 import { recordApiOutage } from './session/outage-memory'
 
@@ -178,25 +184,42 @@ function getCookieFromHeader(cookieHeader: string | null | undefined, name: stri
   return pickNewestJwt(values)
 }
 
-function resolveAuthToken(request?: Request, options?: ClientOptions): string | null {
+/**
+ * How a client authenticates: a bearer token, or (a server-side client whose request carries
+ * several session cookies) those cookies, for the API to choose from. Never both: the API reads a
+ * bearer token first, and the cookies would be ignored.
+ */
+type ClientCredentials = { token: string | null; cookie: string | null }
+
+function bearer(token: string | null): ClientCredentials {
+  return { token, cookie: null }
+}
+
+function resolveCredentials(request?: Request, options?: ClientOptions): ClientCredentials {
   // 1. Check options first
   if (options?.token) {
-    return options.token
+    return bearer(options.token)
   }
 
   // 2. Check the request authorization header
   if (request) {
     const authHeader = request.headers.get('authorization')
     if (authHeader) {
-      const token = authHeader.replace(/^Bearer\s+/, '')
-      return token
+      return bearer(authHeader.replace(/^Bearer\s+/, ''))
     }
 
-    // 3. Check request cookies
+    // 3. Check request cookies. With several same-name session cookies, forward them all and
+    // nothing else: this side cannot verify a signature, so a newer cookie that does not verify
+    // would hide the session that does. The API takes the newest one that verifies
+    // (selectSessionToken).
     const cookieHeader = request.headers.get('cookie')
+    const candidates = cookieCandidates(cookieHeader, getSessionCookieName())
+    if (candidates.length > 1) {
+      return { token: null, cookie: cookiePairs(getSessionCookieName(), candidates) }
+    }
     const cookieToken = getCookieFromHeader(cookieHeader, getSessionCookieName())
     if (cookieToken) {
-      return cookieToken
+      return bearer(cookieToken)
     }
   }
 
@@ -204,11 +227,11 @@ function resolveAuthToken(request?: Request, options?: ClientOptions): string | 
   if (globalThis.window !== undefined && typeof document !== 'undefined') {
     const browserToken = getCookieFromHeader(document.cookie, getSessionCookieName())
     if (browserToken) {
-      return browserToken
+      return bearer(browserToken)
     }
   }
 
-  return null
+  return bearer(null)
 }
 
 /**
@@ -265,7 +288,7 @@ export function isQueryOperation(operation: ApolloLink.Operation): boolean {
 function handleOrganizationRequired(operation: ApolloLink.Operation): void {
   if (globalThis.window === undefined || !isQueryOperation(operation)) return
 
-  globalThis.window.dispatchEvent(
+  globalThis.dispatchEvent(
     new CustomEvent(APOLLO_ORGANIZATION_REQUIRED_EVENT, {
       detail: { operation: operation.operationName },
     }),
@@ -275,7 +298,7 @@ function handleOrganizationRequired(operation: ApolloLink.Operation): void {
 function handleAuthorizationError(operation: ApolloLink.Operation): void {
   if (globalThis.window === undefined || !isQueryOperation(operation)) return
 
-  globalThis.window.dispatchEvent(
+  globalThis.dispatchEvent(
     new CustomEvent(APOLLO_ACCESS_FORBIDDEN_EVENT, {
       detail: { operation: operation.operationName },
     }),
@@ -293,7 +316,7 @@ export const APOLLO_SESSION_SUSPECT_EVENT = 'apollo-session-suspect'
 
 function handleAuthenticationError(operation: ApolloLink.Operation): void {
   if (globalThis.window === undefined) return
-  globalThis.window.dispatchEvent(
+  globalThis.dispatchEvent(
     new CustomEvent(APOLLO_SESSION_SUSPECT_EVENT, {
       detail: { operation: operation.operationName },
     }),
@@ -507,7 +530,7 @@ function dispatchServiceUnavailableEvent(
 
   // No once-per-30-seconds latch: the listener ignores reports while it is already checking, and a
   // latch here only meant that an outage starting soon after a recovery went unreported.
-  globalThis.window.dispatchEvent(
+  globalThis.dispatchEvent(
     new CustomEvent(APOLLO_SERVICE_UNAVAILABLE_EVENT, {
       detail: {
         error: networkError,
@@ -583,8 +606,8 @@ export function storeActiveOrganizationId(organizationId: string | null): void {
 
 /**
  * Forgets the stored organization because this document is about to load another user's session,
- * and stores none for the rest of this document. For starting or ending an emulation, which then
- * sets `location.href`: the next document is the other user's.
+ * and stores none for the rest of this document. For a sign-in, a registration, and starting or
+ * ending an emulation, which then load a document: the next one is the other user's.
  *
  * `storeActiveOrganizationId(null)` alone is not enough there. The signed-in shell is still mounted
  * while the navigation is pending, and it stores the organization it shows on every render
@@ -594,14 +617,24 @@ export function storeActiveOrganizationId(organizationId: string | null): void {
  * every non-null `storeActiveOrganizationId` is ignored and `getStoredActiveOrganizationId`
  * answers null, so this document sends no organization either; the next document starts clean.
  *
- * Only before a document navigation. A sign-in that stays in this document (the login form, an
- * invitation) uses `storeActiveOrganizationId(null)`, so the new session's shell can store its own
- * organization. It never signs anyone out and does not touch the session cookie.
+ * Only right before a document navigation (an emulation, and every sign-in or registration, which
+ * end with one). While a sign-in still has work to do in this document (an invitation to accept),
+ * it uses `storeActiveOrganizationId(null)` and calls this when it leaves. It never signs anyone
+ * out and does not touch the session cookie.
  */
 export function clearActiveOrganizationForSessionChange(): void {
   if (globalThis.window === undefined) return
   activeOrganizationSessionChanging = true
   storeActiveOrganizationId(null)
+}
+
+/**
+ * Whether this document is already leaving for another user's session
+ * (`clearActiveOrganizationForSessionChange` was called): whoever asks must not start a second
+ * document load, which would replace the one on its way.
+ */
+export function isLeavingForSessionChange(): boolean {
+  return activeOrganizationSessionChanging
 }
 
 /**
@@ -671,13 +704,16 @@ export function rememberActiveOrganization(organizationId: string | null | undef
   storeActiveOrganizationId(organizationId)
 }
 
-function createAuthLink(token: string | null): ApolloLink {
+function createAuthLink({ token, cookie }: ClientCredentials): ApolloLink {
   return new SetContextLink(({ headers }) => {
     const newHeaders: Record<string, string> = { ...headers }
 
     // Add authorization header if token exists
     if (token) {
       newHeaders.authorization = `Bearer ${token}`
+    }
+    if (cookie) {
+      newHeaders.cookie = cookie
     }
 
     // Add organization context header for multi-tenant isolation
@@ -746,7 +782,7 @@ function createWebSocketLink(wsUri: string, token: string | null): GraphQLWsLink
 
 function createLinkChain(
   uri: string,
-  token: string | null,
+  credentials: ClientCredentials,
   isDev: boolean,
   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
 ): ApolloLink {
@@ -767,14 +803,14 @@ function createLinkChain(
           const def = getMainDefinition(query)
           return def.kind === 'OperationDefinition' && def.operation === 'subscription'
         },
-        createWebSocketLink(wsUri, token),
+        createWebSocketLink(wsUri, credentials.token),
         uploadLink,
       )
 
   const links = [
     createErrorLink(onApiFailure),
     ...(isDev ? [createLogLink()] : []),
-    createAuthLink(token),
+    createAuthLink(credentials),
     splitLink,
   ]
 
@@ -796,10 +832,10 @@ export function makeClient(request?: Request, options?: ClientOptions) {
     )
   }
 
-  const token = resolveAuthToken(request, options)
+  const credentials = resolveCredentials(request, options)
   const isDev = options?.environment === 'development'
 
-  const link = createLinkChain(uri, token, isDev, options?.onApiFailure)
+  const link = createLinkChain(uri, credentials, isDev, options?.onApiFailure)
 
   return new ApolloClient({
     link,

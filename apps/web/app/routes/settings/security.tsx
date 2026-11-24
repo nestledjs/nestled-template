@@ -24,24 +24,15 @@ import {
   Setup2Fa,
   Enable2Fa,
   Disable2Fa,
-  type ChangePasswordMutation,
-  type InvalidateSessionMutation,
-  type InvalidateAllSessionsMutation,
-  type Setup2FaMutation,
-  type Enable2FaMutation,
-  type Disable2FaMutation,
 } from '@nestled-template/shared/sdk'
 import { useReadQuery, type QueryRef, useMutation } from '@apollo/client/react'
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
   const meQueryRef = preloadQuery<MeQuery>(Me)
-  const securityEventsQueryRef = preloadQuery<MySecurityEventsQuery>(MySecurityEvents, {
+  const securityEventsQueryRef = preloadQuery(MySecurityEvents, {
     variables: {
-      input: {
-        take: 3,
-        orderBy: 'createdAt',
-        orderDirection: 'desc',
-      },
+      // Newest first, the API's default order.
+      input: { take: 3 },
     },
   })
   const userSessionsQueryRef = preloadQuery<GetUserSessionsQuery>(GetUserSessions)
@@ -76,19 +67,16 @@ export default function SecuritySettings() {
   const [backupCodes, setBackupCodes] = useState<string[]>([])
 
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [changePassword] = useMutation<ChangePasswordMutation>(ChangePassword, {
+  const [changePassword] = useMutation(ChangePassword, {
     errorPolicy: 'none',
   })
-  const [invalidateSession] = useMutation<InvalidateSessionMutation>(InvalidateSession, {
+  const [invalidateSession] = useMutation(InvalidateSession, {
     errorPolicy: 'none',
   })
-  const [invalidateAllSessions] = useMutation<InvalidateAllSessionsMutation>(
-    InvalidateAllSessions,
-    { errorPolicy: 'none' },
-  )
-  const [setup2FA] = useMutation<Setup2FaMutation>(Setup2Fa, { errorPolicy: 'none' })
-  const [enable2FA] = useMutation<Enable2FaMutation>(Enable2Fa, { errorPolicy: 'none' })
-  const [disable2FA] = useMutation<Disable2FaMutation>(Disable2Fa, { errorPolicy: 'none' })
+  const [invalidateAllSessions] = useMutation(InvalidateAllSessions, { errorPolicy: 'none' })
+  const [setup2FA] = useMutation(Setup2Fa, { errorPolicy: 'none' })
+  const [enable2FA] = useMutation(Enable2Fa, { errorPolicy: 'none' })
+  const [disable2FA] = useMutation(Disable2Fa, { errorPolicy: 'none' })
 
   const showSuccess = (message: string) => {
     setFormSuccess(message)

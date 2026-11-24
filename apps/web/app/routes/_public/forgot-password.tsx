@@ -3,11 +3,7 @@ import { Link } from 'react-router'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
-import {
-  ForgotPasswordInput,
-  ForgotPassword,
-  type ForgotPasswordMutation,
-} from '@nestled-template/shared/sdk'
+import { ForgotPasswordInput, ForgotPassword } from '@nestled-template/shared/sdk'
 import { formTheme } from '@nestled-template/shared/styles'
 import { useMutation } from '@apollo/client/react'
 
@@ -21,10 +17,7 @@ export default function ForgotPasswordPage() {
   // challenge — otherwise the retry fails the captcha instead of surfacing the real error.
   const [captchaKey, setCaptchaKey] = useState(0)
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [forgotPasswordMutation, { loading }] = useMutation<ForgotPasswordMutation>(
-    ForgotPassword,
-    { errorPolicy: 'none' },
-  )
+  const [forgotPasswordMutation, { loading }] = useMutation(ForgotPassword, { errorPolicy: 'none' })
   const captchaRequired = Boolean(turnstileSiteKey())
 
   async function handleForgotPassword(input: ForgotPasswordInput) {

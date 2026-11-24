@@ -1,37 +1,12 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { BellAlertIcon, BellIcon, EnvelopeIcon } from '@heroicons/react/24/outline'
 import {
   UserPreferences,
   UserPreferencesQuery,
   UserCreateUserPreference,
   UserUpdateUserPreference,
-  type UserCreateUserPreferenceMutation,
-  type UserUpdateUserPreferenceMutation,
 } from '@nestled-template/shared/sdk'
-import { gql, type ApolloCache } from '@apollo/client'
 import { useQuery, useMutation } from '@apollo/client/react'
-
-type CacheReference = {
-  __ref?: string
-}
-
-function updatePreferencesCache(
-  cache: ApolloCache,
-  updatedPreference: { __typename?: string; id: string; value: string },
-) {
-  const updatedPreferenceId = cache.identify(updatedPreference)
-  cache.modify({
-    fields: {
-      userPreferences(existingPreferences = []) {
-        return (existingPreferences as CacheReference[]).map(pref =>
-          pref.__ref === updatedPreferenceId
-            ? { ...pref, value: String(updatedPreference.value) }
-            : pref,
-        )
-      },
-    },
-  })
-}
 
 interface NotificationSetting {
   key: string
@@ -110,34 +85,17 @@ const DEFAULT_NOTIFICATIONS: NotificationSetting[] = [
 
 export const loader = () => ({})
 
-function handleUpdatePreferenceCache(
-  cache: Parameters<typeof updatePreferencesCache>[0],
-  data:
-    | { userUpdateUserPreference?: Parameters<typeof updatePreferencesCache>[1] | null }
-    | null
-    | undefined,
-) {
-  if (data?.userUpdateUserPreference) {
-    updatePreferencesCache(cache, data.userUpdateUserPreference)
-  }
-}
-
 export default function NotificationsSettings() {
-  const { data: preferencesData } = useQuery<UserPreferencesQuery>(UserPreferences)
+  const { data: preferencesData, loading } = useQuery<UserPreferencesQuery>(UserPreferences)
   const preferences = preferencesData?.userPreferences || []
 
   const [formSuccess, setFormSuccess] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  const savingKeys = useRef(new Set<string>())
 
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [createPreference] = useMutation<UserCreateUserPreferenceMutation>(
-    UserCreateUserPreference,
-    { errorPolicy: 'none' },
-  )
-  const [updatePreference] = useMutation<UserUpdateUserPreferenceMutation>(
-    UserUpdateUserPreference,
-    { errorPolicy: 'none' },
-  )
+  const [createPreference] = useMutation(UserCreateUserPreference, { errorPolicy: 'none' })
+  const [updatePreference] = useMutation(UserUpdateUserPreference, { errorPolicy: 'none' })
 
   const showSuccess = (message: string) => {
     setFormSuccess(message)
@@ -175,7 +133,6 @@ export default function NotificationsSettings() {
           updatedAt: new Date().toISOString(),
         },
       },
-      update: (cache, { data }) => handleUpdatePreferenceCache(cache, data),
     })
   }
 
@@ -190,7 +147,8 @@ export default function NotificationsSettings() {
       optimisticResponse: {
         userCreateUserPreference: {
           __typename: 'UserPreference',
-          id: `temp-${Date.now()}`,
+          // By key, so two switches saved at once stay two entities in the cache.
+          id: `temp-${key}`,
           key,
           value: String(newValue),
           createdAt: new Date().toISOString(),
@@ -198,31 +156,33 @@ export default function NotificationsSettings() {
         },
       },
       update: (cache, { data }) => {
-        if (!data?.userCreateUserPreference) return
-        cache.modify({
-          fields: {
-            userPreferences(existingPreferences = []) {
-              const newPrefRef = cache.writeFragment({
-                data: data.userCreateUserPreference,
-                fragment: gql`
-                  fragment NewUserPreference on UserPreference {
-                    id
-                    key
-                    value
-                    createdAt
-                    updatedAt
-                  }
-                `,
-              })
-              return [...existingPreferences, newPrefRef]
-            },
-          },
-        })
+        const created = data?.userCreateUserPreference
+        if (!created) return
+        // Through the query, not `cache.modify`: the document aliases the field, and the cache
+        // keeps it under the name the API gives it.
+        cache.updateQuery({ query: UserPreferences }, cached =>
+          cached
+            ? { ...cached, userPreferences: [...(cached.userPreferences ?? []), created] }
+            : undefined,
+        )
       },
     })
   }
 
   const toggleNotification = async (key: string, currentValue: boolean) => {
+    // Without the saved list there is no telling a create from an update, and a list still being
+    // fetched can be older than the save and replace it.
+    if (loading) {
+      showError('Your saved preferences are still loading. Try again in a moment.')
+      return
+    }
+    if (!preferencesData) {
+      showError('Your saved preferences have not loaded. Reload the page and try again.')
+      return
+    }
+    // A preference being created has no id to update yet, so a switch saves one change at a time.
+    if (savingKeys.current.has(key)) return
+    savingKeys.current.add(key)
     const newValue = !currentValue
 
     try {
@@ -235,6 +195,8 @@ export default function NotificationsSettings() {
       showSuccess('Notification preferences saved!')
     } catch (error) {
       showError((error as Error)?.message ?? 'Failed to save preferences')
+    } finally {
+      savingKeys.current.delete(key)
     }
   }
 

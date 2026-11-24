@@ -1,0 +1,159 @@
+id: 2026-11-24-session-starts-in-fresh-document
+title: >-
+  A session starts in a fresh document, and a document that finds another user signed in is loaded
+  again before anything renders
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-20-session-middleware
+  - 2026-11-20-emulation-organization-reload-race
+  - 2026-11-21-retry-queries-after-confirmed-session
+  - 2026-11-21-session-files-sonar-cleanup
+
+intent: >
+  The defect. Cached data outlived the identity it was read for. The Apollo cache, the mounted
+  components and the stored organization live as long as the browser document, but a sign-in, a
+  registration and the redirect of an ended session to /login were client navigations, which keep
+  the document. A document whose session cookie was replaced meanwhile (another tab signed in as
+  someone else) kept it too.
+
+
+  The fix.
+
+  1. Sign-in and registration end with a document load. login.tsx `signedIn()` (password and
+  two-factor) calls `clearActiveOrganizationForSessionChange()` and then
+  `globalThis.location.assign(<the validated local path>)`; register.tsx does the same with
+  `DEFAULT_POST_LOGIN`; accept-invitation.tsx (its log in and sign up tabs) ends with
+  `loadMembersArea()`, a `location.replace('/members')`. An invitation accepted by a user who was
+  already signed in starts no session and stays a client navigation. `useNavigate` is gone from
+  login.tsx and register.tsx. OAuth arrives from the API as a document load, and an emulation's
+  start and end already load one: unchanged.
+
+  2. `requireSession` (session-middleware.server.ts) answers "no session" with
+  `redirectDocument('/login?return_url=...')` instead of `redirect`: the same 302 for a document
+  request, with or without JavaScript, and a document load instead of a client redirect for a
+  client navigation. A rejected session already did this.
+
+  3. New apps/web/app/session/session-user-guard.tsx, `SessionUserGuard`, wrapped around the page
+  in root.tsx `Layout` (outside `ApolloHydrationHelper`) with the root loader's verdict. It
+  remembers, per document, the last user the server judged signed in. When a verdict names another
+  user, it renders nothing and loads the document again, once. A signed-out or unknown verdict in
+  between neither resets the memory nor does anything, the same user changes nothing, and a new
+  document takes its first user as its own, so it cannot loop. It never signs anyone out.
+
+  4. New `isLeavingForSessionChange()` in libs/shared/apollo, so the guard does not replace a
+  document load already on its way (a sign-in, an emulation starting or ending): it renders nothing
+  and waits for it, and loads the document itself only if that load has not happened after 10 s.
+
+
+  5. No cache keeps a signed-in response. The session middleware sets
+  `Cache-Control: private, no-store` (`SESSION_CACHE_CONTROL`) on every response to a request that
+  carries a session cookie: a document, a `.data` answer, a redirect, an error, whatever the
+  verdict. A route's own value stays, except one that would let a shared cache keep a page (HTML or
+  `.data`): its root loader data holds the user. Anonymous responses and static assets are
+  unchanged.
+
+  6. A document restored from the back/forward cache (`pageshow` with `persisted`) asks the server
+  to judge the session again. If it had rendered a signed-in user it is hidden meanwhile, but stays
+  mounted (`SESSION_CHECK_STYLE`, rendered in root.tsx `Layout`'s head): the same user gets it back
+  as it was left, forms included; another user, or a signed-out verdict on a public page, loads the
+  document; a private page is redirected by `requireSession`; an unknown verdict or a failed request
+  shows the existing recovering screen and keeps the session. Without any answer for 10 s the
+  recovering screen replaces the page, so it cannot stay blank. A document that was left for another
+  session is loaded again.
+
+
+  Expected behaviour changes: signing in and registering load a document (the page after a sign-in
+  is a full load, not a client transition); browser Back to a signed-in page asks the server.
+  Nothing else.
+
+
+  Specs: apps/web/tests/session/session-user-guard.spec.tsx (the app's real client and
+  InMemoryCache), apps/web/tests/session/restored-document.spec.tsx,
+  apps/web/tests/session/session-cache-control.spec.tsx (over real HTTP),
+  apps/web/tests/session/session-middleware.spec.tsx,
+  apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx, and the helper
+  apps/web/tests/helpers/location.ts.
+
+why: >
+  On a shared browser, or when two accounts are used in one browser, a page could show data that
+  had been read for the previous user until its own request answered.
+
+affectedPaths:
+  - apps/web/app/session/session-user-guard.tsx
+  - apps/web/app/session/session-middleware.server.ts
+  - apps/web/app/session/return-url.ts
+  - apps/web/app/session/index.ts
+  - apps/web/app/root.tsx
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/routes/_public/register.tsx
+  - apps/web/app/routes/accept-invitation.tsx
+  - libs/shared/apollo/src/lib/apollo.ts
+  - apps/web/tests/session/session-user-guard.spec.tsx
+  - apps/web/tests/session/restored-document.spec.tsx
+  - apps/web/tests/session/session-cache-control.spec.tsx
+  - apps/web/tests/session/session-middleware.spec.tsx
+  - apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+  - apps/web/tests/helpers/location.ts
+
+skipIf:
+  - The project has not taken 2026-11-20-session-middleware (it has no session verdict).
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm run verify:session-decisions
+  - >-
+    In a production build, sign in with the network panel open: the page after the form is a
+    document request. Then sign in as another user in a second tab and navigate in the first: it
+    loads a document and shows the second user.
+  - >-
+    In the same build, a signed-in document, its `.data` and a redirect answer
+    `Cache-Control: private, no-store`; a signed-out public page answers what it did before.
+
+agentHints:
+  - >
+    Find every place the project starts a session, not only these three: grep for `setCookie`
+    callers in the API and, in the web app, for a `navigate(` after a mutation that answers with a
+    token (magic links, SSO, one-time codes, a custom checkout that registers). Each ends with
+    `clearActiveOrganizationForSessionChange()` and a document load of a local path. While such a
+    flow still has work to do in this document, use `storeActiveOrganizationId(null)` first and the
+    latch only when it leaves.
+  - >
+    Never pass an unvalidated value to `location.assign`: login.tsx passes only what
+    `safeReturnUrl` returned (2026-11-24-session-hardening-follow-ups).
+  - >
+    A project that decides which pages are private by path, rather than with one signed-in layout,
+    has its own copy of `requireSession`'s rule in a root-level access middleware: make that
+    redirect `redirectDocument` too.
+  - >
+    `SessionUserGuard` reads `session` from the root loader data. If the project's root loader
+    returns the verdict under another key, pass that. Before removing root loader fields while you
+    are there, grep for `as any` readers of the root loader data and for every copy of
+    `useCurrentUser`: they compile against a field that is gone.
+  - >
+    The guard goes around everything the document shows, in `Layout`, so that the root
+    ErrorBoundary is inside it as well. Do not move it into `App`: the memory must survive the error
+    boundary replacing App, and nothing beside App may render either.
+  - >
+    Specs that expected a client navigation after a sign-in must stub `location` (the helper in
+    apps/web/tests/helpers/location.ts) and call `__resetActiveOrganizationSessionChange()` and
+    `__resetSessionUserGuard()` between tests.
+  - >
+    A project with its own Cache-Control (a `headers` export, an express or proxy rule, a CDN
+    setting) checks it: a rule applied after React Router must not replace `private, no-store`, and a
+    CDN told to cache pages whatever the origin says must bypass its cache when the session cookie is
+    present, or it still serves one user's page (or an anonymous page) to another.
+  - >
+    A service worker that caches pages or `.data` answers ignores `no-store` unless it was written
+    not to: make it skip both, and clear what it already holds.
+  - >
+    `<Link prefetch>` fetches a `.data` answer ahead of the click and relies on the HTTP cache to keep
+    it. With `no-store` a signed-in browser fetches it again on the click: drop the prefetch there, or
+    accept the second request.
+  - >
+    A root.tsx with its own `Layout` must render `<style>{SESSION_CHECK_STYLE}</style>` in the head, or
+    a restored page is not hidden during the check. Under a strict style-src CSP, put the rule in a
+    stylesheet instead.

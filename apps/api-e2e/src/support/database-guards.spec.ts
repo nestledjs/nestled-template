@@ -16,6 +16,8 @@ import {
 
 // Built at runtime, so no credential-shaped literal sits in the source for secret scanners to flag.
 const PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
+// Where no development port is known: CI sets no POSTGRES_PORT and runs its test Postgres on 5432.
+const IN_CI = { CI: 'true' }
 const URL_WITH_PASSWORD = `postgresql://u:${PASSWORD}@localhost:5433/app_test`
 
 describe('test database guards', () => {
@@ -25,8 +27,8 @@ describe('test database guards', () => {
     'postgres://u:p@localhost/app_test',
     'postgresql://u:p@[::1]:5433/APP_TEST',
   ])('treats %s as disposable', url => {
-    expect(isDisposableTestDatabase(url, {})).toBe(true)
-    expect(assertDisposableTestDatabase(url, {})).toBe('disposable')
+    expect(isDisposableTestDatabase(url, IN_CI)).toBe(true)
+    expect(assertDisposableTestDatabase(url, IN_CI)).toBe('disposable')
   })
 
   it.each([
@@ -39,20 +41,19 @@ describe('test database guards', () => {
     'mysql://u:p@localhost:5432/app_test',
     'not a url',
   ])('refuses %s before setup touches it, naming no password', url => {
-    expect(isDisposableTestDatabase(url, {})).toBe(false)
-    expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
-    expect(() => assertDisposableTestDatabase(url, {})).not.toThrow(/u:p@/)
+    expect(isDisposableTestDatabase(url, IN_CI)).toBe(false)
+    expect(() => assertDisposableTestDatabase(url, IN_CI)).toThrow(/Refusing to run e2e setup/)
+    expect(() => assertDisposableTestDatabase(url, IN_CI)).not.toThrow(/u:p@/)
   })
 
   it.each(DESTINATION_OVERRIDES)(
     'refuses a URL whose %s parameter overrides the destination',
     key => {
       const url = `postgresql://u:p@localhost:5432/app_test?${key}=elsewhere`
-      expect(isDisposableTestDatabase(url, {})).toBe(false)
-      expect(isDisposableTestDatabase(url.replace(`?${key}=`, `?${key.toUpperCase()}=`), {})).toBe(
-        false,
-      )
-      expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
+      const upperCased = url.replace(`?${key}=`, `?${key.toUpperCase()}=`)
+      expect(isDisposableTestDatabase(url, IN_CI)).toBe(false)
+      expect(isDisposableTestDatabase(upperCased, IN_CI)).toBe(false)
+      expect(() => assertDisposableTestDatabase(url, IN_CI)).toThrow(/Refusing to run e2e setup/)
     },
   )
 
@@ -67,7 +68,7 @@ describe('test database guards', () => {
         'development Postgres',
       )
       // Named *_test and local, so only the development-server rule refuses it.
-      expect(isDisposableTestDatabase(url, {})).toBe(true)
+      expect(isDisposableTestDatabase(url, IN_CI)).toBe(true)
       expect(isDisposableTestDatabase(url, { POSTGRES_PORT: port })).toBe(false)
       expect(nonDisposableReason(url, { POSTGRES_PORT: port })).toEqual({
         reason: expect.stringContaining('development Postgres'),
@@ -87,12 +88,46 @@ describe('test database guards', () => {
 
   it.each([
     ['postgresql://u:p@localhost:5433/app_test', { POSTGRES_PORT: '5432' }],
-    ['postgresql://u:p@localhost:5432/app_test', {}],
-    ['postgresql://u:p@localhost:5432/app_test', { POSTGRES_PORT: ' ' }],
+    ['postgresql://u:p@localhost:5432/app_test', IN_CI],
+    ['postgresql://u:p@localhost:5432/app_test', { CI: '1', POSTGRES_PORT: ' ' }],
+    ['postgresql://u:p@localhost:5432/app_test', { POSTGRES_PORT: '5442' }],
+    ['postgresql://u:p@localhost:5433/app_test', {}],
     ['postgresql://u:p@db.example.com:5432/app_test', { POSTGRES_PORT: '5432' }],
+    ['postgresql://u:p@db.example.com:5432/app_test', {}],
     ['not a url', { POSTGRES_PORT: '5432' }],
   ])('does not place %s on the development server (%o)', (url, env) => {
     expect(developmentServerReason(url, env)).toBeUndefined()
+  })
+
+  it.each([
+    [{}],
+    [{ POSTGRES_PORT: '' }],
+    [{ POSTGRES_PORT: ' ' }],
+    [{ CI: '' }],
+    [{ CI: 'false' }],
+    [{ CI: '0' }],
+  ])('takes 5432 as the development port when POSTGRES_PORT is unset outside CI (%o)', env => {
+    for (const url of [
+      'postgresql://u:p@localhost:5432/app_test',
+      'postgresql://u:p@127.0.0.1/app_test',
+      'postgresql://u:p@[::1]:5432/app_test',
+    ]) {
+      expect(nonDisposableReason(url, env)).toEqual({
+        reason: expect.stringMatching(
+          /on port 5432, where the development Postgres .*POSTGRES_PORT/,
+        ),
+        overridable: false,
+      })
+      // The same rule as a POSTGRES_PORT that is set: the opt-out never admits it.
+      expect(() =>
+        assertDisposableTestDatabase(url, { ...env, E2E_ALLOW_NON_DISPOSABLE_DB: '1' }),
+      ).toThrow(/does not apply to a URL on the development server/)
+    }
+  })
+
+  it('still refuses POSTGRES_PORT in CI when one is set', () => {
+    const url = 'postgresql://u:p@localhost:5432/app_test'
+    expect(isDisposableTestDatabase(url, { ...IN_CI, POSTGRES_PORT: '5432' })).toBe(false)
   })
 
   it('lets an explicit opt-out through, and only the value 1', () => {
@@ -108,7 +143,9 @@ describe('test database guards', () => {
     'postgresql://u:p@db.example.com:5432/app_test',
     'postgresql://u:p@localhost:5432/app_test?schema=other',
   ])('lets the opt-out through for %s, a choice of name, host or schema', url => {
-    expect(assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe('allowed')
+    expect(assertDisposableTestDatabase(url, { ...IN_CI, E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe(
+      'allowed',
+    )
   })
 
   it.each([
@@ -126,7 +163,7 @@ describe('test database guards', () => {
   it('says why a database was refused', () => {
     const refusal = (url: string) => {
       try {
-        assertDisposableTestDatabase(url, {})
+        assertDisposableTestDatabase(url, IN_CI)
       } catch (error) {
         return (error as Error).message
       }
@@ -287,6 +324,44 @@ describe('resetTestDatabase', () => {
   })
 
   it.each([
+    [{}, 'pg'],
+    [{ E2E_DATABASE_PROBE: 'psql' }, 'psql'],
+  ])(
+    'gives the reset 30 seconds, so a blocked DROP fails instead of hanging (%o)',
+    (env, client) => {
+      const timeouts: Record<string, (number | undefined)[]> = { pg: [], psql: [] }
+      resetTestDatabase(
+        'postgresql://u:p@localhost:5433/app_test',
+        {
+          pg: (_url, _statement, timeout) => {
+            timeouts.pg.push(timeout)
+          },
+          psql: (_args, _env, timeout) => {
+            timeouts.psql.push(timeout)
+            return { status: 0 }
+          },
+        },
+        env,
+      )
+      expect(timeouts).toEqual({ pg: [], psql: [], [client]: [30_000] })
+    },
+  )
+
+  it('names the pattern a test database must match, not one database, when it refuses', () => {
+    const { clients } = recording()
+    let message = ''
+    try {
+      resetTestDatabase('postgresql://u:p@localhost:5433/app', clients, {})
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).toContain('database named *_test')
+    // The only name in it is the one refused.
+    expect(new Set(message.match(/\w*_test\b/g))).toEqual(new Set(['_test']))
+  })
+
+  it.each([
+    [{}],
     [{ POSTGRES_PORT: '5432' }],
     [{ POSTGRES_PORT: '5432', E2E_ALLOW_NON_DISPOSABLE_DB: '1' }],
   ])('never drops a *_test database on the development server, running no SQL (%o)', env => {

@@ -212,23 +212,20 @@ export default function AdminSecurityEventsPage() {
   const [page, setPage] = useState(0)
   const pageSize = 50
 
-  const { data, loading, error } = useQuery<AdminPlatformSecurityEventsQuery>(
-    AdminPlatformSecurityEvents,
-    {
-      variables: {
-        filters: {
-          eventType: filters.eventType,
-          userId: filters.userId || undefined,
-          ipAddress: filters.ipAddress || undefined,
-          startDate: filters.startDate,
-          endDate: filters.endDate,
-          skip: page * pageSize,
-          take: pageSize,
-        },
+  const { data, loading, error } = useQuery(AdminPlatformSecurityEvents, {
+    variables: {
+      filters: {
+        eventType: filters.eventType,
+        userId: filters.userId || undefined,
+        ipAddress: filters.ipAddress || undefined,
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        skip: page * pageSize,
+        take: pageSize,
       },
-      fetchPolicy: 'network-only',
     },
-  )
+    fetchPolicy: 'network-only',
+  })
 
   const events = data?.adminSecurityEvents?.events || []
   const total = data?.adminSecurityEvents?.total || 0

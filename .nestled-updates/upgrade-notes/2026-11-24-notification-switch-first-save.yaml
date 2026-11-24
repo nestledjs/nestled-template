@@ -1,0 +1,62 @@
+id: 2026-11-24-notification-switch-first-save
+title: >-
+  A notification switch with no saved preference yet did not move when toggled until the page was
+  reloaded
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-security-pages-typed-variables
+
+intent: >
+  In apps/web/app/routes/settings/notifications.tsx, the first toggle of a switch created the
+  preference (the row was saved) but the switch stayed where it was, and a second click tried to
+  create the same preference again and failed. The cache updates used
+  `cache.modify({ fields: { userPreferences } })`, but `userPreferences` is the document's alias:
+  the cache keeps the list under the schema's field name, `userGetUserPreferences`, so the modifier
+  never ran. Toggling a saved preference moved only because Apollo updates a known entity by itself.
+
+
+  The create now adds the new preference with `cache.updateQuery({ query: UserPreferences }, ...)`,
+  which follows the document whatever its aliases are. The update needs no cache code, so its
+  modifier is gone. With the optimistic preference now visible, a second click could have sent its
+  temporary id, so each switch saves one change at a time and ignores clicks until the save ends. The temporary id
+  is made from the preference's key, so two switches saved at once stay two entries in the cache. A
+  click while the saved list is loading, or after it failed to, sends nothing and says why: without
+  the list a create cannot be told from an update, and a list fetched before the save would replace
+  it.
+
+
+  apps/web/tests/routes/settings/notifications-cache.spec.tsx runs the page on a real ApolloClient
+  and InMemoryCache. The mocked spec called the modifier by hand under the alias, which is why it
+  passed; those assertions are removed.
+
+why: >
+  The page looked as if the setting could not be changed.
+
+affectedPaths:
+  - apps/web/app/routes/settings/notifications.tsx
+  - apps/web/tests/routes/settings/notifications.spec.tsx
+  - apps/web/tests/routes/settings/notifications-cache.spec.tsx
+
+skipIf:
+  - The project has no notification preferences page, or its page does not create preferences.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - >-
+    With a user that has no saved preferences, toggle a switch on /settings/notifications: it moves
+    at once and is still moved after a reload. Toggle it back: the same row is updated.
+
+agentHints:
+  - >-
+    Search for other `cache.modify` calls (`git grep -n "cache.modify" -- apps/web libs`) and compare
+    each key in `fields` with the document: where the document aliases the field, the key must be
+    the schema's name, or the call should be a `cache.updateQuery`.
+  - >-
+    If the project's query takes variables, pass the same ones to `cache.updateQuery`.
+  - >-
+    Users who clicked more than once may have duplicate rows for a key if the project's table has no
+    unique constraint on user and key; the page uses the first one it finds. Check before relying on
+    either.

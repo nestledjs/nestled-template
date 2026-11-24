@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestRouter } from '../helpers/createTestRouter'
 import AdminAnalyticsPage from '../../app/routes/admin/analytics/_index'
 import ForceLogoutRoute, { loader as forceLogoutLoader } from '../../app/routes/force-logout'
+import MembersIndex, { loader as membersIndexLoader } from '../../app/routes/members/_index'
 
 const useQuery = vi.fn()
 let loaderData: any = {}
@@ -34,11 +35,11 @@ describe('additional route coverage', () => {
     loaderData = {}
   })
 
-  it('clears auth cookies and redirects from force logout loader', async () => {
+  it('clears auth cookies and redirects from force logout loader', () => {
     process.env.VITE_COOKIE_NAME = '__session'
     process.env.VITE_COOKIE_DOMAIN = 'example.com'
 
-    const response = await forceLogoutLoader({
+    const response = forceLogoutLoader({
       request: new Request('https://app.example.com/force-logout?return_url=/settings'),
     })
 
@@ -47,6 +48,16 @@ describe('additional route coverage', () => {
     expect(response.headers.getSetCookie()).toHaveLength(2)
 
     const { container } = render(<ForceLogoutRoute />)
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('answers the members index with a redirect to the dashboard, not a promise of one', () => {
+    const response = membersIndexLoader()
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get('Location')).toBe('/members/dashboard')
+
+    const { container } = render(<MembersIndex />)
     expect(container.innerHTML).toBe('')
   })
 

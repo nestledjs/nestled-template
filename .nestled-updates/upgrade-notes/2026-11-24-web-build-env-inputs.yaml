@@ -1,0 +1,71 @@
+id: 2026-11-24-web-build-env-inputs
+title: >-
+  web:build is cached by every environment variable it inlines, so a build for one API URL is never
+  replayed for another
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+
+intent: >
+  The defect. `targets.build.inputs` in apps/web/project.json listed one environment variable,
+  VITE_COOKIE_DOMAIN. Vite inlines every other one the app reads, and none of them was an input, so
+  Nx saw two builds that differ only in those as the same build. Building with
+  `VITE_API_URL=http://localhost:3990` after a build with `http://localhost:3000` restored the first
+  bundle from the cache, and the browser called the wrong API. With a shared or remote cache the
+  restored bundle can come from another machine or environment.
+
+
+  The fix:
+
+  1. apps/web/project.json: `build.inputs` gains `{ "env": … }` for NODE_ENV, VITE_API_URL,
+  VITE_COOKIE_NAME, VITE_GTM_TRACKING_ID, VITE_MODE and VITE_TURNSTILE_SITE_KEY, beside
+  VITE_COOKIE_DOMAIN. NODE_ENV belongs there: React Router and Vite build a development bundle when it
+  is `development`. Variables that are read only at runtime or by the dev server are left out
+  (SITE_URL, SESSION_REJECTED_PATH, PORT, WEB_PORT, WEB_PREVIEW_PORT, VITE_HOST).
+
+  2. New scripts/web-build-env-inputs.spec.mjs (run by CI's `node --test scripts/*.spec.mjs`). For
+  each app under apps/ that Vite or React Router builds, it reads the app's source and that of every
+  workspace library the app imports, and fails when a variable is inlined and not in `build.inputs`:
+  any VITE_* read of `import.meta.env` or `process.env`, any variable the app's vite.config or
+  react-router.config reads outside `server`, `preview` and `test`, and NODE_ENV. It also fails on a
+  read whose name it cannot know (`f(import.meta.env)`, `import.meta.env[name]`).
+
+  The other builds need no change: the API, data-browser, shared-components and access-control builds
+  set NODE_ENV in their own command and inline no VITE_* variable.
+
+why: >
+  A cache hit that ignores the API URL ships a bundle that calls another environment, and nothing in
+  the build's output says so: it is green, and faster than usual.
+
+affectedPaths:
+  - apps/web/project.json
+  - scripts/web-build-env-inputs.spec.mjs
+
+skipIf:
+  - The project's web build is not an Nx target, or is never cached.
+
+verification:
+  - node --test scripts/web-build-env-inputs.spec.mjs
+  - pnpm exec nx run web:build --skip-nx-cache
+
+agentHints:
+  - >-
+    List your own variables, not the template's. A project has VITE_* names of its own (analytics
+    ids, feature flags, public keys) and may not read some of the template's. Copy the spec, run it,
+    and add each `{ "env": "…" }` it names to your app's `build.inputs`; keep what is there. Do the
+    same for every other Vite or React Router app under apps/.
+  - >-
+    The spec does not follow Vite's `loadEnv()`, variables a plugin reads itself (a Sentry plugin's
+    SENTRY_RELEASE, for example) or `%VITE_NAME%` in an index.html. If the project uses one, add
+    those variables by hand.
+  - >-
+    An app whose `build` is inferred by the Nx Vite plugin has no `inputs` of its own in
+    project.json. Declare `targets.build.inputs` there with the inferred ones (`pnpm exec nx show
+    project <app> --json`) plus the variables.
+  - >-
+    To see the fix, build twice with two values of VITE_API_URL and no `--skip-nx-cache`: the second
+    run must not report a cache hit for the build, and the new value must be in the client bundle.
+  - >-
+    The first build after this change misses the cache once. A value that changes on every build (a
+    commit SHA in a VITE_* variable) makes every build a miss. That is correct while it is inlined.

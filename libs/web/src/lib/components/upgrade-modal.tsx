@@ -6,7 +6,6 @@ import {
   AvailablePlans,
   CreateCheckoutSession,
   type AvailablePlansQuery,
-  type CreateCheckoutSessionMutation,
 } from '@nestled-template/shared/sdk'
 import { useSubscription } from '../hooks/use-subscription'
 
@@ -38,10 +37,9 @@ export function UpgradeModal({ isOpen, onClose, feature, reason }: UpgradeModalP
   const { plan: currentPlan } = useSubscription()
   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [createCheckout, { loading: checkoutLoading }] = useMutation<CreateCheckoutSessionMutation>(
-    CreateCheckoutSession,
-    { errorPolicy: 'none' },
-  )
+  const [createCheckout, { loading: checkoutLoading }] = useMutation(CreateCheckoutSession, {
+    errorPolicy: 'none',
+  })
 
   const plans = data?.plans || []
 

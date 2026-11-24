@@ -30,14 +30,8 @@ import {
   UserOrganizationMembers,
   OrganizationRoles,
   OrganizationInvitations,
-  type CreateOrganizationInvitationMutation,
-  type CancelOrganizationInvitationMutation,
-  type ResendOrganizationInvitationMutation,
-  type RemoveOrganizationMemberMutation,
-  type UpdateOrganizationMemberRoleMutation,
   type UserOrganizationMembersQuery,
   type OrganizationRolesQuery,
-  type OrganizationInvitationsQuery,
 } from '@nestled-template/shared/sdk'
 import { useReadQuery, type QueryRef, useQuery, useMutation } from '@apollo/client/react'
 
@@ -226,37 +220,22 @@ export default function MembersSettings() {
   } | null>(null)
 
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [inviteMember] = useMutation<CreateOrganizationInvitationMutation>(
-    CreateOrganizationInvitation,
-    { errorPolicy: 'none' },
-  )
-  const [resendInvitation] = useMutation<ResendOrganizationInvitationMutation>(
-    ResendOrganizationInvitation,
-    { errorPolicy: 'none' },
-  )
-  const [cancelInvitation] = useMutation<CancelOrganizationInvitationMutation>(
-    CancelOrganizationInvitation,
-    { errorPolicy: 'none' },
-  )
-  const [removeMember] = useMutation<RemoveOrganizationMemberMutation>(RemoveOrganizationMember, {
+  const [inviteMember] = useMutation(CreateOrganizationInvitation, { errorPolicy: 'none' })
+  const [resendInvitation] = useMutation(ResendOrganizationInvitation, { errorPolicy: 'none' })
+  const [cancelInvitation] = useMutation(CancelOrganizationInvitation, { errorPolicy: 'none' })
+  const [removeMember] = useMutation(RemoveOrganizationMember, {
     errorPolicy: 'none',
   })
-  const [updateMemberRole] = useMutation<UpdateOrganizationMemberRoleMutation>(
-    UpdateOrganizationMemberRole,
-    { errorPolicy: 'none' },
-  )
+  const [updateMemberRole] = useMutation(UpdateOrganizationMemberRole, { errorPolicy: 'none' })
 
-  const { data, loading, error, refetch } = useQuery<UserOrganizationMembersQuery>(
-    UserOrganizationMembers,
-    {
-      variables: {
-        organizationId: activeOrganization?.id || '',
-      },
-      skip: !activeOrganization?.id,
+  const { data, loading, error, refetch } = useQuery(UserOrganizationMembers, {
+    variables: {
+      organizationId: activeOrganization?.id || '',
     },
-  )
+    skip: !activeOrganization?.id,
+  })
 
-  const { data: rolesData } = useQuery<OrganizationRolesQuery>(OrganizationRoles, {
+  const { data: rolesData } = useQuery(OrganizationRoles, {
     variables: {
       organizationId: activeOrganization?.id || '',
     },
@@ -267,7 +246,7 @@ export default function MembersSettings() {
     data: invitationsData,
     loading: invitationsLoading,
     refetch: refetchInvitations,
-  } = useQuery<OrganizationInvitationsQuery>(OrganizationInvitations, {
+  } = useQuery(OrganizationInvitations, {
     variables: {
       organizationId: activeOrganization?.id || '',
     },

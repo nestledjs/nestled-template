@@ -1,5 +1,6 @@
 import { defaultOrigin, normalizeApiOrigin } from './api-url'
 import { cookieDomainFromSetting } from './cookie-domain'
+import { sessionCookieName } from './cookie-name'
 
 // Treat unset OR `.env.example` placeholder values (e.g. `your-google-client-id`) as "not
 // configured", so a plain `cp .env.example .env` does not falsely report OAuth as enabled. Trim
@@ -115,7 +116,7 @@ export const configuration = () => ({
   trustProxyHops: envInt(process.env['TRUST_PROXY_HOPS'], 0),
   api: {
     cookie: {
-      name: process.env['VITE_COOKIE_NAME'] ?? '__session',
+      name: sessionCookieName(),
       secret: process.env['API_COOKIE_SECRET'] ?? 'secret',
       options: {
         // A host-only cookie for an unset value, `localhost`, `127.0.0.1` or `[::1]`; the first
