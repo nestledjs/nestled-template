@@ -1,0 +1,2451 @@
+diff --git a/apps/web/app/root.tsx b/apps/web/app/root.tsx
+index ae6e884..1c02fd7 100644
+--- a/apps/web/app/root.tsx
++++ b/apps/web/app/root.tsx
+@@ -26,8 +26,12 @@ import { isOrganizationContextRequired, OrganizationRequired } from './organizat
+ import { RecoveringApiUnavailable, RETRY_LABEL } from './api-unavailable'
+ import {
+   getSession,
++  isRefusedRenderError,
+   isUnauthenticatedRouteError,
+   RevalidateSessionOnMount,
++  RevalidateSessionOnRefusedRender,
++  SESSION_CHECK_STYLE,
++  SessionUserGuard,
+   type AppSessionVerdict,
+ } from './session'
+ import { sessionMiddleware } from './session/session-middleware.server'
+@@ -74,7 +78,7 @@ export function loader({ request, context }: LoaderFunctionArgs): RootLoaderData
+ 
+ export function Layout({ children }: Readonly<{ children: ReactNode }>) {
+   const gtmTrackingId = import.meta.env.VITE_GTM_TRACKING_ID
+-  const data = useLoaderData() as { theme?: string }
++  const data = useLoaderData() as Partial<RootLoaderData> | undefined
+   const theme = data?.theme || 'dark'
+ 
+   return (
+@@ -85,6 +89,7 @@ export function Layout({ children }: Readonly<{ children: ReactNode }>) {
+         <title>Demo Site</title>
+         <Meta />
+         <Links />
++        <style>{SESSION_CHECK_STYLE}</style>
+         <script
+           dangerouslySetInnerHTML={{
+             __html: `
+@@ -113,7 +118,9 @@ export function Layout({ children }: Readonly<{ children: ReactNode }>) {
+       </head>
+       <body>
+         <GTMNoScript gtmId={gtmTrackingId} />
+-        <ApolloHydrationHelper>{children}</ApolloHydrationHelper>
++        <SessionUserGuard session={data?.session}>
++          <ApolloHydrationHelper>{children}</ApolloHydrationHelper>
++        </SessionUserGuard>
+         <ScrollRestoration />
+         <Scripts />
+       </body>
+@@ -137,6 +144,8 @@ function routeErrorCode(error: unknown): unknown {
+  *   itself.
+  * - a route 401 (`API_UNAUTHENTICATED`: a call refused after the session was judged signed in):
+  *   one revalidation, so the middleware judges the session afresh, then the route's error screen.
++ * - a render that threw an API 401 (`isRefusedRenderError`: a preload refused in the loader data
++ *   stream): the same, at most once a minute.
+  * - 403: access denied, or the organization picker.
+  * - 502/503/504 or no answer: the self-recovering screen.
+  */
+@@ -158,6 +167,14 @@ export function ErrorBoundary({ error }: Readonly<{ error: unknown }>) {
+     )
+   }
+ 
++  if (isRefusedRenderError(error)) {
++    return (
++      <RevalidateSessionOnRefusedRender>
++        <RouteStatusScreen status={401} statusText="Unauthorized" />
++      </RevalidateSessionOnRefusedRender>
++    )
++  }
++
+   const refusal = refusalScreen(error, routeStatus)
+   if (refusal) return refusal
+ 
+diff --git a/apps/web/app/routes/_public/login.tsx b/apps/web/app/routes/_public/login.tsx
+index 705edf5..8f79b12 100644
+--- a/apps/web/app/routes/_public/login.tsx
++++ b/apps/web/app/routes/_public/login.tsx
+@@ -4,7 +4,7 @@ import {
+   LoaderFunctionArgs,
+   redirect,
+   useLoaderData,
+-  useNavigate,
++  useLocation,
+   useSearchParams,
+ } from 'react-router'
+ import { Form } from '@nestledjs/forms'
+@@ -12,15 +12,14 @@ import { FormFieldClass } from '@nestledjs/forms-core'
+ import { AuthLayout } from '@nestled-template/web'
+ import { getJsonCookie } from '@nestled-template/shared/utils'
+ import { getSession } from '../../session'
+-import {
+-  LoginInput,
+-  Login,
+-  Complete2FaLogin,
+-  type LoginMutation,
+-  type Complete2FaLoginMutation,
+-} from '@nestled-template/shared/sdk'
++import { DEFAULT_POST_LOGIN, safeReturnUrl } from '../../session/return-url'
++import { LoginInput, Login, Complete2FaLogin } from '@nestled-template/shared/sdk'
+ import { formTheme } from '@nestled-template/shared/styles'
+-import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
++import { signInNotice } from '../../session/sign-in-notice'
++import {
++  clearActiveOrganizationForSessionChange,
++  storeActiveOrganizationId,
++} from '@nestled-template/shared/apollo'
+ import { useMutation } from '@apollo/client/react'
+ 
+ // A request the session middleware judged signed in goes straight on; any other verdict (signed
+@@ -34,38 +33,13 @@ import { useMutation } from '@apollo/client/react'
+ export function loader({ request, context }: LoaderFunctionArgs) {
+   const afterSignOut = new URL(request.url).searchParams.has('expired')
+   if (!afterSignOut && getSession(context).kind === 'signed-in') {
+-    throw redirect('/members/dashboard')
++    throw redirect(DEFAULT_POST_LOGIN)
+   }
+   const isRemembered = getJsonCookie<{ email: string }>(request.headers, '_nestled_remember')
+   return isRemembered ?? {}
+ }
+ 
+-const DEFAULT_POST_LOGIN = '/members/dashboard'
+-
+-// An origin-local target: a single-slash absolute path with no backslash tricks.
+-// Protocol-relative (`//host`) and backslash forms (`/\host`, `\host`) are rejected
+-// because browsers/routers normalize them into off-site navigations.
+-function isSafeLocalPath(path: string): boolean {
+-  return path.startsWith('/') && !path.startsWith('//') && !path.includes('\\')
+-}
+-
+-// Producers pass the post-login destination as either a same-origin relative path
+-// (`return_url`, most routes) or an absolute URL (`redirect`, e.g. mcp-connect passes
+-// request.url). Return a path we can navigate to that can never leave our origin:
+-// safe relative paths pass through; absolute/other inputs are reduced to
+-// pathname+search+hash (the origin is discarded) and the derived path is re-validated
+-// with the same rule — so `https://host//evil.com` (pathname `//evil.com`) is rejected.
+-export function safeReturnUrl(raw: string | null): string {
+-  if (!raw) return DEFAULT_POST_LOGIN
+-  if (isSafeLocalPath(raw)) return raw
+-  try {
+-    const { pathname, search, hash } = new URL(raw)
+-    const path = `${pathname}${search}${hash}`
+-    return isSafeLocalPath(path) ? path : DEFAULT_POST_LOGIN
+-  } catch {
+-    return DEFAULT_POST_LOGIN
+-  }
+-}
++export { safeReturnUrl }
+ 
+ export const ForgotPasswordWrapper = (children: React.ReactNode) => (
+   <div key={'remember'} className="flex items-center justify-between">
+@@ -80,7 +54,7 @@ export const ForgotPasswordWrapper = (children: React.ReactNode) => (
+ 
+ export default function LoginPage() {
+   const isRemembered = useLoaderData()
+-  const navigate = useNavigate()
++  const notice = signInNotice(useLocation().state)
+   const [searchParams, setSearchParams] = useSearchParams()
+   const [formError, setFormError] = useState<string | null>(null)
+ 
+@@ -116,17 +90,19 @@ export default function LoginPage() {
+   const redirectUrl = safeReturnUrl(searchParams.get('return_url') ?? searchParams.get('redirect'))
+ 
+   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+-  const [loginMutation] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
+-  const [complete2FALoginMutation] = useMutation<Complete2FaLoginMutation>(Complete2FaLogin, {
++  const [loginMutation] = useMutation(Login, { errorPolicy: 'none' })
++  const [complete2FALoginMutation] = useMutation(Complete2FaLogin, {
+     errorPolicy: 'none',
+   })
+ 
+-  // A new session starts here: the organization stored for `x-organization-id` belonged to whoever
+-  // was signed in before (a shared browser, a session that expired without a logout). The API
+-  // refuses an organization the new user is not a member of, but the browser must not send it.
++  // A new session starts here, in a new document: a client navigation would keep this document's
++  // Apollo cache, and with it whatever it holds of whoever was signed in before (a shared browser, a
++  // session that expired without a logout). The organization stored for `x-organization-id`
++  // belonged to them too: the API refuses one the new user is not a member of, but the browser must
++  // not send it, nor store it again before the new document loads.
+   function signedIn() {
+-    storeActiveOrganizationId(null)
+-    navigate(redirectUrl)
++    clearActiveOrganizationForSessionChange()
++    globalThis.location.assign(redirectUrl)
+   }
+ 
+   async function processLogin(input: LoginInput) {
+@@ -146,7 +122,7 @@ export default function LoginPage() {
+       // Normal login without 2FA
+       if (loginInfo?.user?.id) {
+         // The backend already sets the __session cookie via the GraphQL mutation
+-        // We should not set our own cookies here, just navigate
++        // We should not set our own cookies here, just load the page
+         signedIn()
+       } else {
+         setFormError('Invalid login credentials')
+@@ -266,6 +242,11 @@ export default function LoginPage() {
+             Sign up
+           </Link>
+         </p>
++        {notice && (
++          <div className="text-center text-sky-900 dark:text-sky-100 bg-sky-50 dark:bg-sky-400/10 border border-sky-200 dark:border-sky-400/20 rounded-lg p-3 text-sm">
++            {notice}
++          </div>
++        )}
+         {formError && (
+           <div className="text-center text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-lg p-3 text-sm">
+             {formError}
+diff --git a/apps/web/app/routes/_public/register.tsx b/apps/web/app/routes/_public/register.tsx
+index 1412f94..55ba69a 100644
+--- a/apps/web/app/routes/_public/register.tsx
++++ b/apps/web/app/routes/_public/register.tsx
+@@ -1,11 +1,12 @@
+ import React, { useState } from 'react'
+-import { Link, useNavigate } from 'react-router'
++import { Link } from 'react-router'
+ import { Form } from '@nestledjs/forms'
+ import { FormFieldClass } from '@nestledjs/forms-core'
+ import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
+-import { RegisterInput, Register, type RegisterMutation } from '@nestled-template/shared/sdk'
++import { RegisterInput, Register } from '@nestled-template/shared/sdk'
++import { DEFAULT_POST_LOGIN } from '../../session/return-url'
+ import { formTheme } from '@nestled-template/shared/styles'
+-import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
++import { clearActiveOrganizationForSessionChange } from '@nestled-template/shared/apollo'
+ import { useMutation } from '@apollo/client/react'
+ 
+ interface RegisterFormInput extends RegisterInput {
+@@ -13,7 +14,6 @@ interface RegisterFormInput extends RegisterInput {
+ }
+ 
+ export default function RegisterPage() {
+-  const navigate = useNavigate()
+   const [formError, setFormError] = useState<string | null>(null)
+   const [captchaToken, setCaptchaToken] = useState<string | undefined>()
+   // Bumping this remounts the widget for a fresh challenge. A Turnstile token is single-use, so
+@@ -21,7 +21,7 @@ export default function RegisterPage() {
+   // reset the retry would fail the captcha instead of showing the real error.
+   const [captchaKey, setCaptchaKey] = useState(0)
+   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+-  const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register, {
++  const [registerMutation, { loading }] = useMutation(Register, {
+     errorPolicy: 'none',
+   })
+   const captchaRequired = Boolean(turnstileSiteKey())
+@@ -57,11 +57,11 @@ export default function RegisterPage() {
+       const token = data?.register?.token
+       if (token) {
+         // The new account is signed in: forget an organization stored for a previous user, so its
+-        // requests never carry another user's `x-organization-id`.
+-        storeActiveOrganizationId(null)
+-        // Redirect to dashboard after successful registration
++        // requests never carry another user's `x-organization-id`, and go to the dashboard in a new
++        // document, so nothing cached for a previous user is left (see login.tsx `signedIn`).
+         // Email verification can be handled separately if needed
+-        navigate('/members/dashboard')
++        clearActiveOrganizationForSessionChange()
++        globalThis.location.assign(DEFAULT_POST_LOGIN)
+       } else {
+         failRegistration('Unable to register. Please try again.')
+       }
+diff --git a/apps/web/app/routes/accept-invitation.tsx b/apps/web/app/routes/accept-invitation.tsx
+index f714732..6fce270 100644
+--- a/apps/web/app/routes/accept-invitation.tsx
++++ b/apps/web/app/routes/accept-invitation.tsx
+@@ -13,16 +13,16 @@ import {
+   AcceptOrganizationInvitation,
+   Login,
+   RegisterWithInvitation,
+-  type GetInvitationDetailsQuery,
+-  type AcceptOrganizationInvitationMutation,
+-  type LoginMutation,
+-  type RegisterWithInvitationMutation,
+ } from '@nestled-template/shared/sdk'
++import { TWO_FACTOR_INVITATION } from '../session/sign-in-notice'
+ import { useGlobalCtx } from '@nestled-template/web'
+ import { Form } from '@nestledjs/forms'
+ import { FormFieldClass } from '@nestledjs/forms-core'
+ import { formTheme } from '@nestled-template/shared/styles'
+-import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
++import {
++  clearActiveOrganizationForSessionChange,
++  storeActiveOrganizationId,
++} from '@nestled-template/shared/apollo'
+ import { useQuery, useMutation } from '@apollo/client/react'
+ 
+ type Tab = 'login' | 'signup'
+@@ -83,6 +83,16 @@ function capitalizeSentence(message: string): string {
+   return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`
+ }
+ 
++/**
++ * Where a session started on this page goes on: in a new document, so nothing cached for a previous
++ * user is left (see login.tsx `signedIn`). An invitation accepted by a user who was already signed in
++ * starts no session, and stays a client navigation.
++ */
++function loadMembersArea() {
++  clearActiveOrganizationForSessionChange()
++  globalThis.location.replace('/members')
++}
++
+ export default function AcceptInvitation() {
+   const [searchParams] = useSearchParams()
+   const navigate = useNavigate()
+@@ -98,21 +108,15 @@ export default function AcceptInvitation() {
+     data: inviteData,
+     loading: inviteLoading,
+     error: inviteError,
+-  } = useQuery<GetInvitationDetailsQuery>(GetInvitationDetails, {
++  } = useQuery(GetInvitationDetails, {
+     variables: { token: token || '' },
+     skip: !token,
+   })
+ 
+   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
+-  const [acceptInvitation] = useMutation<AcceptOrganizationInvitationMutation>(
+-    AcceptOrganizationInvitation,
+-    { errorPolicy: 'none' },
+-  )
+-  const [login] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
+-  const [registerWithInvitation] = useMutation<RegisterWithInvitationMutation>(
+-    RegisterWithInvitation,
+-    { errorPolicy: 'none' },
+-  )
++  const [acceptInvitation] = useMutation(AcceptOrganizationInvitation, { errorPolicy: 'none' })
++  const [login] = useMutation(Login, { errorPolicy: 'none' })
++  const [registerWithInvitation] = useMutation(RegisterWithInvitation, { errorPolicy: 'none' })
+ 
+   const invitationDetails = inviteData?.getInvitationDetails
+ 
+@@ -209,6 +213,24 @@ export default function AcceptInvitation() {
+         variables: { input },
+       })
+ 
++      if (data?.login?.requires2FA) {
++        // No session yet: the second factor is asked for on the login page, which comes back here
++        // signed in. It sends a signed-in visitor straight on, so a second account cannot go there.
++        setIsProcessing(false)
++        if (user) {
++          setFormError(
++            'This account uses two-factor authentication. Sign out first, then open the invitation link again.',
++          )
++          return
++        }
++        const invitation = `/accept-invitation?token=${encodeURIComponent(token)}`
++        // nestled-session-allow: the user is signing in, and the second factor is collected there
++        void navigate(`/login?return_url=${encodeURIComponent(invitation)}`, {
++          state: TWO_FACTOR_INVITATION,
++        })
++        return
++      }
++
+       if (data?.login?.user?.id) {
+         // A new session: forget an organization stored for a previous user before the invitation
+         // (or anything after it) is sent with its `x-organization-id`.
+@@ -221,9 +243,7 @@ export default function AcceptInvitation() {
+         })
+ 
+         // Redirect to members area
+-        setTimeout(() => {
+-          navigate('/members', { replace: true })
+-        }, 1500)
++        setTimeout(loadMembersArea, 1500)
+       } else {
+         setFormError('Invalid email or password')
+         setIsProcessing(false)
+@@ -250,9 +270,7 @@ export default function AcceptInvitation() {
+         // The new account is signed in: forget an organization stored for a previous user.
+         storeActiveOrganizationId(null)
+         // Registration successful, redirect to members area
+-        setTimeout(() => {
+-          navigate('/members', { replace: true })
+-        }, 1500)
++        setTimeout(loadMembersArea, 1500)
+       } else {
+         setFormError('Failed to create account')
+         setIsProcessing(false)
+diff --git a/apps/web/app/session/index.ts b/apps/web/app/session/index.ts
+index b0d973e..2ffd8f5 100644
+--- a/apps/web/app/session/index.ts
++++ b/apps/web/app/session/index.ts
+@@ -9,11 +9,14 @@ export {
+   type SessionUser,
+ } from './session-context'
+ export {
++  isRefusedRenderError,
+   isUnauthenticatedRouteError,
+   requestSessionRevalidation,
+   RevalidateSessionOnMount,
++  RevalidateSessionOnRefusedRender,
+   retryUnauthenticatedQueries,
+   SessionRevalidator,
+   useSessionRevalidation,
+ } from './session-revalidator'
++export { SESSION_CHECK_STYLE, SessionUserGuard } from './session-user-guard'
+ export { expiredSessionCookies } from './session-cookie'
+diff --git a/apps/web/app/session/return-url.ts b/apps/web/app/session/return-url.ts
+new file mode 100644
+index 0000000..fc6c29b
+--- /dev/null
++++ b/apps/web/app/session/return-url.ts
+@@ -0,0 +1,84 @@
++/** Where a sign-in goes when it was given no safe place to return to. */
++export const DEFAULT_POST_LOGIN = '/members/dashboard'
++
++/**
++ * Routes that sign the user out just by being loaded. An app with one of its own (a custom
++ * `SESSION_REJECTED_PATH`, say) adds it here, in lower case and without a trailing slash.
++ */
++const SIGN_OUT_PATHS: ReadonlySet<string> = new Set(['/logout', '/force-logout'])
++
++// Only resolves a path against: never fetched, and no real origin can equal it.
++const LOCAL_ORIGIN = 'https://return-url.invalid'
++
++// A path still changing after this many rounds of percent-decoding is not a real return path.
++const MAX_DECODE_ROUNDS = 5
++
++// An origin-local target: a single-slash absolute path with no backslash tricks.
++// Protocol-relative (`//host`) and backslash forms (`/\host`, `\host`) are rejected
++// because browsers/routers normalize them into off-site navigations.
++function isSafeLocalPath(path: string): boolean {
++  return path.startsWith('/') && !path.startsWith('//') && !path.includes('\\')
++}
++
++/** Decodes every percent-encoded ASCII character, leaving malformed and non-ASCII sequences. */
++function decodeAsciiOnce(text: string): string {
++  return text.replaceAll(/%([0-7][0-9a-f])/gi, (_match, hex: string) =>
++    String.fromCodePoint(Number.parseInt(hex, 16)),
++  )
++}
++
++/** The route a path reaches: dot segments resolved, slashes collapsed, case and tail dropped. */
++function routeOf(path: string): string {
++  const pathname = path
++    .split(/[?#]/, 1)[0]
++    .replaceAll('\\', '/')
++    .replaceAll(/\/{2,}/g, '/')
++  const resolved = new URL(pathname, LOCAL_ORIGIN).pathname.toLowerCase()
++  const plain = resolved.replaceAll(/;[^/]*/g, '').replaceAll(/\/{2,}/g, '/')
++  // The router also answers `<path>.data` (its own data request) for a route with a loader.
++  return plain.replace(/(?:\/_)?\.data$/, '').replace(/\/$/, '')
++}
++
++/**
++ * Whether a local path reaches a sign-out route, however it is spelled: dot segments, duplicate or
++ * trailing slashes, path parameters, letter case and percent-encoding (repeated, and of `.`, `/`, `?` and `#` too)
++ * are normalised before the check, since the browser, a proxy or the router may undo any of them.
++ */
++export function isSignOutPath(path: string): boolean {
++  let current = path.split(/[?#]/, 1)[0]
++  for (let round = 0; round < MAX_DECODE_ROUNDS; round += 1) {
++    if (SIGN_OUT_PATHS.has(routeOf(current))) return true
++    const decoded = decodeAsciiOnce(current)
++    if (decoded === current) return false
++    current = decoded
++  }
++  return true
++}
++
++/** The path, query and hash `raw` resolves to on this origin, or null if it could leave it. */
++function localPathOf(raw: string): string | null {
++  const relative = isSafeLocalPath(raw)
++  const url = relative ? new URL(raw, LOCAL_ORIGIN) : new URL(raw)
++  // The URL parser drops tabs and newlines, so a path can still turn out protocol-relative.
++  if (relative && url.origin !== LOCAL_ORIGIN) return null
++  const path = `${url.pathname}${url.search}${url.hash}`
++  return isSafeLocalPath(path) ? path : null
++}
++
++/**
++ * Where to go after signing in. Producers pass either a same-origin relative path (`return_url`,
++ * most routes) or an absolute URL (`redirect`, e.g. mcp-connect passes request.url). The result is
++ * a path that can be given to `location.assign`: it can never leave our origin (an absolute URL is
++ * reduced to its path, query and hash, and re-validated, so `https://host//evil.com` is rejected),
++ * and it never is a sign-out route (a crafted link would sign the user out right after signing in).
++ * Anything else falls back to the dashboard.
++ */
++export function safeReturnUrl(raw: string | null): string {
++  if (!raw) return DEFAULT_POST_LOGIN
++  try {
++    const path = localPathOf(raw)
++    return path && !isSignOutPath(path) ? path : DEFAULT_POST_LOGIN
++  } catch {
++    return DEFAULT_POST_LOGIN
++  }
++}
+diff --git a/apps/web/app/session/session-middleware.server.ts b/apps/web/app/session/session-middleware.server.ts
+index e81cee8..d5e9aa8 100644
+--- a/apps/web/app/session/session-middleware.server.ts
++++ b/apps/web/app/session/session-middleware.server.ts
+@@ -1,6 +1,5 @@
+ import {
+   data,
+-  redirect,
+   redirectDocument,
+   type MiddlewareFunction,
+   type RouterContextProvider,
+@@ -18,8 +17,15 @@ import {
+   type MeOutcome,
+   type SessionEvidence,
+ } from '@nestled-template/shared/apollo'
+-import { Me, type MeQuery } from '@nestled-template/shared/sdk'
+-import { getCookie, getSessionCookieName, isJwtExpired } from '@nestled-template/shared/utils'
++import { Me } from '@nestled-template/shared/sdk'
++import {
++  cookieCandidates,
++  cookiePairs,
++  decodeCookieValue,
++  getCookie,
++  getSessionCookieName,
++  isJwtExpired,
++} from '@nestled-template/shared/utils'
+ import { expiredSessionCookies } from './session-cookie'
+ import {
+   getSession,
+@@ -71,7 +77,7 @@ function apiUrl(): string {
+ export const fetchMeWithApollo: FetchMe = async (request, signal) => {
+   const client = makeClient(request, { apiUrl: apiUrl() })
+   try {
+-    const result = await client.query<MeQuery>({
++    const result = await client.query({
+       query: Me,
+       fetchPolicy: 'no-cache',
+       errorPolicy: 'none',
+@@ -114,6 +120,22 @@ export interface ResolveSessionOptions {
+   now?: () => number
+ }
+ 
++/** Every session cookie the request carries (several when the browser holds duplicates). */
++function sessionCookies(request: Request): string[] {
++  return cookieCandidates(request.headers.get('cookie'), getSessionCookieName())
++}
++
++/**
++ * The request's session cookie as evidence. With duplicates it is `expired` only if every one of
++ * them is, and `absent` only with none: which one counts is the API's choice (`makeClient` forwards
++ * them all), so one live candidate is enough to ask.
++ */
++function cookieEvidence(request: Request): 'absent' | 'expired' | 'present' {
++  const candidates = sessionCookies(request)
++  if (candidates.length === 0) return 'absent'
++  return candidates.every(value => isJwtExpired(decodeCookieValue(value))) ? 'expired' : 'present'
++}
++
+ /**
+  * Gathers the evidence for one request and judges it (`judgeSession`): the cookie, one Me call
+  * (none without a live cookie), a one-shot confirmation only after a clean 401, and this
+@@ -127,14 +149,13 @@ export async function resolveSession(
+   const timeoutMs = options.timeoutMs ?? SESSION_TIMEOUT_MS
+   const now = options.now ?? Date.now
+ 
+-  const token = getCookie(request.headers, getSessionCookieName())
++  const cookie = cookieEvidence(request)
+   let evidence: SessionEvidence<SessionUser>
+-  if (!token) evidence = { cookie: 'absent' }
+-  else if (isJwtExpired(token)) evidence = { cookie: 'expired' }
++  if (cookie !== 'present') evidence = { cookie }
+   else {
+     const me = await boundedMe(fetchMe, request, timeoutMs)
+     const confirm = needsConfirmation(me) ? await boundedMe(fetchMe, request, timeoutMs) : undefined
+-    evidence = { cookie: 'present', me, confirm, outageSeenMsAgo: apiOutageSeenMsAgo(now()) }
++    evidence = { cookie, me, confirm, outageSeenMsAgo: apiOutageSeenMsAgo(now()) }
+   }
+   return { verdict: judgeSession(evidence), evidence }
+ }
+@@ -147,18 +168,59 @@ function isRedirect(response: Response): boolean {
+   return response.status >= 300 && response.status < 400
+ }
+ 
++/** For every response to a request that carries a session: no cache may keep it. */
++export const SESSION_CACHE_CONTROL = 'private, no-store'
++
++/**
++ * A route's own Cache-Control stays, except one that lets a shared cache keep a page: every page
++ * (HTML, or React Router's `.data` answer) holds the verdict in its root loader data, so a public
++ * page's signed-in variant must never be served to anyone else.
++ */
++function keepsOwnCacheControl(headers: Headers): boolean {
++  const own = headers.get('Cache-Control')
++  if (!own) return false
++  const isPage =
++    headers.has('X-Remix-Response') || headers.get('Content-Type')?.startsWith('text/html') === true
++  return !isPage || /\b(?:private|no-store)\b/i.test(own)
++}
++
++function withSessionCacheControl(response: Response): Response {
++  if (keepsOwnCacheControl(response.headers)) return response
++  try {
++    response.headers.set('Cache-Control', SESSION_CACHE_CONTROL)
++    return response
++  } catch {
++    // A loader that returns `fetch()`'s or `Response.redirect()`'s own response: immutable headers.
++    const headers = new Headers(response.headers)
++    headers.set('Cache-Control', SESSION_CACHE_CONTROL)
++    return new Response(response.body, {
++      status: response.status,
++      statusText: response.statusText,
++      headers,
++    })
++  }
++}
++
+ /**
+  * The root route's middleware: judges the session once per request (document loads, client
+  * navigations and revalidations alike, before any loader runs) and stores the verdict in
+  * `sessionContext`. On a `signed-out/rejected` verdict it also expires both session cookie scopes
+  * on the response (a public page then renders signed out with the dead cookie gone); a redirect is
+  * left alone, since `/force-logout` expires them itself.
++ *
++ * Every response to a request that carries a session cookie (a document, a `.data` answer, a
++ * redirect or an error) is `SESSION_CACHE_CONTROL`, so neither the browser's history nor a shared
++ * cache can bring one user's page back for another. Anonymous responses are unchanged.
+  */
+ export function createSessionMiddleware(
+   options: ResolveSessionOptions = {},
+ ): MiddlewareFunction<Response> {
+   return async ({ request, context, pattern }, next) => {
+-    if (SESSIONLESS_PATTERNS.has(pattern)) return next()
++    const carriesSession = sessionCookies(request).length > 0
++    if (SESSIONLESS_PATTERNS.has(pattern)) {
++      const sessionless = await next()
++      return carriesSession ? withSessionCacheControl(sessionless) : sessionless
++    }
+     const { verdict, evidence } = await resolveSession(request, options)
+     context.set(sessionContext, verdict)
+     if (verdict.kind === 'unknown' || (evidence.me && evidence.confirm)) {
+@@ -170,7 +232,8 @@ export function createSessionMiddleware(
+         outageSeenMsAgo: evidence.outageSeenMsAgo,
+       })
+     }
+-    const response = await next()
++    const answer = await next()
++    const response = carriesSession ? withSessionCacheControl(answer) : answer
+     if (verdict.kind === 'signed-out' && verdict.reason === 'rejected' && !isRedirect(response)) {
+       for (const cookie of expiredSessionCookies(getSessionCookieName())) {
+         response.headers.append('Set-Cookie', cookie)
+@@ -207,7 +270,8 @@ function withReturnUrl(target: string, path: string): string {
+  * - `signed-out/rejected`: a full document load of `sessionRejectedPath()` (a 302 on a document
+  *   request, a single-fetch redirect with `reload: true` on a `.data` one), which drops the
+  *   browser's in-memory state and expires both cookie scopes;
+- * - `signed-out/no-session`: `/login?return_url=...`;
++ * - `signed-out/no-session`: a full document load of `/login?return_url=...` (the same two forms),
++ *   so a tab whose session ended keeps nothing of it in memory;
+  * - `unknown`: a 503 `SESSION_UNKNOWN` route error, shown by the root ErrorBoundary as the
+  *   self-recovering screen. The session is kept.
+  */
+@@ -218,7 +282,7 @@ export const requireSession: MiddlewareFunction<Response> = async ({ request, co
+   if (verdict.kind === 'signed-out' && verdict.reason === 'rejected') {
+     throw redirectDocument(withReturnUrl(sessionRejectedPath(), path))
+   }
+-  if (verdict.kind === 'signed-out') throw redirect(withReturnUrl('/login', path))
++  if (verdict.kind === 'signed-out') throw redirectDocument(withReturnUrl('/login', path))
+   throw data(
+     { code: SESSION_UNKNOWN_CODE, reason: verdict.reason },
+     { status: 503, statusText: 'Service Unavailable' },
+@@ -226,13 +290,27 @@ export const requireSession: MiddlewareFunction<Response> = async ({ request, co
+ }
+ 
+ /**
+- * The session cookie to forward to the API from a server loader or action that calls a REST
+- * endpoint itself (the MCP consent page). Reading the cookie is the session module's job.
++ * The Cookie header to forward to the API from a server loader or action that calls a REST endpoint
++ * itself (the MCP consent page): the session cookie and no other, every candidate of it when the
++ * browser holds duplicates, so the API can pick the one that verifies. Null with none. Reading the
++ * cookie is the session module's job.
+  */
+ export function forwardedSessionCookie(request: Request): string | null {
+-  const name = getSessionCookieName()
+-  const token = getCookie(request.headers, name)
+-  return token ? `${name}=${token}` : null
++  const candidates = sessionCookies(request)
++  return candidates.length > 0 ? cookiePairs(getSessionCookieName(), candidates) : null
++}
++
++/**
++ * The raw session token, for a loader that must hand one bearer token to something that cannot be
++ * given a Cookie header (an upload widget, say). Prefer `forwardedSessionCookie`. Null with none.
++ *
++ * With duplicate session cookies it is the newest unexpired one by its unverified claims
++ * (`pickNewestJwt`), because a bearer token is a single value and this server cannot verify one. The
++ * API may be using another candidate, so a call refused with this token is never evidence that the
++ * session is dead, and the token never decides a session.
++ */
++export function sessionToken(request: Request): string | null {
++  return getCookie(request.headers, getSessionCookieName()) || null
+ }
+ 
+ /**
+diff --git a/apps/web/app/session/session-user-guard.tsx b/apps/web/app/session/session-user-guard.tsx
+new file mode 100644
+index 0000000..cb834d7
+--- /dev/null
++++ b/apps/web/app/session/session-user-guard.tsx
+@@ -0,0 +1,161 @@
++import { type ReactNode, useContext, useEffect, useLayoutEffect, useState } from 'react'
++import {
++  type RouterState,
++  UNSAFE_DataRouterContext as DataRouterContext,
++  UNSAFE_DataRouterStateContext as DataRouterStateContext,
++} from 'react-router'
++import {
++  clearActiveOrganizationForSessionChange,
++  isLeavingForSessionChange,
++} from '@nestled-template/shared/apollo'
++import { RecoveringApiUnavailable } from '../api-unavailable'
++import type { AppSessionVerdict } from './session-context'
++
++// The last user this document rendered signed in. Browser only, and module-level on purpose: it
++// lives exactly as long as the document (and the Apollo cache, which holds that user's data), and a
++// signed-out verdict in between, or the root ErrorBoundary replacing App, does not reset it.
++let lastSignedInUserId: string | undefined
++// Set with the one reload this document makes; nothing clears it.
++let reloading = false
++// Only while a document load for another session is already on its way (`isLeavingForSessionChange`).
++let leavingTimer: ReturnType<typeof setTimeout> | undefined
++
++/** How long a document load already on its way has before this document is loaded instead. */
++export const LEAVING_GRACE_MS = 10_000
++
++// While a document restored from the back/forward cache waits for its first verdict: the loader data
++// it was restored with, and the bound on the wait.
++let restoredWith: RouterState['loaderData'] | undefined
++let restoreTimer: ReturnType<typeof setTimeout> | undefined
++
++/** How long a restored document may stay hidden before the recovering screen replaces it. */
++export const RESTORE_CHECK_MS = 10_000
++
++const CHECKING_ATTRIBUTE = 'data-session-checking'
++/** Hides everything (portals and dialogs too) without unmounting it or losing its scroll position. */
++export const SESSION_CHECK_STYLE = `[${CHECKING_ATTRIBUTE}] * { visibility: hidden !important; }`
++
++/** For specs: forget the document's user, as a document load does. */
++export function __resetSessionUserGuard(): void {
++  lastSignedInUserId = undefined
++  reloading = false
++  restoredWith = undefined
++  clearTimeout(restoreTimer)
++  document.documentElement.removeAttribute(CHECKING_ATTRIBUTE)
++  clearTimeout(leavingTimer)
++  leavingTimer = undefined
++}
++
++function reloadDocumentOnce(): void {
++  if (reloading) return
++  reloading = true
++  // The stored organization is the previous user's too.
++  clearActiveOrganizationForSessionChange()
++  globalThis.location.reload()
++}
++
++function belongsToAnotherUser(userId: string | undefined): boolean {
++  return (
++    globalThis.window !== undefined &&
++    userId !== undefined &&
++    lastSignedInUserId !== undefined &&
++    lastSignedInUserId !== userId
++  )
++}
++
++function showRestoredDocument(): void {
++  restoredWith = undefined
++  clearTimeout(restoreTimer)
++  document.documentElement.removeAttribute(CHECKING_ATTRIBUTE)
++}
++
++/**
++ * A document restored from the back/forward cache (browser Back) comes back as it was left, with no
++ * request: whoever was signed in then. It asks the server to judge the session again, and if it had
++ * rendered a signed-in user it is hidden, but stays mounted, until that verdict has rendered:
++ * - the same user: shown as it was left, forms included;
++ * - another user: stays hidden, and `SessionUserGuard` loads the document again;
++ * - signed out: stays hidden. A private page is redirected by the server (`requireSession`), and a
++ *   public one is loaded again here, as the previous user's data may be on it;
++ * - unknown, or the request failed: shown, with the root ErrorBoundary's recovering screen. The
++ *   session is kept.
++ *
++ * Without any answer for `RESTORE_CHECK_MS` the recovering screen replaces the page, so it cannot
++ * stay blank. A document that was left for another session is simply loaded again.
++ */
++function useRestoredDocumentCheck(session: AppSessionVerdict | undefined): boolean {
++  const router = useContext(DataRouterContext)?.router
++  const loaderData = useContext(DataRouterStateContext)?.loaderData
++  const [stalled, setStalled] = useState(false)
++
++  useEffect(() => {
++    if (!router) return undefined
++    const onPageShow = (event: PageTransitionEvent) => {
++      if (!event.persisted) return
++      if (isLeavingForSessionChange()) {
++        globalThis.location.reload()
++        return
++      }
++      if (lastSignedInUserId !== undefined) {
++        document.documentElement.setAttribute(CHECKING_ATTRIBUTE, '')
++        restoredWith = router.state.loaderData
++        clearTimeout(restoreTimer)
++        restoreTimer = setTimeout(() => {
++          showRestoredDocument()
++          setStalled(true)
++        }, RESTORE_CHECK_MS)
++      }
++      void router.revalidate()
++    }
++    globalThis.addEventListener('pageshow', onPageShow)
++    return () => globalThis.removeEventListener('pageshow', onPageShow)
++  }, [router])
++
++  // A revalidation ends with new loader data, whatever its outcome, so this is its first render.
++  useLayoutEffect(() => {
++    if (restoredWith === undefined || loaderData === restoredWith) return
++    if (belongsToAnotherUser(session?.kind === 'signed-in' ? session.user.id : undefined)) return
++    if (session?.kind === 'signed-out') reloadDocumentOnce()
++    else showRestoredDocument()
++  }, [loaderData, session])
++
++  return stalled
++}
++
++/**
++ * Wraps the whole page (root.tsx Layout). When the server judges this document signed in as another
++ * user than it last rendered (another tab signed in as someone else, so the cookie changed under
++ * this one), the Apollo cache and every mounted component still hold the previous user's data.
++ * Nothing of it may render for the new session: `children` are not rendered, and the document is
++ * loaded again, once, which starts clean. The new document's first user is its own, so it cannot
++ * loop. The same user changes nothing, and a signed-out or unknown verdict is ignored.
++ *
++ * A document already leaving for another session (a sign-in, an emulation starting or ending) is
++ * not loaded a second time: that would replace the navigation on its way. Only if that navigation
++ * never happens (the user stopped it) is the document loaded after `LEAVING_GRACE_MS`, so the page
++ * cannot stay blank.
++ *
++ * It also judges a restored document again before showing it: `useRestoredDocumentCheck`.
++ */
++export function SessionUserGuard({
++  session,
++  children,
++}: Readonly<{ session: AppSessionVerdict | undefined; children: ReactNode }>) {
++  const userId = session?.kind === 'signed-in' ? session.user.id : undefined
++  const blocked = reloading || belongsToAnotherUser(userId)
++  const stalled = useRestoredDocumentCheck(session)
++  useLayoutEffect(() => {
++    if (userId === undefined || reloading) return
++    if (!belongsToAnotherUser(userId)) {
++      lastSignedInUserId = userId
++      return
++    }
++    if (isLeavingForSessionChange()) {
++      leavingTimer ??= setTimeout(reloadDocumentOnce, LEAVING_GRACE_MS)
++    } else {
++      reloadDocumentOnce()
++    }
++  }, [userId])
++  if (blocked) return null
++  return stalled ? <RecoveringApiUnavailable /> : children
++}
+diff --git a/apps/web/tests/helpers/location.ts b/apps/web/tests/helpers/location.ts
+new file mode 100644
+index 0000000..0053175
+--- /dev/null
++++ b/apps/web/tests/helpers/location.ts
+@@ -0,0 +1,16 @@
++import { vi } from 'vitest'
++
++/**
++ * Replaces `location` so a spec can see a document load, which jsdom cannot do. Undone by
++ * `vi.unstubAllGlobals()`.
++ */
++export function stubLocation() {
++  const location = {
++    ...globalThis.location,
++    assign: vi.fn(),
++    replace: vi.fn(),
++    reload: vi.fn(),
++  }
++  vi.stubGlobal('location', location)
++  return location
++}
+diff --git a/apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx b/apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+index 007cfa3..a22c58b 100644
+--- a/apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
++++ b/apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { useMutation } from '@apollo/client/react'
+ import {
++  __resetActiveOrganizationSessionChange,
++  ACTIVE_ORGANIZATION_STORAGE_KEY,
+   getStoredActiveOrganizationId,
+   storeActiveOrganizationId,
+ } from '@nestled-template/shared/apollo'
+@@ -15,6 +17,7 @@ import {
+   RegisterWithInvitation,
+ } from '@nestled-template/shared/sdk'
+ import { createTestRouter } from '../../helpers/createTestRouter'
++import { stubLocation } from '../../helpers/location'
+ import LoginPage from '../../../app/routes/_public/login'
+ import RegisterPage from '../../../app/routes/_public/register'
+ import AcceptInvitationPage from '../../../app/routes/accept-invitation'
+@@ -24,6 +27,9 @@ import AcceptInvitationPage from '../../../app/routes/accept-invitation'
+ // expired, or went through /force-logout, which cannot reach localStorage). Every sign-in path
+ // forgets the stored organization, and so does the login form opened from a rejected session
+ // (`expired=1`); any other visit to the form keeps it.
++//
++// A sign-in also ends with a document load, never a client navigation: the Apollo cache of this
++// document may hold the previous user's data.
+ 
+ vi.mock('@apollo/client/react', () => ({
+   useMutation: vi.fn(),
+@@ -119,19 +125,31 @@ function answerMutations(answers: Map<unknown, MutationAnswer>) {
+ function renderAt(path: string, Component: React.ComponentType) {
+   const Stub = createTestRouter([
+     { path: path.split('?')[0], Component, loader: () => ({}) },
++    // A client navigation after a sign-in would render one of these in the same document.
+     { path: '/members/dashboard', Component: () => <p>Dashboard</p> },
++    { path: '/members', Component: () => <p>Members</p> },
+   ])
+   return render(<Stub initialEntries={[path]} />)
+ }
+ 
++function stored(): string | null {
++  return localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)
++}
++
+ describe('signing in forgets the organization stored for the previous user', () => {
++  let location: ReturnType<typeof stubLocation>
++
+   beforeEach(() => {
+     localStorage.clear()
++    location = stubLocation()
+     vi.spyOn(console, 'log').mockImplementation(() => undefined)
+   })
+ 
+   afterEach(() => {
++    vi.useRealTimers()
++    vi.unstubAllGlobals()
+     vi.restoreAllMocks()
++    __resetActiveOrganizationSessionChange()
+     localStorage.clear()
+   })
+ 
+@@ -170,8 +188,25 @@ describe('signing in forgets the organization stored for the previous user', ()
+ 
+     await userEvent.click(screen.getByRole('button', { name: 'Log In' }))
+ 
+-    await screen.findByText('Dashboard')
+-    expect(getStoredActiveOrganizationId()).toBeNull()
++    await waitFor(() => expect(location.assign).toHaveBeenCalledTimes(1))
++    expect(location.assign).toHaveBeenCalledWith('/members/dashboard')
++    expect(screen.queryByText('Dashboard')).not.toBeInTheDocument()
++    expect(stored()).toBeNull()
++    // The previous user's shell may still be mounted in this document: it stores nothing more.
++    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
++    expect(stored()).toBeNull()
++  })
++
++  it('a sign-in loads the return_url, never a sign-out route', async () => {
++    answerMutations(new Map([[Login, () => ({ login: { user: { id: 'user-2' } } })]]))
++    const { unmount } = renderAt('/login?return_url=%2Fsettings%2Fprofile%3Ftab%3D2', LoginPage)
++    await userEvent.click(await screen.findByRole('button', { name: 'Log In' }))
++    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/settings/profile?tab=2'))
++    unmount()
++
++    renderAt('/login?return_url=%2F%2566orce-logout', LoginPage)
++    await userEvent.click(await screen.findByRole('button', { name: 'Log In' }))
++    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/members/dashboard'))
+   })
+ 
+   it('a two-factor sign-in forgets it too', async () => {
+@@ -189,8 +224,9 @@ describe('signing in forgets the organization stored for the previous user', ()
+     await userEvent.type(screen.getByLabelText('Authentication Code'), '123456')
+     await userEvent.click(screen.getByRole('button', { name: 'Verify and Login' }))
+ 
+-    await screen.findByText('Dashboard')
+-    expect(getStoredActiveOrganizationId()).toBeNull()
++    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/members/dashboard'))
++    expect(screen.queryByText('Dashboard')).not.toBeInTheDocument()
++    expect(stored()).toBeNull()
+   })
+ 
+   it('a failed sign-in keeps what is stored', async () => {
+@@ -202,6 +238,7 @@ describe('signing in forgets the organization stored for the previous user', ()
+     await userEvent.click(screen.getByRole('button', { name: 'Log In' }))
+ 
+     await screen.findByText('Invalid login credentials')
++    expect(location.assign).not.toHaveBeenCalled()
+     expect(getStoredActiveOrganizationId()).toBe(PREVIOUS_USERS_ORGANIZATION)
+   })
+ 
+@@ -212,8 +249,9 @@ describe('signing in forgets the organization stored for the previous user', ()
+ 
+     await userEvent.click(await screen.findByRole('button', { name: 'Create Account' }))
+ 
+-    await screen.findByText('Dashboard')
+-    await waitFor(() => expect(getStoredActiveOrganizationId()).toBeNull())
++    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/members/dashboard'))
++    expect(screen.queryByText('Dashboard')).not.toBeInTheDocument()
++    expect(stored()).toBeNull()
+   })
+ 
+   it('signing in on the invitation page forgets it before the invitation is accepted', async () => {
+@@ -238,7 +276,11 @@ describe('signing in forgets the organization stored for the previous user', ()
+     await userEvent.click(screen.getByRole('button', { name: 'Login & Accept Invitation' }))
+ 
+     await waitFor(() => expect(storedWhenAccepting).toBeNull())
+-    expect(getStoredActiveOrganizationId()).toBeNull()
++    expect(stored()).toBeNull()
++    await waitFor(() => expect(location.replace).toHaveBeenCalledWith('/members'), {
++      timeout: 3000,
++    })
++    expect(screen.queryByText('Members')).not.toBeInTheDocument()
+   })
+ 
+   it('registering on the invitation page forgets it', async () => {
+@@ -254,6 +296,10 @@ describe('signing in forgets the organization stored for the previous user', ()
+       await screen.findByRole('button', { name: 'Sign Up & Accept Invitation' }),
+     )
+ 
+-    await waitFor(() => expect(getStoredActiveOrganizationId()).toBeNull())
++    await waitFor(() => expect(stored()).toBeNull())
++    await waitFor(() => expect(location.replace).toHaveBeenCalledWith('/members'), {
++      timeout: 3000,
++    })
++    expect(screen.queryByText('Members')).not.toBeInTheDocument()
+   })
+ })
+diff --git a/apps/web/tests/session/restored-document.spec.tsx b/apps/web/tests/session/restored-document.spec.tsx
+new file mode 100644
+index 0000000..cd3f75c
+--- /dev/null
++++ b/apps/web/tests/session/restored-document.spec.tsx
+@@ -0,0 +1,302 @@
++import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { ApolloProvider } from '@apollo/client/react'
++import {
++  createRoutesStub,
++  data,
++  Outlet,
++  redirectDocument,
++  useNavigate,
++  useRouteError,
++} from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import {
++  __resetActiveOrganizationSessionChange,
++  clearActiveOrganizationForSessionChange,
++  makeClient,
++} from '@nestled-template/shared/apollo'
++import { ErrorBoundary, Layout } from '../../app/root'
++import { OFFLINE_TITLE, SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
++import { SESSION_UNKNOWN_TITLE } from '../../app/session/session-unknown'
++import type { AppSessionVerdict } from '../../app/session'
++import { __resetSessionUserGuard, RESTORE_CHECK_MS } from '../../app/session/session-user-guard'
++import { stubLocation } from '../helpers/location'
++import { NO_SESSION, TEST_USER, UNKNOWN } from '../helpers/session-context'
++
++// A document restored from the back/forward cache, through the app's real Layout and root
++// ErrorBoundary, which React Router renders around the page and around the error screen. The root
++// loader stands for the session middleware: it answers with the verdict, or holds, or fails.
++
++const USER_A: AppSessionVerdict = { kind: 'signed-in', user: { ...TEST_USER, id: 'user-a' } }
++const USER_B: AppSessionVerdict = { kind: 'signed-in', user: { ...TEST_USER, id: 'user-b' } }
++
++let verdict: AppSessionVerdict
++let answer: () => Promise<void> | void
++let checks: number
++let location: ReturnType<typeof stubLocation>
++
++function Boundary() {
++  return (
++    <Layout>
++      <ErrorBoundary error={useRouteError()} />
++    </Layout>
++  )
++}
++
++function Page({ name }: Readonly<{ name: string }>) {
++  const navigate = useNavigate()
++  return (
++    <>
++      <h1>{name}</h1>
++      <input aria-label="draft" />
++      <button onClick={() => navigate('/public')}>Public</button>
++    </>
++  )
++}
++
++async function renderApp(initial = '/private') {
++  const Stub = createRoutesStub([
++    {
++      id: 'root',
++      path: '/',
++      loader: async () => {
++        checks += 1
++        await answer()
++        return { theme: 'dark', session: verdict }
++      },
++      Component: () => (
++        <Layout>
++          <Outlet />
++        </Layout>
++      ),
++      ErrorBoundary: Boundary,
++      children: [
++        {
++          path: 'private',
++          loader: async () => {
++            await answer()
++            // requireSession's rule.
++            if (verdict.kind === 'signed-out') throw redirectDocument('/login')
++            if (verdict.kind === 'unknown') {
++              throw data({ code: 'SESSION_UNKNOWN', reason: verdict.reason }, { status: 503 })
++            }
++            return null
++          },
++          Component: () => <Page name="Of user A" />,
++        },
++        { path: 'public', Component: () => <Page name="Of user A" /> },
++      ],
++    },
++  ])
++  await act(async () => {
++    render(
++      <ApolloProvider client={makeClient(undefined, { apiUrl: 'https://api.example.com' })}>
++        <Stub initialEntries={[initial]} />
++      </ApolloProvider>,
++    )
++  })
++  await screen.findByRole('heading', { name: 'Of user A' })
++  checks = 0
++}
++
++/** The event only: the document comes back exactly as it was. */
++function restore(persisted = true) {
++  const event = new Event('pageshow')
++  Object.defineProperty(event, 'persisted', { value: persisted })
++  globalThis.dispatchEvent(event)
++}
++
++function hold(): () => void {
++  let release: () => void = () => undefined
++  const held = new Promise<void>(resolve => {
++    release = resolve
++  })
++  answer = () => held
++  return () => {
++    answer = () => undefined
++    release()
++  }
++}
++
++const page = () => screen.queryByText('Of user A')
++
++beforeEach(() => {
++  __resetSessionUserGuard()
++  __resetActiveOrganizationSessionChange()
++  localStorage.clear()
++  location = stubLocation()
++  vi.useFakeTimers({ shouldAdvanceTime: true })
++  vi.stubGlobal('fetch', () => new Promise(() => undefined))
++  vi.spyOn(console, 'error').mockImplementation(() => undefined)
++  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++  verdict = USER_A
++  answer = () => undefined
++  checks = 0
++})
++
++afterEach(() => {
++  vi.useRealTimers()
++  cleanup()
++  vi.unstubAllGlobals()
++  vi.restoreAllMocks()
++  __resetSessionUserGuard()
++  __resetActiveOrganizationSessionChange()
++})
++
++async function wait(ms: number) {
++  await act(async () => {
++    await vi.advanceTimersByTimeAsync(ms)
++  })
++}
++
++describe('a document restored from the back/forward cache', () => {
++  it('is hidden at once, and shown as it was left for the same user', async () => {
++    await renderApp()
++    await userEvent.type(screen.getByLabelText('draft'), 'half a sentence')
++    expect(page()).toBeVisible()
++
++    const release = hold()
++    restore()
++    // Synchronously: before the browser paints the restored page.
++    expect(page()).not.toBeVisible()
++    await wait(RESTORE_CHECK_MS / 2)
++    expect(page()).not.toBeVisible()
++    expect(page()).toBeInTheDocument()
++
++    release()
++    await waitFor(() => expect(page()).toBeVisible())
++    expect(screen.getByLabelText('draft')).toHaveValue('half a sentence')
++    expect(checks).toBe(1)
++    await wait(RESTORE_CHECK_MS * 2)
++    expect(page()).toBeVisible()
++    expect(location.reload).not.toHaveBeenCalled()
++    expect(location.assign).not.toHaveBeenCalled()
++  })
++
++  it.each(['/private', '/public'])(
++    'never shows the page to another user, and loads the document once (%s)',
++    async path => {
++      await renderApp(path)
++      const release = hold()
++      verdict = USER_B
++      restore()
++      expect(page()).not.toBeVisible()
++
++      release()
++      await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
++      expect(page()).not.toBeInTheDocument()
++      await wait(RESTORE_CHECK_MS * 2)
++      expect(page()).not.toBeInTheDocument()
++      expect(location.reload).toHaveBeenCalledTimes(1)
++    },
++  )
++
++  it('signed out on a private page: the server redirects, and the page stays hidden meanwhile', async () => {
++    await renderApp()
++    verdict = NO_SESSION
++    restore()
++    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/login'))
++    expect(page()).not.toBeVisible()
++    expect(location.reload).not.toHaveBeenCalled()
++  })
++
++  it('signed out on a public page: stays hidden, and the document is loaded once', async () => {
++    await renderApp('/public')
++    verdict = NO_SESSION
++    restore()
++    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
++    await wait(RESTORE_CHECK_MS * 2)
++    const left = page()
++    if (left) expect(left).not.toBeVisible()
++    expect(location.reload).toHaveBeenCalledTimes(1)
++    expect(location.assign).not.toHaveBeenCalled()
++  })
++
++  it.each([
++    ['an outage', UNKNOWN, SERVER_TROUBLE_TITLE],
++    [
++      'an answered error',
++      { kind: 'unknown', reason: 'answered-error' } as AppSessionVerdict,
++      SESSION_UNKNOWN_TITLE,
++    ],
++  ])(
++    'unknown (%s): the recovering screen is visible, nobody is signed out',
++    async (_l, v, title) => {
++      await renderApp()
++      verdict = v
++      restore()
++      expect(await screen.findByText(title)).toBeVisible()
++      expect(page()).not.toBeInTheDocument()
++      expect(location.reload).not.toHaveBeenCalled()
++      expect(location.assign).not.toHaveBeenCalled()
++    },
++  )
++
++  it('unknown on a public page: shown again', async () => {
++    await renderApp('/public')
++    verdict = UNKNOWN
++    restore()
++    expect(page()).not.toBeVisible()
++    await waitFor(() => expect(page()).toBeVisible())
++    expect(location.reload).not.toHaveBeenCalled()
++  })
++
++  it('offline: the offline screen, not a blank page', async () => {
++    await renderApp()
++    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
++    answer = () => Promise.reject(new TypeError('Failed to fetch'))
++    restore()
++    expect(await screen.findByText(OFFLINE_TITLE)).toBeVisible()
++    expect(page()).not.toBeInTheDocument()
++    expect(location.assign).not.toHaveBeenCalled()
++  })
++
++  it('no answer at all: the recovering screen after the bound, not a blank page', async () => {
++    await renderApp()
++    hold()
++    restore()
++    await wait(RESTORE_CHECK_MS - 100)
++    expect(page()).not.toBeVisible()
++    await wait(200)
++    expect(screen.getByText(SERVER_TROUBLE_TITLE)).toBeVisible()
++    expect(page()).not.toBeInTheDocument()
++    expect(location.assign).not.toHaveBeenCalled()
++  })
++
++  it('a second restore during the check starts it again', async () => {
++    await renderApp()
++    hold()
++    restore()
++    await wait(RESTORE_CHECK_MS - 100)
++    restore()
++    await wait(200)
++    expect(screen.queryByText(SERVER_TROUBLE_TITLE)).not.toBeInTheDocument()
++    expect(page()).not.toBeVisible()
++  })
++
++  it('a document that was left for another session is simply loaded again', async () => {
++    await renderApp()
++    clearActiveOrganizationForSessionChange()
++    restore()
++    expect(location.reload).toHaveBeenCalledTimes(1)
++    expect(checks).toBe(0)
++  })
++
++  it('a document that never rendered a signed-in user is judged again, never hidden', async () => {
++    verdict = NO_SESSION
++    await renderApp('/public')
++    hold()
++    restore()
++    expect(page()).toBeVisible()
++    await waitFor(() => expect(checks).toBe(1))
++    expect(location.reload).not.toHaveBeenCalled()
++  })
++
++  it('an ordinary load (not restored) does nothing', async () => {
++    await renderApp()
++    restore(false)
++    await wait(100)
++    expect(page()).toBeVisible()
++    expect(checks).toBe(0)
++  })
++})
+diff --git a/apps/web/tests/session/session-cache-control.spec.tsx b/apps/web/tests/session/session-cache-control.spec.tsx
+new file mode 100644
+index 0000000..ac39f46
+--- /dev/null
++++ b/apps/web/tests/session/session-cache-control.spec.tsx
+@@ -0,0 +1,326 @@
++// @vitest-environment node
++import { createServer, get, type IncomingHttpHeaders, type Server } from 'node:http'
++import type { AddressInfo } from 'node:net'
++import { Readable } from 'node:stream'
++import express from 'express'
++import {
++  createRequestHandler,
++  data,
++  Outlet,
++  redirect,
++  RouterContextProvider,
++  UNSAFE_withComponentProps as withComponentProps,
++  UNSAFE_withErrorBoundaryProps as withErrorBoundaryProps,
++  type ServerBuild,
++} from 'react-router'
++import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
++import { __resetApiOutageMemory } from '@nestled-template/shared/apollo'
++import * as entryServer from '../../app/entry.server'
++import * as rootModule from '../../app/root'
++import { requireSession } from '../../app/session/session-middleware.server'
++import { UNAUTHENTICATED_RESULT } from '../helpers/api-rejection'
++
++// Cache-Control as it leaves the production server: express as in server.js, React
++// Router's request handler in production mode, the real entry.server.tsx and root route, over a real
++// HTTP connection. Only the API is stubbed. (@react-router/express is written out here: loaded by
++// Node, it would bring a second copy of react-router, whose context provider this one refuses.)
++
++const PRIVATE = 'private, no-store'
++
++type Module = Record<string, unknown>
++
++const routes: Record<string, { path: string; parentId: string; module: Module }> = {
++  'routes/private': {
++    path: '',
++    parentId: 'root',
++    module: { middleware: [requireSession], loader: () => null, default: () => <Outlet /> },
++  },
++  'routes/members': {
++    path: 'members',
++    parentId: 'routes/private',
++    module: { loader: () => ({ ok: true }), default: () => <p>Members</p> },
++  },
++  'routes/public': {
++    path: 'public',
++    parentId: 'root',
++    module: { loader: () => ({ ok: true }), default: () => <p>Public</p> },
++  },
++  'routes/shared': {
++    path: 'shared',
++    parentId: 'root',
++    module: {
++      loader: () => ({ ok: true }),
++      headers: () => ({ 'Cache-Control': 'public, max-age=600' }),
++      default: () => <p>Shared</p>,
++    },
++  },
++  'routes/strict': {
++    path: 'strict',
++    parentId: 'root',
++    module: {
++      loader: () => ({ ok: true }),
++      headers: () => ({ 'Cache-Control': 'no-store' }),
++      default: () => <p>Strict</p>,
++    },
++  },
++  'routes/away': {
++    path: 'away',
++    parentId: 'root',
++    module: {
++      loader: () => {
++        throw redirect('/public')
++      },
++      default: () => null,
++    },
++  },
++  'routes/broken': {
++    path: 'broken',
++    parentId: 'root',
++    module: {
++      loader: () => {
++        throw new Error('boom')
++      },
++      default: () => null,
++    },
++  },
++  'routes/missing': {
++    path: 'missing',
++    parentId: 'root',
++    module: {
++      loader: () => {
++        throw data(null, { status: 404 })
++      },
++      default: () => null,
++    },
++  },
++  'routes/resource': {
++    path: 'resource',
++    parentId: 'root',
++    module: { loader: () => new Response('r') },
++  },
++  'routes/resource-cached': {
++    path: 'resource-cached',
++    parentId: 'root',
++    module: {
++      loader: () => new Response('r', { headers: { 'Cache-Control': 'public, max-age=60' } }),
++    },
++  },
++  'routes/proxied': {
++    path: 'proxied',
++    parentId: 'root',
++    // Immutable headers, as on a response that came from `fetch()`.
++    module: { loader: () => Response.redirect('https://example.com/elsewhere', 302) },
++  },
++  'routes/healthz': {
++    path: 'healthz',
++    parentId: 'root',
++    module: { loader: () => new Response('ok', { headers: { 'Cache-Control': 'no-store' } }) },
++  },
++}
++
++function build(): ServerBuild {
++  const manifest = (id: string, path: string, module: Module, parentId?: string) => ({
++    id,
++    path,
++    parentId,
++    hasAction: false,
++    hasLoader: true,
++    hasClientAction: false,
++    hasClientLoader: false,
++    hasClientMiddleware: false,
++    hasErrorBoundary: id === 'root',
++    hasDefaultExport: 'default' in module,
++    module: `/${id}.js`,
++    imports: [],
++    css: [],
++  })
++  const root = {
++    ...rootModule,
++    default: withComponentProps(rootModule.default),
++    ErrorBoundary: withErrorBoundaryProps(rootModule.ErrorBoundary),
++  }
++  const entries = Object.entries(routes)
++  return {
++    entry: { module: entryServer },
++    routes: {
++      root: { id: 'root', path: '', module: root },
++      ...Object.fromEntries(entries.map(([id, route]) => [id, { id, ...route }])),
++    },
++    assets: {
++      entry: { imports: [], module: '/entry.client.js' },
++      routes: {
++        root: manifest('root', '', root),
++        ...Object.fromEntries(
++          entries.map(([id, { path, module, parentId }]) => [
++            id,
++            manifest(id, path, module, parentId),
++          ]),
++        ),
++      },
++      url: '/manifest.js',
++      version: 'test',
++    },
++    publicPath: '/',
++    assetsBuildDirectory: 'build/client',
++    future: { v8_middleware: true },
++    ssr: true,
++    isSpaMode: false,
++    prerender: [],
++    routeDiscovery: { mode: 'initial', manifestPath: '/__manifest' },
++  } as unknown as ServerBuild
++}
++
++const payload = (exp: number) =>
++  Buffer.from(JSON.stringify({ sub: 'user-1', exp })).toString('base64url')
++const now = Math.floor(Date.now() / 1000)
++const LIVE = `__session=h.${payload(now + 3600)}.s`
++const EXPIRED = `__session=h.${payload(now - 60)}.s`
++
++const json = (body: unknown) =>
++  new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
++const USER = { __typename: 'User', id: 'user-1', firstName: 'Ada', emails: [] }
++
++let api: () => Promise<Response>
++let server: Server
++
++beforeAll(async () => {
++  const app = express()
++  const handler = createRequestHandler(build(), 'production')
++  app.use(async (incoming, outgoing) => {
++    const response = await handler(
++      new Request(`http://localhost${incoming.originalUrl}`, {
++        headers: incoming.headers.cookie ? { cookie: incoming.headers.cookie } : {},
++      }),
++      new RouterContextProvider(),
++    )
++    outgoing.status(response.status)
++    for (const [name, value] of response.headers) outgoing.append(name, value)
++    if (response.body) Readable.fromWeb(response.body as never).pipe(outgoing)
++    else outgoing.end()
++  })
++  server = createServer(app)
++  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
++})
++
++afterAll(async () => {
++  await new Promise(resolve => server.close(resolve))
++})
++
++beforeEach(() => {
++  __resetApiOutageMemory()
++  api = async () => json({ data: { me: USER } })
++  vi.stubGlobal('fetch', () => api())
++  vi.spyOn(console, 'error').mockImplementation(() => undefined)
++  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++  vi.spyOn(console, 'log').mockImplementation(() => undefined)
++})
++
++afterEach(() => {
++  vi.unstubAllGlobals()
++  vi.restoreAllMocks()
++})
++
++interface Answer {
++  status: number | undefined
++  headers: IncomingHttpHeaders
++  body: string
++}
++
++function ask(path: string, cookie?: string): Promise<Answer> {
++  const { port } = server.address() as AddressInfo
++  return new Promise((resolve, reject) => {
++    get({ host: '127.0.0.1', port, path, headers: cookie ? { cookie } : {} }, incoming => {
++      let body = ''
++      incoming.setEncoding('utf8')
++      incoming.on('data', chunk => (body += chunk))
++      incoming.on('end', () =>
++        resolve({ status: incoming.statusCode, headers: incoming.headers, body }),
++      )
++    }).on('error', reject)
++  })
++}
++
++const cacheControl = async (path: string, cookie?: string) =>
++  (await ask(path, cookie)).headers['cache-control']
++
++describe('a request that carries a session cookie', () => {
++  it.each([
++    ['a private page', '/members', 200],
++    ['a public page', '/public', 200],
++    ['its client navigation', '/members.data', 200],
++    ['a root revalidation', '/public.data?_routes=root', 200],
++    ['a child revalidation', '/members.data?_routes=routes%2Fmembers', 200],
++    ['a redirect', '/away', 302],
++    ['a redirect of a client navigation', '/away.data', 202],
++    ['an error', '/broken', 500],
++    ['an error of a client navigation', '/broken.data', 500],
++    ['a 404', '/missing', 404],
++    ['a resource route without one of its own', '/resource', 200],
++    ['a response with immutable headers', '/proxied', 302],
++  ])('%s is private, no-store', async (_label, path, status) => {
++    const answer = await ask(path, LIVE)
++    expect(answer.status).toBe(status)
++    expect(answer.headers['cache-control']).toBe(PRIVATE)
++  })
++
++  it('keeps the streamed body and the rest of the headers', async () => {
++    const document = await ask('/members', LIVE)
++    expect(document.headers['content-type']).toContain('text/html')
++    expect(document.body).toContain('Members')
++    const streamed = await ask('/members.data', LIVE)
++    expect(streamed.headers['content-type']).toContain('text/x-script')
++    expect(streamed.headers['x-remix-response']).toBe('yes')
++    expect(streamed.body).toContain('user-1')
++    expect((await ask('/proxied', LIVE)).headers.location).toBe('https://example.com/elsewhere')
++  })
++
++  it('whatever the verdict: rejected, unknown, expired, or one of several cookies', async () => {
++    api = async () => json(UNAUTHENTICATED_RESULT)
++    const rejected = await ask('/public', LIVE)
++    expect(rejected.headers['cache-control']).toBe(PRIVATE)
++    expect(rejected.headers['set-cookie']?.join()).toContain('__session=;')
++    expect(await cacheControl('/members', LIVE)).toBe(PRIVATE)
++
++    api = async () => Promise.reject(new TypeError('fetch failed'))
++    const unknown = await ask('/members', LIVE)
++    expect(unknown.status).toBe(503)
++    expect(unknown.headers['cache-control']).toBe(PRIVATE)
++    expect(await cacheControl('/members.data', LIVE)).toBe(PRIVATE)
++
++    expect(await cacheControl('/public', EXPIRED)).toBe(PRIVATE)
++    expect(await cacheControl('/members', EXPIRED)).toBe(PRIVATE)
++    expect(await cacheControl('/public', `theme=dark; ${EXPIRED}; ${LIVE}x`)).toBe(PRIVATE)
++  })
++
++  it.each(['/shared', '/shared.data'])(
++    'a shared cache cannot hold the signed-in variant of a public page (%s)',
++    async path => {
++      expect(await cacheControl(path, LIVE)).toBe(PRIVATE)
++      expect(await cacheControl(path)).toBe('public, max-age=600')
++    },
++  )
++
++  it('a stricter value, and a resource route with its own, are kept', async () => {
++    expect(await cacheControl('/strict', LIVE)).toBe('no-store')
++    expect(await cacheControl('/healthz', LIVE)).toBe('no-store')
++    expect(await cacheControl('/resource-cached', LIVE)).toBe('public, max-age=60')
++  })
++})
++
++describe('an anonymous request is unchanged', () => {
++  it.each([
++    ['/public', 200],
++    ['/public.data', 200],
++    ['/away', 302],
++    ['/broken', 500],
++    ['/missing', 404],
++    ['/resource', 200],
++    ['/members', 302],
++  ])('%s has no Cache-Control', async (path, status) => {
++    for (const cookie of [undefined, 'theme=dark; other__session=x; __session=']) {
++      const answer = await ask(path, cookie)
++      expect(answer.status).toBe(status)
++      expect(answer.headers['cache-control']).toBeUndefined()
++    }
++  })
++})
+diff --git a/apps/web/tests/session/session-middleware.spec.tsx b/apps/web/tests/session/session-middleware.spec.tsx
+index bd58f8c..43b0467 100644
+--- a/apps/web/tests/session/session-middleware.spec.tsx
++++ b/apps/web/tests/session/session-middleware.spec.tsx
+@@ -12,7 +12,11 @@ import { __resetApiOutageMemory, apolloLoader } from '@nestled-template/shared/a
+ import * as entryServer from '../../app/entry.server'
+ import * as rootModule from '../../app/root'
+ import { getSession, requireUser } from '../../app/session'
+-import { requireSession } from '../../app/session/session-middleware.server'
++import {
++  forwardedSessionCookie,
++  requireSession,
++  sessionToken,
++} from '../../app/session/session-middleware.server'
+ import { SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
+ import { SESSION_UNKNOWN_TITLE } from '../../app/session/session-unknown'
+ import { UNAUTHENTICATED_RESULT } from '../helpers/api-rejection'
+@@ -309,24 +313,26 @@ describe('signed out: no session', () => {
+   it.each([
+     ['no cookie', null],
+     ['a JWT whose exp has passed', expiredJwt()],
+-  ])('%s: a redirect to /login with no Me call', async (_label, cookie) => {
++  ])('%s: a document redirect to /login with no Me call', async (_label, cookie) => {
+     meAnswers(signedIn)
+     const response = await request('/members', cookie)
+ 
+     expect(response.status).toBe(302)
++    // A plain 302 to a document request, with or without JavaScript.
+     expect(response.headers.get('Location')).toBe('/login?return_url=%2Fmembers')
+     expect(meCalls()).toBe(0)
+     expect(privateLoader).not.toHaveBeenCalled()
+     expect(expiredCookies(response)).toHaveLength(0)
+   })
+ 
+-  it('.data navigation: a single-fetch redirect to /login, without a reload', async () => {
++  it('.data navigation: a single-fetch redirect to /login that loads a document', async () => {
+     const response = await request('/members.data', null)
+     const body = await response.text()
+ 
+     expect(response.status).toBe(202)
+     expect(body).toContain('/login?return_url=%2Fmembers')
+-    expect(body).not.toMatch(/"reload",true/)
++    // Nothing the ended session left in the tab's memory survives.
++    expect(body).toMatch(/"reload",true/)
+     expect(privateLoader).not.toHaveBeenCalled()
+   })
+ 
+@@ -337,6 +343,128 @@ describe('signed out: no session', () => {
+   })
+ })
+ 
++describe('duplicate session cookies', () => {
++  // The browser can hold several (a host-only one and a parent-domain one). Only the API can tell
++  // which verifies: none is dropped here, and no single one is put in front as a bearer token.
++  function requestWith(cookie: string, path = '/members') {
++    return handler(
++      new Request(`http://localhost${path}`, { headers: { cookie } }),
++      new RouterContextProvider(),
++    )
++  }
++
++  function sentToApi() {
++    return fetchMock.mock.calls
++      .filter(([, init]) => isMeCall(init))
++      .map(([, init]) => init.headers as Record<string, string>)
++  }
++
++  const newer = unexpiredJwt()
++  const older = `${unexpiredJwt()}-older`
++
++  it.each(PRIVATE_REQUESTS)(
++    '%s: every candidate reaches the API, with no bearer',
++    async (_k, path) => {
++      meAnswers(signedIn)
++      const response = await requestWith(
++        `${COOKIE_NAME}=${newer}; theme=dark; ${COOKIE_NAME}=${older}`,
++        path,
++      )
++
++      expect(response.status).toBe(200)
++      expect(sentToApi()).toHaveLength(1)
++      expect(sentToApi()[0].cookie).toBe(`${COOKIE_NAME}=${newer}; ${COOKIE_NAME}=${older}`)
++      expect(sentToApi()[0]).not.toHaveProperty('authorization')
++    },
++  )
++
++  it('one session cookie is sent as a bearer token, and no Cookie header, as before', async () => {
++    meAnswers(signedIn)
++    await requestWith(`${COOKIE_NAME}=${newer}; theme=dark`)
++
++    expect(sentToApi()).toHaveLength(1)
++    expect(sentToApi()[0].authorization).toBe(`Bearer ${newer}`)
++    expect(sentToApi()[0]).not.toHaveProperty('cookie')
++  })
++
++  // Issued after the live one, as a shorter-lived duplicate is: the newest by issue time is dead.
++  const now = Math.floor(Date.now() / 1000)
++  const issued = (iat: number, exp: number) =>
++    `h.${Buffer.from(JSON.stringify({ sub: 'user-1', iat, exp })).toString('base64url')}.s`
++  const live = issued(now - 1000, now + 3600)
++  const dead = issued(now - 100, now - 60)
++  // From an API whose clock is ahead of this server's, so its age says nothing here.
++  const ahead = issued(now + 3600, now + 7200)
++
++  it.each([
++    ['first', [dead, live]],
++    ['last', [live, dead]],
++    ['beside one from a clock ahead', [dead, ahead]],
++  ])('an expired candidate %s does not end a session another one holds', async (_where, tokens) => {
++    meAnswers(signedIn)
++    const response = await requestWith(tokens.map(value => `${COOKIE_NAME}=${value}`).join('; '))
++
++    expect(response.status).toBe(200)
++    expect(meCalls()).toBe(1)
++  })
++
++  it('is signed out without a Me call only when every candidate expired', async () => {
++    meAnswers(signedIn)
++    const response = await requestWith(
++      `${COOKIE_NAME}=${expiredJwt()}; ${COOKIE_NAME}=${expiredJwt()}2`,
++    )
++
++    expect(response.status).toBe(302)
++    expect(response.headers.get('Location')).toBe('/login?return_url=%2Fmembers')
++    expect(meCalls()).toBe(0)
++  })
++
++  it('is absent only with no nonempty session cookie', async () => {
++    meAnswers(signedIn)
++    const response = await requestWith(`${COOKIE_NAME}=; ${COOKIE_NAME}=; theme=dark`)
++
++    expect(response.headers.get('Location')).toBe('/login?return_url=%2Fmembers')
++    expect(meCalls()).toBe(0)
++  })
++
++  it('an outage with duplicates keeps the session', async () => {
++    meAnswers(unreachable)
++    const response = await requestWith(`${COOKIE_NAME}=${newer}; ${COOKIE_NAME}=${older}`)
++
++    expect(response.status).toBe(503)
++    expect(expiredCookies(response)).toEqual([])
++  })
++
++  it('forwardedSessionCookie forwards every candidate and nothing else', () => {
++    const forwarded = (cookie?: string) =>
++      forwardedSessionCookie(
++        new Request('http://localhost/', { headers: cookie ? { cookie } : {} }),
++      )
++    expect(forwarded(`${COOKIE_NAME}=a; theme=dark; ${COOKIE_NAME}=b`)).toBe(
++      `${COOKIE_NAME}=a; ${COOKIE_NAME}=b`,
++    )
++    expect(forwarded(`theme=dark; ${COOKIE_NAME}=a`)).toBe(`${COOKIE_NAME}=a`)
++    expect(forwarded('theme=dark')).toBeNull()
++    expect(forwarded()).toBeNull()
++  })
++
++  it('sessionToken is the only candidate, or the newest by issue time', () => {
++    const issued = (iat: number) =>
++      `h.${Buffer.from(JSON.stringify({ iat })).toString('base64url')}.s`
++    const token = (...values: string[]) =>
++      sessionToken(
++        new Request('http://localhost/', {
++          headers: { cookie: values.map(value => `${COOKIE_NAME}=${value}`).join('; ') },
++        }),
++      )
++    expect(token('opaque')).toBe('opaque')
++    expect(token(issued(2), issued(1))).toBe(issued(2))
++    expect(token(issued(1), issued(2))).toBe(issued(2))
++    expect(token('')).toBeNull()
++    expect(sessionToken(new Request('http://localhost/'))).toBeNull()
++  })
++})
++
+ describe('unknown: the session is kept', () => {
+   const OUTAGES: Array<[string, Answer[]]> = [
+     ['Me gets no answer', [unreachable]],
+diff --git a/apps/web/tests/session/session-user-guard.spec.tsx b/apps/web/tests/session/session-user-guard.spec.tsx
+new file mode 100644
+index 0000000..a8fd847
+--- /dev/null
++++ b/apps/web/tests/session/session-user-guard.spec.tsx
+@@ -0,0 +1,392 @@
++import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
++import { ApolloProvider, useQuery } from '@apollo/client/react'
++import {
++  createMemoryRouter,
++  createRoutesStub,
++  Link,
++  Outlet,
++  RouterProvider,
++  useLoaderData,
++  useRevalidator,
++} from 'react-router'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import {
++  __resetActiveOrganizationSessionChange,
++  ACTIVE_ORGANIZATION_STORAGE_KEY,
++  clearActiveOrganizationForSessionChange,
++  makeClient,
++  storeActiveOrganizationId,
++} from '@nestled-template/shared/apollo'
++import { UserPreferences, type UserPreferencesQuery } from '@nestled-template/shared/sdk'
++import { SessionUserGuard, type AppSessionVerdict } from '../../app/session'
++import { __resetSessionUserGuard, LEAVING_GRACE_MS } from '../../app/session/session-user-guard'
++import App from '../../app/app'
++import { Layout } from '../../app/root'
++import LogoutRoute from '../../app/routes/logout'
++import NotificationsSettings from '../../app/routes/settings/notifications'
++import { stubLocation } from '../helpers/location'
++import { NO_SESSION, REJECTED, TEST_USER, UNKNOWN } from '../helpers/session-context'
++
++// Cached data must not outlive the identity it was read for. The app's real client (makeClient, on its
++// real InMemoryCache) holds the first user's data; the root loader's verdict then names
++// another user, as a navigation or revalidation does once the cookie changed under the tab. The
++// second user's own requests are held, refused or answered: nothing of the first user may render.
++
++const USER_A: AppSessionVerdict = { kind: 'signed-in', user: { ...TEST_USER, id: 'user-a' } }
++const USER_B: AppSessionVerdict = { kind: 'signed-in', user: { ...TEST_USER, id: 'user-b' } }
++
++// A turned this switch on; the defaults leave it off.
++const A_ONLY_SWITCH = 'notif_newsletters'
++const A_ONLY_TITLE = 'Newsletters'
++
++function preferences(userId: string, value: string): UserPreferencesQuery {
++  return {
++    __typename: 'Query',
++    userPreferences: [
++      {
++        __typename: 'UserPreference',
++        id: `preference-${userId}`,
++        key: A_ONLY_SWITCH,
++        value,
++        createdAt: '2026-01-01T00:00:00.000Z',
++        updatedAt: '2026-01-01T00:00:00.000Z',
++        userId,
++      },
++    ],
++  } as unknown as UserPreferencesQuery
++}
++
++type Answer = 'answer-a' | 'hold' | 'fail'
++
++let answer: Answer
++let requests: number
++
++/** The API as the browser reaches it. Counts the UserPreferences requests only. */
++async function fetchFromApi(_uri: unknown, init?: RequestInit): Promise<Response> {
++  const { operationName } = JSON.parse(String(init?.body)) as { operationName?: string }
++  const json = (body: unknown) =>
++    new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
++  if (operationName === 'Logout') return json({ data: { logout: true } })
++  if (operationName !== 'UserPreferences') return json({ data: null })
++  requests += 1
++  if (answer === 'hold') return new Promise<Response>(() => undefined)
++  if (answer === 'fail') throw new TypeError('Failed to fetch')
++  return json({ data: preferences('user-a', 'true') })
++}
++
++let verdict: AppSessionVerdict
++
++/** Every value of the switch that was ever put on screen, however briefly, after `mark()`. */
++let rendered: string[] = []
++
++function Probe() {
++  const { data } = useQuery(UserPreferences)
++  for (const preference of data?.userPreferences ?? []) rendered.push(preference.id)
++  return null
++}
++
++function Root() {
++  const { session } = useLoaderData() as { session: AppSessionVerdict }
++  return (
++    <SessionUserGuard session={session}>
++      <App />
++    </SessionUserGuard>
++  )
++}
++
++function Page({ name }: Readonly<{ name: string }>) {
++  return (
++    <main>
++      <h1>{name}</h1>
++      <Link to="/settings/notifications">Notifications</Link>
++      <Outlet />
++    </main>
++  )
++}
++
++async function renderApp(initial = '/settings/notifications') {
++  const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
++  const router = createMemoryRouter(
++    [
++      {
++        id: 'root',
++        path: '/',
++        loader: () => ({ session: verdict }),
++        // As in a deployed app, where every client navigation runs the root loader again.
++        shouldRevalidate: () => true,
++        element: <Root />,
++        children: [
++          {
++            path: 'settings/notifications',
++            element: (
++              <>
++                <Probe />
++                <NotificationsSettings />
++              </>
++            ),
++          },
++          { path: 'settings/profile', element: <Page name="Profile" /> },
++          { path: 'login', element: <Page name="Log in" /> },
++          { path: 'logout', element: <LogoutRoute /> },
++        ],
++      },
++    ],
++    { initialEntries: [initial] },
++  )
++  await act(async () => {
++    render(
++      <ApolloProvider client={client}>
++        <RouterProvider router={router} />
++      </ApolloProvider>,
++    )
++  })
++  return { router, client }
++}
++
++async function showsUserA() {
++  await waitFor(() => expect(rendered).toContain('preference-user-a'))
++  expect(screen.getByText(A_ONLY_TITLE)).toBeInTheDocument()
++  rendered = []
++}
++
++let location: ReturnType<typeof stubLocation>
++
++beforeEach(() => {
++  __resetSessionUserGuard()
++  __resetActiveOrganizationSessionChange()
++  localStorage.clear()
++  location = stubLocation()
++  vi.stubGlobal('fetch', vi.fn(fetchFromApi))
++  verdict = USER_A
++  answer = 'answer-a'
++  requests = 0
++  rendered = []
++  vi.spyOn(console, 'error').mockImplementation(() => undefined)
++  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++})
++
++afterEach(() => {
++  vi.useRealTimers()
++  cleanup()
++  vi.unstubAllGlobals()
++  vi.restoreAllMocks()
++  __resetSessionUserGuard()
++  __resetActiveOrganizationSessionChange()
++  localStorage.clear()
++})
++
++describe('cached data does not outlive the user it was read for', () => {
++  it.each(['hold', 'fail'] as const)(
++    "another user's verdict on a navigation renders nothing and loads the document once (their request: %s)",
++    async how => {
++      const { router } = await renderApp()
++      await showsUserA()
++      await act(() => router.navigate('/settings/profile'))
++      expect(location.reload).not.toHaveBeenCalled()
++
++      verdict = USER_B
++      answer = how
++      const before = requests
++      await act(() => router.navigate('/settings/notifications'))
++
++      expect(rendered).toEqual([])
++      expect(screen.queryByText(A_ONLY_TITLE)).not.toBeInTheDocument()
++      expect(document.body.textContent).toBe('')
++      // Not even a request: the new document makes its own.
++      expect(requests).toBe(before)
++      expect(location.reload).toHaveBeenCalledTimes(1)
++    },
++  )
++
++  it('a revalidation that names another user renders nothing and loads the document once', async () => {
++    const { router } = await renderApp()
++    await showsUserA()
++
++    verdict = USER_B
++    answer = 'hold'
++    await act(() => router.revalidate())
++    await act(() => router.revalidate())
++    await act(() => router.navigate('/settings/profile'))
++
++    expect(rendered).toEqual([])
++    expect(document.body.textContent).toBe('')
++    expect(location.reload).toHaveBeenCalledTimes(1)
++  })
++
++  it('stays blocked while the document load is on its way, even if the first user comes back', async () => {
++    const { router } = await renderApp()
++    await showsUserA()
++    verdict = USER_B
++    await act(() => router.revalidate())
++    verdict = USER_A
++    await act(() => router.revalidate())
++
++    expect(document.body.textContent).toBe('')
++    expect(location.reload).toHaveBeenCalledTimes(1)
++  })
++
++  it.each([
++    ['no session', NO_SESSION],
++    ['a rejected session', REJECTED],
++    ['an unknown verdict', UNKNOWN],
++  ])('%s in between does not reset the memory of the last user', async (_label, between) => {
++    const { router } = await renderApp()
++    await showsUserA()
++    verdict = between
++    await act(() => router.navigate('/login'))
++    expect(screen.getByRole('heading', { name: 'Log in' })).toBeInTheDocument()
++    expect(location.reload).not.toHaveBeenCalled()
++
++    verdict = USER_B
++    answer = 'hold'
++    await act(() => router.navigate('/settings/notifications'))
++
++    expect(rendered).toEqual([])
++    expect(document.body.textContent).toBe('')
++    expect(location.reload).toHaveBeenCalledTimes(1)
++  })
++
++  it('forgets the organization stored for the first user, and stores it no more', async () => {
++    storeActiveOrganizationId('org-of-user-a')
++    const { router } = await renderApp()
++    verdict = USER_B
++    await act(() => router.revalidate())
++    storeActiveOrganizationId('org-of-user-a')
++    expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBeNull()
++  })
++})
++
++describe('signing out, then another user', () => {
++  it('empties the cache, and the next user still gets a document of their own', async () => {
++    const { router, client } = await renderApp()
++    await showsUserA()
++    verdict = NO_SESSION
++    await act(() => router.navigate('/logout'))
++    await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
++    expect(client.cache.extract()).toEqual({})
++
++    verdict = USER_B
++    answer = 'hold'
++    await act(() => router.navigate('/settings/notifications'))
++    expect(rendered).toEqual([])
++    expect(document.body.textContent).toBe('')
++    expect(location.reload).toHaveBeenCalledTimes(1)
++  })
++
++  it('holds even when the cache could not be emptied', async () => {
++    const { router, client } = await renderApp()
++    await showsUserA()
++    vi.spyOn(client, 'clearStore').mockRejectedValue(new Error('not cleared'))
++    verdict = NO_SESSION
++    await act(() => router.navigate('/logout'))
++    await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
++
++    verdict = USER_B
++    answer = 'hold'
++    await act(() => router.navigate('/settings/notifications'))
++    expect(rendered).toEqual([])
++    expect(document.body.textContent).toBe('')
++  })
++})
++
++describe('the root Layout', () => {
++  it('guards the whole document with the root loader verdict', async () => {
++    function Content() {
++      const { revalidate } = useRevalidator()
++      return <button onClick={() => void revalidate()}>of the last user</button>
++    }
++    const judgeAgain = () =>
++      act(async () => screen.getByRole('button', { name: 'of the last user' }).click())
++    const Stub = createRoutesStub([
++      {
++        id: 'root',
++        path: '/',
++        loader: () => ({ theme: 'dark', session: verdict }),
++        Component: () => (
++          <Layout>
++            <Content />
++          </Layout>
++        ),
++      },
++    ])
++    await act(async () => {
++      render(
++        <ApolloProvider client={makeClient(undefined, { apiUrl: 'https://api.example.com' })}>
++          <Stub initialEntries={['/']} />
++        </ApolloProvider>,
++      )
++    })
++    expect(await screen.findByText('of the last user')).toBeInTheDocument()
++    await judgeAgain()
++    expect(screen.getByText('of the last user')).toBeInTheDocument()
++
++    verdict = USER_B
++    await judgeAgain()
++    await waitFor(() => expect(screen.queryByText('of the last user')).not.toBeInTheDocument())
++    expect(location.reload).toHaveBeenCalledTimes(1)
++  })
++})
++
++describe('the same user changes nothing', () => {
++  it('through revalidations, navigations and signed-out verdicts', async () => {
++    const { router } = await renderApp()
++    await showsUserA()
++    for (const next of [USER_A, NO_SESSION, USER_A, UNKNOWN, { ...USER_A }]) {
++      verdict = next
++      await act(() => router.revalidate())
++    }
++    await act(() => router.navigate('/settings/profile'))
++
++    expect(screen.getByRole('heading', { name: 'Profile' })).toBeInTheDocument()
++    expect(location.reload).not.toHaveBeenCalled()
++  })
++
++  it('a new document takes its first user, so a reload cannot loop', async () => {
++    const { router } = await renderApp()
++    verdict = USER_B
++    await act(() => router.revalidate())
++    expect(location.reload).toHaveBeenCalledTimes(1)
++
++    // The document load: fresh module state, a fresh client, the same cookie.
++    cleanup()
++    __resetSessionUserGuard()
++    __resetActiveOrganizationSessionChange()
++    const fresh = await renderApp('/settings/profile')
++    await act(() => fresh.router.revalidate())
++
++    expect(screen.getByRole('heading', { name: 'Profile' })).toBeInTheDocument()
++    expect(location.reload).toHaveBeenCalledTimes(1)
++  })
++})
++
++describe('a document already leaving for another session (sign-in, emulation start or end)', () => {
++  it("is not loaded twice, and still renders nothing of the first user's", async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    const { router } = await renderApp()
++    await showsUserA()
++    // What the emulation start, the emulation end and the sign-in do right before `location`.
++    clearActiveOrganizationForSessionChange()
++
++    verdict = USER_B
++    answer = 'hold'
++    await act(() => router.revalidate())
++    await act(() => vi.advanceTimersByTimeAsync(LEAVING_GRACE_MS - 1000))
++
++    expect(rendered).toEqual([])
++    expect(document.body.textContent).toBe('')
++    expect(location.reload).not.toHaveBeenCalled()
++  })
++
++  it('is loaded once if that navigation never happens, so the page cannot stay blank', async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    const { router } = await renderApp()
++    await showsUserA()
++    clearActiveOrganizationForSessionChange()
++    verdict = USER_B
++    await act(() => router.revalidate())
++    await act(() => router.revalidate())
++    await act(() => vi.advanceTimersByTimeAsync(LEAVING_GRACE_MS * 3))
++
++    expect(location.reload).toHaveBeenCalledTimes(1)
++  })
++})
+diff --git a/libs/shared/apollo/src/lib/apollo.ts b/libs/shared/apollo/src/lib/apollo.ts
+index 678ba9a..d8789fa 100644
+--- a/libs/shared/apollo/src/lib/apollo.ts
++++ b/libs/shared/apollo/src/lib/apollo.ts
+@@ -71,7 +71,13 @@ import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
+ import { getMainDefinition } from '@apollo/client/utilities'
+ import { createClient } from 'graphql-ws'
+ import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs'
+-import { decodeCookieValue, isFetchFailure, pickNewestJwt } from '@nestled-template/shared/utils'
++import {
++  cookieCandidates,
++  cookiePairs,
++  decodeCookieValue,
++  isFetchFailure,
++  pickNewestJwt,
++} from '@nestled-template/shared/utils'
+ import { createCache } from './cache-config'
+ import { recordApiOutage } from './session/outage-memory'
+ 
+@@ -178,25 +184,42 @@ function getCookieFromHeader(cookieHeader: string | null | undefined, name: stri
+   return pickNewestJwt(values)
+ }
+ 
+-function resolveAuthToken(request?: Request, options?: ClientOptions): string | null {
++/**
++ * How a client authenticates: a bearer token, or (a server-side client whose request carries
++ * several session cookies) those cookies, for the API to choose from. Never both: the API reads a
++ * bearer token first, and the cookies would be ignored.
++ */
++type ClientCredentials = { token: string | null; cookie: string | null }
++
++function bearer(token: string | null): ClientCredentials {
++  return { token, cookie: null }
++}
++
++function resolveCredentials(request?: Request, options?: ClientOptions): ClientCredentials {
+   // 1. Check options first
+   if (options?.token) {
+-    return options.token
++    return bearer(options.token)
+   }
+ 
+   // 2. Check the request authorization header
+   if (request) {
+     const authHeader = request.headers.get('authorization')
+     if (authHeader) {
+-      const token = authHeader.replace(/^Bearer\s+/, '')
+-      return token
++      return bearer(authHeader.replace(/^Bearer\s+/, ''))
+     }
+ 
+-    // 3. Check request cookies
++    // 3. Check request cookies. With several same-name session cookies, forward them all and
++    // nothing else: this side cannot verify a signature, so a newer cookie that does not verify
++    // would hide the session that does. The API takes the newest one that verifies
++    // (selectSessionToken).
+     const cookieHeader = request.headers.get('cookie')
++    const candidates = cookieCandidates(cookieHeader, getSessionCookieName())
++    if (candidates.length > 1) {
++      return { token: null, cookie: cookiePairs(getSessionCookieName(), candidates) }
++    }
+     const cookieToken = getCookieFromHeader(cookieHeader, getSessionCookieName())
+     if (cookieToken) {
+-      return cookieToken
++      return bearer(cookieToken)
+     }
+   }
+ 
+@@ -204,11 +227,11 @@ function resolveAuthToken(request?: Request, options?: ClientOptions): string |
+   if (globalThis.window !== undefined && typeof document !== 'undefined') {
+     const browserToken = getCookieFromHeader(document.cookie, getSessionCookieName())
+     if (browserToken) {
+-      return browserToken
++      return bearer(browserToken)
+     }
+   }
+ 
+-  return null
++  return bearer(null)
+ }
+ 
+ /**
+@@ -265,7 +288,7 @@ export function isQueryOperation(operation: ApolloLink.Operation): boolean {
+ function handleOrganizationRequired(operation: ApolloLink.Operation): void {
+   if (globalThis.window === undefined || !isQueryOperation(operation)) return
+ 
+-  globalThis.window.dispatchEvent(
++  globalThis.dispatchEvent(
+     new CustomEvent(APOLLO_ORGANIZATION_REQUIRED_EVENT, {
+       detail: { operation: operation.operationName },
+     }),
+@@ -275,7 +298,7 @@ function handleOrganizationRequired(operation: ApolloLink.Operation): void {
+ function handleAuthorizationError(operation: ApolloLink.Operation): void {
+   if (globalThis.window === undefined || !isQueryOperation(operation)) return
+ 
+-  globalThis.window.dispatchEvent(
++  globalThis.dispatchEvent(
+     new CustomEvent(APOLLO_ACCESS_FORBIDDEN_EVENT, {
+       detail: { operation: operation.operationName },
+     }),
+@@ -293,7 +316,7 @@ export const APOLLO_SESSION_SUSPECT_EVENT = 'apollo-session-suspect'
+ 
+ function handleAuthenticationError(operation: ApolloLink.Operation): void {
+   if (globalThis.window === undefined) return
+-  globalThis.window.dispatchEvent(
++  globalThis.dispatchEvent(
+     new CustomEvent(APOLLO_SESSION_SUSPECT_EVENT, {
+       detail: { operation: operation.operationName },
+     }),
+@@ -507,7 +530,7 @@ function dispatchServiceUnavailableEvent(
+ 
+   // No once-per-30-seconds latch: the listener ignores reports while it is already checking, and a
+   // latch here only meant that an outage starting soon after a recovery went unreported.
+-  globalThis.window.dispatchEvent(
++  globalThis.dispatchEvent(
+     new CustomEvent(APOLLO_SERVICE_UNAVAILABLE_EVENT, {
+       detail: {
+         error: networkError,
+@@ -583,8 +606,8 @@ export function storeActiveOrganizationId(organizationId: string | null): void {
+ 
+ /**
+  * Forgets the stored organization because this document is about to load another user's session,
+- * and stores none for the rest of this document. For starting or ending an emulation, which then
+- * sets `location.href`: the next document is the other user's.
++ * and stores none for the rest of this document. For a sign-in, a registration, and starting or
++ * ending an emulation, which then load a document: the next one is the other user's.
+  *
+  * `storeActiveOrganizationId(null)` alone is not enough there. The signed-in shell is still mounted
+  * while the navigation is pending, and it stores the organization it shows on every render
+@@ -594,9 +617,10 @@ export function storeActiveOrganizationId(organizationId: string | null): void {
+  * every non-null `storeActiveOrganizationId` is ignored and `getStoredActiveOrganizationId`
+  * answers null, so this document sends no organization either; the next document starts clean.
+  *
+- * Only before a document navigation. A sign-in that stays in this document (the login form, an
+- * invitation) uses `storeActiveOrganizationId(null)`, so the new session's shell can store its own
+- * organization. It never signs anyone out and does not touch the session cookie.
++ * Only right before a document navigation (an emulation, and every sign-in or registration, which
++ * end with one). While a sign-in still has work to do in this document (an invitation to accept),
++ * it uses `storeActiveOrganizationId(null)` and calls this when it leaves. It never signs anyone
++ * out and does not touch the session cookie.
+  */
+ export function clearActiveOrganizationForSessionChange(): void {
+   if (globalThis.window === undefined) return
+@@ -604,6 +628,15 @@ export function clearActiveOrganizationForSessionChange(): void {
+   storeActiveOrganizationId(null)
+ }
+ 
++/**
++ * Whether this document is already leaving for another user's session
++ * (`clearActiveOrganizationForSessionChange` was called): whoever asks must not start a second
++ * document load, which would replace the one on its way.
++ */
++export function isLeavingForSessionChange(): boolean {
++  return activeOrganizationSessionChanging
++}
++
+ /**
+  * Test-only: undoes `clearActiveOrganizationForSessionChange` for the next test in the same module
+  * instance. A browser never needs it: the document it latched is gone.
+@@ -671,7 +704,7 @@ export function rememberActiveOrganization(organizationId: string | null | undef
+   storeActiveOrganizationId(organizationId)
+ }
+ 
+-function createAuthLink(token: string | null): ApolloLink {
++function createAuthLink({ token, cookie }: ClientCredentials): ApolloLink {
+   return new SetContextLink(({ headers }) => {
+     const newHeaders: Record<string, string> = { ...headers }
+ 
+@@ -679,6 +712,9 @@ function createAuthLink(token: string | null): ApolloLink {
+     if (token) {
+       newHeaders.authorization = `Bearer ${token}`
+     }
++    if (cookie) {
++      newHeaders.cookie = cookie
++    }
+ 
+     // Add organization context header for multi-tenant isolation
+     const activeOrgId = getStoredActiveOrganizationId()
+@@ -746,7 +782,7 @@ function createWebSocketLink(wsUri: string, token: string | null): GraphQLWsLink
+ 
+ function createLinkChain(
+   uri: string,
+-  token: string | null,
++  credentials: ClientCredentials,
+   isDev: boolean,
+   onApiFailure?: (cause: ApiFailureCause, error: unknown) => void,
+ ): ApolloLink {
+@@ -767,14 +803,14 @@ function createLinkChain(
+           const def = getMainDefinition(query)
+           return def.kind === 'OperationDefinition' && def.operation === 'subscription'
+         },
+-        createWebSocketLink(wsUri, token),
++        createWebSocketLink(wsUri, credentials.token),
+         uploadLink,
+       )
+ 
+   const links = [
+     createErrorLink(onApiFailure),
+     ...(isDev ? [createLogLink()] : []),
+-    createAuthLink(token),
++    createAuthLink(credentials),
+     splitLink,
+   ]
+ 
+@@ -796,10 +832,10 @@ export function makeClient(request?: Request, options?: ClientOptions) {
+     )
+   }
+ 
+-  const token = resolveAuthToken(request, options)
++  const credentials = resolveCredentials(request, options)
+   const isDev = options?.environment === 'development'
+ 
+-  const link = createLinkChain(uri, token, isDev, options?.onApiFailure)
++  const link = createLinkChain(uri, credentials, isDev, options?.onApiFailure)
+ 
+   return new ApolloClient({
+     link,

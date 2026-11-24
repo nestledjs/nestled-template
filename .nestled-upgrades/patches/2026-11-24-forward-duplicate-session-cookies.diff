@@ -1,0 +1,412 @@
+diff --git a/apps/web/tests/session/forwarded-session-cookies.spec.ts b/apps/web/tests/session/forwarded-session-cookies.spec.ts
+new file mode 100644
+index 0000000..3b59058
+--- /dev/null
++++ b/apps/web/tests/session/forwarded-session-cookies.spec.ts
+@@ -0,0 +1,61 @@
++// @vitest-environment node
++import { createServer, type IncomingHttpHeaders, type Server } from 'node:http'
++import type { AddressInfo } from 'node:net'
++import { gql } from '@apollo/client'
++import { afterEach, beforeEach, describe, expect, it } from 'vitest'
++import { makeClient } from '@nestled-template/shared/apollo'
++
++// The server-side client over a real HTTP connection, with Node's own fetch: what the API receives
++// when the browser's request holds one session cookie, or several. (The API's side, over its real
++// JwtStrategy and guard: libs/api/custom, jwt.strategy.guard.spec.ts.)
++
++let server: Server
++let received: IncomingHttpHeaders[]
++
++beforeEach(async () => {
++  received = []
++  server = createServer((incoming, response) => {
++    received.push(incoming.headers)
++    response.setHeader('content-type', 'application/json')
++    response.end(JSON.stringify({ data: { ping: 'pong' } }))
++  })
++  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
++})
++
++afterEach(async () => {
++  await new Promise(resolve => server.close(resolve))
++})
++
++async function headersFor(cookie: string): Promise<IncomingHttpHeaders> {
++  const { port } = server.address() as AddressInfo
++  const client = makeClient(new Request('http://app.example.com/', { headers: { cookie } }), {
++    apiUrl: `http://127.0.0.1:${port}/graphql`,
++  })
++  await client.query({
++    query: gql`
++      query Ping {
++        ping
++      }
++    `,
++  })
++  expect(received).toHaveLength(1)
++  return received[0]
++}
++
++describe('what the API receives from a server-side client', () => {
++  it('several session cookies: all of them, nothing else of the Cookie header, no bearer', async () => {
++    const headers = await headersFor('theme=dark; __session=a.b.c; other=1; __session=d.e.f')
++    expect(headers.cookie).toBe('__session=a.b.c; __session=d.e.f')
++    expect(headers.authorization).toBeUndefined()
++    // What the API's CSRF check asks of a request, the same either way.
++    expect(headers['apollo-require-preflight']).toBe('true')
++    expect(headers.origin).toBeUndefined()
++  })
++
++  it('one session cookie: a bearer token, no Cookie header', async () => {
++    const headers = await headersFor('theme=dark; __session=a.b.c')
++    expect(headers.authorization).toBe('Bearer a.b.c')
++    expect(headers.cookie).toBeUndefined()
++    expect(headers['apollo-require-preflight']).toBe('true')
++  })
++})
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+index 93c331c..ddbbed4 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+@@ -1,4 +1,5 @@
+ import { ExecutionContext, ForbiddenException, HttpException } from '@nestjs/common'
++import { JwtService } from '@nestjs/jwt'
+ import { GqlAuthGuard } from '@nestled-template/api/utils'
+ import { JwtStrategy } from './jwt.strategy'
+ 
+@@ -93,3 +94,93 @@ describe('JwtStrategy API-token refusals through AuthGuard', () => {
+     expect((await refusal()).getStatus()).toBe(503)
+   })
+ })
++
++/**
++ * What the web server sends when a browser holds several session cookies: all of them in one Cookie
++ * header and no bearer token. Through passport and the real `AuthGuard('jwt')`.
++ */
++describe('JwtStrategy with several session cookies, through AuthGuard', () => {
++  const jwt = new JwtService({ secret: 'test-secret' })
++  const now = Math.floor(Date.now() / 1000)
++  const COOKIE_NAME_KEYS = ['VITE_COOKIE_NAME', 'API_COOKIE_NAME']
++  let savedNames: Array<string | undefined>
++  let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
++
++  const signed = (userId: string, iat: number) => jwt.sign({ userId, iat }, { expiresIn: 3600 })
++  const unverified = (userId: string, iat: number) =>
++    new JwtService({ secret: 'another-secret' }).sign({ userId, iat }, { expiresIn: 3600 })
++
++  beforeEach(() => {
++    process.env['JWT_SECRET'] = 'test-secret'
++    savedNames = COOKIE_NAME_KEYS.map(key => process.env[key])
++    COOKIE_NAME_KEYS.forEach(key => delete process.env[key])
++    auth = {
++      validateUser: jest.fn(async (id: string) => ({ id })),
++      isTokenCurrent: jest.fn().mockReturnValue(true),
++    }
++    new JwtStrategy(
++      auth as never,
++      { validateApiToken: jest.fn().mockResolvedValue(null), recordTokenUse: jest.fn() } as never,
++    )
++  })
++
++  afterEach(() => {
++    COOKIE_NAME_KEYS.forEach((key, index) => {
++      const value = savedNames[index]
++      if (value === undefined) delete process.env[key]
++      else process.env[key] = value
++    })
++  })
++
++  async function userFor(headers: Record<string, string>): Promise<string | undefined> {
++    const req: { headers: Record<string, string>; user?: { id: string } } = { headers }
++    await new GqlAuthGuard().canActivate({
++      getType: () => 'http',
++      switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({}) }),
++    } as unknown as ExecutionContext)
++    return req.user?.id
++  }
++
++  const cookies = (...tokens: string[]) => ({
++    cookie: tokens.map(token => `__session=${token}`).join('; '),
++  })
++
++  it.each([
++    ['first', [unverified('user-x', now), signed('user-1', now - 60)]],
++    ['last', [signed('user-1', now - 60), unverified('user-x', now)]],
++  ])(
++    'a newer cookie that does not verify (%s) does not hide the one that does',
++    async (_w, tokens) => {
++      await expect(userFor(cookies(...tokens))).resolves.toBe('user-1')
++    },
++  )
++
++  it('as a bearer token, that newer cookie is refused: why the web server sends none', async () => {
++    const error = await userFor({
++      authorization: `Bearer ${unverified('user-x', now)}`,
++      ...cookies(signed('user-1', now - 60)),
++    }).catch((thrown: HttpException) => thrown.getStatus())
++    expect(error).toBe(401)
++  })
++
++  it('reads the cookie the API sets, whatever API_COOKIE_NAME says', async () => {
++    process.env['API_COOKIE_NAME'] = 'another'
++    await expect(userFor(cookies(signed('user-1', now)))).resolves.toBe('user-1')
++
++    process.env['VITE_COOKIE_NAME'] = 'app'
++    await expect(userFor({ cookie: `app=${signed('user-2', now)}` })).resolves.toBe('user-2')
++  })
++
++  it('takes the newest of several that verify', async () => {
++    await expect(
++      userFor(cookies(signed('user-old', now - 60), signed('user-new', now))),
++    ).resolves.toBe('user-new')
++  })
++
++  it('refuses when none verifies', async () => {
++    const error = await userFor(cookies(unverified('a', now), unverified('b', now - 1))).catch(
++      (thrown: HttpException) => thrown.getStatus(),
++    )
++    expect(error).toBe(401)
++  })
++})
+diff --git a/libs/shared/apollo/src/lib/apollo.spec.ts b/libs/shared/apollo/src/lib/apollo.spec.ts
+index 806843d..697da39 100644
+--- a/libs/shared/apollo/src/lib/apollo.spec.ts
++++ b/libs/shared/apollo/src/lib/apollo.spec.ts
+@@ -176,7 +176,7 @@ describe('makeClient', () => {
+     )
+   })
+ 
+-  it('chooses the newest JWT when duplicate session cookies exist', async () => {
++  it('forwards every distinct session cookie of a request, and no bearer, when it has duplicates', async () => {
+     process.env.VITE_COOKIE_NAME = '__session'
+     const older = jwtWithIssuedAt(1)
+     const newer = jwtWithIssuedAt(2)
+@@ -189,7 +189,7 @@ describe('makeClient', () => {
+     globalThis.fetch = fetchMock
+     const request = new Request('https://app.example.com', {
+       headers: {
+-        cookie: `__session=${older}; theme=dark; __session=${newer}`,
++        cookie: `__session=${older}; theme=dark; __session=${newer}; __session=${older}; __session=`,
+       },
+     })
+ 
+@@ -203,9 +203,79 @@ describe('makeClient', () => {
+       `,
+     })
+ 
+-    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(`Bearer ${newer}`)
++    const { headers } = fetchMock.mock.calls[0][1]
++    expect(headers.cookie).toBe(`__session=${newer}; __session=${older}`)
++    expect(headers).not.toHaveProperty('authorization')
+   })
+ 
++  it('keeps the bearer token for one session cookie, sent once or repeated', async () => {
++    process.env.VITE_COOKIE_NAME = '__session'
++    const only = jwtWithIssuedAt(1)
++    const fetchMock = vi.fn().mockImplementation(
++      async () =>
++        new Response(JSON.stringify({ data: { ping: 'pong' } }), {
++          status: 200,
++          headers: { 'content-type': 'application/json' },
++        }),
++    )
++    globalThis.fetch = fetchMock
++
++    for (const cookie of [`__session=${only}`, `__session=${only}; a=b; __session=${only}`]) {
++      const client = makeClient(new Request('https://app.example.com', { headers: { cookie } }), {
++        apiUrl: 'https://api.example.com/graphql',
++      })
++      await client.query({
++        query: gql`
++          query Ping {
++            ping
++          }
++        `,
++      })
++    }
++
++    for (const [, { headers }] of fetchMock.mock.calls) {
++      expect(headers.authorization).toBe(`Bearer ${only}`)
++      expect(headers).not.toHaveProperty('cookie')
++    }
++    expect(fetchMock).toHaveBeenCalledTimes(2)
++  })
++
++  it.each(['option', 'authorization header'])(
++    'an explicit token (%s) outranks duplicate session cookies',
++    async source => {
++      process.env.VITE_COOKIE_NAME = '__session'
++      const fetchMock = vi.fn().mockResolvedValue(
++        new Response(JSON.stringify({ data: { ping: 'pong' } }), {
++          status: 200,
++          headers: { 'content-type': 'application/json' },
++        }),
++      )
++      globalThis.fetch = fetchMock
++      const request = new Request('https://app.example.com', {
++        headers: {
++          cookie: `__session=${jwtWithIssuedAt(1)}; __session=${jwtWithIssuedAt(2)}`,
++          ...(source === 'option' ? {} : { authorization: 'Bearer explicit' }),
++        },
++      })
++
++      const client = makeClient(request, {
++        apiUrl: 'https://api.example.com/graphql',
++        ...(source === 'option' ? { token: 'explicit' } : {}),
++      })
++      await client.query({
++        query: gql`
++          query Ping {
++            ping
++          }
++        `,
++      })
++
++      const { headers } = fetchMock.mock.calls[0][1]
++      expect(headers.authorization).toBe('Bearer explicit')
++      expect(headers).not.toHaveProperty('cookie')
++    },
++  )
++
+   it('chooses the newest JWT from document.cookie without Buffer', async () => {
+     // The browser bundle polyfills nothing, so decoding through Buffer threw a ReferenceError on
+     // every token. The throw never surfaced -- pickNewestJwt's catch treats it as a malformed
+@@ -282,9 +352,10 @@ describe('makeClient', () => {
+     })
+ 
+     expect(fetchMock.mock.calls[0][1].headers.authorization).toBe('Bearer abc%zz')
++    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty('cookie')
+   })
+ 
+-  it('prefers the last duplicate JWT when both were issued in the same second', async () => {
++  it('forwards duplicates verbatim, even when they cannot be told apart by age', async () => {
+     process.env.VITE_COOKIE_NAME = '__session'
+     const first = jwtWithIssuedAt(1)
+     const second = `${jwtWithIssuedAt(1)}-newer-signature`
+@@ -311,7 +382,9 @@ describe('makeClient', () => {
+       `,
+     })
+ 
+-    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(`Bearer ${second}`)
++    const { headers } = fetchMock.mock.calls[0][1]
++    expect(headers.cookie).toBe(`__session=${first}; __session=${second}`)
++    expect(headers).not.toHaveProperty('authorization')
+   })
+ 
+   it('sends authorization and active organization headers through the link chain', async () => {
+@@ -477,6 +550,7 @@ describe('makeClient', () => {
+         dispatchEvent: vi.fn(),
+       }
+       vi.stubGlobal('window', testWindow)
++      vi.stubGlobal('dispatchEvent', testWindow.dispatchEvent)
+       globalThis.fetch = vi
+         .fn()
+         .mockResolvedValue(
+@@ -524,6 +598,7 @@ describe('makeClient', () => {
+       dispatchEvent: vi.fn(),
+     }
+     vi.stubGlobal('window', testWindow)
++    vi.stubGlobal('dispatchEvent', testWindow.dispatchEvent)
+     globalThis.fetch = vi.fn().mockImplementation(async () => answer())
+     const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+ 
+@@ -662,6 +737,7 @@ describe('makeClient', () => {
+         dispatchEvent,
+       }
+       vi.stubGlobal('window', testWindow)
++      vi.stubGlobal('dispatchEvent', dispatchEvent)
+       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({
+         query: gql`
+           query CurrentSubscriptionActive {
+@@ -691,6 +767,7 @@ describe('makeClient', () => {
+         dispatchEvent,
+       }
+       vi.stubGlobal('window', testWindow)
++      vi.stubGlobal('dispatchEvent', dispatchEvent)
+ 
+       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
+         .mutate({
+@@ -1214,6 +1291,7 @@ describe('SKIP_AUTH_ERROR_REPORT_CONTEXT', () => {
+       dispatchEvent: vi.fn(),
+     }
+     vi.stubGlobal('window', testWindow)
++    vi.stubGlobal('dispatchEvent', testWindow.dispatchEvent)
+   })
+ 
+   afterEach(() => {
+diff --git a/libs/shared/utils/src/lib/cookies.spec.ts b/libs/shared/utils/src/lib/cookies.spec.ts
+index 0c508db..9ba877d 100644
+--- a/libs/shared/utils/src/lib/cookies.spec.ts
++++ b/libs/shared/utils/src/lib/cookies.spec.ts
+@@ -1,6 +1,8 @@
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ import { decodeBase64UrlSegment } from './base64url'
+ import {
++  cookieCandidates,
++  cookiePairs,
+   decodeCookieValue,
+   getCookie,
+   getJsonCookie,
+@@ -145,6 +147,24 @@ describe('session cookie picking without Buffer', () => {
+   })
+ })
+ 
++describe('cookieCandidates and cookiePairs', () => {
++  it('returns every distinct, nonempty value as sent, in the order of its last occurrence', () => {
++    const header =
++      ' __session=a%20b ; theme=dark;__session=c=d; __session=a%20b; __session=; x__session=z'
++    const candidates = cookieCandidates(header, '__session')
++
++    expect(candidates).toEqual(['c=d', 'a%20b'])
++    expect(cookiePairs('__session', candidates)).toBe('__session=c=d; __session=a%20b')
++  })
++
++  it.each([null, undefined, '', 'theme=dark', '__session', '__session='])(
++    'returns none for %s',
++    header => {
++      expect(cookieCandidates(header, '__session')).toEqual([])
++    },
++  )
++})
++
+ describe('malformed cookie encoding', () => {
+   // The cookie header carries every cookie visible to the request, including ones another app set
+   // on a parent domain. One bad `%` sequence made decodeURIComponent throw, the root loader throw,
+diff --git a/libs/shared/utils/src/lib/cookies.tsx b/libs/shared/utils/src/lib/cookies.tsx
+index ebef55d..7e5b435 100644
+--- a/libs/shared/utils/src/lib/cookies.tsx
++++ b/libs/shared/utils/src/lib/cookies.tsx
+@@ -139,6 +139,32 @@ export function getCookie<T extends string = string>(
+   return pickNewestJwt(values) as T
+ }
+ 
++/**
++ * Every distinct, nonempty value of the cookie `name` in a Cookie header, as sent (not
++ * percent-decoded, so it can be forwarded verbatim) and in the order of its last occurrence: the API
++ * breaks a tie between two issued in the same second by taking the later. More than one means the browser
++ * holds duplicates (a host-only and a parent-domain cookie, say); only the API can tell which of
++ * them verifies, so a caller that forwards the session forwards them all (`cookiePairs`).
++ */
++export function cookieCandidates(cookieHeader: string | null | undefined, name: string): string[] {
++  if (!cookieHeader) return []
++  const values = new Set<string>()
++  for (const pair of cookieHeader.split(';')) {
++    const separator = pair.indexOf('=')
++    if (separator < 0 || pair.slice(0, separator).trim() !== name) continue
++    const value = pair.slice(separator + 1).trim()
++    if (!value) continue
++    values.delete(value)
++    values.add(value)
++  }
++  return [...values]
++}
++
++/** A Cookie header that carries `values` of the cookie `name` and nothing else. */
++export function cookiePairs(name: string, values: readonly string[]): string {
++  return values.map(value => `${name}=${value}`).join('; ')
++}
++
+ // Returns cookie parsed as object or null
+ export function getJsonCookie<T extends object>(
+   headers: Headers | Record<string, string>,
