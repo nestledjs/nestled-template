@@ -6,12 +6,7 @@ import {
   ExclamationTriangleIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline'
-import {
-  DeleteUserAccount,
-  ExportUserData,
-  type DeleteUserAccountMutation,
-  type ExportUserDataQuery,
-} from '@nestled-template/shared/sdk'
+import { DeleteUserAccount, ExportUserData } from '@nestled-template/shared/sdk'
 import { useMutation, useLazyQuery } from '@apollo/client/react'
 import { TransferOwnershipModal } from '@nestled-template/web'
 
@@ -30,7 +25,7 @@ export function ExportDataSection() {
   const [isExporting, setIsExporting] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
-  const [exportUserData] = useLazyQuery<ExportUserDataQuery>(ExportUserData)
+  const [exportUserData] = useLazyQuery(ExportUserData)
 
   const handleExportData = async () => {
     if (isExporting) return
@@ -154,7 +149,7 @@ export function DangerZoneSection() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [deleteAccountMutation] = useMutation<DeleteUserAccountMutation>(DeleteUserAccount, {
+  const [deleteAccountMutation] = useMutation(DeleteUserAccount, {
     errorPolicy: 'none',
   })
 

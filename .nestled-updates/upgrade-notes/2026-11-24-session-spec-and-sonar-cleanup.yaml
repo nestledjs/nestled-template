@@ -1,0 +1,121 @@
+id: 2026-11-24-session-spec-and-sonar-cleanup
+title: >-
+  Small clean-ups: a session spec that failed under load, two async loaders with nothing to await, a
+  new array on every render of the signed-in layout, a session-audit spec every project had to edit,
+  and a stale path in a comment
+priority: normal
+area: web
+type: cleanup
+delivery: code-patch
+applyAfter:
+  - 2026-11-20-session-middleware
+  - 2026-11-20-session-cookie-domain-rule
+  - 2026-11-21-retry-queries-after-confirmed-session
+  - 2026-11-21-sonar-rebaseline-findings
+  - 2026-11-24-forward-duplicate-session-cookies
+
+intent: >
+  Seven independent parts. Nothing changes at runtime.
+
+
+  1. apps/web/tests/session/session-revalidator.spec.tsx used
+  `vi.useFakeTimers({ shouldAdvanceTime: true })`, which moves the fake clock with real time. On a
+  loaded machine five real seconds could pass inside a spec and end the 5-second cooldown early
+  ("answers five 401s within the cooldown" saw 2 revalidations instead of 1). It now uses
+  `vi.useFakeTimers()`: only the specs move the clock. A new case waits 100 ms of real time and
+  checks that the clock did not move.
+
+
+  2. The loaders in apps/web/app/routes/force-logout.tsx and apps/web/app/routes/members/_index.tsx
+  were `async` with no `await` (Sonar typescript:S7503), the pattern
+  2026-11-21-sonar-rebaseline-findings fixed in login and oauth-success. Both are plain functions
+  that return the same response; React Router accepts either. The specs that awaited the
+  force-logout loader no longer do (awaiting a plain value is S4123), and the members index gets a
+  case.
+
+
+  3. apps/web/app/routes/_authenticated/_layout.tsx: `orgsData?.myOrganizations || []` made a new
+  array on every render when the answer held none, which changed the `user` memo's dependencies and
+  the shell's context each time (react-hooks/exhaustive-deps warned). It falls back to one
+  module-level `NO_ORGANIZATIONS`.
+
+
+  4. scripts/audit-session-decisions.spec.mjs asserted exactly 8 allowed sites, the template's own
+  number, so every project with one more or one fewer had to edit it. It now asserts no findings and
+  a non-empty reason on every allowed site.
+
+
+  5. The comment in libs/api/config/src/lib/cookie-domain.ts (and the one in its spec) named
+  apps/web/app/session-cookie.ts; the file is apps/web/app/session/session-cookie.ts since
+  2026-11-20-session-middleware. Comments only. docs/template/README.md has the same correction.
+
+
+  6. scripts/audit-session-decisions.mjs also flags
+  `cookieCandidates(..., getSessionCookieName())` outside apps/web/app/session/ and
+  libs/shared/apollo: it reads the session cookie just as `getCookie(..., getSessionCookieName())`
+  does. The finding's text now names `sessionToken(request)` for a raw bearer token that cannot be
+  avoided.
+
+
+  7. Two corrections to earlier notes, which are not rewritten once published:
+  - 2026-11-21-sonar-two-typescript-programs says to expect "a few dozen" type errors from the API
+    program. The template has about 50, and a larger project about 100. Both are normal; thousands
+    still mean a wrong option or a missing generated file.
+  - 2026-08-06-per-project-dev-ports (archived) deleted
+    libs/api/core/feature/src/lib/config/configuration.ts, an unexported, unimported copy of
+    libs/api/config/src/lib/configuration.ts. A project that never applied that part may still have
+    it; see the hint.
+
+why: >
+  Each one cost downstream projects something for no benefit: a red web suite that passed on the
+  rerun, Sonar and lint findings in unchanged template files, a spec edit with every adoption, and a
+  pointer to a file that is not there.
+
+affectedPaths:
+  - apps/web/tests/session/session-revalidator.spec.tsx
+  - apps/web/app/routes/force-logout.tsx
+  - apps/web/app/routes/members/_index.tsx
+  - apps/web/tests/routes/force-logout.spec.tsx
+  - apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+  - apps/web/tests/session-cookie.spec.ts
+  - apps/web/app/routes/_authenticated/_layout.tsx
+  - apps/web/tests/routes/authenticated-layout.spec.tsx
+  - scripts/audit-session-decisions.mjs
+  - scripts/audit-session-decisions.spec.mjs
+  - libs/api/config/src/lib/cookie-domain.ts
+  - libs/api/config/src/lib/cookie-domain.spec.ts
+
+skipIf:
+  - >-
+    Parts 1, 3, 4, 5 and 6: the project has not taken 2026-11-20-session-middleware (it has none of
+    these files). Part 2 applies to any project with the two loaders.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx lint web --skip-nx-cache
+  - pnpm exec nx test config --skip-nx-cache
+  - node --test scripts/audit-session-decisions.spec.mjs
+
+agentHints:
+  - >-
+    Part 1: search the project's other specs for `shouldAdvanceTime: true`. Where one asserts what
+    happens before a timer ends, drop the option and advance the clock explicitly. A spec that only
+    waits for something to appear can keep it.
+  - >-
+    Part 2: a project without a /force-logout route or a members index records that half
+    not-applicable. Drop `async` from any other loader S7503 flags, and make a spec helper that
+    relies on `.rejects`/`.resolves` an async wrapper rather than leaving `await loader(...)` on a
+    plain value. A loader that can throw now throws synchronously.
+  - >-
+    Part 3: if the project's signed-in layout reads organizations another way, look for any `|| []`
+    or `?? []` in render whose result is a hook dependency, and move the fallback to module level.
+  - >-
+    Part 4: if you changed the number 8 to your own count, take the template's version of the case.
+  - >-
+    Part 6: a project's own loader this flags uses `forwardedSessionCookie(request)` to call the API,
+    or `sessionToken(request)` where only a bearer token will do. Neither decides a session.
+  - >-
+    Part 7: if libs/api/core/feature/src/lib/config/configuration.ts exists, check
+    `git grep -n "config/configuration" -- apps libs` and the library's index.ts. When nothing
+    imports or exports it, compare it with libs/api/config/src/lib/configuration.ts, carry over any
+    setting only it has, and delete it. Keep it if something uses it.

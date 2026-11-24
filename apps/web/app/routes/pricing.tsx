@@ -6,7 +6,6 @@ import {
   AvailablePlans,
   CreateCheckoutSession,
   type AvailablePlansQuery,
-  type CreateCheckoutSessionMutation,
 } from '@nestled-template/shared/sdk'
 import { useSubscription, useGlobalCtx } from '@nestled-template/web'
 
@@ -20,8 +19,9 @@ export default function PricingPage() {
   const { plan: currentPlan } = useSubscription()
   const { data, loading } = useQuery<AvailablePlansQuery>(AvailablePlans)
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [createCheckoutSession, { loading: checkoutLoading }] =
-    useMutation<CreateCheckoutSessionMutation>(CreateCheckoutSession, { errorPolicy: 'none' })
+  const [createCheckoutSession, { loading: checkoutLoading }] = useMutation(CreateCheckoutSession, {
+    errorPolicy: 'none',
+  })
 
   const plans = data?.plans || []
 

@@ -1,0 +1,91 @@
+id: 2026-11-24-session-hardening-follow-ups
+title: >-
+  A return_url never reaches a sign-out route, a streamed preload's 401 asks for a fresh verdict, and
+  small session clean-ups
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-20-session-middleware
+  - 2026-11-21-retry-queries-after-confirmed-session
+  - 2026-11-24-session-starts-in-fresh-document
+  - 2026-11-24-forward-duplicate-session-cookies
+
+intent: >
+  1. `safeReturnUrl` accepted a sign-out route, so a sign-in could end in a sign-out. It moves from
+  login.tsx to apps/web/app/session/return-url.ts (login.tsx still re-exports it, with
+  `DEFAULT_POST_LOGIN` beside it) and refuses `/logout` and `/force-logout` however they are
+  spelled: the path is resolved, decoded and lower-cased before the check. It also resolves the
+  value with the URL parser before accepting it, since `location.assign` does (the parser drops
+  characters a string check does not). Ordinary paths pass through unchanged. The other readers
+  (force-logout.tsx, logout.tsx) only pass the value on to /login.
+
+  2. A preload the API refuses (a clean 401) after the request was judged signed in reaches the
+  browser in the loader data stream. The component that reads it throws, the browser's error link
+  never sees it, and the page showed the generic error screen with no revalidation. The root
+  ErrorBoundary now asks the server to judge the session again
+  (`RevalidateSessionOnRefusedRender`), at most once a minute so that a refusal that stays is not a
+  request loop, and shows the 401 screen with its retry. `isRefusedRenderError` decides by code and
+  status only, and outage evidence outranks the 401. The browser still never signs anyone out.
+
+  3. The deprecated single type argument is gone from `useQuery(Me)` (app.tsx,
+  transfer-ownership-modal.tsx) and `client.query({ query: Me })` (session-middleware.server.ts):
+  the typed document carries the types (S1874).
+
+  4. apollo.ts dispatches its four events with `globalThis.dispatchEvent`, behind the same guard.
+
+  5. New apps/web/tests/root-error-boundary-document.spec.tsx: no screen of the root ErrorBoundary
+  renders a document of its own (`Layout` owns html, head and body).
+
+
+  Specs: apps/web/tests/routes/_public/login.spec.tsx (safeReturnUrl),
+  apps/web/tests/session/refused-render.spec.tsx.
+
+why: >
+  A sign-in could end in a sign-out, and a transient 401 on a
+  streamed query left an error screen that only a reload cleared.
+
+affectedPaths:
+  - apps/web/app/session/return-url.ts
+  - apps/web/app/session/session-revalidator.tsx
+  - apps/web/app/session/session-middleware.server.ts
+  - apps/web/app/session/index.ts
+  - apps/web/app/root.tsx
+  - apps/web/app/app.tsx
+  - apps/web/app/routes/_public/login.tsx
+  - libs/web/src/lib/modals/transfer-ownership-modal.tsx
+  - libs/shared/apollo/src/lib/apollo.ts
+  - libs/shared/apollo/src/lib/apollo.spec.ts
+  - apps/web/tests/routes/_public/login.spec.tsx
+  - apps/web/tests/session/refused-render.spec.tsx
+  - apps/web/tests/root-error-boundary-document.spec.tsx
+
+skipIf:
+  - The project has not taken 2026-11-20-session-middleware.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm exec nx test apollo --skip-nx-cache
+  - pnpm run verify:session-decisions
+
+agentHints:
+  - >
+    A project with its own sign-out route, or that sets SESSION_REJECTED_PATH to one, adds it to
+    `SIGN_OUT_PATHS` in return-url.ts. A project with its own copy of `safeReturnUrl` replaces it
+    with this one; its specs can keep importing it from login.tsx.
+  - >
+    Grep for other readers of `return_url` / `redirect` that navigate by themselves and pass them
+    through `safeReturnUrl`.
+  - >
+    If root.tsx's ErrorBoundary differs, add only the `isRefusedRenderError` branch, before the
+    branch that maps statuses to screens. Do not turn it into a sign-out or a redirect.
+  - >
+    A project whose client has a RetryLink records an outage per attempt, inside the retry. Keep
+    that: a 401 that follows a failed attempt is then not taken for a sign-out.
+  - >
+    A preload or query with `errorPolicy: 'all'` does not throw, so the new branch does not see it.
+    Read its `error` where it is used.
+  - >
+    Specs that replace `window` with a stub to catch the events must stub `dispatchEvent` too
+    (`vi.stubGlobal('dispatchEvent', ...)`). In a browser the two are the same function.

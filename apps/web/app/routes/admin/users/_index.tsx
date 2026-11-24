@@ -5,8 +5,6 @@ import {
   AdminUserManagement,
   EmulateUser,
   type AdminUserManagementQuery,
-  type AdminUserManagementDetailsQuery,
-  type EmulateUserMutation,
 } from '@nestled-template/shared/sdk'
 import {
   CheckCircleIcon,
@@ -178,7 +176,7 @@ export default function AdminUsersPage() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
 
   // Query users
-  const { data, loading, error } = useQuery<AdminUserManagementQuery>(AdminUserManagement, {
+  const { data, loading, error } = useQuery(AdminUserManagement, {
     variables: {
       filters: {
         search: search || undefined,
@@ -191,19 +189,16 @@ export default function AdminUsersPage() {
   })
 
   // Query user details
-  const { data: detailsData, loading: loadingDetails } = useQuery<AdminUserManagementDetailsQuery>(
-    AdminUserManagementDetails,
-    {
-      variables: { userId: selectedUserId || '' },
-      skip: !selectedUserId,
-      fetchPolicy: 'network-only',
-    },
-  )
+  const { data: detailsData, loading: loadingDetails } = useQuery(AdminUserManagementDetails, {
+    variables: { userId: selectedUserId || '' },
+    skip: !selectedUserId,
+    fetchPolicy: 'network-only',
+  })
 
   const userDetails = detailsData?.adminUserDetails
 
   // Emulate user mutation
-  const [emulateUser, { loading: emulating }] = useMutation<EmulateUserMutation>(EmulateUser, {
+  const [emulateUser, { loading: emulating }] = useMutation(EmulateUser, {
     onCompleted: () => {
       // The emulated user's session starts now: forget the admin's organization, so its requests
       // are not sent for an organization the emulated user may not belong to, and store none until

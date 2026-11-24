@@ -13,10 +13,8 @@ import {
   type MyOrganizationsWithMembersQuery,
   UserUpdateOrganization,
   UploadOrganizationLogo,
-  type UserUpdateOrganizationMutation,
   type UploadOrganizationLogoMutation,
   RemoveOrganizationLogo,
-  type RemoveOrganizationLogoMutation,
 } from '@nestled-template/shared/sdk'
 import { useApolloClient, useReadQuery, type QueryRef, useMutation } from '@apollo/client/react'
 import { Avatar, AvatarUpload } from '@nestled-template/web-ui'
@@ -112,17 +110,11 @@ export default function OrganizationSettings() {
     text: string
   } | null>(null)
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [updateOrganization] = useMutation<UserUpdateOrganizationMutation>(UserUpdateOrganization, {
+  const [updateOrganization] = useMutation(UserUpdateOrganization, {
     errorPolicy: 'none',
   })
-  const [uploadOrganizationLogo] = useMutation<UploadOrganizationLogoMutation>(
-    UploadOrganizationLogo,
-    { errorPolicy: 'none' },
-  )
-  const [removeOrganizationLogo] = useMutation<RemoveOrganizationLogoMutation>(
-    RemoveOrganizationLogo,
-    { errorPolicy: 'none' },
-  )
+  const [uploadOrganizationLogo] = useMutation(UploadOrganizationLogo, { errorPolicy: 'none' })
+  const [removeOrganizationLogo] = useMutation(RemoveOrganizationLogo, { errorPolicy: 'none' })
   const revalidator = useRevalidator()
   const client = useApolloClient()
   const canUpdateOrganization = hasPermission(

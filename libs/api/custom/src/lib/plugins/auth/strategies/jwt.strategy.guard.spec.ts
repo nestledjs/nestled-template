@@ -1,4 +1,5 @@
 import { ExecutionContext, ForbiddenException, HttpException } from '@nestjs/common'
+import { JwtService } from '@nestjs/jwt'
 import { GqlAuthGuard } from '@nestled-template/api/utils'
 import { JwtStrategy } from './jwt.strategy'
 
@@ -91,5 +92,95 @@ describe('JwtStrategy API-token refusals through AuthGuard', () => {
     apiTokensService.validateApiToken.mockRejectedValue(new Error('database unavailable'))
 
     expect((await refusal()).getStatus()).toBe(503)
+  })
+})
+
+/**
+ * What the web server sends when a browser holds several session cookies: all of them in one Cookie
+ * header and no bearer token. Through passport and the real `AuthGuard('jwt')`.
+ */
+describe('JwtStrategy with several session cookies, through AuthGuard', () => {
+  const jwt = new JwtService({ secret: 'test-secret' })
+  const now = Math.floor(Date.now() / 1000)
+  const COOKIE_NAME_KEYS = ['VITE_COOKIE_NAME', 'API_COOKIE_NAME']
+  let savedNames: Array<string | undefined>
+  let auth: { validateUser: jest.Mock; isTokenCurrent: jest.Mock }
+
+  const signed = (userId: string, iat: number) => jwt.sign({ userId, iat }, { expiresIn: 3600 })
+  const unverified = (userId: string, iat: number) =>
+    new JwtService({ secret: 'another-secret' }).sign({ userId, iat }, { expiresIn: 3600 })
+
+  beforeEach(() => {
+    process.env['JWT_SECRET'] = 'test-secret'
+    savedNames = COOKIE_NAME_KEYS.map(key => process.env[key])
+    COOKIE_NAME_KEYS.forEach(key => delete process.env[key])
+    auth = {
+      validateUser: jest.fn(async (id: string) => ({ id })),
+      isTokenCurrent: jest.fn().mockReturnValue(true),
+    }
+    new JwtStrategy(
+      auth as never,
+      { validateApiToken: jest.fn().mockResolvedValue(null), recordTokenUse: jest.fn() } as never,
+    )
+  })
+
+  afterEach(() => {
+    COOKIE_NAME_KEYS.forEach((key, index) => {
+      const value = savedNames[index]
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    })
+  })
+
+  async function userFor(headers: Record<string, string>): Promise<string | undefined> {
+    const req: { headers: Record<string, string>; user?: { id: string } } = { headers }
+    await new GqlAuthGuard().canActivate({
+      getType: () => 'http',
+      switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({}) }),
+    } as unknown as ExecutionContext)
+    return req.user?.id
+  }
+
+  const cookies = (...tokens: string[]) => ({
+    cookie: tokens.map(token => `__session=${token}`).join('; '),
+  })
+
+  it.each([
+    ['first', [unverified('user-x', now), signed('user-1', now - 60)]],
+    ['last', [signed('user-1', now - 60), unverified('user-x', now)]],
+  ])(
+    'a newer cookie that does not verify (%s) does not hide the one that does',
+    async (_w, tokens) => {
+      await expect(userFor(cookies(...tokens))).resolves.toBe('user-1')
+    },
+  )
+
+  it('as a bearer token, that newer cookie is refused: why the web server sends none', async () => {
+    const error = await userFor({
+      authorization: `Bearer ${unverified('user-x', now)}`,
+      ...cookies(signed('user-1', now - 60)),
+    }).catch((thrown: HttpException) => thrown.getStatus())
+    expect(error).toBe(401)
+  })
+
+  it('reads the cookie the API sets, whatever API_COOKIE_NAME says', async () => {
+    process.env['API_COOKIE_NAME'] = 'another'
+    await expect(userFor(cookies(signed('user-1', now)))).resolves.toBe('user-1')
+
+    process.env['VITE_COOKIE_NAME'] = 'app'
+    await expect(userFor({ cookie: `app=${signed('user-2', now)}` })).resolves.toBe('user-2')
+  })
+
+  it('takes the newest of several that verify', async () => {
+    await expect(
+      userFor(cookies(signed('user-old', now - 60), signed('user-new', now))),
+    ).resolves.toBe('user-new')
+  })
+
+  it('refuses when none verifies', async () => {
+    const error = await userFor(cookies(unverified('a', now), unverified('b', now - 1))).catch(
+      (thrown: HttpException) => thrown.getStatus(),
+    )
+    expect(error).toBe(401)
   })
 })

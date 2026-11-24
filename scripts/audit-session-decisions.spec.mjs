@@ -108,6 +108,24 @@ describe('audit-session-decisions', () => {
       assert.deepEqual(rules(text), [{ line: 2, rule: 'session-cookie-read' }])
     })
 
+    const candidates =
+      "export function f(request: Request) {\n  return cookieCandidates(request.headers.get('cookie'), getSessionCookieName())\n}"
+
+    it('flags cookieCandidates(header, getSessionCookieName())', () => {
+      const { findings } = auditSource('apps/web/app/routes/example.tsx', candidates)
+      assert.deepEqual(
+        findings.map(({ line, rule }) => ({ line, rule })),
+        [{ line: 2, rule: 'session-cookie-read' }],
+      )
+      assert.match(findings[0].message, /forwardedSessionCookie\(request\)/)
+      assert.match(findings[0].message, /sessionToken\(request\)/)
+    })
+
+    it('lets the server-side Apollo client read the candidates it forwards', () => {
+      const { findings } = auditSource('libs/shared/apollo/src/lib/apollo.ts', candidates)
+      assert.deepEqual(findings, [])
+    })
+
     it('ignores any other cookie', () => {
       const text =
         "export function f(request: Request) {\n  return getCookie(request.headers, 'theme')\n}"
@@ -195,10 +213,15 @@ describe('audit-session-decisions', () => {
       assert.ok(files.includes('apps/web/app/root.tsx'))
     })
 
-    it('passes on the template, with exactly the allowed sites it documents', () => {
+    // No count: how many sites a project allows is its own, and the report lists each one.
+    it('passes on this workspace: nothing found, and a reason for every allowed site', () => {
       const result = auditFiles(root)
       assert.deepEqual(result.findings, [], formatReport(result))
-      assert.equal(result.allowed.length, 8, formatReport(result))
+      assert.deepEqual(
+        result.allowed.filter(({ reason }) => !reason?.trim()),
+        [],
+        formatReport(result),
+      )
     })
   })
 })

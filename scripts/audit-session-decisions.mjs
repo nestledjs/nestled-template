@@ -21,7 +21,8 @@
 //                         `classifyApiFailure(...) === 'unauthenticated'`
 //   throw-401             a 401 made by hand: `data(..., { status: 401 })`,
 //                         `new Response(..., { status: 401 })`, `Response.json(..., { status: 401 })`
-//   session-cookie-read   `getCookie(..., getSessionCookieName())`
+//   session-cookie-read   `getCookie(..., getSessionCookieName())`, or `cookieCandidates(...)` with
+//                         the same name outside libs/shared/apollo
 //   empty-organizations   a `catch` that returns `[]` in a function that reads organizations
 //                         (`myOrganizations` / `MyOrganizations...`): a failed read must never look
 //                         like "no organizations"
@@ -72,7 +73,7 @@ export const MESSAGES = {
   'throw-401':
     'makes a 401 by hand. Throw narrowApiError(error) for a refused call; only the session middleware turns a 401 into a sign-out.',
   'session-cookie-read':
-    'reads the session cookie. Read getSession(context) instead (or forwardedSessionCookie(request) to pass it to the API).',
+    'reads the session cookie. Read getSession(context) instead (or forwardedSessionCookie(request) to pass it to the API, or sessionToken(request) when a raw bearer token is unavoidable).',
   'empty-organizations':
     'returns [] when reading organizations fails. A failed read must not look like "no organizations": let it throw (narrowApiError) so the outage screen or the error screen shows.',
 }
@@ -175,8 +176,14 @@ function isHand401(node) {
   return false
 }
 
-function isSessionCookieRead(node) {
-  if (!ts.isCallExpression(node) || calleeName(node) !== 'getCookie') return false
+// The server-side Apollo client forwards the candidates, so it has to read them.
+const READS_CANDIDATES = 'libs/shared/apollo/'
+
+function isSessionCookieRead(node, fileName) {
+  if (!ts.isCallExpression(node)) return false
+  const callee = calleeName(node)
+  if (callee !== 'getCookie' && callee !== 'cookieCandidates') return false
+  if (callee === 'cookieCandidates' && fileName.startsWith(READS_CANDIDATES)) return false
   const name = node.arguments[1]
   return !!name && ts.isCallExpression(name) && calleeName(name) === 'getSessionCookieName'
 }
@@ -298,7 +305,7 @@ export function auditSource(fileName, text) {
     if (isNavigation(node)) report(node, 'navigate-to-sign-out')
     else if (isAuthCondition(node)) report(node, 'auth-condition')
     else if (isHand401(node)) report(node, 'throw-401')
-    else if (isSessionCookieRead(node)) report(node, 'session-cookie-read')
+    else if (isSessionCookieRead(node, fileName)) report(node, 'session-cookie-read')
     else if (isEmptyOrganizationsCatch(node)) report(node, 'empty-organizations')
     ts.forEachChild(node, visit)
   }

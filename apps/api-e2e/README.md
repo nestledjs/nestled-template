@@ -37,10 +37,10 @@ one test passed. A filter that matches nothing, or a run in which every test is 
 2. **Global setup** (`src/support/global-setup.ts`):
    - refuses a test database that is not disposable (a `postgresql:` URL on this machine, named
      `*_test`, with no `?schema=`, fragment or destination-override parameter, and not on the
-     development server's port, `POSTGRES_PORT`) before anything is reset, migrated, pushed or
-     seeded, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set. The opt-out never admits a URL on the
-     development server, whatever it is named. The wrapper's read-only `SELECT 1` probe has already
-     connected by then; nothing writes before this check.
+     development server's port: `POSTGRES_PORT`, or 5432 when it is unset outside CI) before anything
+     is reset, migrated, pushed or seeded, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set. The opt-out
+     never admits a URL on the development server, whatever it is named. The wrapper's read-only
+     `SELECT 1` probe has already connected by then; nothing writes before this check.
    - applies migrations with `prisma migrate deploy`. A local test database built by `db push` alone
      has no migration history; it is emptied and migrated from scratch, by the same rule (the reset
      never runs on a database the guard would refuse, opt-out or not).
@@ -71,7 +71,7 @@ one test passed. A filter that matches nothing, or a run in which every test is 
   database. It never lets through a URL that could connect somewhere other than it appears to: a
   query parameter that overrides the destination (`?host=`, `?port=`, `?dbname=`...), a fragment,
   or a protocol other than `postgresql:`; nor one on the development server (a local URL on
-  `POSTGRES_PORT`), whatever it is named. A setup that empties the schema on every run gains nothing
+  `POSTGRES_PORT`, or on 5432 when it is unset and `CI` is not set), whatever it is named. A setup that empties the schema on every run gains nothing
   from it and should not offer it. `scripts/test-db.sh migrate` applies the same rule before
   `prisma migrate deploy`, except that it accepts no query string at all, and so does
   `scripts/test-db.sh verify`, which the wrapper runs before Vitest, for the development server.

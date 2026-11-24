@@ -2,12 +2,7 @@ import React, { useState } from 'react'
 import { useLoaderData } from 'react-router'
 import { CalendarIcon, CheckCircleIcon, UserCircleIcon } from '@heroicons/react/24/outline'
 import { apolloLoader } from '@nestled-template/shared/apollo'
-import {
-  Me,
-  type MeQuery,
-  ResendMyVerificationEmail,
-  type ResendMyVerificationEmailMutation,
-} from '@nestled-template/shared/sdk'
+import { Me, type MeQuery, ResendMyVerificationEmail } from '@nestled-template/shared/sdk'
 import { useReadQuery, QueryRef, useMutation } from '@apollo/client/react'
 import { ExportDataSection, TransferOwnershipSection, DangerZoneSection } from './_shared-sections'
 
@@ -28,10 +23,9 @@ export default function AccountSettings() {
   // resendVerificationEmail requires a Turnstile token and would reject this call outright on a
   // deployment with Turnstile enabled.
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [resendMyVerificationEmail] = useMutation<ResendMyVerificationEmailMutation>(
-    ResendMyVerificationEmail,
-    { errorPolicy: 'none' },
-  )
+  const [resendMyVerificationEmail] = useMutation(ResendMyVerificationEmail, {
+    errorPolicy: 'none',
+  })
 
   const handleResendVerificationEmail = async () => {
     const primaryEmail = user?.emails?.find(e => e.primary)?.email

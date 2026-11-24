@@ -1,7 +1,7 @@
 import { getSessionCookieName } from '@nestled-template/shared/utils'
 import { expiredSessionCookies } from '../session/session-cookie'
 
-export async function loader({ request }: { request: Request }) {
+export function loader({ request }: { request: Request }) {
   const cookieName = getSessionCookieName()
   const url = new URL(request.url)
   const returnUrl = url.searchParams.get('return_url')

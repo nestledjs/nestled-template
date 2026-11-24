@@ -1,0 +1,64 @@
+id: 2026-11-24-invitation-two-factor-sign-in
+title: >-
+  Signing in on the invitation page with a two-factor account said the password was wrong
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-session-starts-in-fresh-document
+  - 2026-11-24-session-hardening-follow-ups
+  - 2026-11-24-security-pages-typed-variables
+
+intent: >
+  The login form on /accept-invitation knew two answers: a user, or wrong credentials. An account
+  with two-factor authentication gets neither (`requires2FA` and a temporary token, no user and no
+  session yet), so a correct password showed "Invalid email or password" and the invitation could
+  not be accepted from there.
+
+
+  The page now recognises `requires2FA` and sends the visitor to
+  `/login?return_url=/accept-invitation?token=<the same token>` (encoded). The login page says why,
+  asks for the password and the code, and returns to the invitation, which a signed-in visitor
+  accepts automatically, as before. The temporary token is dropped: there is no second two-factor
+  form, and nothing secret goes into the address.
+
+
+  The reason travels as router state, not in the address, and the login page shows only words it
+  knows for a known reason (apps/web/app/session/sign-in-notice.ts), so a crafted link cannot put
+  text there. The session audit allows this one navigation with a reason: it is a sign-in, not a
+  session decision.
+
+
+  When somebody else is signed in (their attempt at the invitation failed and the form shows), the
+  page stays and says to sign out first: /login would send a signed-in visitor on to the dashboard.
+
+why: >
+  Two-factor users were told their password was wrong and could not join an organization from the
+  link they were sent.
+
+affectedPaths:
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/app/routes/_public/login.tsx
+  - apps/web/app/session/sign-in-notice.ts
+  - apps/web/tests/routes/accept-invitation-two-factor.spec.tsx
+
+skipIf:
+  - The project has no login form on its invitation page, or no two-factor authentication.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm verify:session-decisions
+  - >-
+    Invite a user who has two-factor authentication, open the link signed out, and log in on that
+    page: the login page opens with the message, and after the code the invitation is accepted.
+
+agentHints:
+  - >-
+    The project's login answer may name the pending state differently. Check what its login mutation
+    returns for a two-factor account and that the document selects it.
+  - >-
+    The project's `safeReturnUrl` must keep a path with a query string, and its invitation path must
+    match. If the login page is elsewhere, change the target and keep the encoding.
+  - >-
+    Look for other sign-in forms outside /login (a checkout, a share link) with the same two answers.

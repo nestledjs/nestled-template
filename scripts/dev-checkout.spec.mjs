@@ -411,6 +411,7 @@ function testDb(root, bin, command, env = {}) {
   delete base.POSTGRES_TEST_PORT
   delete base.E2E_ALLOW_NON_DISPOSABLE_DB
   delete base.POSTGRES_PORT
+  delete base.CI
   return spawnSync('bash', [join(root, 'scripts/test-db.sh'), command], {
     cwd: root,
     env: { ...base, ...env },
@@ -597,7 +598,7 @@ void describe('scripts/test-db.sh reads .env as compose does, and acts only on w
 
     for (const url of [
       'postgresql://postgres:postgres@db.example.com:5432/app_test',
-      'postgresql://postgres:postgres@localhost:5432/app',
+      'postgresql://postgres:postgres@localhost:55433/app',
     ]) {
       const refused = testDb(main, bin, 'migrate', { TEST_DATABASE_URL: url })
       assert.notEqual(refused.status, 0, url)
@@ -748,6 +749,46 @@ void describe('scripts/test-db.sh ensure creates only a local *_test database', 
     }
     assert.equal(node.calls(), '')
     assert.equal(calls().match(/prisma migrate deploy/g)?.length ?? 0, 0, calls())
+  })
+
+  void it('takes 5432 as the development port when POSTGRES_PORT is unset outside CI', () => {
+    const { main, bin } = checkouts()
+    const node = nodeStub(main)
+    const { bin: recording, calls } = recordingStubs(join(main, '..'))
+    const path = `${node.bin}:${recording}:${bin}`
+    for (const rest of ['localhost:5432/app_test', '127.0.0.1/app_test']) {
+      const url = urlWithPassword(rest)
+      for (const unset of [{}, { POSTGRES_PORT: ' ' }, { CI: 'false' }, { CI: '0' }]) {
+        for (const allow of ['', '1']) {
+          const env = { ...unset, TEST_DATABASE_URL: url, E2E_ALLOW_NON_DISPOSABLE_DB: allow }
+          for (const command of ['ensure', 'verify', 'migrate']) {
+            const label = `${command} ${JSON.stringify(unset)} ${allow} ${rest}`
+            const refused = testDb(main, path, command, env)
+            assert.notEqual(refused.status, 0, label)
+            assert.match(refused.stderr, /on port 5432, the development\s+Postgres/, label)
+            assert.match(refused.stderr, /POSTGRES_PORT is unset/, label)
+            assert.ok(!refused.stderr.includes(FIXTURE_PASSWORD), label)
+          }
+        }
+      }
+    }
+    assert.equal(node.calls(), '')
+    assert.equal(calls(), '')
+  })
+
+  void it('compares no port in CI without POSTGRES_PORT, and the one that is set elsewhere', () => {
+    const { main, bin } = checkouts()
+    const { bin: recording } = recordingStubs(join(main, '..'))
+    const path = `${recording}:${bin}`
+    const url = 'postgresql://prisma:prisma@localhost:5432/app_test'
+    for (const env of [{ CI: 'true' }, { CI: '1' }, { POSTGRES_PORT: '5442' }]) {
+      for (const command of ['verify', 'migrate']) {
+        const ok = testDb(main, path, command, { ...env, TEST_DATABASE_URL: url })
+        assert.equal(ok.status, 0, `${command} ${JSON.stringify(env)} ${ok.stderr}`)
+      }
+    }
+    const set = { CI: 'true', POSTGRES_PORT: '5432', TEST_DATABASE_URL: url }
+    assert.notEqual(testDb(main, path, 'verify', set).status, 0)
   })
 
   void it('verifies a URL of your own on another port without asking Docker', () => {

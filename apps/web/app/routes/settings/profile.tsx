@@ -10,11 +10,7 @@ import {
   ResendVerificationEmail,
   UploadUserAvatar,
   RemoveUserAvatar,
-  type UpdateMyProfileMutation,
-  type ChangeEmailMutation,
-  type ResendVerificationEmailMutation,
   type UploadUserAvatarMutation,
-  type RemoveUserAvatarMutation,
 } from '@nestled-template/shared/sdk'
 import { useApolloClient, useReadQuery, type QueryRef, useMutation } from '@apollo/client/react'
 import { Form } from '@nestledjs/forms'
@@ -167,18 +163,15 @@ export default function ProfileSettings() {
   const client = useApolloClient()
 
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [updateMyProfile] = useMutation<UpdateMyProfileMutation>(UpdateMyProfile, {
+  const [updateMyProfile] = useMutation(UpdateMyProfile, {
     errorPolicy: 'none',
   })
-  const [changeEmail] = useMutation<ChangeEmailMutation>(ChangeEmail, { errorPolicy: 'none' })
-  const [resendVerificationEmail] = useMutation<ResendVerificationEmailMutation>(
-    ResendVerificationEmail,
-    { errorPolicy: 'none' },
-  )
-  const [uploadUserAvatar] = useMutation<UploadUserAvatarMutation>(UploadUserAvatar, {
+  const [changeEmail] = useMutation(ChangeEmail, { errorPolicy: 'none' })
+  const [resendVerificationEmail] = useMutation(ResendVerificationEmail, { errorPolicy: 'none' })
+  const [uploadUserAvatar] = useMutation(UploadUserAvatar, {
     errorPolicy: 'none',
   })
-  const [removeUserAvatar] = useMutation<RemoveUserAvatarMutation>(RemoveUserAvatar, {
+  const [removeUserAvatar] = useMutation(RemoveUserAvatar, {
     errorPolicy: 'none',
   })
 

@@ -13,16 +13,16 @@ import {
   AcceptOrganizationInvitation,
   Login,
   RegisterWithInvitation,
-  type GetInvitationDetailsQuery,
-  type AcceptOrganizationInvitationMutation,
-  type LoginMutation,
-  type RegisterWithInvitationMutation,
 } from '@nestled-template/shared/sdk'
+import { TWO_FACTOR_INVITATION } from '../session/sign-in-notice'
 import { useGlobalCtx } from '@nestled-template/web'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { formTheme } from '@nestled-template/shared/styles'
-import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+import {
+  clearActiveOrganizationForSessionChange,
+  storeActiveOrganizationId,
+} from '@nestled-template/shared/apollo'
 import { useQuery, useMutation } from '@apollo/client/react'
 
 type Tab = 'login' | 'signup'
@@ -83,6 +83,16 @@ function capitalizeSentence(message: string): string {
   return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`
 }
 
+/**
+ * Where a session started on this page goes on: in a new document, so nothing cached for a previous
+ * user is left (see login.tsx `signedIn`). An invitation accepted by a user who was already signed in
+ * starts no session, and stays a client navigation.
+ */
+function loadMembersArea() {
+  clearActiveOrganizationForSessionChange()
+  globalThis.location.replace('/members')
+}
+
 export default function AcceptInvitation() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -98,21 +108,15 @@ export default function AcceptInvitation() {
     data: inviteData,
     loading: inviteLoading,
     error: inviteError,
-  } = useQuery<GetInvitationDetailsQuery>(GetInvitationDetails, {
+  } = useQuery(GetInvitationDetails, {
     variables: { token: token || '' },
     skip: !token,
   })
 
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [acceptInvitation] = useMutation<AcceptOrganizationInvitationMutation>(
-    AcceptOrganizationInvitation,
-    { errorPolicy: 'none' },
-  )
-  const [login] = useMutation<LoginMutation>(Login, { errorPolicy: 'none' })
-  const [registerWithInvitation] = useMutation<RegisterWithInvitationMutation>(
-    RegisterWithInvitation,
-    { errorPolicy: 'none' },
-  )
+  const [acceptInvitation] = useMutation(AcceptOrganizationInvitation, { errorPolicy: 'none' })
+  const [login] = useMutation(Login, { errorPolicy: 'none' })
+  const [registerWithInvitation] = useMutation(RegisterWithInvitation, { errorPolicy: 'none' })
 
   const invitationDetails = inviteData?.getInvitationDetails
 
@@ -209,6 +213,24 @@ export default function AcceptInvitation() {
         variables: { input },
       })
 
+      if (data?.login?.requires2FA) {
+        // No session yet: the second factor is asked for on the login page, which comes back here
+        // signed in. It sends a signed-in visitor straight on, so a second account cannot go there.
+        setIsProcessing(false)
+        if (user) {
+          setFormError(
+            'This account uses two-factor authentication. Sign out first, then open the invitation link again.',
+          )
+          return
+        }
+        const invitation = `/accept-invitation?token=${encodeURIComponent(token)}`
+        // nestled-session-allow: the user is signing in, and the second factor is collected there
+        void navigate(`/login?return_url=${encodeURIComponent(invitation)}`, {
+          state: TWO_FACTOR_INVITATION,
+        })
+        return
+      }
+
       if (data?.login?.user?.id) {
         // A new session: forget an organization stored for a previous user before the invitation
         // (or anything after it) is sent with its `x-organization-id`.
@@ -221,9 +243,7 @@ export default function AcceptInvitation() {
         })
 
         // Redirect to members area
-        setTimeout(() => {
-          navigate('/members', { replace: true })
-        }, 1500)
+        setTimeout(loadMembersArea, 1500)
       } else {
         setFormError('Invalid email or password')
         setIsProcessing(false)
@@ -250,9 +270,7 @@ export default function AcceptInvitation() {
         // The new account is signed in: forget an organization stored for a previous user.
         storeActiveOrganizationId(null)
         // Registration successful, redirect to members area
-        setTimeout(() => {
-          navigate('/members', { replace: true })
-        }, 1500)
+        setTimeout(loadMembersArea, 1500)
       } else {
         setFormError('Failed to create account')
         setIsProcessing(false)

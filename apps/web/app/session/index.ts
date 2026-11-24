@@ -9,11 +9,14 @@ export {
   type SessionUser,
 } from './session-context'
 export {
+  isRefusedRenderError,
   isUnauthenticatedRouteError,
   requestSessionRevalidation,
   RevalidateSessionOnMount,
+  RevalidateSessionOnRefusedRender,
   retryUnauthenticatedQueries,
   SessionRevalidator,
   useSessionRevalidation,
 } from './session-revalidator'
+export { SESSION_CHECK_STYLE, SessionUserGuard } from './session-user-guard'
 export { expiredSessionCookies } from './session-cookie'

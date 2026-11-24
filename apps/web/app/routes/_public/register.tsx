@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link } from 'react-router'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { AuthLayout, TurnstileWidget, turnstileSiteKey } from '@nestled-template/web'
-import { RegisterInput, Register, type RegisterMutation } from '@nestled-template/shared/sdk'
+import { RegisterInput, Register } from '@nestled-template/shared/sdk'
+import { DEFAULT_POST_LOGIN } from '../../session/return-url'
 import { formTheme } from '@nestled-template/shared/styles'
-import { storeActiveOrganizationId } from '@nestled-template/shared/apollo'
+import { clearActiveOrganizationForSessionChange } from '@nestled-template/shared/apollo'
 import { useMutation } from '@apollo/client/react'
 
 interface RegisterFormInput extends RegisterInput {
@@ -13,7 +14,6 @@ interface RegisterFormInput extends RegisterInput {
 }
 
 export default function RegisterPage() {
-  const navigate = useNavigate()
   const [formError, setFormError] = useState<string | null>(null)
   const [captchaToken, setCaptchaToken] = useState<string | undefined>()
   // Bumping this remounts the widget for a fresh challenge. A Turnstile token is single-use, so
@@ -21,7 +21,7 @@ export default function RegisterPage() {
   // reset the retry would fail the captcha instead of showing the real error.
   const [captchaKey, setCaptchaKey] = useState(0)
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [registerMutation, { loading }] = useMutation<RegisterMutation>(Register, {
+  const [registerMutation, { loading }] = useMutation(Register, {
     errorPolicy: 'none',
   })
   const captchaRequired = Boolean(turnstileSiteKey())
@@ -57,11 +57,11 @@ export default function RegisterPage() {
       const token = data?.register?.token
       if (token) {
         // The new account is signed in: forget an organization stored for a previous user, so its
-        // requests never carry another user's `x-organization-id`.
-        storeActiveOrganizationId(null)
-        // Redirect to dashboard after successful registration
+        // requests never carry another user's `x-organization-id`, and go to the dashboard in a new
+        // document, so nothing cached for a previous user is left (see login.tsx `signedIn`).
         // Email verification can be handled separately if needed
-        navigate('/members/dashboard')
+        clearActiveOrganizationForSessionChange()
+        globalThis.location.assign(DEFAULT_POST_LOGIN)
       } else {
         failRegistration('Unable to register. Please try again.')
       }

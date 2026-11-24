@@ -1,12 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useMutation } from '@apollo/client/react'
-import {
-  VerifyEmail,
-  VerifyEmailChange,
-  type VerifyEmailMutation,
-  type VerifyEmailChangeMutation,
-} from '@nestled-template/shared/sdk'
+import { VerifyEmail, VerifyEmailChange } from '@nestled-template/shared/sdk'
 import { AuthLayout } from '@nestled-template/web'
 
 type VerificationType = 'initial' | 'change'
@@ -16,10 +11,10 @@ export default function VerifyEmailPage() {
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [message, setMessage] = useState<string>('Verifying your email...')
   // Throw on a GraphQL error so the .catch below sees it (also the client default; kept explicit).
-  const [verifyEmailMutation] = useMutation<VerifyEmailMutation>(VerifyEmail, {
+  const [verifyEmailMutation] = useMutation(VerifyEmail, {
     errorPolicy: 'none',
   })
-  const [verifyEmailChangeMutation] = useMutation<VerifyEmailChangeMutation>(VerifyEmailChange, {
+  const [verifyEmailChangeMutation] = useMutation(VerifyEmailChange, {
     errorPolicy: 'none',
   })
 

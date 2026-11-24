@@ -1,0 +1,108 @@
+id: 2026-11-24-dependency-alerts
+title: >-
+  Dependency hardening: effect 3.22.1 under @prisma/config, fast-xml-parser 5.12.0, glob 13.0.7
+priority: normal
+area: infra
+type: security
+delivery: code-patch
+
+intent: >
+  Root package.json and pnpm-lock.yaml only. Promotion mirrors neither, so nestled-template and
+  each project apply this to their own manifest and re-resolve their own lockfile with pnpm; the
+  template's lockfile is not copied. No zod pin or override changes.
+
+
+  1. effect 3.20.0 -> 3.22.1 (high). @prisma/config 7.10.1, the latest release, pins `effect` to
+  exactly 3.20.0, so no update within range reaches the fix. Add one entry under `pnpm.overrides`:
+  `"@prisma/config>effect@<3.22.1": "3.22.1"`. It is scoped to effect under @prisma/config and to
+  versions below 3.22.1, so it stops applying by itself once Prisma ships a newer pin (its 7.11
+  pre-releases pin 3.22.1). Same major, same two dependencies.
+
+
+  2. fast-xml-parser 5.10.1 -> 5.12.0 (low). @google-cloud/storage 7.x asks for `^5.3.4`, so this is
+  a lockfile move and needs no override. It brings @nodable/entities 3.1.0, fast-xml-builder 1.3.1,
+  is-unsafe 2.0.3 and strnum 2.5.1, the lowest versions 5.12.0 accepts.
+
+
+  3. glob 13.0.6 -> 13.0.7, under @joshwooding/vite-plugin-react-docgen-typescript (Storybook, which
+  asks for `^13.0.1`). Lockfile move, no override. 13.0.7 carries the same correction as 14.0.2, but
+  `pnpm audit` counts every version below 14.0.2, so the glob finding stays listed.
+
+
+  Where each one runs. effect is loaded only by the Prisma CLI, which reads `prisma.config.ts`
+  (generate, migrate, and the `prisma migrate deploy` step before a deploy); the api bundle does not
+  load it, and @prisma/config does not use the affected feature. fast-xml-parser is loaded by the
+  running api through @google-cloud/storage, which uses it only in TransferManager, with default
+  options; the template's GCS provider does not use TransferManager. glob and minimatch
+  are build, lint, test and Storybook tooling; they also appear in `pnpm audit --prod` because
+  @nestledjs/generators, @nx/devkit and stylus (an optional peer of vite) are listed under
+  `dependencies`, but neither the api nor the web output loads them.
+
+
+  What stays, and why. glob 10.5.0 (jest 30 asks for `^10.5.0`, stylus 0.64 for `^10.4.5`) and
+  minimatch 7.4.x, 9.0.7 and 10.2.x. The corrected releases are the next majors, glob 14.0.2 and
+  minimatch 11.0.1, and minimatch 11 removes exports (`makeRe`, `AST`) that 7 to 10 have. Their
+  consumers do not declare support for them: nx, @nx/devkit, @nx/jest, @nx/react and
+  @microsoft/api-extractor (10.2.x) and verdaccio (7.4.x) pin exact versions; @swc/cli and
+  @vue/language-core ask for `^9.0.3`, glob 10 for `^9.0.4`, glob 13 for `^10.2.2`, graphql-config
+  for `^10.0.0`. They are not forced with an override. eslint 10.15, @eslint/config-array 0.23.6 and
+  typescript-eslint 8.73 do move to minimatch 11, but were less than two weeks old when this note
+  was written, and would not clear the finding while the others remain.
+
+why: >
+  These packages are only reached through other dependencies, and a normal `pnpm install` keeps the
+  versions already in the lockfile, so the older ones stay until something moves them.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+
+skipIf:
+  - >
+    `pnpm why -r effect` shows 3.22.1 or later, `pnpm why -r fast-xml-parser` shows 5.12.0 or later
+    (or nothing), and `pnpm why -r glob` shows no 13.x below 13.0.7.
+
+verification:
+  - pnpm install --frozen-lockfile
+  - pnpm why -r effect
+  - pnpm why -r fast-xml-parser
+  - pnpm why -r glob
+  - pnpm prisma:generate
+  - pnpm prisma validate
+  - pnpm exec nx run-many -t test --skip-nx-cache
+  - pnpm build:api
+  - pnpm build:web
+
+agentHints:
+  - >
+    Add the effect override to package.json. For the two lockfile moves, do not use
+    `pnpm update -r --depth Infinity fast-xml-parser`: it moves hundreds of unrelated packages.
+    Instead add these three entries to `pnpm.overrides` temporarily:
+    `"@google-cloud/storage>fast-xml-parser": "5.12.0"`,
+    `"fast-xml-parser>fast-xml-builder": "1.3.1"` and
+    `"@joshwooding/vite-plugin-react-docgen-typescript>glob": "13.0.7"`; run
+    `pnpm install --lockfile-only`; remove the three entries; run `pnpm install`. pnpm keeps the
+    versions now in the lockfile, because each consumer's range already accepts them. Leave out an
+    entry for a package the project does not have, or already resolves at that version or later.
+  - >
+    Check the result in pnpm-lock.yaml:
+    `grep -nE "^  '?(effect|fast-xml-parser|glob)@" pnpm-lock.yaml` must list no effect below 3.22.1,
+    no fast-xml-parser below 5.12.0 and no glob 13.x below 13.0.7. The `overrides:` block gains only
+    the effect line, and the diff touches only these packages and fast-xml-parser's own
+    dependencies. In the template `pnpm audit` goes from 10 (1 high, 8 moderate, 1 low) to 8, all
+    moderate and all glob or minimatch.
+  - >
+    Work from the project's own `pnpm audit`. A project may reach these packages another way (a
+    second fast-xml-parser 4.x or 5.x, its own use of effect, glob or minimatch). Update the parent
+    within its range first; add an override only for what cannot move, scoped as `parent>child`; and
+    never override glob or minimatch to a major the consumer does not ask for. Record what is left
+    with the reason. If the project's own code imports one of them, check how it is used rather than
+    relying on the reachability described here.
+  - >
+    If the project is on a Prisma release whose @prisma/config already pins effect 3.22.1 or later,
+    leave the override out.
+  - >
+    A change to package.json and the lockfile can trigger an automatic deploy of every service that
+    watches them. A project with a long-running worker should confirm it is idle, or that an
+    interrupted job is safe, before merging, and say in its report which services the merge
+    restarts.

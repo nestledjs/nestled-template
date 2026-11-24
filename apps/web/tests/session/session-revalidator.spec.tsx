@@ -32,6 +32,9 @@ import {
 
 type BoundaryError = Parameters<typeof ErrorBoundary>[0]['error']
 
+// The real timer, taken before any spec installs the fake ones.
+const realSetTimeout = globalThis.setTimeout
+
 const SIGN_OUT_TARGET = /\/(login|logout|force-logout)/
 
 /** Every way the browser could navigate, so a spec can prove it never does by itself. */
@@ -90,7 +93,9 @@ async function suspect(times = 1) {
 
 beforeEach(() => {
   __resetSessionRevalidation()
-  vi.useFakeTimers({ shouldAdvanceTime: true })
+  // No `shouldAdvanceTime`: real time passing under load would end the cooldown early. Specs advance
+  // the clock themselves.
+  vi.useFakeTimers()
 })
 
 afterEach(() => {
@@ -100,6 +105,14 @@ afterEach(() => {
 })
 
 describe('SessionRevalidator: a browser 401 only triggers a revalidation', () => {
+  it('is timed by the fake clock alone: real time passing never ends the cooldown', async () => {
+    const before = Date.now()
+    await act(async () => {
+      await new Promise(resolve => realSetTimeout(resolve, 100))
+    })
+    expect(Date.now()).toBe(before)
+  })
+
   it('answers an error-link 401 with one revalidation', async () => {
     const navigations = watchLocation()
     const { revalidations } = await renderWith(<SessionRevalidator />)

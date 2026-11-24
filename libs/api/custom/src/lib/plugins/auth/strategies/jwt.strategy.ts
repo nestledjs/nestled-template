@@ -9,6 +9,7 @@ import { PassportStrategy } from '@nestjs/passport'
 import { Request } from 'express'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 import { JwtService } from '@nestjs/jwt'
+import { sessionCookieName } from '@nestled-template/api/config'
 import { User } from '@nestled-template/api/core/models'
 import {
   API_ERROR_CODES,
@@ -43,10 +44,6 @@ type ApiTokenRefusal = { rejected: string } | { forbidden: ForbiddenException }
 type ApiTokenVerdict = ApiTokenRefusal | { user: User; result: ValidatedApiToken }
 
 const API_TOKEN_PATTERN = /^[a-f0-9]{64}$/i
-
-function sessionCookieName(): string {
-  return process.env['VITE_COOKIE_NAME'] || process.env['API_COOKIE_NAME'] || '__session'
-}
 
 /**
  * The bearer header, else the session cookie. With several same-name session cookies the newest

@@ -1,0 +1,75 @@
+id: 2026-11-24-one-session-cookie-name
+title: >-
+  One session cookie name for the whole API, and a start refused when API_COOKIE_NAME names another
+priority: normal
+area: api
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-forward-duplicate-session-cookies
+
+intent: >
+  Four places in the API worked out the session cookie's name for themselves. The JWT strategy read
+  `VITE_COOKIE_NAME`, then `API_COOKIE_NAME`; the configuration that sets and clears the cookie, the
+  WebSocket check and the MCP OAuth session read used `VITE_COOKIE_NAME` only, as the web build does.
+
+
+  All four now use `sessionCookieName()` (libs/api/config/src/lib/cookie-name.ts):
+  `VITE_COOKIE_NAME`, else `__session`. `API_COOKIE_NAME` is not read. The validation schema refuses
+  to start the API when `API_COOKIE_NAME` is set to anything but that name.
+
+
+  What changes for each setting:
+
+  - Neither set, only `VITE_COOKIE_NAME`, both equal, or an empty `API_COOKIE_NAME`: nothing.
+
+  - Only `API_COOKIE_NAME` (other than `__session`), or the two different: the API does not start,
+  and the message says what to set. Refusing was chosen over picking one, because which name the
+  signed-in browsers hold depends on the project: an API that silently reads the other one signs
+  every user out, while a release that does not start leaves the running one in place.
+
+
+  In the unchanged template the two could not disagree in a running API: validation writes the
+  `VITE_COOKIE_NAME` default into the environment before any request, so the strategy never reached
+  `API_COOKIE_NAME`. Such a deployment has been using `__session` (or `VITE_COOKIE_NAME`) all along.
+  A project with its own configuration, schema or strategy can differ; see the hints.
+
+why: >
+  Two names for one cookie mean a sign-in that looks successful and is not recognised by the next
+  request. The variable also suggested the API's name could be set on its own.
+
+affectedPaths:
+  - libs/api/config/src/lib/cookie-name.ts
+  - libs/api/config/src/lib/cookie-name.spec.ts
+  - libs/api/config/src/lib/configuration.ts
+  - libs/api/config/src/lib/validation.ts
+  - libs/api/config/src/index.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+  - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+  - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+  - libs/api/core/feature/src/lib/ws-session-token.ts
+
+verification:
+  - pnpm exec nx test config --skip-nx-cache
+  - pnpm exec nx test api-custom --skip-nx-cache
+  - pnpm exec nx test api-core-feature --skip-nx-cache
+  - git grep -n "COOKIE_NAME'\]" -- apps/api libs/api shows cookie-name.ts and specs only
+
+agentHints:
+  - >-
+    Before deploying, list both variables in every environment of the API service. If
+    `API_COOKIE_NAME` is set and differs from `VITE_COOKIE_NAME` (unset counts as `__session`), sign
+    in to that environment and look up the cookie's name in the browser. Put that name in
+    `VITE_COOKIE_NAME` on the API and on the web service (the web reads it at build time, so rebuild
+    it), then remove `API_COOKIE_NAME`. Any other name signs every user out.
+  - >-
+    If the project sets its cookie under `API_COOKIE_NAME` (its own configuration.ts or auth
+    service), that is the name its browsers hold: move the value to `VITE_COOKIE_NAME` in the same
+    release, on both services.
+  - >-
+    Search for other readers (`git grep -n "COOKIE_NAME" -- apps libs`): a project's own guard,
+    gateway, upload route or file proxy uses `sessionCookieName()` too. The web keeps
+    `getSessionCookieName()`, which already reads `VITE_COOKIE_NAME` only.
+  - >-
+    A clone that validates its environment elsewhere needs the same rule there, or a check at the
+    start of main.ts.

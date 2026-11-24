@@ -5,13 +5,10 @@ import { useReadQuery, type QueryRef } from '@apollo/client/react'
 import { ChevronRightIcon, ShieldCheckIcon } from '@heroicons/react/24/outline'
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
-  const securityEventsQueryRef = preloadQuery<MySecurityEventsQuery>(MySecurityEvents, {
+  const securityEventsQueryRef = preloadQuery(MySecurityEvents, {
     variables: {
-      input: {
-        take: 50,
-        orderBy: 'createdAt',
-        orderDirection: 'desc',
-      },
+      // Newest first, the API's default order.
+      input: { take: 50 },
     },
   })
   return { securityEventsQueryRef }

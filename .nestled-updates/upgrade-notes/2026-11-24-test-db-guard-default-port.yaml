@@ -1,0 +1,87 @@
+id: 2026-11-24-test-db-guard-default-port
+title: >-
+  Test database guard: 5432 is the development port when POSTGRES_PORT is unset outside CI, and the
+  from-scratch reset has a 30-second timeout
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-20-test-db-guard-follow-ups
+
+intent: >
+  The defect. The development-server check (2026-11-20-test-db-guard-follow-ups) compares a test
+  database URL's port with POSTGRES_PORT, and did nothing when POSTGRES_PORT was unset. Compose then
+  publishes the development Postgres on its default, 5432, so a local URL on 5432 named `*_test`
+  passed as disposable while it sat beside the development data. Two smaller faults in the same
+  file: `resetTestDatabase` passed no timeout, so a lock held elsewhere could block its DROP SCHEMA
+  without end, and its refusal quoted the template's own database name.
+
+
+  The fix:
+
+  1. apps/api-e2e/src/support/database-guards.ts `developmentServerReason`: when POSTGRES_PORT is
+  unset (or blank) and CI is not set, the development port is 5432. `CI` empty, `0` or `false` is not
+  CI; any other value is. With CI set and POSTGRES_PORT unset nothing is compared, as before; a
+  POSTGRES_PORT that is set is compared everywhere, as before. The reason is the existing one, so it
+  is not overridable: E2E_ALLOW_NON_DISPOSABLE_DB does not admit it, and the reset refuses it before
+  any SQL. The message says POSTGRES_PORT is unset and to set it if the development Postgres listens
+  elsewhere.
+
+  2. scripts/test-db.sh: the same rule for `ensure`, `migrate` and `verify` (new `in_ci`;
+  `DEV_DB_PORT` defaults to 5432 outside CI, after POSTGRES_PORT from the environment and from .env;
+  a blank POSTGRES_PORT counts as unset).
+
+  3. `resetTestDatabase` runs its statement with a 30-second timeout, through pg and psql alike.
+
+  4. Its refusal says "a local database named *_test" and names no example database.
+
+  5. The specs: database-guards.spec.ts's cases that mean "no development port to compare with" pass
+  `{ CI: 'true' }` instead of `{}`; dev-checkout.spec.mjs's `testDb` helper removes CI from the
+  environment it inherits. New cases cover the default port in both, the timeout and the message.
+  apps/api-e2e/README.md and the POSTGRES_TEST_PORT comment in .env.example state the rule.
+
+why: >
+  An unset POSTGRES_PORT is the state of a fresh clone with no .env, and the guard was off exactly
+  there. Nothing but a `*_test` name was needed for setup to migrate, seed and empty a database on
+  the development server.
+
+affectedPaths:
+  - apps/api-e2e/src/support/database-guards.ts
+  - apps/api-e2e/src/support/database-guards.spec.ts
+  - apps/api-e2e/README.md
+  - scripts/test-db.sh
+  - scripts/dev-checkout.spec.mjs
+  - .env.example
+
+skipIf:
+  - >-
+    The project's e2e suite does not use the template harness (no
+    apps/api-e2e/src/support/database-guards.ts and no scripts/test-db.sh).
+
+verification:
+  - node --test scripts/dev-checkout.spec.mjs
+  - env -u CI pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - env CI=true pnpm exec nx run api-e2e:test-support --skip-nx-cache
+  - pnpm exec nx run api-e2e:lint --skip-nx-cache
+
+agentHints:
+  - >-
+    Behaviour change: someone who runs the tests against a database on port 5432, with no
+    POSTGRES_PORT, outside CI, is now refused. If that server is the development Postgres, the fix
+    is the repo's own test database (`pnpm test:db:start`). If the development Postgres listens
+    elsewhere, set POSTGRES_PORT to its port.
+  - >-
+    A CI system or container that does not set CI and has its test Postgres on 5432 must set
+    `CI=true` for the e2e run. GitHub Actions sets it. Check workflows that run the suite through
+    `docker run` or `act`: the variable must reach the process that runs the suite.
+  - >-
+    global setup reads POSTGRES_PORT from its environment, which Nx fills from the checkout's own
+    .env. A git worktree without a .env has none, so a main checkout's POSTGRES_PORT does not reach
+    it; a test URL on 5432 is then refused there, and the message says how to go on.
+  - >-
+    Your own specs that call the guard with `{}` and a URL on 5432 (or with no port) now see the
+    development server. Pass `{ CI: 'true' }` where the case is about something else.
+  - >-
+    If your own reset or truncate helper does not go through `resetTestDatabase`, give it a timeout
+    too.

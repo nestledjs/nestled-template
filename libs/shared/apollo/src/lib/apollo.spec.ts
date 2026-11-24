@@ -176,7 +176,7 @@ describe('makeClient', () => {
     )
   })
 
-  it('chooses the newest JWT when duplicate session cookies exist', async () => {
+  it('forwards every distinct session cookie of a request, and no bearer, when it has duplicates', async () => {
     process.env.VITE_COOKIE_NAME = '__session'
     const older = jwtWithIssuedAt(1)
     const newer = jwtWithIssuedAt(2)
@@ -189,7 +189,7 @@ describe('makeClient', () => {
     globalThis.fetch = fetchMock
     const request = new Request('https://app.example.com', {
       headers: {
-        cookie: `__session=${older}; theme=dark; __session=${newer}`,
+        cookie: `__session=${older}; theme=dark; __session=${newer}; __session=${older}; __session=`,
       },
     })
 
@@ -203,8 +203,78 @@ describe('makeClient', () => {
       `,
     })
 
-    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(`Bearer ${newer}`)
+    const { headers } = fetchMock.mock.calls[0][1]
+    expect(headers.cookie).toBe(`__session=${newer}; __session=${older}`)
+    expect(headers).not.toHaveProperty('authorization')
   })
+
+  it('keeps the bearer token for one session cookie, sent once or repeated', async () => {
+    process.env.VITE_COOKIE_NAME = '__session'
+    const only = jwtWithIssuedAt(1)
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ data: { ping: 'pong' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    globalThis.fetch = fetchMock
+
+    for (const cookie of [`__session=${only}`, `__session=${only}; a=b; __session=${only}`]) {
+      const client = makeClient(new Request('https://app.example.com', { headers: { cookie } }), {
+        apiUrl: 'https://api.example.com/graphql',
+      })
+      await client.query({
+        query: gql`
+          query Ping {
+            ping
+          }
+        `,
+      })
+    }
+
+    for (const [, { headers }] of fetchMock.mock.calls) {
+      expect(headers.authorization).toBe(`Bearer ${only}`)
+      expect(headers).not.toHaveProperty('cookie')
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['option', 'authorization header'])(
+    'an explicit token (%s) outranks duplicate session cookies',
+    async source => {
+      process.env.VITE_COOKIE_NAME = '__session'
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: { ping: 'pong' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      globalThis.fetch = fetchMock
+      const request = new Request('https://app.example.com', {
+        headers: {
+          cookie: `__session=${jwtWithIssuedAt(1)}; __session=${jwtWithIssuedAt(2)}`,
+          ...(source === 'option' ? {} : { authorization: 'Bearer explicit' }),
+        },
+      })
+
+      const client = makeClient(request, {
+        apiUrl: 'https://api.example.com/graphql',
+        ...(source === 'option' ? { token: 'explicit' } : {}),
+      })
+      await client.query({
+        query: gql`
+          query Ping {
+            ping
+          }
+        `,
+      })
+
+      const { headers } = fetchMock.mock.calls[0][1]
+      expect(headers.authorization).toBe('Bearer explicit')
+      expect(headers).not.toHaveProperty('cookie')
+    },
+  )
 
   it('chooses the newest JWT from document.cookie without Buffer', async () => {
     // The browser bundle polyfills nothing, so decoding through Buffer threw a ReferenceError on
@@ -282,9 +352,10 @@ describe('makeClient', () => {
     })
 
     expect(fetchMock.mock.calls[0][1].headers.authorization).toBe('Bearer abc%zz')
+    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty('cookie')
   })
 
-  it('prefers the last duplicate JWT when both were issued in the same second', async () => {
+  it('forwards duplicates verbatim, even when they cannot be told apart by age', async () => {
     process.env.VITE_COOKIE_NAME = '__session'
     const first = jwtWithIssuedAt(1)
     const second = `${jwtWithIssuedAt(1)}-newer-signature`
@@ -311,7 +382,9 @@ describe('makeClient', () => {
       `,
     })
 
-    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(`Bearer ${second}`)
+    const { headers } = fetchMock.mock.calls[0][1]
+    expect(headers.cookie).toBe(`__session=${first}; __session=${second}`)
+    expect(headers).not.toHaveProperty('authorization')
   })
 
   it('sends authorization and active organization headers through the link chain', async () => {
@@ -477,6 +550,7 @@ describe('makeClient', () => {
         dispatchEvent: vi.fn(),
       }
       vi.stubGlobal('window', testWindow)
+      vi.stubGlobal('dispatchEvent', testWindow.dispatchEvent)
       globalThis.fetch = vi
         .fn()
         .mockResolvedValue(
@@ -524,6 +598,7 @@ describe('makeClient', () => {
       dispatchEvent: vi.fn(),
     }
     vi.stubGlobal('window', testWindow)
+    vi.stubGlobal('dispatchEvent', testWindow.dispatchEvent)
     globalThis.fetch = vi.fn().mockImplementation(async () => answer())
     const client = makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
 
@@ -662,6 +737,7 @@ describe('makeClient', () => {
         dispatchEvent,
       }
       vi.stubGlobal('window', testWindow)
+      vi.stubGlobal('dispatchEvent', dispatchEvent)
       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' }).query({
         query: gql`
           query CurrentSubscriptionActive {
@@ -691,6 +767,7 @@ describe('makeClient', () => {
         dispatchEvent,
       }
       vi.stubGlobal('window', testWindow)
+      vi.stubGlobal('dispatchEvent', dispatchEvent)
 
       await makeClient(undefined, { apiUrl: 'https://api.example.com/graphql' })
         .mutate({
@@ -1214,6 +1291,7 @@ describe('SKIP_AUTH_ERROR_REPORT_CONTEXT', () => {
       dispatchEvent: vi.fn(),
     }
     vi.stubGlobal('window', testWindow)
+    vi.stubGlobal('dispatchEvent', testWindow.dispatchEvent)
   })
 
   afterEach(() => {

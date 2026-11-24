@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useMutation } from '@apollo/client/react'
 import {
+  __resetActiveOrganizationSessionChange,
+  ACTIVE_ORGANIZATION_STORAGE_KEY,
   getStoredActiveOrganizationId,
   storeActiveOrganizationId,
 } from '@nestled-template/shared/apollo'
@@ -15,6 +17,7 @@ import {
   RegisterWithInvitation,
 } from '@nestled-template/shared/sdk'
 import { createTestRouter } from '../../helpers/createTestRouter'
+import { stubLocation } from '../../helpers/location'
 import LoginPage from '../../../app/routes/_public/login'
 import RegisterPage from '../../../app/routes/_public/register'
 import AcceptInvitationPage from '../../../app/routes/accept-invitation'
@@ -24,6 +27,9 @@ import AcceptInvitationPage from '../../../app/routes/accept-invitation'
 // expired, or went through /force-logout, which cannot reach localStorage). Every sign-in path
 // forgets the stored organization, and so does the login form opened from a rejected session
 // (`expired=1`); any other visit to the form keeps it.
+//
+// A sign-in also ends with a document load, never a client navigation: the Apollo cache of this
+// document may hold the previous user's data.
 
 vi.mock('@apollo/client/react', () => ({
   useMutation: vi.fn(),
@@ -119,19 +125,31 @@ function answerMutations(answers: Map<unknown, MutationAnswer>) {
 function renderAt(path: string, Component: React.ComponentType) {
   const Stub = createTestRouter([
     { path: path.split('?')[0], Component, loader: () => ({}) },
+    // A client navigation after a sign-in would render one of these in the same document.
     { path: '/members/dashboard', Component: () => <p>Dashboard</p> },
+    { path: '/members', Component: () => <p>Members</p> },
   ])
   return render(<Stub initialEntries={[path]} />)
 }
 
+function stored(): string | null {
+  return localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)
+}
+
 describe('signing in forgets the organization stored for the previous user', () => {
+  let location: ReturnType<typeof stubLocation>
+
   beforeEach(() => {
     localStorage.clear()
+    location = stubLocation()
     vi.spyOn(console, 'log').mockImplementation(() => undefined)
   })
 
   afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    __resetActiveOrganizationSessionChange()
     localStorage.clear()
   })
 
@@ -170,8 +188,25 @@ describe('signing in forgets the organization stored for the previous user', () 
 
     await userEvent.click(screen.getByRole('button', { name: 'Log In' }))
 
-    await screen.findByText('Dashboard')
-    expect(getStoredActiveOrganizationId()).toBeNull()
+    await waitFor(() => expect(location.assign).toHaveBeenCalledTimes(1))
+    expect(location.assign).toHaveBeenCalledWith('/members/dashboard')
+    expect(screen.queryByText('Dashboard')).not.toBeInTheDocument()
+    expect(stored()).toBeNull()
+    // The previous user's shell may still be mounted in this document: it stores nothing more.
+    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
+    expect(stored()).toBeNull()
+  })
+
+  it('a sign-in loads the return_url, never a sign-out route', async () => {
+    answerMutations(new Map([[Login, () => ({ login: { user: { id: 'user-2' } } })]]))
+    const { unmount } = renderAt('/login?return_url=%2Fsettings%2Fprofile%3Ftab%3D2', LoginPage)
+    await userEvent.click(await screen.findByRole('button', { name: 'Log In' }))
+    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/settings/profile?tab=2'))
+    unmount()
+
+    renderAt('/login?return_url=%2F%2566orce-logout', LoginPage)
+    await userEvent.click(await screen.findByRole('button', { name: 'Log In' }))
+    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/members/dashboard'))
   })
 
   it('a two-factor sign-in forgets it too', async () => {
@@ -189,8 +224,9 @@ describe('signing in forgets the organization stored for the previous user', () 
     await userEvent.type(screen.getByLabelText('Authentication Code'), '123456')
     await userEvent.click(screen.getByRole('button', { name: 'Verify and Login' }))
 
-    await screen.findByText('Dashboard')
-    expect(getStoredActiveOrganizationId()).toBeNull()
+    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/members/dashboard'))
+    expect(screen.queryByText('Dashboard')).not.toBeInTheDocument()
+    expect(stored()).toBeNull()
   })
 
   it('a failed sign-in keeps what is stored', async () => {
@@ -202,6 +238,7 @@ describe('signing in forgets the organization stored for the previous user', () 
     await userEvent.click(screen.getByRole('button', { name: 'Log In' }))
 
     await screen.findByText('Invalid login credentials')
+    expect(location.assign).not.toHaveBeenCalled()
     expect(getStoredActiveOrganizationId()).toBe(PREVIOUS_USERS_ORGANIZATION)
   })
 
@@ -212,8 +249,9 @@ describe('signing in forgets the organization stored for the previous user', () 
 
     await userEvent.click(await screen.findByRole('button', { name: 'Create Account' }))
 
-    await screen.findByText('Dashboard')
-    await waitFor(() => expect(getStoredActiveOrganizationId()).toBeNull())
+    await waitFor(() => expect(location.assign).toHaveBeenCalledWith('/members/dashboard'))
+    expect(screen.queryByText('Dashboard')).not.toBeInTheDocument()
+    expect(stored()).toBeNull()
   })
 
   it('signing in on the invitation page forgets it before the invitation is accepted', async () => {
@@ -238,7 +276,11 @@ describe('signing in forgets the organization stored for the previous user', () 
     await userEvent.click(screen.getByRole('button', { name: 'Login & Accept Invitation' }))
 
     await waitFor(() => expect(storedWhenAccepting).toBeNull())
-    expect(getStoredActiveOrganizationId()).toBeNull()
+    expect(stored()).toBeNull()
+    await waitFor(() => expect(location.replace).toHaveBeenCalledWith('/members'), {
+      timeout: 3000,
+    })
+    expect(screen.queryByText('Members')).not.toBeInTheDocument()
   })
 
   it('registering on the invitation page forgets it', async () => {
@@ -254,6 +296,10 @@ describe('signing in forgets the organization stored for the previous user', () 
       await screen.findByRole('button', { name: 'Sign Up & Accept Invitation' }),
     )
 
-    await waitFor(() => expect(getStoredActiveOrganizationId()).toBeNull())
+    await waitFor(() => expect(stored()).toBeNull())
+    await waitFor(() => expect(location.replace).toHaveBeenCalledWith('/members'), {
+      timeout: 3000,
+    })
+    expect(screen.queryByText('Members')).not.toBeInTheDocument()
   })
 })

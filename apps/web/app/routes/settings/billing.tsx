@@ -3,12 +3,7 @@ import { Link } from 'react-router'
 import { CreditCardIcon, ArrowUpIcon, BanknotesIcon } from '@heroicons/react/24/outline'
 import { useMutation } from '@apollo/client/react'
 import { useSubscription, useLimit, UpgradeModal, useGlobalCtx } from '@nestled-template/web'
-import {
-  CreatePortalSession,
-  CancelSubscription,
-  type CreatePortalSessionMutation,
-  type CancelSubscriptionMutation,
-} from '@nestled-template/shared/sdk'
+import { CreatePortalSession, CancelSubscription } from '@nestled-template/shared/sdk'
 import { canManageBilling, hasBillingAccess, useSettingsOrganization } from './_settings-access'
 
 type OrganizationWithMemberCount = {
@@ -64,10 +59,10 @@ export default function BillingSettings() {
   } = useSubscription()
 
   // Throw on a GraphQL error so the catch below sees it (also the client default; kept explicit).
-  const [createPortalSession] = useMutation<CreatePortalSessionMutation>(CreatePortalSession, {
+  const [createPortalSession] = useMutation(CreatePortalSession, {
     errorPolicy: 'none',
   })
-  const [cancelSubscription] = useMutation<CancelSubscriptionMutation>(CancelSubscription, {
+  const [cancelSubscription] = useMutation(CancelSubscription, {
     errorPolicy: 'none',
   })
 

@@ -169,7 +169,7 @@ export default function AdminAuditLogsPage() {
   const [page, setPage] = useState(0)
   const pageSize = 50
 
-  const { data, loading, error } = useQuery<AdminPlatformAuditLogsQuery>(AdminPlatformAuditLogs, {
+  const { data, loading, error } = useQuery(AdminPlatformAuditLogs, {
     variables: {
       filters: {
         userId: filters.user?.id || undefined,
