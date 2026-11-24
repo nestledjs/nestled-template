@@ -1,0 +1,442 @@
+diff --git a/.env.example b/.env.example
+index 0e58176..c179ab5 100644
+--- a/.env.example
++++ b/.env.example
+@@ -49,8 +49,9 @@ ALLOWED_ORIGINS=http://localhost:4200
+ POSTGRES_PORT=5432
+ # PAIR 4 — POSTGRES_TEST_PORT must match TEST_DATABASE_URL (the API e2e suite's database).
+ #          The test database runs in its own container (`pnpm test:db:start`), never in the
+-#          development Postgres: the e2e setup refuses a TEST_DATABASE_URL on POSTGRES_PORT, and one
+-#          not on this machine or not named *_test. Nx passes this .env to `nx run api-e2e:e2e`;
++#          development Postgres: the e2e setup refuses a TEST_DATABASE_URL on POSTGRES_PORT
++#          (5432 when it is unset, except in CI), and one not on this machine or not named *_test.
++#          Nx passes this .env to `nx run api-e2e:e2e`;
+ #          scripts/test-db.sh and `pnpm test:e2e` read POSTGRES_TEST_PORT from it and build the same
+ #          URL, so keep the two in step. Exported in your shell, TEST_DATABASE_URL wins over both.
+ POSTGRES_TEST_PORT=5433
+diff --git a/apps/api-e2e/README.md b/apps/api-e2e/README.md
+index 7293a18..5888b7c 100644
+--- a/apps/api-e2e/README.md
++++ b/apps/api-e2e/README.md
+@@ -37,10 +37,10 @@ one test passed. A filter that matches nothing, or a run in which every test is
+ 2. **Global setup** (`src/support/global-setup.ts`):
+    - refuses a test database that is not disposable (a `postgresql:` URL on this machine, named
+      `*_test`, with no `?schema=`, fragment or destination-override parameter, and not on the
+-     development server's port, `POSTGRES_PORT`) before anything is reset, migrated, pushed or
+-     seeded, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set. The opt-out never admits a URL on the
+-     development server, whatever it is named. The wrapper's read-only `SELECT 1` probe has already
+-     connected by then; nothing writes before this check.
++     development server's port: `POSTGRES_PORT`, or 5432 when it is unset outside CI) before anything
++     is reset, migrated, pushed or seeded, unless `E2E_ALLOW_NON_DISPOSABLE_DB=1` is set. The opt-out
++     never admits a URL on the development server, whatever it is named. The wrapper's read-only
++     `SELECT 1` probe has already connected by then; nothing writes before this check.
+    - applies migrations with `prisma migrate deploy`. A local test database built by `db push` alone
+      has no migration history; it is emptied and migrated from scratch, by the same rule (the reset
+      never runs on a database the guard would refuse, opt-out or not).
+@@ -71,7 +71,7 @@ one test passed. A filter that matches nothing, or a run in which every test is
+   database. It never lets through a URL that could connect somewhere other than it appears to: a
+   query parameter that overrides the destination (`?host=`, `?port=`, `?dbname=`...), a fragment,
+   or a protocol other than `postgresql:`; nor one on the development server (a local URL on
+-  `POSTGRES_PORT`), whatever it is named. A setup that empties the schema on every run gains nothing
++  `POSTGRES_PORT`, or on 5432 when it is unset and `CI` is not set), whatever it is named. A setup that empties the schema on every run gains nothing
+   from it and should not offer it. `scripts/test-db.sh migrate` applies the same rule before
+   `prisma migrate deploy`, except that it accepts no query string at all, and so does
+   `scripts/test-db.sh verify`, which the wrapper runs before Vitest, for the development server.
+diff --git a/apps/api-e2e/src/support/database-guards.spec.ts b/apps/api-e2e/src/support/database-guards.spec.ts
+index 51e7475..ab0c660 100644
+--- a/apps/api-e2e/src/support/database-guards.spec.ts
++++ b/apps/api-e2e/src/support/database-guards.spec.ts
+@@ -16,6 +16,8 @@ import {
+ 
+ // Built at runtime, so no credential-shaped literal sits in the source for secret scanners to flag.
+ const PASSWORD = ['fixture', 'pw', String(process.pid)].join('-')
++// Where no development port is known: CI sets no POSTGRES_PORT and runs its test Postgres on 5432.
++const IN_CI = { CI: 'true' }
+ const URL_WITH_PASSWORD = `postgresql://u:${PASSWORD}@localhost:5433/app_test`
+ 
+ describe('test database guards', () => {
+@@ -25,8 +27,8 @@ describe('test database guards', () => {
+     'postgres://u:p@localhost/app_test',
+     'postgresql://u:p@[::1]:5433/APP_TEST',
+   ])('treats %s as disposable', url => {
+-    expect(isDisposableTestDatabase(url, {})).toBe(true)
+-    expect(assertDisposableTestDatabase(url, {})).toBe('disposable')
++    expect(isDisposableTestDatabase(url, IN_CI)).toBe(true)
++    expect(assertDisposableTestDatabase(url, IN_CI)).toBe('disposable')
+   })
+ 
+   it.each([
+@@ -39,20 +41,19 @@ describe('test database guards', () => {
+     'mysql://u:p@localhost:5432/app_test',
+     'not a url',
+   ])('refuses %s before setup touches it, naming no password', url => {
+-    expect(isDisposableTestDatabase(url, {})).toBe(false)
+-    expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
+-    expect(() => assertDisposableTestDatabase(url, {})).not.toThrow(/u:p@/)
++    expect(isDisposableTestDatabase(url, IN_CI)).toBe(false)
++    expect(() => assertDisposableTestDatabase(url, IN_CI)).toThrow(/Refusing to run e2e setup/)
++    expect(() => assertDisposableTestDatabase(url, IN_CI)).not.toThrow(/u:p@/)
+   })
+ 
+   it.each(DESTINATION_OVERRIDES)(
+     'refuses a URL whose %s parameter overrides the destination',
+     key => {
+       const url = `postgresql://u:p@localhost:5432/app_test?${key}=elsewhere`
+-      expect(isDisposableTestDatabase(url, {})).toBe(false)
+-      expect(isDisposableTestDatabase(url.replace(`?${key}=`, `?${key.toUpperCase()}=`), {})).toBe(
+-        false,
+-      )
+-      expect(() => assertDisposableTestDatabase(url, {})).toThrow(/Refusing to run e2e setup/)
++      const upperCased = url.replace(`?${key}=`, `?${key.toUpperCase()}=`)
++      expect(isDisposableTestDatabase(url, IN_CI)).toBe(false)
++      expect(isDisposableTestDatabase(upperCased, IN_CI)).toBe(false)
++      expect(() => assertDisposableTestDatabase(url, IN_CI)).toThrow(/Refusing to run e2e setup/)
+     },
+   )
+ 
+@@ -67,7 +68,7 @@ describe('test database guards', () => {
+         'development Postgres',
+       )
+       // Named *_test and local, so only the development-server rule refuses it.
+-      expect(isDisposableTestDatabase(url, {})).toBe(true)
++      expect(isDisposableTestDatabase(url, IN_CI)).toBe(true)
+       expect(isDisposableTestDatabase(url, { POSTGRES_PORT: port })).toBe(false)
+       expect(nonDisposableReason(url, { POSTGRES_PORT: port })).toEqual({
+         reason: expect.stringContaining('development Postgres'),
+@@ -87,14 +88,48 @@ describe('test database guards', () => {
+ 
+   it.each([
+     ['postgresql://u:p@localhost:5433/app_test', { POSTGRES_PORT: '5432' }],
+-    ['postgresql://u:p@localhost:5432/app_test', {}],
+-    ['postgresql://u:p@localhost:5432/app_test', { POSTGRES_PORT: ' ' }],
++    ['postgresql://u:p@localhost:5432/app_test', IN_CI],
++    ['postgresql://u:p@localhost:5432/app_test', { CI: '1', POSTGRES_PORT: ' ' }],
++    ['postgresql://u:p@localhost:5432/app_test', { POSTGRES_PORT: '5442' }],
++    ['postgresql://u:p@localhost:5433/app_test', {}],
+     ['postgresql://u:p@db.example.com:5432/app_test', { POSTGRES_PORT: '5432' }],
++    ['postgresql://u:p@db.example.com:5432/app_test', {}],
+     ['not a url', { POSTGRES_PORT: '5432' }],
+   ])('does not place %s on the development server (%o)', (url, env) => {
+     expect(developmentServerReason(url, env)).toBeUndefined()
+   })
+ 
++  it.each([
++    [{}],
++    [{ POSTGRES_PORT: '' }],
++    [{ POSTGRES_PORT: ' ' }],
++    [{ CI: '' }],
++    [{ CI: 'false' }],
++    [{ CI: '0' }],
++  ])('takes 5432 as the development port when POSTGRES_PORT is unset outside CI (%o)', env => {
++    for (const url of [
++      'postgresql://u:p@localhost:5432/app_test',
++      'postgresql://u:p@127.0.0.1/app_test',
++      'postgresql://u:p@[::1]:5432/app_test',
++    ]) {
++      expect(nonDisposableReason(url, env)).toEqual({
++        reason: expect.stringMatching(
++          /on port 5432, where the development Postgres .*POSTGRES_PORT/,
++        ),
++        overridable: false,
++      })
++      // The same rule as a POSTGRES_PORT that is set: the opt-out never admits it.
++      expect(() =>
++        assertDisposableTestDatabase(url, { ...env, E2E_ALLOW_NON_DISPOSABLE_DB: '1' }),
++      ).toThrow(/does not apply to a URL on the development server/)
++    }
++  })
++
++  it('still refuses POSTGRES_PORT in CI when one is set', () => {
++    const url = 'postgresql://u:p@localhost:5432/app_test'
++    expect(isDisposableTestDatabase(url, { ...IN_CI, POSTGRES_PORT: '5432' })).toBe(false)
++  })
++
+   it('lets an explicit opt-out through, and only the value 1', () => {
+     const url = 'postgresql://u:p@postgres:5432/app_test'
+     expect(assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe('allowed')
+@@ -108,7 +143,9 @@ describe('test database guards', () => {
+     'postgresql://u:p@db.example.com:5432/app_test',
+     'postgresql://u:p@localhost:5432/app_test?schema=other',
+   ])('lets the opt-out through for %s, a choice of name, host or schema', url => {
+-    expect(assertDisposableTestDatabase(url, { E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe('allowed')
++    expect(assertDisposableTestDatabase(url, { ...IN_CI, E2E_ALLOW_NON_DISPOSABLE_DB: '1' })).toBe(
++      'allowed',
++    )
+   })
+ 
+   it.each([
+@@ -126,7 +163,7 @@ describe('test database guards', () => {
+   it('says why a database was refused', () => {
+     const refusal = (url: string) => {
+       try {
+-        assertDisposableTestDatabase(url, {})
++        assertDisposableTestDatabase(url, IN_CI)
+       } catch (error) {
+         return (error as Error).message
+       }
+@@ -287,6 +324,44 @@ describe('resetTestDatabase', () => {
+   })
+ 
+   it.each([
++    [{}, 'pg'],
++    [{ E2E_DATABASE_PROBE: 'psql' }, 'psql'],
++  ])(
++    'gives the reset 30 seconds, so a blocked DROP fails instead of hanging (%o)',
++    (env, client) => {
++      const timeouts: Record<string, (number | undefined)[]> = { pg: [], psql: [] }
++      resetTestDatabase(
++        'postgresql://u:p@localhost:5433/app_test',
++        {
++          pg: (_url, _statement, timeout) => {
++            timeouts.pg.push(timeout)
++          },
++          psql: (_args, _env, timeout) => {
++            timeouts.psql.push(timeout)
++            return { status: 0 }
++          },
++        },
++        env,
++      )
++      expect(timeouts).toEqual({ pg: [], psql: [], [client]: [30_000] })
++    },
++  )
++
++  it('names the pattern a test database must match, not one database, when it refuses', () => {
++    const { clients } = recording()
++    let message = ''
++    try {
++      resetTestDatabase('postgresql://u:p@localhost:5433/app', clients, {})
++    } catch (error) {
++      message = (error as Error).message
++    }
++    expect(message).toContain('database named *_test')
++    // The only name in it is the one refused.
++    expect(new Set(message.match(/\w*_test\b/g))).toEqual(new Set(['_test']))
++  })
++
++  it.each([
++    [{}],
+     [{ POSTGRES_PORT: '5432' }],
+     [{ POSTGRES_PORT: '5432', E2E_ALLOW_NON_DISPOSABLE_DB: '1' }],
+   ])('never drops a *_test database on the development server, running no SQL (%o)', env => {
+diff --git a/apps/api-e2e/src/support/database-guards.ts b/apps/api-e2e/src/support/database-guards.ts
+index d857644..a546563 100644
+--- a/apps/api-e2e/src/support/database-guards.ts
++++ b/apps/api-e2e/src/support/database-guards.ts
+@@ -19,6 +19,12 @@ export const DESTINATION_OVERRIDES = [
+ /** The opt-out for a test database that does not look disposable. */
+ export const ALLOW_NON_DISPOSABLE_DB = 'E2E_ALLOW_NON_DISPOSABLE_DB'
+ 
++// The port .dev/docker-compose.yml publishes the development Postgres on when POSTGRES_PORT is unset.
++const DEFAULT_DEVELOPMENT_PORT = '5432'
++
++// The from-scratch reset drops a schema; a lock held elsewhere would otherwise block it forever.
++const RESET_TIMEOUT_MS = 30_000
++
+ const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:'])
+ 
+ /** A URL's host, port and database name, without its credentials, for messages and logs. */
+@@ -38,7 +44,7 @@ export function describeDatabase(databaseUrl: string): string {
+  * neither is one on the development server (see developmentServerReason), whatever it is named.
+  *
+  * This is the one rule for every path that writes to, resets or drops a test database: global
+- * setup's guard and its from-scratch reset both read it. `env` supplies POSTGRES_PORT.
++ * setup's guard and its from-scratch reset both read it. `env` supplies POSTGRES_PORT and CI.
+  */
+ export function nonDisposableReason(
+   databaseUrl: string,
+@@ -91,18 +97,23 @@ export function nonDisposableReason(
+   return undefined
+ }
+ 
++// CI providers set CI to `true` or `1`; `false`, `0` and an empty value mean it is not CI.
++function isCi(env: NodeJS.ProcessEnv): boolean {
++  return !['', '0', 'false'].includes((env.CI ?? '').trim().toLowerCase())
++}
++
+ /**
+  * Why a URL reaches this machine's development Postgres, or undefined. POSTGRES_PORT, from the
+- * repo-root .env that Nx loads, is the port it listens on; a local URL on that port puts the test
+- * database beside the development data, however it is named. CI sets no POSTGRES_PORT, and then
+- * there is nothing to compare with.
++ * repo-root .env that Nx loads, is the port it listens on; unset, it is Compose's default. A local
++ * URL on that port puts the test database beside the development data, however it is named. CI sets
++ * no POSTGRES_PORT and has no development Postgres, so there is then nothing to compare with.
+  */
+ export function developmentServerReason(
+   databaseUrl: string,
+   env: NodeJS.ProcessEnv = process.env,
+ ): string | undefined {
+   const developmentPort = env.POSTGRES_PORT?.trim()
+-  if (!developmentPort) return undefined
++  if (!developmentPort && isCi(env)) return undefined
+   let url: URL
+   try {
+     url = new URL(databaseUrl)
+@@ -111,15 +122,18 @@ export function developmentServerReason(
+   }
+   if (!LOCAL_DATABASE_HOSTS.has(url.hostname)) return undefined
+   const port = url.port || '5432'
+-  if (port !== developmentPort) return undefined
+-  return `it is on port ${port}, where the development Postgres listens (POSTGRES_PORT)`
++  if (port !== (developmentPort || DEFAULT_DEVELOPMENT_PORT)) return undefined
++  const listens = `it is on port ${port}, where the development Postgres listens`
++  return developmentPort
++    ? `${listens} (POSTGRES_PORT)`
++    : `${listens} by default (POSTGRES_PORT is unset; set it if yours listens elsewhere)`
+ }
+ 
+ /**
+  * Whether a URL names a database this suite may migrate, push, seed and wipe: a postgresql: URL on
+  * this machine (the rule prisma.config.ts applies to `migrate reset`), named as a test database,
+  * ending in `_test` (`nestled_template_test` by default), with no `?schema=` and no fragment, and
+- * not on the development server's port (POSTGRES_PORT in `env`). A URL whose query parameters
++ * not on the development server's port (see developmentServerReason). A URL whose query parameters
+  * override the destination (`?host=`, `?port=`, `?dbname=` and the like) is never disposable, since
+  * the client would connect there.
+  */
+@@ -281,14 +295,14 @@ export function resetTestDatabase(
+   if (problem) {
+     throw new Error(
+       `Refusing to reset ${describeDatabase(databaseUrl)}: ${problem.reason}. Only a local ` +
+-        `database named *_test (e.g. nestled_template_test), not on the development server, is ` +
+-        `reset by the e2e setup, ${ALLOW_NON_DISPOSABLE_DB} or not.`,
++        `database named *_test, not on the development server, is reset by the e2e setup, ` +
++        `${ALLOW_NON_DISPOSABLE_DB} or not.`,
+     )
+   }
+   runOnTestDatabase(
+     databaseUrl,
+     'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;',
+     clients,
+-    { env },
++    { env, timeout: RESET_TIMEOUT_MS },
+   )
+ }
+diff --git a/scripts/dev-checkout.spec.mjs b/scripts/dev-checkout.spec.mjs
+index 8b1aaf9..476fd88 100644
+--- a/scripts/dev-checkout.spec.mjs
++++ b/scripts/dev-checkout.spec.mjs
+@@ -411,6 +411,7 @@ function testDb(root, bin, command, env = {}) {
+   delete base.POSTGRES_TEST_PORT
+   delete base.E2E_ALLOW_NON_DISPOSABLE_DB
+   delete base.POSTGRES_PORT
++  delete base.CI
+   return spawnSync('bash', [join(root, 'scripts/test-db.sh'), command], {
+     cwd: root,
+     env: { ...base, ...env },
+@@ -597,7 +598,7 @@ void describe('scripts/test-db.sh reads .env as compose does, and acts only on w
+ 
+     for (const url of [
+       'postgresql://postgres:postgres@db.example.com:5432/app_test',
+-      'postgresql://postgres:postgres@localhost:5432/app',
++      'postgresql://postgres:postgres@localhost:55433/app',
+     ]) {
+       const refused = testDb(main, bin, 'migrate', { TEST_DATABASE_URL: url })
+       assert.notEqual(refused.status, 0, url)
+@@ -750,6 +751,46 @@ void describe('scripts/test-db.sh ensure creates only a local *_test database',
+     assert.equal(calls().match(/prisma migrate deploy/g)?.length ?? 0, 0, calls())
+   })
+ 
++  void it('takes 5432 as the development port when POSTGRES_PORT is unset outside CI', () => {
++    const { main, bin } = checkouts()
++    const node = nodeStub(main)
++    const { bin: recording, calls } = recordingStubs(join(main, '..'))
++    const path = `${node.bin}:${recording}:${bin}`
++    for (const rest of ['localhost:5432/app_test', '127.0.0.1/app_test']) {
++      const url = urlWithPassword(rest)
++      for (const unset of [{}, { POSTGRES_PORT: ' ' }, { CI: 'false' }, { CI: '0' }]) {
++        for (const allow of ['', '1']) {
++          const env = { ...unset, TEST_DATABASE_URL: url, E2E_ALLOW_NON_DISPOSABLE_DB: allow }
++          for (const command of ['ensure', 'verify', 'migrate']) {
++            const label = `${command} ${JSON.stringify(unset)} ${allow} ${rest}`
++            const refused = testDb(main, path, command, env)
++            assert.notEqual(refused.status, 0, label)
++            assert.match(refused.stderr, /on port 5432, the development\s+Postgres/, label)
++            assert.match(refused.stderr, /POSTGRES_PORT is unset/, label)
++            assert.ok(!refused.stderr.includes(FIXTURE_PASSWORD), label)
++          }
++        }
++      }
++    }
++    assert.equal(node.calls(), '')
++    assert.equal(calls(), '')
++  })
++
++  void it('compares no port in CI without POSTGRES_PORT, and the one that is set elsewhere', () => {
++    const { main, bin } = checkouts()
++    const { bin: recording } = recordingStubs(join(main, '..'))
++    const path = `${recording}:${bin}`
++    const url = 'postgresql://prisma:prisma@localhost:5432/app_test'
++    for (const env of [{ CI: 'true' }, { CI: '1' }, { POSTGRES_PORT: '5442' }]) {
++      for (const command of ['verify', 'migrate']) {
++        const ok = testDb(main, path, command, { ...env, TEST_DATABASE_URL: url })
++        assert.equal(ok.status, 0, `${command} ${JSON.stringify(env)} ${ok.stderr}`)
++      }
++    }
++    const set = { CI: 'true', POSTGRES_PORT: '5432', TEST_DATABASE_URL: url }
++    assert.notEqual(testDb(main, path, 'verify', set).status, 0)
++  })
++
+   void it('verifies a URL of your own on another port without asking Docker', () => {
+     const { main, bin } = checkouts()
+     writeFileSync(join(main, '.env'), 'POSTGRES_PORT=55450\n')
+diff --git a/scripts/test-db.sh b/scripts/test-db.sh
+index 35e5cb5..d068572 100755
+--- a/scripts/test-db.sh
++++ b/scripts/test-db.sh
+@@ -35,10 +35,24 @@ TEST_DB_PORT="${TEST_DB_PORT:-5433}"
+ # Any other URL names a database you chose, on a server you vouch for.
+ TEST_DB_OWN_URL="postgresql://postgres:postgres@localhost:${TEST_DB_PORT}/nestled_template_test"
+ TEST_DB_URL="${TEST_DATABASE_URL:-$TEST_DB_OWN_URL}"
+-# The development Postgres's host port: POSTGRES_PORT from the environment, else .env. Empty when
+-# neither sets it (CI has no .env), which skips the development-server check below.
+-DEV_DB_PORT="${POSTGRES_PORT:-}"
++# CI providers set CI to `true` or `1`; `false`, `0` and an empty value mean it is not CI.
++in_ci() {
++  case "$(printf '%s' "${CI:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" in
++    '' | 0 | false) return 1 ;;
++    *) return 0 ;;
++  esac
++}
++
++# The development Postgres's host port: POSTGRES_PORT from the environment, else .env, else the port
++# compose defaults to. Empty in CI when neither sets it (CI has no development Postgres), which skips
++# the development-server check below.
++DEV_DB_PORT="$(printf '%s' "${POSTGRES_PORT:-}" | tr -d '[:space:]')"
+ [[ -n "$DEV_DB_PORT" ]] || DEV_DB_PORT="$(read_env POSTGRES_PORT)" || exit 1
++DEV_DB_PORT_SOURCE="POSTGRES_PORT"
++if [[ -z "$DEV_DB_PORT" ]] && ! in_ci; then
++  DEV_DB_PORT=5432
++  DEV_DB_PORT_SOURCE="POSTGRES_PORT is unset; set it if yours listens elsewhere"
++fi
+ # The resolved URL is the single source of truth for the port we report. When a caller supplies
+ # TEST_DATABASE_URL (e.g. a block-specific port), TEST_DB_PORT still holds the .env/default value, so
+ # echoing it would claim "ready on port 5433" while actually using the URL's port. Read the port back
+@@ -85,7 +99,7 @@ is_local_test_database() {
+   return 1
+ }
+ 
+-# Whether TEST_DB_URL is on this machine's development Postgres (the port POSTGRES_PORT names). A
++# Whether TEST_DB_URL is on this machine's development Postgres (DEV_DB_PORT). A
+ # test database there sits beside the development data, in a server `reset` never clears, and
+ # `ensure` would create it inside that server. Nothing here acts on such a URL, whatever its name and
+ # whatever E2E_ALLOW_NON_DISPOSABLE_DB says (the rule database-guards.ts applies in the e2e setup).
+@@ -122,7 +136,7 @@ refuse_development_server() {
+   local action="$1"
+   on_development_server || return 0
+   echo "❌ Refusing to $action $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development" >&2
+-  echo "   Postgres (POSTGRES_PORT). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT)." >&2
++  echo "   Postgres ($DEV_DB_PORT_SOURCE). Point TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT)." >&2
+   echo "   E2E_ALLOW_NON_DISPOSABLE_DB does not apply: a database on the development server is never" >&2
+   echo "   a disposable test database, whatever it is named." >&2
+   exit 1
+@@ -161,7 +175,7 @@ ensure_test_database() {
+   fi
+   if on_development_server; then
+     echo "❌ Refusing to create $TEST_DB_DISPLAY_URL: it is on port $DEV_DB_PORT, the development Postgres" >&2
+-    echo "   (POSTGRES_PORT), so it would be created beside the development data. Point" >&2
++    echo "   ($DEV_DB_PORT_SOURCE), so it would be created beside the development data. Point" >&2
+     echo "   TEST_DATABASE_URL at the test server (POSTGRES_TEST_PORT), or create it yourself." >&2
+     return 1
+   fi

@@ -1,0 +1,406 @@
+diff --git a/apps/web/app/routes/_authenticated/_layout.tsx b/apps/web/app/routes/_authenticated/_layout.tsx
+index 4241f64..a8892eb 100644
+--- a/apps/web/app/routes/_authenticated/_layout.tsx
++++ b/apps/web/app/routes/_authenticated/_layout.tsx
+@@ -39,6 +39,10 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
+   return { myOrganizationsQueryRef }
+ })
+ 
++// One array for every render: a new one each time would change the memo below and the shell's
++// context with it.
++const NO_ORGANIZATIONS: MyOrganizationsWithMembersQuery['myOrganizations'] = []
++
+ export default function AuthenticatedLayout() {
+   const { user: contextUser } = useGlobalCtx()
+   const location = useLocation()
+@@ -55,7 +59,7 @@ export default function AuthenticatedLayout() {
+   // The organization shown, and every request's `x-organization-id`: the server's active one (from
+   // Me), else the first, identical in the server render and the hydrating one. A choice this browser stored is restored after hydration, through the shared
+   // switch, and the loaders run again for it; organization-scoped content waits meanwhile.
+-  const organizations = orgsData?.myOrganizations || []
++  const organizations = orgsData?.myOrganizations ?? NO_ORGANIZATIONS
+   // A restored organization must reach the user the pages get too, so `user.activeOrganizationId`
+   // and `activeOrganization.id` agree. The cached Me follows the switch's cache write by itself; the
+   // verdict's user (rendered until the cache has it) does not, so the restore is applied here, for the user it was restored for, and only while that user's own active
+diff --git a/apps/web/app/routes/force-logout.tsx b/apps/web/app/routes/force-logout.tsx
+index 4a7721d..e4e352f 100644
+--- a/apps/web/app/routes/force-logout.tsx
++++ b/apps/web/app/routes/force-logout.tsx
+@@ -1,7 +1,7 @@
+ import { getSessionCookieName } from '@nestled-template/shared/utils'
+ import { expiredSessionCookies } from '../session/session-cookie'
+ 
+-export async function loader({ request }: { request: Request }) {
++export function loader({ request }: { request: Request }) {
+   const cookieName = getSessionCookieName()
+   const url = new URL(request.url)
+   const returnUrl = url.searchParams.get('return_url')
+diff --git a/apps/web/app/routes/members/_index.tsx b/apps/web/app/routes/members/_index.tsx
+index 7f01f0c..6f7c3dc 100644
+--- a/apps/web/app/routes/members/_index.tsx
++++ b/apps/web/app/routes/members/_index.tsx
+@@ -1,6 +1,6 @@
+ import { redirect } from 'react-router'
+ 
+-export async function loader() {
++export function loader() {
+   return redirect('/members/dashboard')
+ }
+ 
+diff --git a/apps/web/tests/routes/authenticated-layout.spec.tsx b/apps/web/tests/routes/authenticated-layout.spec.tsx
+index 2177207..b4ad7c7 100644
+--- a/apps/web/tests/routes/authenticated-layout.spec.tsx
++++ b/apps/web/tests/routes/authenticated-layout.spec.tsx
+@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { ApolloProvider, createQueryPreloader } from '@apollo/client/react'
+ import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client'
+ import { MyOrganizationsWithMembers } from '@nestled-template/shared/sdk'
++import { useGlobalCtx } from '@nestled-template/web'
+ import { App } from '../../app/app'
+ import AuthenticatedLayout, { middleware } from '../../app/routes/_authenticated/_layout'
+ import { requireSession } from '../../app/session/session-middleware.server'
+@@ -26,8 +27,15 @@ vi.mock('@nestled-template/web', async importOriginal => ({
+ }))
+ 
+ const operations: string[] = []
++// The organizations the page was given, one entry per render of it.
++const givenOrganizations: unknown[] = []
+ 
+-function organizationsLink(organizations: unknown[]) {
++function MembersPage() {
++  givenOrganizations.push(useGlobalCtx().organizations)
++  return <p>Members page</p>
++}
++
++function organizationsLink(organizations: unknown[] | null) {
+   return new ApolloLink(
+     operation =>
+       new Observable<ApolloLink.Result>(observer => {
+@@ -49,7 +57,7 @@ const ORGANIZATION = {
+   members: [],
+ }
+ 
+-async function renderMembers(organizations: unknown[] = [ORGANIZATION]) {
++async function renderMembers(organizations: unknown[] | null = [ORGANIZATION]) {
+   const client = new ApolloClient({
+     link: organizationsLink(organizations),
+     cache: new InMemoryCache(),
+@@ -71,7 +79,7 @@ async function renderMembers(organizations: unknown[] = [ORGANIZATION]) {
+               return { myOrganizationsQueryRef }
+             },
+             element: <AuthenticatedLayout />,
+-            children: [{ index: true, element: <p>Members page</p> }],
++            children: [{ index: true, element: <MembersPage /> }],
+           },
+         ],
+       },
+@@ -85,10 +93,12 @@ async function renderMembers(organizations: unknown[] = [ORGANIZATION]) {
+       </ApolloProvider>,
+     )
+   })
++  return router
+ }
+ 
+ beforeEach(() => {
+   operations.length = 0
++  givenOrganizations.length = 0
+   localStorage.clear()
+   vi.spyOn(console, 'error').mockImplementation(() => undefined)
+   vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+@@ -120,4 +130,18 @@ describe('the signed-in layout', () => {
+     expect(await screen.findByText('Members page')).toBeInTheDocument()
+     expect(screen.getByText(/^Header user:/)).toBeInTheDocument()
+   })
++
++  it('gives the page the same empty list on every render when the answer holds none', async () => {
++    const router = await renderMembers(null)
++    expect(await screen.findByText('Members page')).toBeInTheDocument()
++
++    // A new location renders the layout again.
++    await act(async () => {
++      await router.navigate('/members?tab=2')
++    })
++
++    expect(givenOrganizations.length).toBeGreaterThan(1)
++    expect(givenOrganizations[0]).toEqual([])
++    expect(new Set(givenOrganizations).size).toBe(1)
++  })
+ })
+diff --git a/apps/web/tests/routes/force-logout.spec.tsx b/apps/web/tests/routes/force-logout.spec.tsx
+index bbe2aaf..88a63c7 100644
+--- a/apps/web/tests/routes/force-logout.spec.tsx
++++ b/apps/web/tests/routes/force-logout.spec.tsx
+@@ -6,9 +6,9 @@ vi.mock('@nestled-template/shared/utils', () => ({
+ }))
+ 
+ describe('Force Logout Loader', () => {
+-  it('should return a 302 redirect to /login', async () => {
++  it('should return a 302 redirect to /login', () => {
+     const request = new Request('http://localhost/force-logout')
+-    const response = await loader({ request })
++    const response = loader({ request })
+ 
+     expect(response.status).toBe(302)
+     const location = response.headers.get('Location')
+@@ -16,19 +16,19 @@ describe('Force Logout Loader', () => {
+     expect(location?.startsWith('/login')).toBe(true)
+   })
+ 
+-  it('should append expired=1 to the login redirect', async () => {
++  it('should append expired=1 to the login redirect', () => {
+     const request = new Request('http://localhost/force-logout')
+-    const response = await loader({ request })
++    const response = loader({ request })
+ 
+     const location = response.headers.get('Location') ?? ''
+     expect(new URL(location, 'http://localhost').searchParams.get('expired')).toBe('1')
+   })
+ 
+-  it('should preserve return_url when provided', async () => {
++  it('should preserve return_url when provided', () => {
+     const request = new Request(
+       'http://localhost/force-logout?return_url=' + encodeURIComponent('/members/billing'),
+     )
+-    const response = await loader({ request })
++    const response = loader({ request })
+ 
+     const location = response.headers.get('Location') ?? ''
+     const params = new URL(location, 'http://localhost').searchParams
+@@ -36,9 +36,9 @@ describe('Force Logout Loader', () => {
+     expect(params.get('expired')).toBe('1')
+   })
+ 
+-  it('should clear the session cookie', async () => {
++  it('should clear the session cookie', () => {
+     const request = new Request('http://localhost/force-logout')
+-    const response = await loader({ request })
++    const response = loader({ request })
+ 
+     // The loader can set multiple Set-Cookie headers (host-only + domain-scoped),
+     // so read them all via getSetCookie() and assert on the __session clear.
+diff --git a/apps/web/tests/routes/sonar-coverage-routes.spec.tsx b/apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+index 4cca851..54ef5c4 100644
+--- a/apps/web/tests/routes/sonar-coverage-routes.spec.tsx
++++ b/apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
+ import { createTestRouter } from '../helpers/createTestRouter'
+ import AdminAnalyticsPage from '../../app/routes/admin/analytics/_index'
+ import ForceLogoutRoute, { loader as forceLogoutLoader } from '../../app/routes/force-logout'
++import MembersIndex, { loader as membersIndexLoader } from '../../app/routes/members/_index'
+ 
+ const useQuery = vi.fn()
+ let loaderData: any = {}
+@@ -34,11 +35,11 @@ describe('additional route coverage', () => {
+     loaderData = {}
+   })
+ 
+-  it('clears auth cookies and redirects from force logout loader', async () => {
++  it('clears auth cookies and redirects from force logout loader', () => {
+     process.env.VITE_COOKIE_NAME = '__session'
+     process.env.VITE_COOKIE_DOMAIN = 'example.com'
+ 
+-    const response = await forceLogoutLoader({
++    const response = forceLogoutLoader({
+       request: new Request('https://app.example.com/force-logout?return_url=/settings'),
+     })
+ 
+@@ -50,6 +51,16 @@ describe('additional route coverage', () => {
+     expect(container.innerHTML).toBe('')
+   })
+ 
++  it('answers the members index with a redirect to the dashboard, not a promise of one', () => {
++    const response = membersIndexLoader()
++
++    expect(response.status).toBe(302)
++    expect(response.headers.get('Location')).toBe('/members/dashboard')
++
++    const { container } = render(<MembersIndex />)
++    expect(container.innerHTML).toBe('')
++  })
++
+   it('renders admin analytics metrics and errors', () => {
+     const refetch = vi.fn()
+     useQuery.mockReturnValue({
+diff --git a/apps/web/tests/session-cookie.spec.ts b/apps/web/tests/session-cookie.spec.ts
+index feea38a..847c9ca 100644
+--- a/apps/web/tests/session-cookie.spec.ts
++++ b/apps/web/tests/session-cookie.spec.ts
+@@ -83,10 +83,10 @@ describe('expiring the session cookie on sign-out', () => {
+     },
+   )
+ 
+-  it('/force-logout expires both when only the API variable is set', async () => {
++  it('/force-logout expires both when only the API variable is set', () => {
+     vi.stubEnv('API_COOKIE_DOMAIN', '.example.com')
+ 
+-    const response = await forceLogoutLoader({
++    const response = forceLogoutLoader({
+       request: new Request('https://app.example.com/force-logout'),
+     })
+ 
+diff --git a/apps/web/tests/session/session-revalidator.spec.tsx b/apps/web/tests/session/session-revalidator.spec.tsx
+index 8d5ae07..52da4e1 100644
+--- a/apps/web/tests/session/session-revalidator.spec.tsx
++++ b/apps/web/tests/session/session-revalidator.spec.tsx
+@@ -32,6 +32,9 @@ import {
+ 
+ type BoundaryError = Parameters<typeof ErrorBoundary>[0]['error']
+ 
++// The real timer, taken before any spec installs the fake ones.
++const realSetTimeout = globalThis.setTimeout
++
+ const SIGN_OUT_TARGET = /\/(login|logout|force-logout)/
+ 
+ /** Every way the browser could navigate, so a spec can prove it never does by itself. */
+@@ -90,7 +93,9 @@ async function suspect(times = 1) {
+ 
+ beforeEach(() => {
+   __resetSessionRevalidation()
+-  vi.useFakeTimers({ shouldAdvanceTime: true })
++  // No `shouldAdvanceTime`: real time passing under load would end the cooldown early. Specs advance
++  // the clock themselves.
++  vi.useFakeTimers()
+ })
+ 
+ afterEach(() => {
+@@ -100,6 +105,14 @@ afterEach(() => {
+ })
+ 
+ describe('SessionRevalidator: a browser 401 only triggers a revalidation', () => {
++  it('is timed by the fake clock alone: real time passing never ends the cooldown', async () => {
++    const before = Date.now()
++    await act(async () => {
++      await new Promise(resolve => realSetTimeout(resolve, 100))
++    })
++    expect(Date.now()).toBe(before)
++  })
++
+   it('answers an error-link 401 with one revalidation', async () => {
+     const navigations = watchLocation()
+     const { revalidations } = await renderWith(<SessionRevalidator />)
+diff --git a/libs/api/config/src/lib/cookie-domain.spec.ts b/libs/api/config/src/lib/cookie-domain.spec.ts
+index 4076bdf..5dfc868 100644
+--- a/libs/api/config/src/lib/cookie-domain.spec.ts
++++ b/libs/api/config/src/lib/cookie-domain.spec.ts
+@@ -3,7 +3,7 @@ import { cookieDomainFromSetting } from './cookie-domain'
+ 
+ // The rule the API sets its session cookie's `Domain` with. apps/web/tests/session-cookie.spec.ts
+ // runs the same table against the web server's copy (`cookieDomainFromSetting` in
+-// apps/web/app/session-cookie.ts); keep the two tables identical.
++// apps/web/app/session/session-cookie.ts); keep the two tables identical.
+ const SETTING_CASES: ReadonlyArray<[string | undefined, string | undefined]> = [
+   [undefined, undefined],
+   ['', undefined],
+diff --git a/libs/api/config/src/lib/cookie-domain.ts b/libs/api/config/src/lib/cookie-domain.ts
+index eaf501e..9565666 100644
+--- a/libs/api/config/src/lib/cookie-domain.ts
++++ b/libs/api/config/src/lib/cookie-domain.ts
+@@ -9,9 +9,9 @@ export const HOST_ONLY_COOKIE_DOMAINS: readonly string[] = ['localhost', '127.0.
+  * comma-separated list; the first nonempty entry is the cookie's domain. Undefined (a host-only
+  * cookie) when nothing is set or the entry is `localhost`, `127.0.0.1` or `[::1]`.
+  *
+- * The web server applies the same rule (apps/web/app/session-cookie.ts `cookieDomainFromSetting`)
+- * to know which cookie a sign-out must expire; the two share the table in their specs. Change
+- * both together.
++ * The web server applies the same rule (apps/web/app/session/session-cookie.ts
++ * `cookieDomainFromSetting`) to know which cookie a sign-out must expire; the two share the table
++ * in their specs. Change both together.
+  */
+ export function cookieDomainFromSetting(value: string | undefined): string | undefined {
+   const domain = (value ?? '')
+diff --git a/scripts/audit-session-decisions.mjs b/scripts/audit-session-decisions.mjs
+index 5bcb429..3798908 100644
+--- a/scripts/audit-session-decisions.mjs
++++ b/scripts/audit-session-decisions.mjs
+@@ -21,7 +21,8 @@
+ //                         `classifyApiFailure(...) === 'unauthenticated'`
+ //   throw-401             a 401 made by hand: `data(..., { status: 401 })`,
+ //                         `new Response(..., { status: 401 })`, `Response.json(..., { status: 401 })`
+-//   session-cookie-read   `getCookie(..., getSessionCookieName())`
++//   session-cookie-read   `getCookie(..., getSessionCookieName())`, or `cookieCandidates(...)` with
++//                         the same name outside libs/shared/apollo
+ //   empty-organizations   a `catch` that returns `[]` in a function that reads organizations
+ //                         (`myOrganizations` / `MyOrganizations...`): a failed read must never look
+ //                         like "no organizations"
+@@ -72,7 +73,7 @@ export const MESSAGES = {
+   'throw-401':
+     'makes a 401 by hand. Throw narrowApiError(error) for a refused call; only the session middleware turns a 401 into a sign-out.',
+   'session-cookie-read':
+-    'reads the session cookie. Read getSession(context) instead (or forwardedSessionCookie(request) to pass it to the API).',
++    'reads the session cookie. Read getSession(context) instead (or forwardedSessionCookie(request) to pass it to the API, or sessionToken(request) when a raw bearer token is unavoidable).',
+   'empty-organizations':
+     'returns [] when reading organizations fails. A failed read must not look like "no organizations": let it throw (narrowApiError) so the outage screen or the error screen shows.',
+ }
+@@ -175,8 +176,14 @@ function isHand401(node) {
+   return false
+ }
+ 
+-function isSessionCookieRead(node) {
+-  if (!ts.isCallExpression(node) || calleeName(node) !== 'getCookie') return false
++// The server-side Apollo client forwards the candidates, so it has to read them.
++const READS_CANDIDATES = 'libs/shared/apollo/'
++
++function isSessionCookieRead(node, fileName) {
++  if (!ts.isCallExpression(node)) return false
++  const callee = calleeName(node)
++  if (callee !== 'getCookie' && callee !== 'cookieCandidates') return false
++  if (callee === 'cookieCandidates' && fileName.startsWith(READS_CANDIDATES)) return false
+   const name = node.arguments[1]
+   return !!name && ts.isCallExpression(name) && calleeName(name) === 'getSessionCookieName'
+ }
+@@ -298,7 +305,7 @@ export function auditSource(fileName, text) {
+     if (isNavigation(node)) report(node, 'navigate-to-sign-out')
+     else if (isAuthCondition(node)) report(node, 'auth-condition')
+     else if (isHand401(node)) report(node, 'throw-401')
+-    else if (isSessionCookieRead(node)) report(node, 'session-cookie-read')
++    else if (isSessionCookieRead(node, fileName)) report(node, 'session-cookie-read')
+     else if (isEmptyOrganizationsCatch(node)) report(node, 'empty-organizations')
+     ts.forEachChild(node, visit)
+   }
+diff --git a/scripts/audit-session-decisions.spec.mjs b/scripts/audit-session-decisions.spec.mjs
+index 37c7d8d..34d7bb9 100644
+--- a/scripts/audit-session-decisions.spec.mjs
++++ b/scripts/audit-session-decisions.spec.mjs
+@@ -108,6 +108,24 @@ describe('audit-session-decisions', () => {
+       assert.deepEqual(rules(text), [{ line: 2, rule: 'session-cookie-read' }])
+     })
+ 
++    const candidates =
++      "export function f(request: Request) {\n  return cookieCandidates(request.headers.get('cookie'), getSessionCookieName())\n}"
++
++    it('flags cookieCandidates(header, getSessionCookieName())', () => {
++      const { findings } = auditSource('apps/web/app/routes/example.tsx', candidates)
++      assert.deepEqual(
++        findings.map(({ line, rule }) => ({ line, rule })),
++        [{ line: 2, rule: 'session-cookie-read' }],
++      )
++      assert.match(findings[0].message, /forwardedSessionCookie\(request\)/)
++      assert.match(findings[0].message, /sessionToken\(request\)/)
++    })
++
++    it('lets the server-side Apollo client read the candidates it forwards', () => {
++      const { findings } = auditSource('libs/shared/apollo/src/lib/apollo.ts', candidates)
++      assert.deepEqual(findings, [])
++    })
++
+     it('ignores any other cookie', () => {
+       const text =
+         "export function f(request: Request) {\n  return getCookie(request.headers, 'theme')\n}"
+@@ -195,10 +213,15 @@ describe('audit-session-decisions', () => {
+       assert.ok(files.includes('apps/web/app/root.tsx'))
+     })
+ 
+-    it('passes on the template, with exactly the allowed sites it documents', () => {
++    // No count: how many sites a project allows is its own, and the report lists each one.
++    it('passes on this workspace: nothing found, and a reason for every allowed site', () => {
+       const result = auditFiles(root)
+       assert.deepEqual(result.findings, [], formatReport(result))
+-      assert.equal(result.allowed.length, 8, formatReport(result))
++      assert.deepEqual(
++        result.allowed.filter(({ reason }) => !reason?.trim()),
++        [],
++        formatReport(result),
++      )
+     })
+   })
+ })

@@ -1,0 +1,209 @@
+diff --git a/libs/api/config/src/index.ts b/libs/api/config/src/index.ts
+index b618549..4acc2b3 100644
+--- a/libs/api/config/src/index.ts
++++ b/libs/api/config/src/index.ts
+@@ -2,6 +2,7 @@ export * from './lib/api-url'
+ export * from './lib/config.module'
+ export * from './lib/config.service'
+ export * from './lib/cookie-domain'
++export * from './lib/cookie-name'
+ export * from './lib/configuration'
+ export * from './lib/public-url.service'
+ export * from './lib/validation'
+diff --git a/libs/api/config/src/lib/configuration.ts b/libs/api/config/src/lib/configuration.ts
+index 30b873f..39f183b 100644
+--- a/libs/api/config/src/lib/configuration.ts
++++ b/libs/api/config/src/lib/configuration.ts
+@@ -1,5 +1,6 @@
+ import { defaultOrigin, normalizeApiOrigin } from './api-url'
+ import { cookieDomainFromSetting } from './cookie-domain'
++import { sessionCookieName } from './cookie-name'
+ 
+ // Treat unset OR `.env.example` placeholder values (e.g. `your-google-client-id`) as "not
+ // configured", so a plain `cp .env.example .env` does not falsely report OAuth as enabled. Trim
+@@ -115,7 +116,7 @@ export const configuration = () => ({
+   trustProxyHops: envInt(process.env['TRUST_PROXY_HOPS'], 0),
+   api: {
+     cookie: {
+-      name: process.env['VITE_COOKIE_NAME'] ?? '__session',
++      name: sessionCookieName(),
+       secret: process.env['API_COOKIE_SECRET'] ?? 'secret',
+       options: {
+         // A host-only cookie for an unset value, `localhost`, `127.0.0.1` or `[::1]`; the first
+diff --git a/libs/api/config/src/lib/cookie-name.spec.ts b/libs/api/config/src/lib/cookie-name.spec.ts
+new file mode 100644
+index 0000000..bd9c1e8
+--- /dev/null
++++ b/libs/api/config/src/lib/cookie-name.spec.ts
+@@ -0,0 +1,59 @@
++import { ConfigModule } from '@nestjs/config'
++import { configuration } from './configuration'
++import { sessionCookieName } from './cookie-name'
++import { validationSchema } from './validation'
++
++const KEYS = ['VITE_COOKIE_NAME', 'API_COOKIE_NAME']
++
++describe('the session cookie name', () => {
++  const saved = KEYS.map(key => process.env[key])
++
++  beforeEach(() => KEYS.forEach(key => delete process.env[key]))
++  afterAll(() =>
++    KEYS.forEach((key, index) => {
++      const value = saved[index]
++      if (value === undefined) delete process.env[key]
++      else process.env[key] = value
++    }),
++  )
++
++  const validate = (env: Record<string, string>) =>
++    validationSchema.validate(env, { allowUnknown: true })
++
++  describe('settings that keep working as they did', () => {
++    it.each([
++      ['neither', {}, '__session'],
++      ['only VITE_COOKIE_NAME', { VITE_COOKIE_NAME: 'app' }, 'app'],
++      ['both, equal', { VITE_COOKIE_NAME: 'app', API_COOKIE_NAME: 'app' }, 'app'],
++      ['API_COOKIE_NAME with the default name', { API_COOKIE_NAME: '__session' }, '__session'],
++      ['an empty API_COOKIE_NAME', { VITE_COOKIE_NAME: 'app', API_COOKIE_NAME: '' }, 'app'],
++    ])('%s', (_case, env: Record<string, string>, expected) => {
++      expect(validate(env).error).toBeUndefined()
++      Object.assign(process.env, env)
++      expect(sessionCookieName()).toBe(expected)
++      // The name the API sets its cookie under.
++      expect(configuration().api.cookie.name).toBe(expected)
++    })
++  })
++
++  describe('settings the API refuses to start with', () => {
++    const refused: [string, Record<string, string>][] = [
++      ['only API_COOKIE_NAME', { API_COOKIE_NAME: 'api' }],
++      ['two different names', { VITE_COOKIE_NAME: 'app', API_COOKIE_NAME: 'api' }],
++    ]
++
++    it.each(refused)('%s', (_case, env) => {
++      const { error } = validate(env)
++      expect(error?.message).toContain('API_COOKIE_NAME')
++      expect(error?.message).toContain('VITE_COOKIE_NAME')
++      expect(error?.message).not.toContain('{{')
++    })
++
++    it.each(refused)('%s, at boot', async (_case, env) => {
++      Object.assign(process.env, env)
++      await expect(
++        ConfigModule.forRoot({ ignoreEnvFile: true, validationSchema, load: [configuration] }),
++      ).rejects.toThrow(/API_COOKIE_NAME/)
++    })
++  })
++})
+diff --git a/libs/api/config/src/lib/cookie-name.ts b/libs/api/config/src/lib/cookie-name.ts
+new file mode 100644
+index 0000000..778ad0e
+--- /dev/null
++++ b/libs/api/config/src/lib/cookie-name.ts
+@@ -0,0 +1,10 @@
++export const DEFAULT_SESSION_COOKIE_NAME = '__session'
++
++/**
++ * The session cookie's name, for everything in the API that sets, clears or reads it. The web build
++ * inlines the same variable, so it is the one name both sides have. `API_COOKIE_NAME` is not read:
++ * the API refuses to start when it names another cookie (validation.ts).
++ */
++export function sessionCookieName(env: NodeJS.ProcessEnv = process.env): string {
++  return env['VITE_COOKIE_NAME'] || DEFAULT_SESSION_COOKIE_NAME
++}
+diff --git a/libs/api/config/src/lib/validation.ts b/libs/api/config/src/lib/validation.ts
+index 414b794..004b18f 100644
+--- a/libs/api/config/src/lib/validation.ts
++++ b/libs/api/config/src/lib/validation.ts
+@@ -1,4 +1,5 @@
+ import * as Joi from 'joi'
++import { DEFAULT_SESSION_COOKIE_NAME } from './cookie-name'
+ import { defaultApiOrigin, defaultOrigin, isHttpOrigin, normalizeApiOrigin } from './api-url'
+ 
+ export const validationSchema = Joi.object({
+@@ -17,7 +18,19 @@ export const validationSchema = Joi.object({
+   // Supply the 4200 fallback here — same defect (and same fix) as the API_URL default below.
+   WEB_URL: Joi.string().default(defaultOrigin(process.env['HOST'], process.env['WEB_PORT'], 4200)),
+   API_COOKIE_DOMAIN: Joi.string().default('localhost'),
+-  VITE_COOKIE_NAME: Joi.string().default('__session'),
++  VITE_COOKIE_NAME: Joi.string().default(DEFAULT_SESSION_COOKIE_NAME),
++  // Not read anywhere (cookie-name.ts). A project that sets it to another name had parts that set
++  // the session cookie under one name and parts that read another; picking one for it could sign
++  // every user out, so starting is refused until the two say the same.
++  API_COOKIE_NAME: Joi.string()
++    .valid('', Joi.ref('VITE_COOKIE_NAME'))
++    .messages({
++      'any.only':
++        '{{#label}} must be empty or the same as VITE_COOKIE_NAME, which names the session cookie ' +
++        '(unset: "__session"). Received {{:#value}}. Before changing either, look up the name of ' +
++        'the session cookie in a signed-in browser: that name belongs in VITE_COOKIE_NAME, on the ' +
++        'web service too (it is read at build time), and another one signs every user out.',
++    }),
+   // API_URL is the origin only, WITHOUT the `/api` global prefix. The prefix is appended by the
+   // URL-building code (OAuth redirect_uri, MCP base URL, upload public URLs). Keep this consistent
+   // with .env.example and docs/template/README.md — a `/api` suffix here breaks all of those.
+diff --git a/libs/api/core/feature/src/lib/ws-session-token.ts b/libs/api/core/feature/src/lib/ws-session-token.ts
+index c998321..d9e8140 100644
+--- a/libs/api/core/feature/src/lib/ws-session-token.ts
++++ b/libs/api/core/feature/src/lib/ws-session-token.ts
+@@ -1,5 +1,6 @@
+ import { Logger } from '@nestjs/common'
+ import { JsonWebTokenError, JwtService } from '@nestjs/jwt'
++import { sessionCookieName } from '@nestled-template/api/config'
+ import { rawHeaderCookieValues, selectSessionToken } from '@nestled-template/api/utils'
+ 
+ type WsContextExtra = {
+@@ -40,7 +41,7 @@ export function extractTokenFromWsContext(extra: unknown): string {
+     'rawHeaders' in extra.request
+   ) {
+     const rawHeaders = (extra as WsContextExtra).request?.rawHeaders
+-    const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
++    const cookieName = sessionCookieName()
+     if (!rawHeaders) return ''
+     return (
+       selectSessionToken(rawHeaderCookieValues(rawHeaders, cookieName), verifyWithJwtSecret) ?? ''
+diff --git a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+index 2c05ef5..90df63d 100644
+--- a/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
++++ b/libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+@@ -9,6 +9,7 @@ import { PassportStrategy } from '@nestjs/passport'
+ import { Request } from 'express'
+ import { ExtractJwt, Strategy } from 'passport-jwt'
+ import { JwtService } from '@nestjs/jwt'
++import { sessionCookieName } from '@nestled-template/api/config'
+ import { User } from '@nestled-template/api/core/models'
+ import {
+   API_ERROR_CODES,
+@@ -44,10 +45,6 @@ type ApiTokenVerdict = ApiTokenRefusal | { user: User; result: ValidatedApiToken
+ 
+ const API_TOKEN_PATTERN = /^[a-f0-9]{64}$/i
+ 
+-function sessionCookieName(): string {
+-  return process.env['VITE_COOKIE_NAME'] || process.env['API_COOKIE_NAME'] || '__session'
+-}
+-
+ /**
+  * The bearer header, else the session cookie. With several same-name session cookies the newest
+  * one whose signature verifies is used (see selectSessionToken), so neither a stale cookie that
+diff --git a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+index 0915854..72607a2 100644
+--- a/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
++++ b/libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+@@ -16,6 +16,7 @@ import { JwtService } from '@nestjs/jwt'
+ import { Request, Response } from 'express'
+ import { ConfigService } from '@nestjs/config'
+ import { McpOAuthService, OAuthClientError, PKCE_METHOD } from './mcp-oauth.service'
++import { sessionCookieName } from '@nestled-template/api/config'
+ import {
+   orderSessionTokensNewestFirst,
+   Public,
+@@ -517,8 +518,7 @@ export class McpOAuthController {
+    * forged one with a far-future `iat` can shadow the valid session.
+    */
+   private async getSessionFromCookie(req: Request): Promise<AuthTokenClaims | null> {
+-    const cookieName = process.env['VITE_COOKIE_NAME'] || '__session'
+-    const candidates = orderSessionTokensNewestFirst(requestCookieValues(req, cookieName))
++    const candidates = orderSessionTokensNewestFirst(requestCookieValues(req, sessionCookieName()))
+     for (const cookieToken of candidates) {
+       let payload: AuthTokenClaims
+       try {

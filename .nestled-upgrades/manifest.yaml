@@ -1,7 +1,7 @@
 schemaVersion: 1
-generatedAt: 2026-11-23
+generatedAt: 2026-11-24
 channels:
-  canary: 2026.11.12
+  canary: 2026.11.13
   stable: 2026.11.12
 releases:
   - id: 2026.08.0
@@ -2693,3 +2693,371 @@ releases:
         applyAfter:
           - 2026-11-20-session-middleware
         patch: patches/2026-11-21-session-files-sonar-cleanup.diff
+  - id: 2026.11.13
+    date: 2026-11-24
+    title: Session hardening, typed queries and dependency fixes
+    templateCommit: b7ae7ca
+    notes:
+      - id: 2026-11-24-dependency-alerts
+        title: "Dependency hardening: effect 3.22.1 under @prisma/config, fast-xml-parser 5.12.0, glob 13.0.7"
+        delivery: code-patch
+        intent: "Root package.json and pnpm-lock.yaml only. Promotion mirrors neither, so nestled-template and each project apply this to their own manifest and re-resolve their own lockfile with pnpm; the template's lockfile is not copied. No zod pin or override changes. 1. effect 3.20.0 -> 3.22.1 (high). @prisma/config 7.10.1, the latest release, pins `effect` to exactly 3.20.0, so no update within range reaches the fix. Add one entry under `pnpm.overrides`: `\"@prisma/config>effect@<3.22.1\": \"3.22.1\"`. It is scoped to effect under @prisma/config and to versions below 3.22.1, so it stops applying by itself once Prisma ships a newer pin (its 7.11 pre-releases pin 3.22.1). Same major, same two dependencies. 2. fast-xml-parser 5.10.1 -> 5.12.0 (low). @google-cloud/storage 7.x asks for `^5.3.4`, so this is a lockfile move and needs no override. It brings @nodable/entities 3.1.0, fast-xml-builder 1.3.1, is-unsafe 2.0.3 and strnum 2.5.1, the lowest versions 5.12.0 accepts. 3. glob 13.0.6 -> 13.0.7, under @joshwooding/vite-plugin-react-docgen-typescript (Storybook, which asks for `^13.0.1`). Lockfile move, no override. 13.0.7 carries the same correction as 14.0.2, but `pnpm audit` counts every version below 14.0.2, so the glob finding stays listed. Where each one runs. effect is loaded only by the Prisma CLI, which reads `prisma.config.ts` (generate, migrate, and the `prisma migrate deploy` step before a deploy); the api bundle does not load it, and @prisma/config does not use the affected feature. fast-xml-parser is loaded by the running api through @google-cloud/storage, which uses it only in TransferManager, with default options; the template's GCS provider does not use TransferManager. glob and minimatch are build, lint, test and Storybook tooling; they also appear in `pnpm audit --prod` because @nestledjs/generators, @nx/devkit and stylus (an optional peer of vite) are listed under `dependencies`, but neither the api nor the web output loads them. What stays, and why. glob 10.5.0 (jest 30 asks for `^10.5.0`, stylus 0.64 for `^10.4.5`) and minimatch 7.4.x, 9.0.7 and 10.2.x. The corrected releases are the next majors, glob 14.0.2 and minimatch 11.0.1, and minimatch 11 removes exports (`makeRe`, `AST`) that 7 to 10 have. Their consumers do not declare support for them: nx, @nx/devkit, @nx/jest, @nx/react and @microsoft/api-extractor (10.2.x) and verdaccio (7.4.x) pin exact versions; @swc/cli and @vue/language-core ask for `^9.0.3`, glob 10 for `^9.0.4`, glob 13 for `^10.2.2`, graphql-config for `^10.0.0`. They are not forced with an override. eslint 10.15, @eslint/config-array 0.23.6 and typescript-eslint 8.73 do move to minimatch 11, but were less than two weeks old when this note was written, and would not clear the finding while the others remain."
+        area: infra
+        affectedPaths:
+          - package.json
+          - pnpm-lock.yaml
+        verification:
+          - pnpm install --frozen-lockfile
+          - pnpm why -r effect
+          - pnpm why -r fast-xml-parser
+          - pnpm why -r glob
+          - "pnpm prisma:generate"
+          - pnpm prisma validate
+          - pnpm exec nx run-many -t test --skip-nx-cache
+          - "pnpm build:api"
+          - "pnpm build:web"
+        skipIf:
+          - "`pnpm why -r effect` shows 3.22.1 or later, `pnpm why -r fast-xml-parser` shows 5.12.0 or later (or nothing), and `pnpm why -r glob` shows no 13.x below 13.0.7."
+        agentHints:
+          - "Add the effect override to package.json. For the two lockfile moves, do not use `pnpm update -r --depth Infinity fast-xml-parser`: it moves hundreds of unrelated packages. Instead add these three entries to `pnpm.overrides` temporarily: `\"@google-cloud/storage>fast-xml-parser\": \"5.12.0\"`, `\"fast-xml-parser>fast-xml-builder\": \"1.3.1\"` and `\"@joshwooding/vite-plugin-react-docgen-typescript>glob\": \"13.0.7\"`; run `pnpm install --lockfile-only`; remove the three entries; run `pnpm install`. pnpm keeps the versions now in the lockfile, because each consumer's range already accepts them. Leave out an entry for a package the project does not have, or already resolves at that version or later."
+          - "Check the result in pnpm-lock.yaml: `grep -nE \"^  '?(effect|fast-xml-parser|glob)@\" pnpm-lock.yaml` must list no effect below 3.22.1, no fast-xml-parser below 5.12.0 and no glob 13.x below 13.0.7. The `overrides:` block gains only the effect line, and the diff touches only these packages and fast-xml-parser's own dependencies. In the template `pnpm audit` goes from 10 (1 high, 8 moderate, 1 low) to 8, all moderate and all glob or minimatch."
+          - Work from the project's own `pnpm audit`. A project may reach these packages another way (a second fast-xml-parser 4.x or 5.x, its own use of effect, glob or minimatch). Update the parent within its range first; add an override only for what cannot move, scoped as `parent>child`; and never override glob or minimatch to a major the consumer does not ask for. Record what is left with the reason. If the project's own code imports one of them, check how it is used rather than relying on the reachability described here.
+          - If the project is on a Prisma release whose @prisma/config already pins effect 3.22.1 or later, leave the override out.
+          - A change to package.json and the lockfile can trigger an automatic deploy of every service that watches them. A project with a long-running worker should confirm it is idle, or that an interrupted job is safe, before merging, and say in its report which services the merge restarts.
+        patch: patches/2026-11-24-dependency-alerts.diff
+      - id: 2026-11-24-session-starts-in-fresh-document
+        title: A session starts in a fresh document, and a document that finds another user signed in is loaded again before anything renders
+        delivery: code-patch
+        intent: "The defect. Cached data outlived the identity it was read for. The Apollo cache, the mounted components and the stored organization live as long as the browser document, but a sign-in, a registration and the redirect of an ended session to /login were client navigations, which keep the document. A document whose session cookie was replaced meanwhile (another tab signed in as someone else) kept it too. The fix. 1. Sign-in and registration end with a document load. login.tsx `signedIn()` (password and two-factor) calls `clearActiveOrganizationForSessionChange()` and then `globalThis.location.assign(<the validated local path>)`; register.tsx does the same with `DEFAULT_POST_LOGIN`; accept-invitation.tsx (its log in and sign up tabs) ends with `loadMembersArea()`, a `location.replace('/members')`. An invitation accepted by a user who was already signed in starts no session and stays a client navigation. `useNavigate` is gone from login.tsx and register.tsx. OAuth arrives from the API as a document load, and an emulation's start and end already load one: unchanged. 2. `requireSession` (session-middleware.server.ts) answers \"no session\" with `redirectDocument('/login?return_url=...')` instead of `redirect`: the same 302 for a document request, with or without JavaScript, and a document load instead of a client redirect for a client navigation. A rejected session already did this. 3. New apps/web/app/session/session-user-guard.tsx, `SessionUserGuard`, wrapped around the page in root.tsx `Layout` (outside `ApolloHydrationHelper`) with the root loader's verdict. It remembers, per document, the last user the server judged signed in. When a verdict names another user, it renders nothing and loads the document again, once. A signed-out or unknown verdict in between neither resets the memory nor does anything, the same user changes nothing, and a new document takes its first user as its own, so it cannot loop. It never signs anyone out. 4. New `isLeavingForSessionChange()` in libs/shared/apollo, so the guard does not replace a document load already on its way (a sign-in, an emulation starting or ending): it renders nothing and waits for it, and loads the document itself only if that load has not happened after 10 s. 5. No cache keeps a signed-in response. The session middleware sets `Cache-Control: private, no-store` (`SESSION_CACHE_CONTROL`) on every response to a request that carries a session cookie: a document, a `.data` answer, a redirect, an error, whatever the verdict. A route's own value stays, except one that would let a shared cache keep a page (HTML or `.data`): its root loader data holds the user. Anonymous responses and static assets are unchanged. 6. A document restored from the back/forward cache (`pageshow` with `persisted`) asks the server to judge the session again. If it had rendered a signed-in user it is hidden meanwhile, but stays mounted (`SESSION_CHECK_STYLE`, rendered in root.tsx `Layout`'s head): the same user gets it back as it was left, forms included; another user, or a signed-out verdict on a public page, loads the document; a private page is redirected by `requireSession`; an unknown verdict or a failed request shows the existing recovering screen and keeps the session. Without any answer for 10 s the recovering screen replaces the page, so it cannot stay blank. A document that was left for another session is loaded again. Expected behaviour changes: signing in and registering load a document (the page after a sign-in is a full load, not a client transition); browser Back to a signed-in page asks the server. Nothing else. Specs: apps/web/tests/session/session-user-guard.spec.tsx (the app's real client and InMemoryCache), apps/web/tests/session/restored-document.spec.tsx, apps/web/tests/session/session-cache-control.spec.tsx (over real HTTP), apps/web/tests/session/session-middleware.spec.tsx, apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx, and the helper apps/web/tests/helpers/location.ts."
+        area: web
+        affectedPaths:
+          - apps/web/app/session/session-user-guard.tsx
+          - apps/web/app/session/session-middleware.server.ts
+          - apps/web/app/session/return-url.ts
+          - apps/web/app/session/index.ts
+          - apps/web/app/root.tsx
+          - apps/web/app/routes/_public/login.tsx
+          - apps/web/app/routes/_public/register.tsx
+          - apps/web/app/routes/accept-invitation.tsx
+          - libs/shared/apollo/src/lib/apollo.ts
+          - apps/web/tests/session/session-user-guard.spec.tsx
+          - apps/web/tests/session/restored-document.spec.tsx
+          - apps/web/tests/session/session-cache-control.spec.tsx
+          - apps/web/tests/session/session-middleware.spec.tsx
+          - apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+          - apps/web/tests/helpers/location.ts
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - "pnpm run verify:session-decisions"
+          - "In a production build, sign in with the network panel open: the page after the form is a document request. Then sign in as another user in a second tab and navigate in the first: it loads a document and shows the second user."
+          - "In the same build, a signed-in document, its `.data` and a redirect answer `Cache-Control: private, no-store`; a signed-out public page answers what it did before."
+        skipIf:
+          - The project has not taken 2026-11-20-session-middleware (it has no session verdict).
+        agentHints:
+          - "Find every place the project starts a session, not only these three: grep for `setCookie` callers in the API and, in the web app, for a `navigate(` after a mutation that answers with a token (magic links, SSO, one-time codes, a custom checkout that registers). Each ends with `clearActiveOrganizationForSessionChange()` and a document load of a local path. While such a flow still has work to do in this document, use `storeActiveOrganizationId(null)` first and the latch only when it leaves."
+          - "Never pass an unvalidated value to `location.assign`: login.tsx passes only what `safeReturnUrl` returned (2026-11-24-session-hardening-follow-ups)."
+          - "A project that decides which pages are private by path, rather than with one signed-in layout, has its own copy of `requireSession`'s rule in a root-level access middleware: make that redirect `redirectDocument` too."
+          - "`SessionUserGuard` reads `session` from the root loader data. If the project's root loader returns the verdict under another key, pass that. Before removing root loader fields while you are there, grep for `as any` readers of the root loader data and for every copy of `useCurrentUser`: they compile against a field that is gone."
+          - "The guard goes around everything the document shows, in `Layout`, so that the root ErrorBoundary is inside it as well. Do not move it into `App`: the memory must survive the error boundary replacing App, and nothing beside App may render either."
+          - Specs that expected a client navigation after a sign-in must stub `location` (the helper in apps/web/tests/helpers/location.ts) and call `__resetActiveOrganizationSessionChange()` and `__resetSessionUserGuard()` between tests.
+          - "A project with its own Cache-Control (a `headers` export, an express or proxy rule, a CDN setting) checks it: a rule applied after React Router must not replace `private, no-store`, and a CDN told to cache pages whatever the origin says must bypass its cache when the session cookie is present, or it still serves one user's page (or an anonymous page) to another."
+          - "A service worker that caches pages or `.data` answers ignores `no-store` unless it was written not to: make it skip both, and clear what it already holds."
+          - "`<Link prefetch>` fetches a `.data` answer ahead of the click and relies on the HTTP cache to keep it. With `no-store` a signed-in browser fetches it again on the click: drop the prefetch there, or accept the second request."
+          - A root.tsx with its own `Layout` must render `<style>{SESSION_CHECK_STYLE}</style>` in the head, or a restored page is not hidden during the check. Under a strict style-src CSP, put the rule in a stylesheet instead.
+        applyAfter:
+          - 2026-11-20-session-middleware
+          - 2026-11-20-emulation-organization-reload-race
+          - 2026-11-21-retry-queries-after-confirmed-session
+          - 2026-11-21-session-files-sonar-cleanup
+        patch: patches/2026-11-24-session-starts-in-fresh-document.diff
+      - id: 2026-11-24-forward-duplicate-session-cookies
+        title: With several same-name session cookies, the web server forwards all of them and lets the API choose the one that verifies
+        delivery: code-patch
+        intent: "The defect. A browser can hold several cookies with the session cookie's name (a host-only and a parent-domain one, after a domain change or from a sibling site). The API already handles that: it takes the newest one whose signature verifies. But the web server picked one itself, by issue time, and sent it as a bearer token, which the API reads first. The web server cannot verify a signature, so a newer cookie that does not verify hid a valid session. The fix. 1. libs/shared/utils/src/lib/cookies.tsx: new `cookieCandidates(cookieHeader, name)` (every distinct, nonempty value, in order, as sent) and `cookiePairs(name, values)`. 2. libs/shared/apollo/src/lib/apollo.ts: `resolveAuthToken` becomes `resolveCredentials`. For a server-side client whose request carries several candidates, it returns a Cookie header with those candidates and nothing else of the request's cookies, and no bearer token. One candidate keeps the bearer token exactly as before. An explicit token option or the request's own Authorization header still comes first. The browser's client is unchanged. 3. apps/web/app/session/session-middleware.server.ts: the cookie evidence is `expired` only when every candidate is, and `absent` only with none. `forwardedSessionCookie(request)` forwards every candidate. New `sessionToken(request)` for a server-side call that can only take a bearer token (a file proxy, an export): the only candidate, or the newest by issue time of several, which is a guess. Prefer `forwardedSessionCookie`. The API is unchanged, and needs nothing: checked that its CSRF check is the `apollo-require-preflight` header, sent both ways; that CORS admits a request without an Origin; that throttling is by IP; and that a query behaves the same with a bearer token or a cookie (only the sign-out and emulation mutations, which the server never sends, differ). Specs: libs/shared/utils/src/lib/cookies.spec.ts, libs/shared/apollo/src/lib/apollo.spec.ts, apps/web/tests/session/session-middleware.spec.tsx, apps/web/tests/session/forwarded-session-cookies.spec.ts (a real HTTP request) and libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts (the real JwtStrategy behind the real guard)."
+        area: web
+        affectedPaths:
+          - libs/shared/utils/src/lib/cookies.tsx
+          - libs/shared/utils/src/lib/cookies.spec.ts
+          - libs/shared/apollo/src/lib/apollo.ts
+          - libs/shared/apollo/src/lib/apollo.spec.ts
+          - apps/web/app/session/session-middleware.server.ts
+          - apps/web/tests/session/session-middleware.spec.tsx
+          - apps/web/tests/session/forwarded-session-cookies.spec.ts
+          - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+        verification:
+          - pnpm exec nx test utils --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx test api-custom --skip-nx-cache
+        skipIf:
+          - The project's API does not read the session from the Cookie header (see agentHints) and cannot be changed to.
+        agentHints:
+          - Before taking this note, confirm that the project's JWT extractor reads the Cookie header and chooses with `selectSessionToken` (jwt.strategy.ts). A project with a custom extractor that reads only the bearer token, or takes the first cookie, must take the template's first. The new specs in jwt.strategy.guard.spec.ts fail there.
+          - "The web server and the API must agree on the cookie's name. The API reads `VITE_COOKIE_NAME`, then `API_COOKIE_NAME`; the web reads `VITE_COOKIE_NAME`. A project that sets only `API_COOKIE_NAME` is already broken: apply `2026-11-24-one-session-cookie-name`, after which only `VITE_COOKIE_NAME` is read."
+          - "Grep server code for `getCookie(..., getSessionCookieName())` outside the session module: a loader that calls a REST endpoint itself uses `forwardedSessionCookie(request)`, and one that really needs a raw token `sessionToken(request)`. Do not decide a session from either: only the verdict does that."
+          - "Do not forward the request's whole Cookie header: only the session candidates go to the API."
+        applyAfter:
+          - 2026-11-20-session-middleware
+          - 2026-11-24-session-starts-in-fresh-document
+        patch: patches/2026-11-24-forward-duplicate-session-cookies.diff
+      - id: 2026-11-24-one-session-cookie-name
+        title: One session cookie name for the whole API, and a start refused when API_COOKIE_NAME names another
+        delivery: code-patch
+        intent: "Four places in the API worked out the session cookie's name for themselves. The JWT strategy read `VITE_COOKIE_NAME`, then `API_COOKIE_NAME`; the configuration that sets and clears the cookie, the WebSocket check and the MCP OAuth session read used `VITE_COOKIE_NAME` only, as the web build does. All four now use `sessionCookieName()` (libs/api/config/src/lib/cookie-name.ts): `VITE_COOKIE_NAME`, else `__session`. `API_COOKIE_NAME` is not read. The validation schema refuses to start the API when `API_COOKIE_NAME` is set to anything but that name. What changes for each setting: - Neither set, only `VITE_COOKIE_NAME`, both equal, or an empty `API_COOKIE_NAME`: nothing. - Only `API_COOKIE_NAME` (other than `__session`), or the two different: the API does not start, and the message says what to set. Refusing was chosen over picking one, because which name the signed-in browsers hold depends on the project: an API that silently reads the other one signs every user out, while a release that does not start leaves the running one in place. In the unchanged template the two could not disagree in a running API: validation writes the `VITE_COOKIE_NAME` default into the environment before any request, so the strategy never reached `API_COOKIE_NAME`. Such a deployment has been using `__session` (or `VITE_COOKIE_NAME`) all along. A project with its own configuration, schema or strategy can differ; see the hints."
+        area: api
+        affectedPaths:
+          - libs/api/config/src/lib/cookie-name.ts
+          - libs/api/config/src/lib/cookie-name.spec.ts
+          - libs/api/config/src/lib/configuration.ts
+          - libs/api/config/src/lib/validation.ts
+          - libs/api/config/src/index.ts
+          - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.ts
+          - libs/api/custom/src/lib/plugins/auth/strategies/jwt.strategy.guard.spec.ts
+          - libs/api/custom/src/lib/plugins/mcp/mcp-oauth.controller.ts
+          - libs/api/core/feature/src/lib/ws-session-token.ts
+        verification:
+          - pnpm exec nx test config --skip-nx-cache
+          - pnpm exec nx test api-custom --skip-nx-cache
+          - pnpm exec nx test api-core-feature --skip-nx-cache
+          - git grep -n "COOKIE_NAME'\]" -- apps/api libs/api shows cookie-name.ts and specs only
+        agentHints:
+          - Before deploying, list both variables in every environment of the API service. If `API_COOKIE_NAME` is set and differs from `VITE_COOKIE_NAME` (unset counts as `__session`), sign in to that environment and look up the cookie's name in the browser. Put that name in `VITE_COOKIE_NAME` on the API and on the web service (the web reads it at build time, so rebuild it), then remove `API_COOKIE_NAME`. Any other name signs every user out.
+          - "If the project sets its cookie under `API_COOKIE_NAME` (its own configuration.ts or auth service), that is the name its browsers hold: move the value to `VITE_COOKIE_NAME` in the same release, on both services."
+          - "Search for other readers (`git grep -n \"COOKIE_NAME\" -- apps libs`): a project's own guard, gateway, upload route or file proxy uses `sessionCookieName()` too. The web keeps `getSessionCookieName()`, which already reads `VITE_COOKIE_NAME` only."
+          - A clone that validates its environment elsewhere needs the same rule there, or a check at the start of main.ts.
+        applyAfter:
+          - 2026-11-24-forward-duplicate-session-cookies
+        patch: patches/2026-11-24-one-session-cookie-name.diff
+      - id: 2026-11-24-session-hardening-follow-ups
+        title: A return_url never reaches a sign-out route, a streamed preload's 401 asks for a fresh verdict, and small session clean-ups
+        delivery: code-patch
+        intent: "1. `safeReturnUrl` accepted a sign-out route, so a sign-in could end in a sign-out. It moves from login.tsx to apps/web/app/session/return-url.ts (login.tsx still re-exports it, with `DEFAULT_POST_LOGIN` beside it) and refuses `/logout` and `/force-logout` however they are spelled: the path is resolved, decoded and lower-cased before the check. It also resolves the value with the URL parser before accepting it, since `location.assign` does (the parser drops characters a string check does not). Ordinary paths pass through unchanged. The other readers (force-logout.tsx, logout.tsx) only pass the value on to /login. 2. A preload the API refuses (a clean 401) after the request was judged signed in reaches the browser in the loader data stream. The component that reads it throws, the browser's error link never sees it, and the page showed the generic error screen with no revalidation. The root ErrorBoundary now asks the server to judge the session again (`RevalidateSessionOnRefusedRender`), at most once a minute so that a refusal that stays is not a request loop, and shows the 401 screen with its retry. `isRefusedRenderError` decides by code and status only, and outage evidence outranks the 401. The browser still never signs anyone out. 3. The deprecated single type argument is gone from `useQuery(Me)` (app.tsx, transfer-ownership-modal.tsx) and `client.query({ query: Me })` (session-middleware.server.ts): the typed document carries the types (S1874). 4. apollo.ts dispatches its four events with `globalThis.dispatchEvent`, behind the same guard. 5. New apps/web/tests/root-error-boundary-document.spec.tsx: no screen of the root ErrorBoundary renders a document of its own (`Layout` owns html, head and body). Specs: apps/web/tests/routes/_public/login.spec.tsx (safeReturnUrl), apps/web/tests/session/refused-render.spec.tsx."
+        area: web
+        affectedPaths:
+          - apps/web/app/session/return-url.ts
+          - apps/web/app/session/session-revalidator.tsx
+          - apps/web/app/session/session-middleware.server.ts
+          - apps/web/app/session/index.ts
+          - apps/web/app/root.tsx
+          - apps/web/app/app.tsx
+          - apps/web/app/routes/_public/login.tsx
+          - libs/web/src/lib/modals/transfer-ownership-modal.tsx
+          - libs/shared/apollo/src/lib/apollo.ts
+          - libs/shared/apollo/src/lib/apollo.spec.ts
+          - apps/web/tests/routes/_public/login.spec.tsx
+          - apps/web/tests/session/refused-render.spec.tsx
+          - apps/web/tests/root-error-boundary-document.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx test apollo --skip-nx-cache
+          - "pnpm run verify:session-decisions"
+        skipIf:
+          - The project has not taken 2026-11-20-session-middleware.
+        agentHints:
+          - A project with its own sign-out route, or that sets SESSION_REJECTED_PATH to one, adds it to `SIGN_OUT_PATHS` in return-url.ts. A project with its own copy of `safeReturnUrl` replaces it with this one; its specs can keep importing it from login.tsx.
+          - Grep for other readers of `return_url` / `redirect` that navigate by themselves and pass them through `safeReturnUrl`.
+          - If root.tsx's ErrorBoundary differs, add only the `isRefusedRenderError` branch, before the branch that maps statuses to screens. Do not turn it into a sign-out or a redirect.
+          - "A project whose client has a RetryLink records an outage per attempt, inside the retry. Keep that: a 401 that follows a failed attempt is then not taken for a sign-out."
+          - "A preload or query with `errorPolicy: 'all'` does not throw, so the new branch does not see it. Read its `error` where it is used."
+          - Specs that replace `window` with a stub to catch the events must stub `dispatchEvent` too (`vi.stubGlobal('dispatchEvent', ...)`). In a browser the two are the same function.
+        applyAfter:
+          - 2026-11-20-session-middleware
+          - 2026-11-21-retry-queries-after-confirmed-session
+          - 2026-11-24-session-starts-in-fresh-document
+          - 2026-11-24-forward-duplicate-session-cookies
+        patch: patches/2026-11-24-session-hardening-follow-ups.diff
+      - id: 2026-11-24-security-pages-typed-variables
+        title: "The security settings pages failed on variables the API does not have, which typecheck could not see: loader queries were untyped, and one type argument leaves an operation's variables untyped"
+        delivery: code-patch
+        intent: "1. The loaders of apps/web/app/routes/settings/security.tsx and security.events.tsx sent `orderBy: 'createdAt', orderDirection: 'desc'`. The template's `SecurityEventPagingInput` has `take`, `skip` and `orderDirection` only, and the enum's GraphQL names are ASC and DESC, so both values were refused: a document load answered 500, and a client navigation showed `Field \"orderBy\" is not defined by type \"SecurityEventPagingInput\"`. Both are dropped; newest first is the API's default. apps/web/tests/routes/settings/security-events-variables.spec.ts runs both loaders and checks every variable against api-schema.graphql. 2. Typecheck missed it for two reasons. First, `preloadQuery` was `any` in every loader. `@apollo/client-integration-react-router` types its loader arguments from 'react-router/route-module', a path React Router does not export, and an unresolved type is `any`. apps/web/app/react-router-route-module.d.ts declares the one type the package imports from there, and `apolloLoader` (libs/shared/apollo/src/lib/apollo-loader.ts) passes its argument type on: `handler<typeof args>()(loader)(args)`. No runtime change. Second, a call with one type argument, `preloadQuery<MySecurityEventsQuery>(...)` or `useMutation<LoginMutation>(...)`, types the result only: TypeScript does not infer the rest, so the variables fall back to any object. Every such call that passes variables (56 in the template) drops its type argument, and the generated document types both. Nothing else in the template turned out to be wrong. 3. Two guards. apps/web/tests/apollo-loader-types.spec.ts fails `nx typecheck web` when `preloadQuery` is `any` again. scripts/apollo-operation-types.spec.mjs fails on an operation that passes variables with a single type argument, and when React Router starts exporting the path or the package stops importing it, since an ambient declaration would then hide the real types."
+        area: web
+        affectedPaths:
+          - apps/web/app/routes/settings/security.tsx
+          - apps/web/app/routes/settings/security.events.tsx
+          - apps/web/app/react-router-route-module.d.ts
+          - libs/shared/apollo/src/lib/apollo-loader.ts
+          - apps/web/tests/routes/settings/security-events-variables.spec.ts
+          - apps/web/tests/apollo-loader-types.spec.ts
+          - scripts/apollo-operation-types.spec.mjs
+          - apps/web/app/components/audit-log-entity-filters.tsx
+          - apps/web/app/routes/_public/forgot-password.tsx
+          - apps/web/app/routes/_public/login.tsx
+          - apps/web/app/routes/_public/register.tsx
+          - apps/web/app/routes/_public/resend-verification.tsx
+          - apps/web/app/routes/_public/reset-password.tsx
+          - apps/web/app/routes/_public/verify-email.tsx
+          - apps/web/app/routes/accept-invitation.tsx
+          - apps/web/app/routes/admin/audit-logs/_index.tsx
+          - apps/web/app/routes/admin/organizations/_index.tsx
+          - apps/web/app/routes/admin/security-events/_index.tsx
+          - apps/web/app/routes/admin/users/_index.tsx
+          - apps/web/app/routes/pricing.tsx
+          - apps/web/app/routes/settings/_shared-sections.tsx
+          - apps/web/app/routes/settings/account.tsx
+          - apps/web/app/routes/settings/billing.tsx
+          - apps/web/app/routes/settings/members.tsx
+          - apps/web/app/routes/settings/notifications.tsx
+          - apps/web/app/routes/settings/organization.tsx
+          - apps/web/app/routes/settings/profile.tsx
+          - apps/web/app/routes/settings/roles.tsx
+          - libs/web/src/lib/components/emulation-banner.tsx
+          - libs/web/src/lib/components/upgrade-modal.tsx
+          - libs/web/src/lib/modals/transfer-ownership-modal.tsx
+        verification:
+          - pnpm exec nx typecheck web --skip-nx-cache
+          - pnpm exec nx test web --skip-nx-cache
+          - node --test scripts/apollo-operation-types.spec.mjs
+          - pnpm exec nx build web --skip-nx-cache
+          - "Signed in, load /settings/security and /settings/security/events as documents (reload each): both answer 200 and list the latest events first."
+        skipIf:
+          - "Part 1: the project's security pages send only fields its own schema has, under whatever names. The type fix in part 2 and the guards still apply."
+        agentHints:
+          - "The input type's name and fields differ per app. Look up the argument of the project's own security-events query in its api-schema.graphql before changing the loader: if it has an `orderBy`, keep it, and write the direction with the enum the generated SDK exports. Adjust the expected variables in security-events-variables.spec.ts to match."
+          - "Apply part 2 in this order: the declaration, the apollo-loader.ts line, then typecheck, then the type arguments. New type errors are real mismatches between what a page sends and what the project's API accepts: fix the variables. Do not cast them away, widen the type or add the type argument back. A required variable that is optional on the page needs a real check or `skip`."
+          - "Drop the type argument and its type import rather than adding the variables type as a second one: a document from the generated SDK carries both. A document built with `gql` in the page carries neither, so give that call both type arguments, or move the operation into the SDK."
+          - The declaration needs no package.json or tsconfig change as long as apps/web/tsconfig.app.json includes `app/**/*.ts` (the template's always has, and the guard spec checks). Where the web app lives elsewhere, put the file inside that program and adjust the paths in both specs.
+          - In scripts/apollo-operation-types.spec.mjs, add the project's own client folders to CLIENT_FOLDERS; a folder that does not exist is skipped.
+          - The latest @apollo/client-integration-react-router (0.14.5-alpha.0 when this was written) still imports the missing path, so bumping it does not replace the declaration.
+        applyAfter:
+          - 2026-11-19-mutation-errorpolicy-none
+          - 2026-11-19-session-follow-ups
+          - 2026-11-20-session-middleware
+          - 2026-11-20-emulation-organization-reload-race
+          - 2026-11-21-sonar-rebaseline-findings
+          - 2026-11-24-session-starts-in-fresh-document
+          - 2026-11-24-session-hardening-follow-ups
+        patch: patches/2026-11-24-security-pages-typed-variables.diff
+      - id: 2026-11-24-invitation-two-factor-sign-in
+        title: Signing in on the invitation page with a two-factor account said the password was wrong
+        delivery: code-patch
+        intent: "The login form on /accept-invitation knew two answers: a user, or wrong credentials. An account with two-factor authentication gets neither (`requires2FA` and a temporary token, no user and no session yet), so a correct password showed \"Invalid email or password\" and the invitation could not be accepted from there. The page now recognises `requires2FA` and sends the visitor to `/login?return_url=/accept-invitation?token=<the same token>` (encoded). The login page says why, asks for the password and the code, and returns to the invitation, which a signed-in visitor accepts automatically, as before. The temporary token is dropped: there is no second two-factor form, and nothing secret goes into the address. The reason travels as router state, not in the address, and the login page shows only words it knows for a known reason (apps/web/app/session/sign-in-notice.ts), so a crafted link cannot put text there. The session audit allows this one navigation with a reason: it is a sign-in, not a session decision. When somebody else is signed in (their attempt at the invitation failed and the form shows), the page stays and says to sign out first: /login would send a signed-in visitor on to the dashboard."
+        area: web
+        affectedPaths:
+          - apps/web/app/routes/accept-invitation.tsx
+          - apps/web/app/routes/_public/login.tsx
+          - apps/web/app/session/sign-in-notice.ts
+          - apps/web/tests/routes/accept-invitation-two-factor.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - "pnpm verify:session-decisions"
+          - "Invite a user who has two-factor authentication, open the link signed out, and log in on that page: the login page opens with the message, and after the code the invitation is accepted."
+        skipIf:
+          - The project has no login form on its invitation page, or no two-factor authentication.
+        agentHints:
+          - The project's login answer may name the pending state differently. Check what its login mutation returns for a two-factor account and that the document selects it.
+          - The project's `safeReturnUrl` must keep a path with a query string, and its invitation path must match. If the login page is elsewhere, change the target and keep the encoding.
+          - Look for other sign-in forms outside /login (a checkout, a share link) with the same two answers.
+        applyAfter:
+          - 2026-11-24-session-starts-in-fresh-document
+          - 2026-11-24-session-hardening-follow-ups
+          - 2026-11-24-security-pages-typed-variables
+        patch: patches/2026-11-24-invitation-two-factor-sign-in.diff
+      - id: 2026-11-24-notification-switch-first-save
+        title: A notification switch with no saved preference yet did not move when toggled until the page was reloaded
+        delivery: code-patch
+        intent: "In apps/web/app/routes/settings/notifications.tsx, the first toggle of a switch created the preference (the row was saved) but the switch stayed where it was, and a second click tried to create the same preference again and failed. The cache updates used `cache.modify({ fields: { userPreferences } })`, but `userPreferences` is the document's alias: the cache keeps the list under the schema's field name, `userGetUserPreferences`, so the modifier never ran. Toggling a saved preference moved only because Apollo updates a known entity by itself. The create now adds the new preference with `cache.updateQuery({ query: UserPreferences }, ...)`, which follows the document whatever its aliases are. The update needs no cache code, so its modifier is gone. With the optimistic preference now visible, a second click could have sent its temporary id, so each switch saves one change at a time and ignores clicks until the save ends. The temporary id is made from the preference's key, so two switches saved at once stay two entries in the cache. A click while the saved list is loading, or after it failed to, sends nothing and says why: without the list a create cannot be told from an update, and a list fetched before the save would replace it. apps/web/tests/routes/settings/notifications-cache.spec.tsx runs the page on a real ApolloClient and InMemoryCache. The mocked spec called the modifier by hand under the alias, which is why it passed; those assertions are removed."
+        area: web
+        affectedPaths:
+          - apps/web/app/routes/settings/notifications.tsx
+          - apps/web/tests/routes/settings/notifications.spec.tsx
+          - apps/web/tests/routes/settings/notifications-cache.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - "With a user that has no saved preferences, toggle a switch on /settings/notifications: it moves at once and is still moved after a reload. Toggle it back: the same row is updated."
+        skipIf:
+          - The project has no notification preferences page, or its page does not create preferences.
+        agentHints:
+          - "Search for other `cache.modify` calls (`git grep -n \"cache.modify\" -- apps/web libs`) and compare each key in `fields` with the document: where the document aliases the field, the key must be the schema's name, or the call should be a `cache.updateQuery`."
+          - If the project's query takes variables, pass the same ones to `cache.updateQuery`.
+          - Users who clicked more than once may have duplicate rows for a key if the project's table has no unique constraint on user and key; the page uses the first one it finds. Check before relying on either.
+        applyAfter:
+          - 2026-11-24-security-pages-typed-variables
+        patch: patches/2026-11-24-notification-switch-first-save.diff
+      - id: 2026-11-24-session-spec-and-sonar-cleanup
+        title: "Small clean-ups: a session spec that failed under load, two async loaders with nothing to await, a new array on every render of the signed-in layout, a session-audit spec every project had to edit, and a stale path in a comment"
+        delivery: code-patch
+        intent: "Seven independent parts. Nothing changes at runtime. 1. apps/web/tests/session/session-revalidator.spec.tsx used `vi.useFakeTimers({ shouldAdvanceTime: true })`, which moves the fake clock with real time. On a loaded machine five real seconds could pass inside a spec and end the 5-second cooldown early (\"answers five 401s within the cooldown\" saw 2 revalidations instead of 1). It now uses `vi.useFakeTimers()`: only the specs move the clock. A new case waits 100 ms of real time and checks that the clock did not move. 2. The loaders in apps/web/app/routes/force-logout.tsx and apps/web/app/routes/members/_index.tsx were `async` with no `await` (Sonar typescript:S7503), the pattern 2026-11-21-sonar-rebaseline-findings fixed in login and oauth-success. Both are plain functions that return the same response; React Router accepts either. The specs that awaited the force-logout loader no longer do (awaiting a plain value is S4123), and the members index gets a case. 3. apps/web/app/routes/_authenticated/_layout.tsx: `orgsData?.myOrganizations || []` made a new array on every render when the answer held none, which changed the `user` memo's dependencies and the shell's context each time (react-hooks/exhaustive-deps warned). It falls back to one module-level `NO_ORGANIZATIONS`. 4. scripts/audit-session-decisions.spec.mjs asserted exactly 8 allowed sites, the template's own number, so every project with one more or one fewer had to edit it. It now asserts no findings and a non-empty reason on every allowed site. 5. The comment in libs/api/config/src/lib/cookie-domain.ts (and the one in its spec) named apps/web/app/session-cookie.ts; the file is apps/web/app/session/session-cookie.ts since 2026-11-20-session-middleware. Comments only. docs/template/README.md has the same correction. 6. scripts/audit-session-decisions.mjs also flags `cookieCandidates(..., getSessionCookieName())` outside apps/web/app/session/ and libs/shared/apollo: it reads the session cookie just as `getCookie(..., getSessionCookieName())` does. The finding's text now names `sessionToken(request)` for a raw bearer token that cannot be avoided. 7. Two corrections to earlier notes, which are not rewritten once published: - 2026-11-21-sonar-two-typescript-programs says to expect \"a few dozen\" type errors from the API program. The template has about 50, and a larger project about 100. Both are normal; thousands still mean a wrong option or a missing generated file. - 2026-08-06-per-project-dev-ports (archived) deleted libs/api/core/feature/src/lib/config/configuration.ts, an unexported, unimported copy of libs/api/config/src/lib/configuration.ts. A project that never applied that part may still have it; see the hint."
+        area: web
+        affectedPaths:
+          - apps/web/tests/session/session-revalidator.spec.tsx
+          - apps/web/app/routes/force-logout.tsx
+          - apps/web/app/routes/members/_index.tsx
+          - apps/web/tests/routes/force-logout.spec.tsx
+          - apps/web/tests/routes/sonar-coverage-routes.spec.tsx
+          - apps/web/tests/session-cookie.spec.ts
+          - apps/web/app/routes/_authenticated/_layout.tsx
+          - apps/web/tests/routes/authenticated-layout.spec.tsx
+          - scripts/audit-session-decisions.mjs
+          - scripts/audit-session-decisions.spec.mjs
+          - libs/api/config/src/lib/cookie-domain.ts
+          - libs/api/config/src/lib/cookie-domain.spec.ts
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - pnpm exec nx lint web --skip-nx-cache
+          - pnpm exec nx test config --skip-nx-cache
+          - node --test scripts/audit-session-decisions.spec.mjs
+        skipIf:
+          - "Parts 1, 3, 4, 5 and 6: the project has not taken 2026-11-20-session-middleware (it has none of these files). Part 2 applies to any project with the two loaders."
+        agentHints:
+          - "Part 1: search the project's other specs for `shouldAdvanceTime: true`. Where one asserts what happens before a timer ends, drop the option and advance the clock explicitly. A spec that only waits for something to appear can keep it."
+          - "Part 2: a project without a /force-logout route or a members index records that half not-applicable. Drop `async` from any other loader S7503 flags, and make a spec helper that relies on `.rejects`/`.resolves` an async wrapper rather than leaving `await loader(...)` on a plain value. A loader that can throw now throws synchronously."
+          - "Part 3: if the project's signed-in layout reads organizations another way, look for any `|| []` or `?? []` in render whose result is a hook dependency, and move the fallback to module level."
+          - "Part 4: if you changed the number 8 to your own count, take the template's version of the case."
+          - "Part 6: a project's own loader this flags uses `forwardedSessionCookie(request)` to call the API, or `sessionToken(request)` where only a bearer token will do. Neither decides a session."
+          - "Part 7: if libs/api/core/feature/src/lib/config/configuration.ts exists, check `git grep -n \"config/configuration\" -- apps libs` and the library's index.ts. When nothing imports or exports it, compare it with libs/api/config/src/lib/configuration.ts, carry over any setting only it has, and delete it. Keep it if something uses it."
+        applyAfter:
+          - 2026-11-20-session-middleware
+          - 2026-11-20-session-cookie-domain-rule
+          - 2026-11-21-retry-queries-after-confirmed-session
+          - 2026-11-21-sonar-rebaseline-findings
+          - 2026-11-24-forward-duplicate-session-cookies
+        patch: patches/2026-11-24-session-spec-and-sonar-cleanup.diff
+      - id: 2026-11-24-test-db-guard-default-port
+        title: "Test database guard: 5432 is the development port when POSTGRES_PORT is unset outside CI, and the from-scratch reset has a 30-second timeout"
+        delivery: code-patch
+        intent: "The defect. The development-server check (2026-11-20-test-db-guard-follow-ups) compares a test database URL's port with POSTGRES_PORT, and did nothing when POSTGRES_PORT was unset. Compose then publishes the development Postgres on its default, 5432, so a local URL on 5432 named `*_test` passed as disposable while it sat beside the development data. Two smaller faults in the same file: `resetTestDatabase` passed no timeout, so a lock held elsewhere could block its DROP SCHEMA without end, and its refusal quoted the template's own database name. The fix: 1. apps/api-e2e/src/support/database-guards.ts `developmentServerReason`: when POSTGRES_PORT is unset (or blank) and CI is not set, the development port is 5432. `CI` empty, `0` or `false` is not CI; any other value is. With CI set and POSTGRES_PORT unset nothing is compared, as before; a POSTGRES_PORT that is set is compared everywhere, as before. The reason is the existing one, so it is not overridable: E2E_ALLOW_NON_DISPOSABLE_DB does not admit it, and the reset refuses it before any SQL. The message says POSTGRES_PORT is unset and to set it if the development Postgres listens elsewhere. 2. scripts/test-db.sh: the same rule for `ensure`, `migrate` and `verify` (new `in_ci`; `DEV_DB_PORT` defaults to 5432 outside CI, after POSTGRES_PORT from the environment and from .env; a blank POSTGRES_PORT counts as unset). 3. `resetTestDatabase` runs its statement with a 30-second timeout, through pg and psql alike. 4. Its refusal says \"a local database named *_test\" and names no example database. 5. The specs: database-guards.spec.ts's cases that mean \"no development port to compare with\" pass `{ CI: 'true' }` instead of `{}`; dev-checkout.spec.mjs's `testDb` helper removes CI from the environment it inherits. New cases cover the default port in both, the timeout and the message. apps/api-e2e/README.md and the POSTGRES_TEST_PORT comment in .env.example state the rule."
+        area: infra
+        affectedPaths:
+          - apps/api-e2e/src/support/database-guards.ts
+          - apps/api-e2e/src/support/database-guards.spec.ts
+          - apps/api-e2e/README.md
+          - scripts/test-db.sh
+          - scripts/dev-checkout.spec.mjs
+          - .env.example
+        verification:
+          - node --test scripts/dev-checkout.spec.mjs
+          - "env -u CI pnpm exec nx run api-e2e:test-support --skip-nx-cache"
+          - "env CI=true pnpm exec nx run api-e2e:test-support --skip-nx-cache"
+          - "pnpm exec nx run api-e2e:lint --skip-nx-cache"
+        skipIf:
+          - The project's e2e suite does not use the template harness (no apps/api-e2e/src/support/database-guards.ts and no scripts/test-db.sh).
+        agentHints:
+          - "Behaviour change: someone who runs the tests against a database on port 5432, with no POSTGRES_PORT, outside CI, is now refused. If that server is the development Postgres, the fix is the repo's own test database (`pnpm test:db:start`). If the development Postgres listens elsewhere, set POSTGRES_PORT to its port."
+          - "A CI system or container that does not set CI and has its test Postgres on 5432 must set `CI=true` for the e2e run. GitHub Actions sets it. Check workflows that run the suite through `docker run` or `act`: the variable must reach the process that runs the suite."
+          - global setup reads POSTGRES_PORT from its environment, which Nx fills from the checkout's own .env. A git worktree without a .env has none, so a main checkout's POSTGRES_PORT does not reach it; a test URL on 5432 is then refused there, and the message says how to go on.
+          - "Your own specs that call the guard with `{}` and a URL on 5432 (or with no port) now see the development server. Pass `{ CI: 'true' }` where the case is about something else."
+          - If your own reset or truncate helper does not go through `resetTestDatabase`, give it a timeout too.
+        applyAfter:
+          - 2026-11-20-test-db-guard-follow-ups
+        patch: patches/2026-11-24-test-db-guard-default-port.diff
+      - id: 2026-11-24-web-build-env-inputs
+        title: "web:build is cached by every environment variable it inlines, so a build for one API URL is never replayed for another"
+        delivery: code-patch
+        intent: "The defect. `targets.build.inputs` in apps/web/project.json listed one environment variable, VITE_COOKIE_DOMAIN. Vite inlines every other one the app reads, and none of them was an input, so Nx saw two builds that differ only in those as the same build. Building with `VITE_API_URL=http://localhost:3990` after a build with `http://localhost:3000` restored the first bundle from the cache, and the browser called the wrong API. With a shared or remote cache the restored bundle can come from another machine or environment. The fix: 1. apps/web/project.json: `build.inputs` gains `{ \"env\": … }` for NODE_ENV, VITE_API_URL, VITE_COOKIE_NAME, VITE_GTM_TRACKING_ID, VITE_MODE and VITE_TURNSTILE_SITE_KEY, beside VITE_COOKIE_DOMAIN. NODE_ENV belongs there: React Router and Vite build a development bundle when it is `development`. Variables that are read only at runtime or by the dev server are left out (SITE_URL, SESSION_REJECTED_PATH, PORT, WEB_PORT, WEB_PREVIEW_PORT, VITE_HOST). 2. New scripts/web-build-env-inputs.spec.mjs (run by CI's `node --test scripts/*.spec.mjs`). For each app under apps/ that Vite or React Router builds, it reads the app's source and that of every workspace library the app imports, and fails when a variable is inlined and not in `build.inputs`: any VITE_* read of `import.meta.env` or `process.env`, any variable the app's vite.config or react-router.config reads outside `server`, `preview` and `test`, and NODE_ENV. It also fails on a read whose name it cannot know (`f(import.meta.env)`, `import.meta.env[name]`). The other builds need no change: the API, data-browser, shared-components and access-control builds set NODE_ENV in their own command and inline no VITE_* variable."
+        area: infra
+        affectedPaths:
+          - apps/web/project.json
+          - scripts/web-build-env-inputs.spec.mjs
+        verification:
+          - node --test scripts/web-build-env-inputs.spec.mjs
+          - "pnpm exec nx run web:build --skip-nx-cache"
+        skipIf:
+          - The project's web build is not an Nx target, or is never cached.
+        agentHints:
+          - "List your own variables, not the template's. A project has VITE_* names of its own (analytics ids, feature flags, public keys) and may not read some of the template's. Copy the spec, run it, and add each `{ \"env\": \"…\" }` it names to your app's `build.inputs`; keep what is there. Do the same for every other Vite or React Router app under apps/."
+          - The spec does not follow Vite's `loadEnv()`, variables a plugin reads itself (a Sentry plugin's SENTRY_RELEASE, for example) or `%VITE_NAME%` in an index.html. If the project uses one, add those variables by hand.
+          - An app whose `build` is inferred by the Nx Vite plugin has no `inputs` of its own in project.json. Declare `targets.build.inputs` there with the inferred ones (`pnpm exec nx show project <app> --json`) plus the variables.
+          - "To see the fix, build twice with two values of VITE_API_URL and no `--skip-nx-cache`: the second run must not report a cache hit for the build, and the new value must be in the client bundle."
+          - The first build after this change misses the cache once. A value that changes on every build (a commit SHA in a VITE_* variable) makes every build a miss. That is correct while it is inlined.
+        patch: patches/2026-11-24-web-build-env-inputs.diff
