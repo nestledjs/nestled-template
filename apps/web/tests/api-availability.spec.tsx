@@ -321,6 +321,23 @@ describe('root error boundary for a network error', () => {
     expect(probe).toHaveBeenCalledTimes(1)
     expect(reload).toHaveBeenCalledTimes(1)
   })
+
+  it.each([
+    ['never happened', true],
+    ['was held back', false],
+  ])('reloads by hand when the API answers and its own reload %s', async (_label, asked) => {
+    const byHand = vi.fn()
+    vi.stubGlobal('location', { ...globalThis.location, reload: byHand })
+    const reload = vi.fn().mockReturnValue(asked)
+    render(<RecoveringApiUnavailable probe={vi.fn().mockResolvedValue(true)} reload={reload} />)
+    await advance(retryDelayMs(0))
+    expect(reload).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(byHand).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(byHand).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('reloadForRecovery', () => {

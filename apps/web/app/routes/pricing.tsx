@@ -35,7 +35,7 @@ export default function PricingPage() {
     if (!user) {
       // Redirect to login with return URL
       // nestled-session-allow: the user pressed Subscribe while signed out
-      globalThis.location.assign(`/login?returnTo=/pricing`)
+      globalThis.location.assign('/login?return_url=%2Fpricing')
       return
     }
 

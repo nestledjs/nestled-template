@@ -1,0 +1,125 @@
+id: 2026-11-24-restored-document-hidden-before-reload
+title: >-
+  A document that is being loaded again is hidden until the new one is there, and cannot stay blank;
+  the pricing page returns the user to it after signing in
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-session-starts-in-fresh-document
+
+intent: >
+  Two defects, both small.
+
+
+  1. The wait for a document load (apps/web/app/session/session-user-guard.tsx, from
+  2026-11-24-session-starts-in-fresh-document). A document that was left for another session and
+  then restored from the back/forward cache was loaded again without being hidden first, so it stayed
+  visible until the new document arrived. And where the guard did hide the page before loading it
+  again (another user's verdict, or a signed-out verdict on a public page), nothing bounded the wait:
+  a load the user stopped, or that the network never answered, left the page blank.
+
+
+  The fix. Every reload the guard makes goes through `reloadDocumentOnce`, which hides the document
+  (`data-session-checking`) before it asks for the reload. Whatever the wait is for, a verdict or a
+  document, the recovering screen replaces the page after `RESTORE_CHECK_MS` (10 s): never blank for
+  good, and never the previous content. That state belongs to the document and not to the
+  component, so an error boundary that remounts the page cannot undo it, and a verdict that comes
+  later does not hide the screen again. A document that is restored while its reload was still
+  awaited is hidden and loaded once more; before, `reloading` stayed set and nothing more happened.
+  The same user's restored page is shown as it was left, as before. No path signs anyone out.
+
+
+  The recovering screen itself (`RecoveringApiUnavailable`, apps/web/app/api-unavailable.tsx) probes
+  the API and reloads when it answers. If that reload did not happen, its "Try again" did nothing:
+  there was nothing left to probe, and only a reload held back by the once-a-minute limit made the
+  button reload. Now it reloads whenever the API answers.
+
+
+  2. apps/web/app/routes/pricing.tsx sent a signed-out user to `/login?returnTo=/pricing`. The login
+  page reads `return_url`, so the user ended on the default page. It sends
+  `/login?return_url=%2Fpricing`.
+
+
+  Specs: apps/web/tests/session/restored-document.spec.tsx ("a document load that is awaited"),
+  apps/web/tests/api-availability.spec.tsx and apps/web/tests/routes/pricing.spec.tsx. They assert what is visible, not only that a reload was
+  asked for.
+
+why: >
+  Between the restore and the new document, which is as long as the network takes, the page showed
+  what had been read for the session it was left for. A blank page is the opposite fault: nothing
+  tells the user what to do.
+
+affectedPaths:
+  - apps/web/app/session/session-user-guard.tsx
+  - apps/web/app/api-unavailable.tsx
+  - apps/web/app/routes/pricing.tsx
+  - apps/web/tests/session/restored-document.spec.tsx
+  - apps/web/tests/api-availability.spec.tsx
+  - apps/web/tests/routes/pricing.spec.tsx
+
+skipIf:
+  - >-
+    Part 1 only: the project has no apps/web/app/session/session-user-guard.tsx.
+  - >-
+    Part 2 only: the project has no pricing page that sends a signed-out user to the login page.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm run verify:session-decisions
+  - >-
+    `git grep -nE "returnTo=|redirectTo=" -- apps/web/app libs/web` lists no link to the login page.
+  - >-
+    In a production build, in a browser that keeps the pages in its back/forward cache, end an
+    emulation and press Back with document requests stalled: the page is hidden from its first frame,
+    and after 10 s the recovering screen is there.
+
+agentHints:
+  - >
+    A project that has not adopted 2026-11-24-session-starts-in-fresh-document yet applies the two
+    together, in one release.
+  - >
+    Take session-user-guard.tsx as a whole if the project has not changed it. If it has, the parts
+    that belong together are `hideDocument`, `showDocument`, `setStalled`, `reloadDocumentOnce` and
+    the order at the end of `SessionUserGuard`: the recovering screen first, then nothing while
+    blocked, then the page. A project with its own recovering screen renders that one, and checks that
+    its button still does something after a reload that never happened.
+  - >
+    The login page reads `return_url`, and `redirect` for the MCP authorization redirect. Search for
+    other producers with another name (`returnTo`, `redirectTo`, `next`, `from`, `callback`) in the
+    web app, the shared libraries, e-mail templates and the API. The template had only the one.
+  - >
+    The hints below correct and add to the other notes of 2026.11.13, which cannot be rewritten now
+    that they are published. A project that has adopted one of them checks only the part that names it.
+  - >
+    2026-11-24-session-starts-in-fresh-document, 2026-11-24-notification-switch-first-save and
+    2026-11-24-security-pages-typed-variables: five template specs hard-code the MySecurityEvents and
+    UserPreferences operations (session/session-user-guard.spec.tsx, session/refused-render.spec.tsx,
+    routes/settings/notifications-cache.spec.tsx, routes/settings/security-events-variables.spec.ts
+    and apollo-loader-types.spec.ts, all under apps/web/tests). A project with its own operations
+    rewrites them against its own documents instead of leaving them out. A case over a `_layout`
+    loader needs a loader that may return undefined.
+  - >
+    2026-11-24-dependency-alerts: the temporary `fast-xml-parser>fast-xml-builder` override collides
+    with a permanent one a project may already have: remove the permanent one, the parent's own range
+    reaches the fixed version. jest 30.5 brings glob 13.0.6 through jest-config and jest-runtime,
+    which the scoped entry does not reach: use a temporary `"glob@>=13.0.0 <13.0.7": "13.0.7"` instead
+    and remove it as the note says. Lockfile moves of anynum, path-expression-matcher, xml-naming and
+    path-scurry are expected: they are these packages' own dependencies.
+  - >
+    2026-11-24-one-session-cookie-name: search the e2e helpers and their setup too, they may read
+    `API_COOKIE_NAME`. The two settings the start now refuses (only `API_COOKIE_NAME`, and two
+    different names) started before, so check the names of the deployed variables first. A project
+    whose order of precedence differs keeps its own, in one resolver that every reader uses.
+  - >
+    2026-11-24-test-db-guard-default-port: 5432 is the template's Compose default. A project whose
+    Compose file publishes another default port uses that one in database-guards.ts,
+    scripts/test-db.sh, the specs, the README and .env.example.
+  - >
+    2026-11-24-session-spec-and-sonar-cleanup, 2026-11-24-session-hardening-follow-ups and
+    2026-11-24-security-pages-typed-variables: a merge without conflicts can still declare
+    `NO_ORGANIZATIONS` twice or replace a project's own cases in login.spec.tsx, so compare both with
+    the project's previous version. Look for copies of the return-url helper outside
+    apps/web/app/session/ and point them at `safeReturnUrl`. Dropping a type argument from an Apollo
+    call can leave a local type unused, which fails lint: remove that type.
