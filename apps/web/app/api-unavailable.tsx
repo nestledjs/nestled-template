@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { ServiceUnavailable } from '@nestledjs/shared-components'
 import {
   reloadForRecovery,
@@ -76,15 +75,16 @@ export function RecoveringApiUnavailable({
     reload?: () => boolean
   }
 >) {
-  const [reloadHeldBack, setReloadHeldBack] = useState(false)
   const { unavailable, reason, retryNow } = useApiAvailability({
     initiallyUnavailable: true,
     initialReason,
     probe,
     onRecover: () => {
-      if (!reload()) setReloadHeldBack(true)
+      reload()
     },
   })
-  const onRetry = unavailable || !reloadHeldBack ? retryNow : () => globalThis.location.reload()
+  // The API answers: there is nothing left to probe, and this page is still here, because its reload
+  // was held back, was stopped, or is not getting anywhere.
+  const onRetry = unavailable ? retryNow : () => globalThis.location.reload()
   return <ApiUnavailableScreen reason={reason} onRetry={onRetry} copy={copy} />
 }

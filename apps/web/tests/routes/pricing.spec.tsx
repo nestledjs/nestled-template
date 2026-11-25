@@ -338,7 +338,7 @@ describe('Pricing Page', () => {
       const subscribeButton = screen.getAllByRole('button', { name: /Get Started/i })[1]
       await user.click(subscribeButton)
 
-      expect(window.location.href).toBe('/login?returnTo=/pricing')
+      expect(window.location.href).toBe('/login?return_url=%2Fpricing')
     })
 
     it('should create checkout session for authenticated users', async () => {

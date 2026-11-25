@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ApolloProvider } from '@apollo/client/react'
@@ -6,7 +7,7 @@ import {
   data,
   Outlet,
   redirectDocument,
-  useNavigate,
+  useRevalidator,
   useRouteError,
 } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -34,6 +35,8 @@ let verdict: AppSessionVerdict
 let answer: () => Promise<void> | void
 let checks: number
 let location: ReturnType<typeof stubLocation>
+/** The page's own revalidation, which outlives the page. */
+let judgeAgain: () => Promise<void>
 
 function Boundary() {
   return (
@@ -44,12 +47,14 @@ function Boundary() {
 }
 
 function Page({ name }: Readonly<{ name: string }>) {
-  const navigate = useNavigate()
+  const { revalidate } = useRevalidator()
+  useEffect(() => {
+    judgeAgain = revalidate
+  }, [revalidate])
   return (
     <>
       <h1>{name}</h1>
       <input aria-label="draft" />
-      <button onClick={() => navigate('/public')}>Public</button>
     </>
   )
 }
@@ -274,14 +279,6 @@ describe('a document restored from the back/forward cache', () => {
     expect(page()).not.toBeVisible()
   })
 
-  it('a document that was left for another session is simply loaded again', async () => {
-    await renderApp()
-    clearActiveOrganizationForSessionChange()
-    restore()
-    expect(location.reload).toHaveBeenCalledTimes(1)
-    expect(checks).toBe(0)
-  })
-
   it('a document that never rendered a signed-in user is judged again, never hidden', async () => {
     verdict = NO_SESSION
     await renderApp('/public')
@@ -298,5 +295,137 @@ describe('a document restored from the back/forward cache', () => {
     await wait(100)
     expect(page()).toBeVisible()
     expect(checks).toBe(0)
+  })
+})
+
+// A document load that never commits: the user stopped it, or the network is gone. Nothing of the
+// previous user may be seen while it is awaited, and the page may not stay blank for good.
+describe('a document load that is awaited', () => {
+  function expectNothingVisible() {
+    const left = page()
+    if (left) expect(left).not.toBeVisible()
+    expect(screen.queryByText(SERVER_TROUBLE_TITLE)).not.toBeInTheDocument()
+  }
+
+  async function expectRecoveringScreenAfterTheBound() {
+    expectNothingVisible()
+    await wait(RESTORE_CHECK_MS - 500)
+    expectNothingVisible()
+    await wait(600)
+    expect(screen.getByText(SERVER_TROUBLE_TITLE)).toBeVisible()
+    expect(page()).not.toBeInTheDocument()
+  }
+
+  it.each(['/private', '/public'])(
+    'a restored document that was left for another session is hidden at once (%s)',
+    async path => {
+      await renderApp(path)
+      clearActiveOrganizationForSessionChange()
+      expect(page()).toBeVisible()
+      // As the browser runs it: the page is hidden before the reload is even asked for.
+      let visibleAtReload: boolean | undefined
+      location.reload.mockImplementation(() => {
+        visibleAtReload = !document.documentElement.hasAttribute('data-session-checking')
+      })
+      restore()
+
+      expect(page()).not.toBeVisible()
+      expect(visibleAtReload).toBe(false)
+      expect(location.reload).toHaveBeenCalledTimes(1)
+      expect(checks).toBe(0)
+      await expectRecoveringScreenAfterTheBound()
+      expect(location.reload).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('and offline it ends in the offline screen', async () => {
+    await renderApp()
+    clearActiveOrganizationForSessionChange()
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    restore()
+    await wait(RESTORE_CHECK_MS + 100)
+    expect(screen.getByText(OFFLINE_TITLE)).toBeVisible()
+    expect(page()).not.toBeInTheDocument()
+  })
+
+  it('so is the sign-in form it was left from, though nobody was signed in on it', async () => {
+    verdict = NO_SESSION
+    await renderApp('/public')
+    clearActiveOrganizationForSessionChange()
+    restore()
+    expect(page()).not.toBeVisible()
+    await expectRecoveringScreenAfterTheBound()
+  })
+
+  it.each(['/private', '/public'])(
+    "another user's verdict on a restored document (%s)",
+    async path => {
+      await renderApp(path)
+      verdict = USER_B
+      restore()
+      await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
+      await expectRecoveringScreenAfterTheBound()
+      expect(location.reload).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('a signed-out verdict on a restored public page', async () => {
+    await renderApp('/public')
+    verdict = NO_SESSION
+    restore()
+    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
+    await expectRecoveringScreenAfterTheBound()
+  })
+
+  it("another user's verdict on a document that was never restored", async () => {
+    await renderApp('/public')
+    verdict = USER_B
+    await act(judgeAgain)
+    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
+    await expectRecoveringScreenAfterTheBound()
+  })
+
+  it.each([
+    ['the first user again', USER_A],
+    ['an unknown verdict', UNKNOWN],
+    ['a signed-out verdict', NO_SESSION],
+  ])('%s after the reload was asked for does not end the wait', async (_label, later) => {
+    await renderApp('/public')
+    verdict = USER_B
+    restore()
+    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
+    verdict = later
+    await act(judgeAgain)
+    await expectRecoveringScreenAfterTheBound()
+    expect(location.reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('a verdict that comes after the bound does not hide the recovering screen', async () => {
+    await renderApp()
+    const release = hold()
+    restore()
+    await wait(RESTORE_CHECK_MS + 100)
+    expect(screen.getByText(SERVER_TROUBLE_TITLE)).toBeVisible()
+    verdict = USER_B
+    release()
+    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
+    expect(screen.getByText(SERVER_TROUBLE_TITLE)).toBeVisible()
+    expect(page()).not.toBeInTheDocument()
+  })
+
+  it('a document restored while its reload was still awaited is hidden and loaded again', async () => {
+    await renderApp('/public')
+    verdict = USER_B
+    restore()
+    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
+
+    restore()
+    expect(location.reload).toHaveBeenCalledTimes(2)
+    await expectRecoveringScreenAfterTheBound()
+
+    // Left from the recovering screen, and restored again: it asks once more, and stays up.
+    restore()
+    expect(location.reload).toHaveBeenCalledTimes(3)
+    expect(screen.getByText(SERVER_TROUBLE_TITLE)).toBeVisible()
   })
 })
