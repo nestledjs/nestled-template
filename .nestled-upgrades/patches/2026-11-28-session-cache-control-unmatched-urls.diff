@@ -1,0 +1,96 @@
+diff --git a/apps/web/app/entry.server.tsx b/apps/web/app/entry.server.tsx
+index 2a08d1b..b4a3572 100644
+--- a/apps/web/app/entry.server.tsx
++++ b/apps/web/app/entry.server.tsx
+@@ -27,7 +27,10 @@ import {
+   isOrganizationContextRequired,
+   organizationRequiredResponse,
+ } from './organization-required'
+-import { refusedCallResponse } from './session/session-middleware.server'
++import {
++  refusedCallResponse,
++  withRequestSessionCacheControl,
++} from './session/session-middleware.server'
+ 
+ disableFragmentWarnings()
+ 
+@@ -107,6 +110,14 @@ function rejectWith(request: Request, message: string, response: Response): Prom
+   return Promise.reject(response) // NOSONAR: a Response on purpose, see unavailableResponse
+ }
+ 
++/**
++ * React Router's hook for every `.data` response. A `.data` request for a URL that matches no route
++ * runs no middleware, so its 404 gets the session Cache-Control here (`withRequestSessionCacheControl`).
++ */
++export function handleDataRequest(response: Response, { request }: { request: Request }): Response {
++  return withRequestSessionCacheControl(request, response)
++}
++
+ export default function handleRequest(
+   request: Request,
+   responseStatusCode: number,
+@@ -142,11 +153,16 @@ export default function handleRequest(
+ 
+           responseHeaders.set('Content-Type', 'text/html')
+ 
++          // A URL that matches no route runs no middleware: its 404 gets the session
++          // Cache-Control here.
+           resolve(
+-            new Response(stream, {
+-              headers: responseHeaders,
+-              status: responseStatusCode,
+-            }),
++            withRequestSessionCacheControl(
++              request,
++              new Response(stream, {
++                headers: responseHeaders,
++                status: responseStatusCode,
++              }),
++            ),
+           )
+ 
+           pipe(body)
+diff --git a/apps/web/app/session/session-middleware.server.ts b/apps/web/app/session/session-middleware.server.ts
+index d5e9aa8..93fdfe1 100644
+--- a/apps/web/app/session/session-middleware.server.ts
++++ b/apps/web/app/session/session-middleware.server.ts
+@@ -201,6 +201,16 @@ function withSessionCacheControl(response: Response): Response {
+   }
+ }
+ 
++/**
++ * `SESSION_CACHE_CONTROL` for a response the session middleware never sees, by the same rule: a URL
++ * that matches no route is answered (a 404 page, or a `.data` 404) without running any middleware.
++ * Called from entry.server for every document and `.data` response; where the middleware ran, it
++ * changes nothing. Anonymous responses are unchanged.
++ */
++export function withRequestSessionCacheControl(request: Request, response: Response): Response {
++  return sessionCookies(request).length > 0 ? withSessionCacheControl(response) : response
++}
++
+ /**
+  * The root route's middleware: judges the session once per request (document loads, client
+  * navigations and revalidations alike, before any loader runs) and stores the verdict in
+diff --git a/apps/web/tests/session/session-cache-control.spec.tsx b/apps/web/tests/session/session-cache-control.spec.tsx
+index ac39f46..96f4930 100644
+--- a/apps/web/tests/session/session-cache-control.spec.tsx
++++ b/apps/web/tests/session/session-cache-control.spec.tsx
+@@ -255,6 +255,9 @@ describe('a request that carries a session cookie', () => {
+     ['an error', '/broken', 500],
+     ['an error of a client navigation', '/broken.data', 500],
+     ['a 404', '/missing', 404],
++    ['a URL that matches no route', '/no-such-page', 404],
++    ['a nested URL that matches no route', '/members/no-such-page/', 404],
++    ['a client navigation to a URL that matches no route', '/no-such-page.data', 404],
+     ['a resource route without one of its own', '/resource', 200],
+     ['a response with immutable headers', '/proxied', 302],
+   ])('%s is private, no-store', async (_label, path, status) => {
+@@ -314,6 +317,8 @@ describe('an anonymous request is unchanged', () => {
+     ['/away', 302],
+     ['/broken', 500],
+     ['/missing', 404],
++    ['/no-such-page', 404],
++    ['/no-such-page.data', 404],
+     ['/resource', 200],
+     ['/members', 302],
+   ])('%s has no Cache-Control', async (path, status) => {
