@@ -153,6 +153,24 @@ describe('Login Component', () => {
     })
 
     it.each([
+      '/x%3f/..%2Fforce-logout',
+      '/x%3F/..%2flogout',
+      '/x%3f/../force-logout/',
+      '/X%3F/..%2FFORCE-LOGOUT',
+      '/x%23/../logout',
+      '/x%23/..%2Flogout/',
+      '/x%3f/%2e%2e/logout',
+      '/x%5c..%5clogout',
+      '/x%253f/..%252fforce-logout',
+      '/x%253F/../logout',
+      '/x%25253f/..%25252flogout',
+      '/members/%252Flogout',
+      'https://app.example.com/x%3f/..%2fforce-logout',
+    ])('refuses %s, whose encoded separators reach a sign-out route once decoded', raw => {
+      expect(safeReturnUrl(raw)).toBe(DEFAULT)
+    })
+
+    it.each([
       '/settings/profile?next=%2Flogout',
       '/settings/profile#/logout',
       '/logout-history',
@@ -162,6 +180,48 @@ describe('Login Component', () => {
       '/mcp-connect?request=%25252525252525abc',
     ])('keeps the ordinary path %s', raw => {
       expect(safeReturnUrl(raw)).toBe(raw)
+    })
+
+    describe('the API host MCP authorization URL (API and web on different hosts)', () => {
+      const API = 'https://api.example.com'
+      const AUTHORIZE = `${API}/api/mcp/authorize?client_id=c&redirect_uri=https%3A%2F%2Fclient.example%2Fcb&code_challenge=x&code_challenge_method=S256&state=s`
+
+      it('is kept whole, so the sign-in returns to the authorization request on the API', () => {
+        expect(safeReturnUrl(AUTHORIZE, API)).toBe(AUTHORIZE)
+      })
+
+      it('is the configured API origin by default', () => {
+        const configured = new URL(import.meta.env.VITE_API_URL || 'http://localhost:3000').origin
+        const url = `${configured}/api/mcp/authorize?client_id=c`
+        expect(safeReturnUrl(url)).toBe(url)
+      })
+
+      it.each([
+        // Another endpoint of the API, or a near miss of this one, is reduced to its path as before.
+        [`${API}/api/mcp/token?x=1`, '/api/mcp/token?x=1'],
+        [`${API}/api/mcp/authorize/pending?request=r`, '/api/mcp/authorize/pending?request=r'],
+        [`${API}/api/mcp/%61uthorize?x=1`, '/api/mcp/%61uthorize?x=1'],
+        [`${API}/graphql`, '/graphql'],
+        // Another host, scheme or port with the same path: never left for.
+        ['https://evil.example/api/mcp/authorize?x=1', '/api/mcp/authorize?x=1'],
+        ['http://api.example.com/api/mcp/authorize?x=1', '/api/mcp/authorize?x=1'],
+        ['https://api.example.com:8443/api/mcp/authorize?x=1', '/api/mcp/authorize?x=1'],
+        ['https://api.example.com.evil.example/api/mcp/authorize', '/api/mcp/authorize'],
+      ])('only that one: %s stays on this origin', (raw, path) => {
+        expect(safeReturnUrl(raw, API)).toBe(path)
+      })
+
+      it('refuses credentials in the URL', () => {
+        expect(safeReturnUrl('https://user:pw@api.example.com/api/mcp/authorize?x=1', API)).toBe(
+          '/api/mcp/authorize?x=1',
+        )
+      })
+
+      it('drops a fragment', () => {
+        expect(safeReturnUrl(`${API}/api/mcp/authorize?x=1#frag`, API)).toBe(
+          `${API}/api/mcp/authorize?x=1`,
+        )
+      })
     })
 
     it('falls back for non-path schemes like javascript:', () => {

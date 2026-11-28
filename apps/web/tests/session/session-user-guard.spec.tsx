@@ -377,6 +377,50 @@ describe('a document already leaving for another session (sign-in, emulation sta
     expect(location.reload).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['an unknown verdict', UNKNOWN],
+    ['a signed-out verdict', NO_SESSION],
+    ['the first user again', USER_A],
+  ])(
+    'stays blank while that navigation is awaited, whatever comes next (%s)',
+    async (_l, later) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      const { router } = await renderApp()
+      await showsUserA()
+      clearActiveOrganizationForSessionChange()
+      verdict = USER_B
+      answer = 'hold'
+      await act(() => router.revalidate())
+      expect(document.body.textContent).toBe('')
+
+      verdict = later
+      await act(() => router.revalidate())
+      await act(() => router.navigate('/settings/profile'))
+      await act(() => vi.advanceTimersByTimeAsync(LEAVING_GRACE_MS - 1000))
+
+      expect(rendered).toEqual([])
+      expect(document.body.textContent).toBe('')
+      expect(location.reload).not.toHaveBeenCalled()
+      await act(() => vi.advanceTimersByTimeAsync(2000))
+      expect(location.reload).toHaveBeenCalledTimes(1)
+      expect(document.body.textContent).toBe('')
+    },
+  )
+
+  it('keeps the organization the next session stored meanwhile when it loads the document', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { router } = await renderApp()
+    clearActiveOrganizationForSessionChange()
+    verdict = USER_B
+    await act(() => router.revalidate())
+    // The next session's own document (this tab's navigation, or another tab) chose it.
+    localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, 'org-of-user-b')
+    await act(() => vi.advanceTimersByTimeAsync(LEAVING_GRACE_MS + 1000))
+
+    expect(location.reload).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBe('org-of-user-b')
+  })
+
   it('is loaded once if that navigation never happens, so the page cannot stay blank', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const { router } = await renderApp()

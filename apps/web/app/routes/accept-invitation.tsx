@@ -15,12 +15,14 @@ import {
   RegisterWithInvitation,
 } from '@nestled-template/shared/sdk'
 import { TWO_FACTOR_INVITATION } from '../session/sign-in-notice'
+import { LEAVING_GRACE_MS } from '../session/session-user-guard'
 import { useGlobalCtx } from '@nestled-template/web'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { formTheme } from '@nestled-template/shared/styles'
 import {
   clearActiveOrganizationForSessionChange,
+  isLeavingForSessionChange,
   storeActiveOrganizationId,
 } from '@nestled-template/shared/apollo'
 import { useQuery, useMutation } from '@apollo/client/react'
@@ -93,6 +95,44 @@ function loadMembersArea() {
   globalThis.location.replace('/members')
 }
 
+// Set once a log-in here has asked for a new document; see `loadInvitationForNewSession`.
+let sessionLoadTimer: ReturnType<typeof setTimeout> | undefined
+
+/** For specs: forget the document load a log-in asked for, as a new document does. */
+export function __resetInvitationSessionLoad(): void {
+  clearTimeout(sessionLoadTimer)
+  sessionLoadTimer = undefined
+}
+
+/** Whether `target` is the current address, or differs from it only in its fragment. */
+function isCurrentDocument(target: string): boolean {
+  const current = new URL(globalThis.location.href)
+  const next = new URL(target, current)
+  current.hash = ''
+  next.hash = ''
+  return next.href === current.href
+}
+
+/**
+ * Where a log-in on this page goes on: this same invitation, in a new document, which accepts it as
+ * the user now signed in (the automatic acceptance below). This document does not accept it: it was
+ * rendered for whoever was here before, and a single-use invitation accepted here and again by the
+ * new document fails the second time. From here on this document accepts nothing
+ * (`isLeavingForSessionChange`). A log-in answered after the user moved on loads where they are now.
+ *
+ * A target that is this document's own address, or differs from it only in its fragment, is a
+ * reload: replacing it would only scroll, and this document would stay, sending no organization.
+ * If no new document has replaced this one after `LEAVING_GRACE_MS` (the user stopped the load), it
+ * is loaded again, once, so the page never stays on its "Logging in…" state.
+ */
+function loadInvitationForNewSession(invitationPath: string | null) {
+  clearActiveOrganizationForSessionChange()
+  const target = invitationPath ?? globalThis.location.href
+  if (isCurrentDocument(target)) globalThis.location.reload()
+  else globalThis.location.replace(target)
+  sessionLoadTimer ??= setTimeout(() => globalThis.location.reload(), LEAVING_GRACE_MS)
+}
+
 export default function AcceptInvitation() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -102,6 +142,16 @@ export default function AcceptInvitation() {
   const [isProcessing, setIsProcessing] = useState(false)
 
   const token = searchParams.get('token')
+
+  // The invitation this page shows now, or null once it is gone: a log-in's answer that arrives
+  // after the user left, or moved to another invitation link, is not acted on for this one.
+  const shownTokenRef = useRef<string | null>(token)
+  useEffect(() => {
+    shownTokenRef.current = token
+    return () => {
+      shownTokenRef.current = null
+    }
+  }, [token])
 
   // Fetch invitation details
   const {
@@ -126,6 +176,10 @@ export default function AcceptInvitation() {
   // in the same tab shows that invitation's own accepting state.
   const [failedToken, setFailedToken] = useState<string | null>(null)
   const autoAccepting = Boolean(user && token && invitationDetails) && failedToken !== token
+  // The invitation this document has seen accepted. Only then does the page say so: while the
+  // acceptance is pending, or the document is waiting for a new one after a log-in, it says it is
+  // working on it.
+  const [acceptedToken, setAcceptedToken] = useState<string | null>(null)
 
   // An invitation token is single-use, so it is accepted once per token however often the effect
   // below re-runs for it (React StrictMode replays effects, and a new `user` or `invitationDetails`
@@ -166,6 +220,7 @@ export default function AcceptInvitation() {
       return acceptance
         .then(() => {
           if (!isCurrent()) return
+          setAcceptedToken(token)
           // Redirect to members area
           onRedirectScheduled(
             setTimeout(() => {
@@ -188,6 +243,8 @@ export default function AcceptInvitation() {
   // If user is already logged in, accept the invitation automatically
   useEffect(() => {
     if (!(user && token && invitationDetails)) return
+    // A log-in on this page is loading a new document, which accepts it (`handleLogin`).
+    if (isLeavingForSessionChange()) return
     let current = true
     let redirectTimer: ReturnType<typeof setTimeout> | undefined
     void acceptInvitationAsync(
@@ -212,6 +269,18 @@ export default function AcceptInvitation() {
       const { data } = await login({
         variables: { input },
       })
+      const stillShown = shownTokenRef.current === token
+
+      if (data?.login?.user?.id && !data.login.requires2FA) {
+        // A new session: the invitation is accepted in a new document, never in this one.
+        loadInvitationForNewSession(
+          stillShown ? `/accept-invitation?token=${encodeURIComponent(token)}` : null,
+        )
+        return
+      }
+
+      // The user left, or this page shows another invitation now: nothing more to do for this one.
+      if (!stillShown) return
 
       if (data?.login?.requires2FA) {
         // No session yet: the second factor is asked for on the login page, which comes back here
@@ -231,24 +300,10 @@ export default function AcceptInvitation() {
         return
       }
 
-      if (data?.login?.user?.id) {
-        // A new session: forget an organization stored for a previous user before the invitation
-        // (or anything after it) is sent with its `x-organization-id`.
-        storeActiveOrganizationId(null)
-        // Login successful, now accept the invitation
-        await acceptInvitation({
-          variables: {
-            input: { token },
-          },
-        })
-
-        // Redirect to members area
-        setTimeout(loadMembersArea, 1500)
-      } else {
-        setFormError('Invalid email or password')
-        setIsProcessing(false)
-      }
+      setFormError('Invalid email or password')
+      setIsProcessing(false)
     } catch (error) {
+      if (shownTokenRef.current !== token) return
       setFormError(getInvitationErrorMessage(error, 'Failed to login. Please try again.'))
       setIsProcessing(false)
     }
@@ -304,7 +359,10 @@ export default function AcceptInvitation() {
     )
   }
 
-  // If user is logged in and processing, show accepting state
+  // Signed in: joined once the acceptance succeeded here, and working on it until then.
+  if (user && acceptedToken === token) {
+    return <InvitationAcceptedState organizationName={invitationDetails.organizationName} />
+  }
   if (user && (isProcessing || autoAccepting)) {
     return <InvitationAcceptingState organizationName={invitationDetails.organizationName} />
   }
@@ -485,6 +543,28 @@ function InvitationLoadingState() {
 }
 
 function InvitationAcceptingState({ organizationName }: { readonly organizationName: string }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950 p-4">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-8 backdrop-blur shadow-xl">
+          <div className="text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-sky-100 dark:bg-sky-500/10 mb-4">
+              <ArrowPathIcon className="h-8 w-8 text-sky-600 dark:text-sky-400 animate-spin" />
+            </div>
+            <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">
+              Accepting your invitation
+            </h1>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Joining <strong>{organizationName}</strong>…
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function InvitationAcceptedState({ organizationName }: { readonly organizationName: string }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950 p-4">
       <div className="w-full max-w-md">

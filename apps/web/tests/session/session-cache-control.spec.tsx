@@ -255,6 +255,9 @@ describe('a request that carries a session cookie', () => {
     ['an error', '/broken', 500],
     ['an error of a client navigation', '/broken.data', 500],
     ['a 404', '/missing', 404],
+    ['a URL that matches no route', '/no-such-page', 404],
+    ['a nested URL that matches no route', '/members/no-such-page/', 404],
+    ['a client navigation to a URL that matches no route', '/no-such-page.data', 404],
     ['a resource route without one of its own', '/resource', 200],
     ['a response with immutable headers', '/proxied', 302],
   ])('%s is private, no-store', async (_label, path, status) => {
@@ -314,6 +317,8 @@ describe('an anonymous request is unchanged', () => {
     ['/away', 302],
     ['/broken', 500],
     ['/missing', 404],
+    ['/no-such-page', 404],
+    ['/no-such-page.data', 404],
     ['/resource', 200],
     ['/members', 302],
   ])('%s has no Cache-Control', async (path, status) => {

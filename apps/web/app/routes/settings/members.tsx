@@ -33,7 +33,7 @@ import {
   type UserOrganizationMembersQuery,
   type OrganizationRolesQuery,
 } from '@nestled-template/shared/sdk'
-import { useReadQuery, type QueryRef, useQuery, useMutation } from '@apollo/client/react'
+import { useReadQuery, useQuery, useMutation } from '@apollo/client/react'
 
 // Permission descriptions for display
 const permissionDescriptions: Record<string, string> = {
@@ -196,10 +196,7 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
 })
 
 export default function MembersSettings() {
-  const loaderData = useLoaderData() as {
-    myOrganizationsQueryRef: QueryRef<MyOrganizationsWithMembersQuery>
-    meQueryRef: QueryRef<MeQuery>
-  }
+  const loaderData = useLoaderData<typeof loader>()
   const { data: orgData } = useReadQuery(loaderData.myOrganizationsQueryRef)
   const { data: meData } = useReadQuery(loaderData.meQueryRef)
   const organizations = orgData?.myOrganizations || []

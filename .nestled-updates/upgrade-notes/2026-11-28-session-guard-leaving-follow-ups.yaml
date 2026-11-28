@@ -1,0 +1,76 @@
+id: 2026-11-28-session-guard-leaving-follow-ups
+title: >-
+  A document leaving for another session stays blank until it is replaced, and its reload keeps the
+  new session's stored organization
+priority: high
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-session-starts-in-fresh-document
+  - 2026-11-24-restored-document-hidden-before-reload
+
+intent: >
+  Two defects in apps/web/app/session/session-user-guard.tsx, both while a document load for another
+  session (a sign-in, an emulation starting or ending) is on its way.
+
+
+  1. When the root verdict named another user while that load was pending, `SessionUserGuard`
+  rendered nothing and waited up to `LEAVING_GRACE_MS` (10 s) for it (`leavingTimer`). A later
+  verdict in that window (unknown, signed out, or the document's first user again) un-blocked the
+  page, so the previous user's page could show until the navigation committed. The guard now also
+  renders nothing while `leavingTimer` is set: until the document is replaced, or the grace runs
+  out and the document is loaded again.
+
+
+  2. Every reload the guard makes went through `reloadDocumentOnce`, which called
+  `clearActiveOrganizationForSessionChange()` and so removed the stored active organization. On a
+  document that had already left for another session (the latched one: the sign-in form restored by
+  Back, or the grace timer firing), that clear had already happened when it left, and what is stored
+  since is the new session's own choice, made by the document it left for or by another tab. The
+  reload wiped it. `reloadDocumentOnce` now clears only when `isLeavingForSessionChange()` is still
+  false; a latched document is hidden and loaded again without touching storage. A document that
+  was not leaving (another user's verdict after another tab signed in) still forgets the stored
+  organization, as before, since it may be the previous user's. Visible in an app with no
+  server-side active organization, where the stored one is the only record of the choice.
+
+
+  Specs: apps/web/tests/session/session-user-guard.spec.tsx ("a document already leaving for
+  another session") and apps/web/tests/session/restored-document.spec.tsx ("a document load that is
+  awaited").
+
+why: >
+  The guard exists so that nothing of one user is shown to the next; a verdict arriving at the wrong
+  moment showed it anyway. And a user who chose an organization, pressed Back to the sign-in form,
+  and came forward again, found their choice gone.
+
+affectedPaths:
+  - apps/web/app/session/session-user-guard.tsx
+  - apps/web/tests/session/session-user-guard.spec.tsx
+  - apps/web/tests/session/restored-document.spec.tsx
+
+skipIf:
+  - The project has no apps/web/app/session/session-user-guard.tsx.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm run verify:session-decisions
+  - >-
+    In a production build with no server-side active organization: sign in, choose an organization,
+    press Back to the sign-in form (it is hidden and loaded again), and the chosen organization is
+    still selected.
+
+agentHints:
+  - >
+    Two lines: `blocked` gains `leavingTimer !== undefined`, and `reloadDocumentOnce` guards its
+    `clearActiveOrganizationForSessionChange()` with `!isLeavingForSessionChange()`. A project whose
+    guard has drifted applies the same two rules where its own block and reload live.
+  - >
+    The cross-tab case where this document was not leaving keeps clearing: the stored organization
+    may have been written back by this document's own signed-in shell for the previous user. Do not
+    remove that clear.
+  - >
+    A project whose root route has a `shouldRevalidate` should check its comment: since
+    2026-11-20-session-middleware the verdict is judged by the session middleware on every request,
+    so a comment that says the root loader decides the session, or calls Me itself, is stale. The
+    template has no root `shouldRevalidate`; comment only.

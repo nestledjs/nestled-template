@@ -1,0 +1,81 @@
+id: 2026-11-28-invitation-sign-in-new-document
+title: >-
+  A log-in on the invitation page accepts the invitation in a new document, once, and a late answer
+  is ignored
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-invitation-two-factor-sign-in
+  - 2026-11-28-session-guard-leaving-follow-ups
+
+intent: >
+  Two defects in the log-in tab of apps/web/app/routes/accept-invitation.tsx.
+
+
+  1. After the log-in succeeded, the page accepted the invitation in the same document and then
+  loaded /members. That document was rendered for whoever was there before: its state, and
+  `SessionUserGuard`, which reloads a document that learns of another user, belong to the previous
+  session. The accept call could fail or be cut off, and if the new session's document then accepted
+  as well, the single-use invitation failed the second time. Now a successful log-in calls
+  `clearActiveOrganizationForSessionChange()` and replaces the document with the same invitation
+  (`location.replace`); the new document, signed in, accepts it once through the automatic
+  acceptance and goes on to /members. The old document accepts nothing from then on: the automatic
+  acceptance returns early while `isLeavingForSessionChange()` is true. The invitation is accepted
+  in exactly one document. A target that is the current address, or differs from it only in its
+  fragment, is loaded with `location.reload()`: replacing it would only scroll, and the latched
+  document would stay, sending no `x-organization-id`. If no new document has replaced this one
+  after `LEAVING_GRACE_MS` (10 s, the user stopped the load), it is reloaded once, so the page
+  never stays on "Logging in…".
+
+
+  The page also said "You've successfully joined" while an acceptance was still pending, or while a
+  signed-in page waited for its new document after a log-in. It now shows "Accepting your
+  invitation" until the acceptance has succeeded in this document, and the joined screen only then.
+
+
+  2. The log-in's answer was acted on whenever it came. A late two-factor answer navigated to
+  /login after the user had left the page, or when it showed another invitation link. The page now
+  keeps the invitation it shows in a ref (null once it unmounts), and an answer for another one is
+  ignored. A session that started after the user left still gets a new document, at the current
+  address, and accepts nothing.
+
+
+  Specs: apps/web/tests/routes/accept-invitation-sign-in.spec.tsx, the invitation case of
+  apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx, and two cases of
+  apps/web/tests/routes/accept-invitation.spec.tsx that asserted the joined screen for an acceptance
+  still in flight.
+
+why: >
+  Signing in with an existing account to accept an invitation failed, and could leave the invitation
+  used but the page showing an error.
+
+affectedPaths:
+  - apps/web/app/routes/accept-invitation.tsx
+  - apps/web/tests/routes/accept-invitation-sign-in.spec.tsx
+  - apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+  - apps/web/tests/routes/accept-invitation.spec.tsx
+
+skipIf:
+  - The project has no log-in form on its invitation page.
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm run verify:session-decisions
+  - >-
+    Signed out, open an invitation link, log in on its Login tab with the invited account: the page
+    loads once more, says the invitation was accepted, goes to /members, and the API shows one
+    acceptance.
+
+agentHints:
+  - >
+    The sign-up tab is unchanged: registration accepts the invitation on the API, then loads
+    /members.
+  - >
+    The automatic acceptance (for a user already signed in) still dedupes per token in
+    `acceptancesRef`; keep that. The new early return only covers the document that is leaving.
+  - >
+    A project whose invitation page has no automatic acceptance for a signed-in user must add one
+    (or accept in the new document some other way) before taking part 1, or the invitation is never
+    accepted.

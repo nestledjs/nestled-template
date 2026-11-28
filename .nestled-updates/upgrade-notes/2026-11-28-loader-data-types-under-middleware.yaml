@@ -1,0 +1,105 @@
+id: 2026-11-28-loader-data-types-under-middleware
+title: >-
+  useLoaderData<typeof loader>() types an Apollo loader's query refs under v8_middleware, so pages
+  drop their casts; two specs no longer depend on the template's operations, and root
+  ErrorBoundary renders in specs run inside a data router
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-security-pages-typed-variables
+  - 2026-11-24-restored-document-hidden-before-reload
+  - 2026-11-24-session-hardening-follow-ups
+  - 2026-11-24-session-spec-and-sonar-cleanup
+
+intent: >
+  1. Loader data types. apps/web/app/react-router-route-module.d.ts declared
+  `CreateServerLoaderArgs` as `LoaderFunctionArgs`. With `future.v8_middleware` (the template's
+  react-router.config.ts), `LoaderFunctionArgs` has exactly the fields of React Router's client
+  loader arguments, so `useLoaderData<typeof loader>()` took an `apolloLoader` loader for a client
+  one and left each query ref wrapped in `unstable_SerializesTo<QueryRef<…>>`, which `useReadQuery`
+  does not accept. Every page hid it with `useLoaderData() as { …: QueryRef<…> }`, a cast that
+  stays silent when the loader changes. The declaration is now
+  `Omit<import('react-router').LoaderFunctionArgs, 'pattern'>`: without one of those fields the
+  loader takes the server branch, which unwraps the ref to `QueryRef<TData, TVariables>`. No runtime
+  change; a loader that needs the route pattern reads it in a middleware.
+
+
+  The casts go: the settings pages (account, ai, api-tokens, members, organization, preferences,
+  profile, security, security.events) and routes/_authenticated/_layout.tsx now call
+  `useLoaderData<typeof loader>()`, and the `QueryRef` and query-type imports that only served the
+  casts are removed. apps/web/tests/apollo-loader-types.spec.ts asserts that
+  `useLoaderData<typeof loader>()` of an `apolloLoader` loader is `{ ref: QueryRef<TData, TVariables> }`;
+  it fails `nx typecheck web` with the old declaration.
+
+
+  2. Specs that every project had to rewrite. apollo-loader-types.spec.ts and
+  tests/session/refused-render.spec.tsx used the template's own operations (`MySecurityEvents`,
+  `UserPreferences`), so in a project whose API lacks them the first did not typecheck and the
+  second failed. Each now defines its own small typed document, answered by the spec's own fetch
+  stub, and passes unchanged in any project.
+
+
+  3. Data router for ErrorBoundary renders. Some branches of the root ErrorBoundary use router
+  hooks: a route 401 revalidates with `useRevalidator`, which throws "useRevalidator must be used
+  within a data router" outside one. apps/web/tests/api-availability.spec.tsx rendered the boundary
+  bare, which worked only for the errors it happened to test. apps/web/tests/helpers/render-in-data-router.tsx
+  (`renderInDataRouter`) renders an element as the only route of a memory data router, as the app
+  does; every bare ErrorBoundary render in that spec uses it, and a new case renders a route 401.
+
+why: >
+  A cast on loader data hides the next mismatch between a loader and its page, and the specs that
+  name template operations were rewritten by every project on every promotion. A 401 case added to a
+  boundary spec failed with a router error rather than testing the boundary.
+
+affectedPaths:
+  - apps/web/app/react-router-route-module.d.ts
+  - apps/web/app/routes/_authenticated/_layout.tsx
+  - apps/web/app/routes/settings/account.tsx
+  - apps/web/app/routes/settings/ai.tsx
+  - apps/web/app/routes/settings/api-tokens.tsx
+  - apps/web/app/routes/settings/members.tsx
+  - apps/web/app/routes/settings/organization.tsx
+  - apps/web/app/routes/settings/preferences.tsx
+  - apps/web/app/routes/settings/profile.tsx
+  - apps/web/app/routes/settings/security.events.tsx
+  - apps/web/app/routes/settings/security.tsx
+  - apps/web/tests/apollo-loader-types.spec.ts
+  - apps/web/tests/session/refused-render.spec.tsx
+  - apps/web/tests/api-availability.spec.tsx
+  - apps/web/tests/helpers/render-in-data-router.tsx
+
+skipIf:
+  - >-
+    Part 1: the project does not enable `future.v8_middleware`, or has no
+    react-router-route-module.d.ts (then 2026-11-24-security-pages-typed-variables is not applied
+    either; apply that first). Parts 2 and 3 still apply.
+
+verification:
+  - pnpm exec nx typecheck web --skip-nx-cache
+  - pnpm exec nx lint web
+  - pnpm exec nx test web --skip-nx-cache
+  - node --test scripts/apollo-operation-types.spec.mjs
+
+agentHints:
+  - >-
+    Change the declaration first and run `nx typecheck web` before touching a page: the spec's
+    `useLoaderData` assertion should now pass. Then replace each `useLoaderData() as {…}` whose route
+    loader is an `apolloLoader` with `useLoaderData<typeof loader>()`, and run typecheck again. A new
+    error there is a real mismatch the cast hid (a renamed key, a ref of another query): fix the page
+    or the loader, never restore the cast.
+  - >-
+    Leave casts on routes whose loader is not an `apolloLoader` (the root loader, a loader returning
+    a plain object read by another route) unless `useLoaderData<typeof loader>()` already types
+    them; this note only removes the casts the declaration made unnecessary.
+  - >-
+    If a project's loader reads `pattern` from its arguments, move that read into a middleware, or
+    keep that one loader typed with React Router's `Route.LoaderArgs` and outside `apolloLoader`.
+  - >-
+    For the two specs, take the template's versions as they are; they import no generated operation.
+    If the project changed what refused-render.spec.tsx asserts for its own routes, keep those
+    changes and replace only the document and the fetch answer (`{ data: { widgets: [] } }`).
+  - >-
+    Use `renderInDataRouter` for any spec of the project's that renders the root ErrorBoundary
+    outside a router, not only api-availability.spec.tsx.

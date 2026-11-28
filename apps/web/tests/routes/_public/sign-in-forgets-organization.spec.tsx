@@ -254,17 +254,17 @@ describe('signing in forgets the organization stored for the previous user', () 
     expect(stored()).toBeNull()
   })
 
-  it('signing in on the invitation page forgets it before the invitation is accepted', async () => {
+  it('signing in on the invitation page forgets it, and loads the invitation in a new document', async () => {
     storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
     // An invitation link opened straight after a previous session expired skips the login form.
-    let storedWhenAccepting: string | null = 'not accepted'
+    let accepted = 0
     answerMutations(
       new Map<unknown, MutationAnswer>([
         [Login, () => ({ login: { user: { id: 'user-2' } } })],
         [
           AcceptOrganizationInvitation,
           () => {
-            storedWhenAccepting = getStoredActiveOrganizationId()
+            accepted += 1
             return { acceptOrganizationInvitation: { success: true } }
           },
         ],
@@ -275,12 +275,14 @@ describe('signing in forgets the organization stored for the previous user', () 
     await userEvent.click(await screen.findByRole('button', { name: 'Login' }))
     await userEvent.click(screen.getByRole('button', { name: 'Login & Accept Invitation' }))
 
-    await waitFor(() => expect(storedWhenAccepting).toBeNull())
+    await waitFor(() =>
+      expect(location.replace).toHaveBeenCalledWith('/accept-invitation?token=invitation-token'),
+    )
     expect(stored()).toBeNull()
-    await waitFor(() => expect(location.replace).toHaveBeenCalledWith('/members'), {
-      timeout: 3000,
-    })
-    expect(screen.queryByText('Members')).not.toBeInTheDocument()
+    // The new document accepts it, signed in; this one stores and accepts nothing more.
+    storeActiveOrganizationId(PREVIOUS_USERS_ORGANIZATION)
+    expect(stored()).toBeNull()
+    expect(accepted).toBe(0)
   })
 
   it('registering on the invitation page forgets it', async () => {

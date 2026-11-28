@@ -17,7 +17,6 @@ import {
   Me,
   type MeQuery,
   MySecurityEvents,
-  type MySecurityEventsQuery,
   ChangePassword,
   InvalidateSession,
   InvalidateAllSessions,
@@ -25,7 +24,7 @@ import {
   Enable2Fa,
   Disable2Fa,
 } from '@nestled-template/shared/sdk'
-import { useReadQuery, type QueryRef, useMutation } from '@apollo/client/react'
+import { useReadQuery, useMutation } from '@apollo/client/react'
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
   const meQueryRef = preloadQuery<MeQuery>(Me)
@@ -40,11 +39,7 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
 })
 
 export default function SecuritySettings() {
-  const loaderData = useLoaderData() as {
-    meQueryRef: QueryRef<MeQuery>
-    securityEventsQueryRef: QueryRef<MySecurityEventsQuery>
-    userSessionsQueryRef: QueryRef<GetUserSessionsQuery>
-  }
+  const loaderData = useLoaderData<typeof loader>()
   const { data } = useReadQuery(loaderData.meQueryRef)
   const { data: securityEventsData } = useReadQuery(loaderData.securityEventsQueryRef)
   const { data: userSessionsData } = useReadQuery(loaderData.userSessionsQueryRef)

@@ -1,0 +1,66 @@
+id: 2026-11-28-dev-redis-restart-policy
+title: >-
+  The development Redis comes back after a reboot like the other dev services; the dev Dockerfile
+  says how a container reaches them now that they are on 127.0.0.1
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-28-dev-services-bind-loopback
+
+intent: >
+  1. Restart policy. In `.dev/docker-compose.yml`, `postgres`, `postgres-test` and `mailhog` have
+  `restart: unless-stopped`; `redis` had none, so after a reboot or a Docker restart every other
+  service came back and Redis stayed down, and the API failed on its first Redis call rather than at
+  start. `redis` gains `restart: unless-stopped`; its `127.0.0.1:` port binding is unchanged.
+  scripts/dev-compose.spec.mjs checks that every service in the file has `restart: unless-stopped`
+  and publishes its ports on 127.0.0.1 only.
+
+
+  2. Comment only. `.dev/Dockerfile` gains a comment on running the image against the development
+  services: join the compose network (`docker run --network <compose project name>_default …`) and
+  use the service names as hosts (`postgres`, `redis`, …) with the container ports. Since
+  2026-11-28-dev-services-bind-loopback the services are published on 127.0.0.1 only, so
+  `host.docker.internal` still reaches them with Docker Desktop but not on Linux, where it is the
+  bridge's address. The image and its build are unchanged.
+
+why: >
+  A dev service that does not come back with the others fails later and less clearly than one that
+  is simply missing. Instructions that point a container at `host.docker.internal` stopped working on
+  Linux when the services moved to the loopback address.
+
+affectedPaths:
+  - .dev/docker-compose.yml
+  - .dev/Dockerfile
+  - scripts/dev-compose.spec.mjs
+
+skipIf:
+  - >-
+    Part 1: the project's dev Redis already has a restart policy (or the project has no dev Redis).
+    Part 2 still applies wherever the project documents how a container reaches the dev services.
+
+verification:
+  - node --test scripts/dev-compose.spec.mjs
+  - >-
+    docker compose -f .dev/docker-compose.yml --profile '*' config --format json | node -e
+    "const c=JSON.parse(require('fs').readFileSync(0));const bad=Object.entries(c.services).filter(([,s])=>s.restart!=='unless-stopped').map(([n])=>n);if(bad.length){console.error('no restart policy:',bad.join(', '));process.exit(1)}console.log('every service restarts')"
+
+agentHints:
+  - >-
+    Add `restart: unless-stopped` to the project's own services in the compose file too (a worker,
+    a search engine, a second database), and keep each port's `127.0.0.1:` prefix. If a service is
+    meant to stay down unless started by hand, keep it without the policy and add a comment saying
+    so; the spec then needs that service named as an exception, with the reason.
+  - >-
+    A running stack picks up the policy only when its containers are recreated: run
+    `docker compose -f .dev/docker-compose.yml up -d`, which recreates the changed services and keeps
+    the data volumes. Say in your report that existing checkouts and development boxes need this.
+  - >-
+    The Dockerfile change is a comment. If the project's own docs, scripts or Dockerfile tell users
+    to reach the dev database or Redis through `host.docker.internal`, change them the same way.
+    The compose network is `<name>_default`, where `<name>` is the `name:` at the top of the compose
+    file.
+  - >-
+    scripts/dev-compose.spec.mjs reads the compose file with the `yaml` package, already a root
+    dependency of the template; check the project has it (`pnpm why yaml`) before adding the spec.

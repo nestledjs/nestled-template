@@ -87,8 +87,10 @@ function reloadDocumentOnce(): void {
   // No later verdict may show the page again, or end the wait for the new document.
   restoredWith = undefined
   hideDocument()
-  // The stored organization is the previous user's too.
-  clearActiveOrganizationForSessionChange()
+  // The stored organization is the previous user's too, unless this document already forgot it when
+  // it left for the new session (a sign-in, an emulation): whatever is stored since is the new
+  // session's own choice, from the document it left for or another tab, and must survive.
+  if (!isLeavingForSessionChange()) clearActiveOrganizationForSessionChange()
   globalThis.location.reload()
 }
 
@@ -169,7 +171,10 @@ export function SessionUserGuard({
   children,
 }: Readonly<{ session: AppSessionVerdict | undefined; children: ReactNode }>) {
   const userId = session?.kind === 'signed-in' ? session.user.id : undefined
-  const blocked = reloading || belongsToAnotherUser(userId)
+  // While a document load for another session is awaited (`leavingTimer`), a later verdict (unknown,
+  // signed out, the first user again) does not show the page either: until that load replaces this
+  // document, or the grace runs out and this one is loaded again.
+  const blocked = reloading || leavingTimer !== undefined || belongsToAnotherUser(userId)
   const waitedTooLong = useSyncExternalStore(
     subscribeToStalled,
     () => stalled,

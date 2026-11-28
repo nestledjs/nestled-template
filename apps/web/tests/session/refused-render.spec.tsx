@@ -1,11 +1,10 @@
 import { Suspense } from 'react'
 import { act, cleanup, render, screen } from '@testing-library/react'
-import { CombinedGraphQLErrors, ServerError } from '@apollo/client'
-import { ApolloProvider, useReadQuery, type QueryRef } from '@apollo/client/react'
+import { CombinedGraphQLErrors, ServerError, gql, type TypedDocumentNode } from '@apollo/client'
+import { ApolloProvider, useReadQuery } from '@apollo/client/react'
 import { createMemoryRouter, RouterProvider, useLoaderData, useRouteError } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apolloLoader, makeClient } from '@nestled-template/shared/apollo'
-import { UserPreferences, type UserPreferencesQuery } from '@nestled-template/shared/sdk'
 import { ErrorBoundary } from '../../app/root'
 import { isRefusedRenderError } from '../../app/session'
 import {
@@ -149,18 +148,32 @@ describe('a render the API refused', () => {
 // A GraphQL answer (HTTP 200) travels in the stream as it is. An HTTP failure travels as a bare
 // `error` event, and the browser's client sends the query again through its own links, so what the
 // component throws is the browser's own error, with its status: never a redacted one.
+// A document of the spec's own rather than one from the generated SDK, so the spec passes unchanged
+// in a project whose API has none of the template's operations. The fetch below answers it.
+const Widgets: TypedDocumentNode<{ widgets: Array<{ id: string }> }, Record<string, never>> = gql`
+  query Widgets {
+    widgets {
+      id
+    }
+  }
+`
+
 describe('a preload refused in the loader data stream', () => {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
-  const answered = () => json({ data: { userPreferences: [] } })
+  const answered = () => json({ data: { widgets: [] } })
+
+  const preload = apolloLoader()(async ({ preloadQuery }) => ({
+    widgets: preloadQuery(Widgets),
+  }))
 
   function PreloadPage() {
-    const { preferences } = useLoaderData() as { preferences: QueryRef<UserPreferencesQuery> }
-    const { data } = useReadQuery(preferences)
-    return <p>{data.userPreferences?.length ?? 'no'} preferences</p>
+    const { widgets } = useLoaderData<typeof preload>()
+    const { data } = useReadQuery(widgets)
+    return <p>{data.widgets.length} widgets</p>
   }
 
   async function renderPreload(answer: (call: number) => Response) {
@@ -169,9 +182,6 @@ describe('a preload refused in the loader data stream', () => {
       calls += 1
       return answer(calls)
     })
-    const preload = apolloLoader()(async ({ preloadQuery }) => ({
-      preferences: preloadQuery(UserPreferences),
-    }))
     const router = createMemoryRouter(
       [
         { path: '/', element: <p>Home</p> },
@@ -216,21 +226,21 @@ describe('a preload refused in the loader data stream', () => {
     const { calls } = await renderPreload(call =>
       call === 1 ? json(UNAUTHENTICATED_RESULT) : answered(),
     )
-    expect(await screen.findByText('0 preferences')).toBeInTheDocument()
+    expect(await screen.findByText('0 widgets')).toBeInTheDocument()
     expect(loads).toBe(2)
     expect(calls()).toBe(2)
   })
 
   it('an HTTP 401, refused again in the browser: one retry, which recovers', async () => {
     const { calls } = await renderPreload(call => (call <= 2 ? json({}, 401) : answered()))
-    expect(await screen.findByText('0 preferences')).toBeInTheDocument()
+    expect(await screen.findByText('0 widgets')).toBeInTheDocument()
     expect(loads).toBe(2)
     expect(calls()).toBe(3)
   })
 
   it('an HTTP 401 the browser does not get again needs no retry', async () => {
     const { calls } = await renderPreload(call => (call === 1 ? json({}, 401) : answered()))
-    expect(await screen.findByText('0 preferences')).toBeInTheDocument()
+    expect(await screen.findByText('0 widgets')).toBeInTheDocument()
     expect(loads).toBe(1)
     expect(calls()).toBe(2)
   })

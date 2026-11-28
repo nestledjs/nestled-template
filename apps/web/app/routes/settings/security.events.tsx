@@ -1,7 +1,7 @@
 import { Link, useLoaderData } from 'react-router'
 import { apolloLoader } from '@nestled-template/shared/apollo'
-import { MySecurityEvents, type MySecurityEventsQuery } from '@nestled-template/shared/sdk'
-import { useReadQuery, type QueryRef } from '@apollo/client/react'
+import { MySecurityEvents } from '@nestled-template/shared/sdk'
+import { useReadQuery } from '@apollo/client/react'
 import { ChevronRightIcon, ShieldCheckIcon } from '@heroicons/react/24/outline'
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
@@ -15,7 +15,7 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
 })
 
 export default function SecurityEventsPage() {
-  const loaderData = useLoaderData() as { securityEventsQueryRef: QueryRef<MySecurityEventsQuery> }
+  const loaderData = useLoaderData<typeof loader>()
   const { data } = useReadQuery(loaderData.securityEventsQueryRef)
   const securityEvents = data?.mySecurityEvents || []
 

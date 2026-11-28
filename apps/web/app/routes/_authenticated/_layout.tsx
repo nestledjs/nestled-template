@@ -16,7 +16,7 @@ import {
   MyOrganizationsWithMembers,
   type MyOrganizationsWithMembersQuery,
 } from '@nestled-template/shared/sdk'
-import { useReadQuery, type QueryRef } from '@apollo/client/react'
+import { useReadQuery } from '@apollo/client/react'
 import { requireSession } from '../../session/session-middleware.server'
 
 /**
@@ -46,9 +46,7 @@ const NO_ORGANIZATIONS: MyOrganizationsWithMembersQuery['myOrganizations'] = []
 export default function AuthenticatedLayout() {
   const { user: contextUser } = useGlobalCtx()
   const location = useLocation()
-  const loaderData = useLoaderData() as {
-    myOrganizationsQueryRef: QueryRef<MyOrganizationsWithMembersQuery>
-  }
+  const loaderData = useLoaderData<typeof loader>()
 
   // Read organizations from preloaded query
   const { data: orgsData } = useReadQuery(loaderData.myOrganizationsQueryRef)
