@@ -58,7 +58,9 @@ export class GqlThrottlerGuard extends ThrottlerGuard {
  */
 @Injectable()
 export class GqlUserThrottlerGuard extends GqlThrottlerGuard {
-  private readonly logger = new Logger(GqlUserThrottlerGuard.name)
+  // Not `logger`: @nestjs/throttler 6.7 declares a protected `logger` on ThrottlerGuard, and a private
+  // field of the same name no longer compiles against it.
+  private readonly userKeyLogger = new Logger(GqlUserThrottlerGuard.name)
 
   protected override async getTracker(req: Record<string, unknown>): Promise<string> {
     const userId = (req['user'] as { id?: string } | undefined)?.id
@@ -76,7 +78,7 @@ export class GqlUserThrottlerGuard extends GqlThrottlerGuard {
    * misconfiguration, not a design choice.
    */
   private assertUserKeyed(): void {
-    this.logger.warn(
+    this.userKeyLogger.warn(
       'GqlUserThrottlerGuard ran with no authenticated user; falling back to IP keying. ' +
         'Declare it after GqlAuthGuard in @UseGuards to key by account.',
     )

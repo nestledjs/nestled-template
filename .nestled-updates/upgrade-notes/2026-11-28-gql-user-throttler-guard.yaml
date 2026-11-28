@@ -71,6 +71,11 @@ agentHints:
     Add the class and its spec cases; do not apply the guard to any resolver as part of this note.
     Choosing which operations get a per-account limit is a product decision for the project.
   - >-
+    The guard's private logger is named `userKeyLogger`, not `logger`: @nestjs/throttler 6.7 declares a
+    protected `logger` on ThrottlerGuard, so a private field named `logger` fails to compile (TS2415) on
+    6.7 and later. Keep the name, and update the spec's `Object.defineProperty(guard, 'userKeyLogger', …)`
+    with it.
+  - >-
     When a project adopts it, list it after the auth guard, `@UseGuards(GqlAuthGuard,
     GqlUserThrottlerGuard)`, and give the operation its own limit with
     `@Throttle({ signup: { limit, ttl } })` (ttl in milliseconds). Where the auth guard is already

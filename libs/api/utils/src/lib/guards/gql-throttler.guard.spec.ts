@@ -78,8 +78,8 @@ describe('GqlUserThrottlerGuard', () => {
 
   beforeEach(() => {
     guard = Object.create(TestableUserGuard.prototype) as TestableUserGuard
-    // `logger` is a field initialiser, which Object.create skips.
-    Object.defineProperty(guard, 'logger', { value: new Logger('test'), configurable: true })
+    // `userKeyLogger` is a field initialiser, which Object.create skips.
+    Object.defineProperty(guard, 'userKeyLogger', { value: new Logger('test'), configurable: true })
 
     warnings = []
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(message => {
