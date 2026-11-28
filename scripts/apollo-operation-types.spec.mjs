@@ -17,9 +17,9 @@ import { fileURLToPath } from 'node:url'
 const ts = createRequire(import.meta.url)('typescript')
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-// Every folder with Apollo client code. A clone that embeds no package of its own lacks some.
-const CLIENT_FOLDERS = [
-  'apps/web/app',
+// The libraries with Apollo client code. A clone that embeds no package of its own lacks some, and
+// a folder that does not exist is skipped. Add a project's own client libraries here.
+const CLIENT_LIBRARIES = [
   'libs/web',
   'libs/web-ui',
   'libs/shared',
@@ -27,6 +27,39 @@ const CLIENT_FOLDERS = [
   'libs/data-browser',
   'libs/shared-components',
 ]
+// Every app's `app` (React Router) and `src` (React Native, Expo, Vite) folder is read as well, so an
+// app a project adds is covered without a change here, but only an app with Apollo client code: one
+// of its files imports `@apollo/client` or the shared Apollo library. A server's own
+// `pool.query<Row>(sql, params)` is not an Apollo call, and reading it would fail this spec.
+const APP_SOURCE_FOLDERS = ['app', 'src']
+const CLIENT_IMPORT = /from\s+['"](@apollo\/client|[^'"]*\/shared\/apollo)/
+
+/**
+ * Apps never read, whatever they import: the template's API and its e2e suite. The one place for a
+ * project to add its own exclusions (`apps/<name>`), with a comment naming the reason.
+ */
+export const SKIPPED_APP_FOLDERS = new Set(['apps/api', 'apps/api-e2e'])
+
+function hasClientCode(folder) {
+  for (const file of sourceFiles(folder)) {
+    if (CLIENT_IMPORT.test(readFileSync(file, 'utf8'))) return true
+  }
+  return false
+}
+
+export function clientFolders(workspace) {
+  const apps = join(workspace, 'apps')
+  const appFolders = existsSync(apps)
+    ? readdirSync(apps, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && !SKIPPED_APP_FOLDERS.has(`apps/${entry.name}`))
+        .flatMap(entry => APP_SOURCE_FOLDERS.map(folder => `apps/${entry.name}/${folder}`))
+        .filter(folder => existsSync(join(workspace, folder)))
+        .filter(folder => hasClientCode(join(workspace, folder)))
+        .sort()
+    : []
+  return [...appFolders, ...CLIENT_LIBRARIES]
+}
+
 const SKIPPED_FOLDERS = new Set(['node_modules', 'build', 'dist', 'generated', '.react-router'])
 const TESTS = /\.(spec|test|stories)\.tsx?$/
 
@@ -71,19 +104,56 @@ function mayPassVariables(argument, index) {
   )
 }
 
-/**
- * The calls that give one type argument, the result's, while passing variables. TypeScript does not
- * infer the rest once one is given: the variables fall back to "any object", and a field the API
- * does not have is found by the user.
- */
-function untypedOperations(fileName, text) {
-  const source = ts.createSourceFile(
+function parseSource(fileName, text) {
+  return ts.createSourceFile(
     fileName,
     text,
     ts.ScriptTarget.Latest,
     true,
     fileName.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   )
+}
+
+const isNoCachePolicy = property =>
+  ts.isPropertyAssignment(property) &&
+  property.name.getText() === 'fetchPolicy' &&
+  ts.isStringLiteralLike(property.initializer) &&
+  property.initializer.text === 'no-cache'
+
+/**
+ * The loader preloads that ask for `fetchPolicy: 'no-cache'`. A preload's answer is meant to land in
+ * the browser's cache, where the page and every other query of the same objects read it; `no-cache`
+ * keeps it out, so a later mutation or refetch does not update what the page shows. What the
+ * template means by "always ask the API" is `network-only`, which still writes the answer.
+ */
+function noCachePreloads(fileName, text) {
+  const source = parseSource(fileName, text)
+  const found = []
+  const visit = node => {
+    if (
+      ts.isCallExpression(node) &&
+      calledName(node) === 'preloadQuery' &&
+      node.arguments.some(
+        argument =>
+          ts.isObjectLiteralExpression(argument) && argument.properties.some(isNoCachePolicy),
+      )
+    ) {
+      const { line } = source.getLineAndCharacterOfPosition(node.expression.getEnd())
+      found.push(`${fileName}:${line + 1} preloadQuery with fetchPolicy 'no-cache'`)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return found
+}
+
+/**
+ * The calls that give one type argument, the result's, while passing variables. TypeScript does not
+ * infer the rest once one is given: the variables fall back to "any object", and a field the API
+ * does not have is found by the user.
+ */
+function untypedOperations(fileName, text) {
+  const source = parseSource(fileName, text)
   const found = []
   const visit = node => {
     if (ts.isCallExpression(node) && node.typeArguments?.length === 1) {
@@ -102,9 +172,63 @@ function untypedOperations(fileName, text) {
   return found
 }
 
+describe('the folders read for Apollo operations', () => {
+  it('include every app folder a project adds, a React Native app among them', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'client-folders-'))
+    try {
+      for (const folder of ['apps/web/app', 'apps/mobile/src', 'apps/kiosk/app', 'apps/docs']) {
+        mkdirSync(join(workspace, folder), { recursive: true })
+        writeFileSync(
+          join(workspace, folder, 'client.tsx'),
+          "import { gql } from '@apollo/client'\n",
+        )
+      }
+      const folders = clientFolders(workspace)
+      assert.ok(folders.includes('apps/web/app'))
+      assert.ok(folders.includes('apps/mobile/src'))
+      assert.ok(folders.includes('apps/kiosk/app'))
+      assert.ok(!folders.some(folder => folder.startsWith('apps/docs')), 'no app or src folder')
+      assert.ok(folders.includes('libs/web'), 'the library folders stay listed')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('leave out server apps, whose own query<T>(sql, params) is not an Apollo call', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'client-folders-'))
+    const server = 'export const row = pool.query<Row>(sql, [id])\n'
+    try {
+      for (const [folder, text] of [
+        ['apps/web/app', "import { useQuery } from '@apollo/client/react'\n"],
+        ['apps/api/src', server],
+        ['apps/api-e2e/src', server],
+        ['apps/worker/src', server],
+      ]) {
+        mkdirSync(join(workspace, folder), { recursive: true })
+        writeFileSync(join(workspace, folder, 'index.ts'), text)
+      }
+      // The call is one the guard refuses wherever it reads it, so reading these folders would fail.
+      assert.equal(untypedOperations('index.ts', server).length, 1)
+
+      const folders = clientFolders(workspace)
+      assert.ok(folders.includes('apps/web/app'))
+      for (const folder of ['apps/api/src', 'apps/api-e2e/src', 'apps/worker/src']) {
+        assert.ok(!folders.includes(folder), `${folder} is not client code`)
+      }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('skip the server apps named in SKIPPED_APP_FOLDERS', () => {
+    assert.ok(SKIPPED_APP_FOLDERS.has('apps/api'))
+    assert.ok(SKIPPED_APP_FOLDERS.has('apps/api-e2e'))
+  })
+})
+
 describe('the types of Apollo operations', () => {
   it('come from the document, variables included', () => {
-    const files = CLIENT_FOLDERS.flatMap(folder => [...sourceFiles(join(root, folder))])
+    const files = clientFolders(root).flatMap(folder => [...sourceFiles(join(root, folder))])
     assert.ok(files.length > 50, `only ${files.length} files were read`)
     const found = files.flatMap(file =>
       untypedOperations(relative(root, file).split(sep).join('/'), readFileSync(file, 'utf8')),
@@ -133,6 +257,34 @@ describe('the types of Apollo operations', () => {
   ]) {
     it(`${expected ? 'refuses' : 'allows'} ${call}`, () => {
       assert.equal(untypedOperations('example.tsx', call).length, expected)
+    })
+  }
+})
+
+describe('the fetch policy of a loader preload', () => {
+  it('is never no-cache', () => {
+    const files = clientFolders(root).flatMap(folder => [...sourceFiles(join(root, folder))])
+    const found = files.flatMap(file =>
+      noCachePreloads(relative(root, file).split(sep).join('/'), readFileSync(file, 'utf8')),
+    )
+    assert.deepEqual(
+      found,
+      [],
+      "Use fetchPolicy 'network-only': it still asks the API, and writes the answer to the cache.",
+    )
+  })
+
+  for (const [call, expected] of [
+    ["preloadQuery(Doc, { fetchPolicy: 'no-cache' })", 1],
+    ["preloadQuery(Doc, { variables, fetchPolicy: 'no-cache' })", 1],
+    ['preloadQuery(Doc, { fetchPolicy: "no-cache" })', 1],
+    ["preloadQuery(Doc, { fetchPolicy: 'network-only' })", 0],
+    ['preloadQuery(Doc)', 0],
+    ["client.query({ query: Doc, fetchPolicy: 'no-cache' })", 0],
+    ["useMutation(Doc, { fetchPolicy: 'no-cache' })", 0],
+  ]) {
+    it(`${expected ? 'refuses' : 'allows'} ${call}`, () => {
+      assert.equal(noCachePreloads('example.tsx', call).length, expected)
     })
   }
 })

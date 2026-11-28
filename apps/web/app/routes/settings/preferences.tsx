@@ -11,7 +11,7 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
 })
 
 export default function ApplicationPreferences() {
-  const loaderData = useLoaderData()
+  const loaderData = useLoaderData<typeof loader>()
   const { data } = useReadQuery<MeQuery, ReadQueryDataState>(loaderData.meQueryRef)
   const user = data?.me
 

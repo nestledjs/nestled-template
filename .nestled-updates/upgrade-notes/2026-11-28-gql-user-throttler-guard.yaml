@@ -1,0 +1,91 @@
+id: 2026-11-28-gql-user-throttler-guard
+title: >-
+  A per-account GraphQL rate limit is available: GqlUserThrottlerGuard keys on the signed-in user
+  instead of the client address (a tool only; no template resolver uses it)
+priority: normal
+area: api
+type: feature
+delivery: code-patch
+
+intent: >
+  The template's only GraphQL rate limit, `GqlThrottlerGuard`, keys on the client address. That
+  suits the signed-out mutations it guards (register, forgotPassword, resendVerificationEmail), but
+  not a signed-in operation that costs something to serve, such as one that sends mail: one account
+  rotating addresses gets a fresh bucket each time, and everyone behind one office NAT address
+  shares a single bucket.
+
+
+  libs/api/utils/src/lib/guards/gql-throttler.guard.ts gains `GqlUserThrottlerGuard`, beside
+  `GqlThrottlerGuard` and built on it:
+
+  - It keys on the authenticated user (`user:<id>`). Only when there is no `req.user` does it fall
+    back to the address (`ip:<address>`), so the operation is never left unthrottled, and the two
+    kinds of key cannot collide.
+
+  - `assertUserKeyed` logs a warning on that fallback. It is reached only when the guard runs before
+    the auth guard, or on a resolver without one, which is a misconfiguration rather than a choice.
+    Declare it after the auth guard: `@UseGuards(GqlAuthGuard, GqlUserThrottlerGuard)`. Nest runs
+    guards in the order listed.
+
+  - It reuses the `signup` throttler AuthModule registers rather than adding a named one.
+    `ThrottlerGuard` evaluates every configured throttler, so a second one would also start applying
+    to the three signed-out mutations. Buckets stay separate anyway, because the storage key includes
+    the resolver class and handler name. Set an operation's own limit with
+    `@Throttle({ signup: { limit, ttl } })`.
+
+  - The limit message names the account rather than the address.
+
+
+  Two consequences of sharing that throttler: `SIGNUP_THROTTLE_ENABLED=false` turns off every
+  per-account limit along with the signup ones, and an operation without its own `@Throttle` gets the
+  signup limit, which is tight: 3 requests an hour by default (`SIGNUP_THROTTLE_LIMIT`,
+  `SIGNUP_THROTTLE_TTL`).
+
+
+  No template resolver uses it, so nothing changes at runtime. The spec beside it covers the user
+  key, the separation of two accounts behind one address, the address fallback and its warning, and
+  the message.
+
+why: >
+  An account-level limit is what an authenticated, costly operation needs, and building one by hand
+  is easy to get subtly wrong: listed before the auth guard, it quietly degrades to the address key;
+  registered as a new named throttler, it starts limiting the signup mutations too.
+
+affectedPaths:
+  - libs/api/utils/src/lib/guards/gql-throttler.guard.ts
+  - libs/api/utils/src/lib/guards/gql-throttler.guard.spec.ts
+
+skipIf:
+  - >-
+    The project already has a GraphQL throttler guard keyed on the authenticated user (look for a
+    `getTracker` override that reads `req.user`). Compare it with this one: keep it if it also warns
+    on the address fallback and reuses the existing named throttler; otherwise adapt it to do both.
+
+verification:
+  - pnpm exec nx test api-utils --skip-nx-cache
+  - pnpm exec nx typecheck api-utils --skip-nx-cache
+  - pnpm exec nx build api --skip-nx-cache
+
+agentHints:
+  - >-
+    Add the class and its spec cases; do not apply the guard to any resolver as part of this note.
+    Choosing which operations get a per-account limit is a product decision for the project.
+  - >-
+    When a project adopts it, list it after the auth guard, `@UseGuards(GqlAuthGuard,
+    GqlUserThrottlerGuard)`, and give the operation its own limit with
+    `@Throttle({ signup: { limit, ttl } })` (ttl in milliseconds). Where the auth guard is already
+    on the resolver class (`@UseGuards(GqlAuthGuard)` above the class, as on the storage resolver),
+    put only `@UseGuards(GqlUserThrottlerGuard)` on the method: class guards run before method
+    guards, and listing both again runs the token validation and the organization lookup twice.
+  - >-
+    A warning "ran with no authenticated user" in the logs means the order is wrong or the resolver
+    has no auth guard. On a `@Public()` resolver every anonymous request takes the address fallback,
+    so the warning is logged once per such request: use `GqlThrottlerGuard` there instead.
+  - >-
+    The guard needs the throttler that AuthModule registers (`ThrottlerModule.forRootAsync`, named
+    `signup`). If the project registers it elsewhere or under another name, use that name in
+    `@Throttle`, and do not add a second named throttler. The module's `skipIf` turns this guard off
+    as well: with `SIGNUP_THROTTLE_ENABLED=false` (the API e2e setup) it limits nothing.
+  - >-
+    If the project's request user has its id under another field than `id`, change the one line in
+    `getTracker` that reads it, and the spec's request objects to match.

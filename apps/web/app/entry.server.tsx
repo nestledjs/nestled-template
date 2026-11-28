@@ -27,7 +27,10 @@ import {
   isOrganizationContextRequired,
   organizationRequiredResponse,
 } from './organization-required'
-import { refusedCallResponse } from './session/session-middleware.server'
+import {
+  refusedCallResponse,
+  withRequestSessionCacheControl,
+} from './session/session-middleware.server'
 
 disableFragmentWarnings()
 
@@ -107,6 +110,14 @@ function rejectWith(request: Request, message: string, response: Response): Prom
   return Promise.reject(response) // NOSONAR: a Response on purpose, see unavailableResponse
 }
 
+/**
+ * React Router's hook for every `.data` response. A `.data` request for a URL that matches no route
+ * runs no middleware, so its 404 gets the session Cache-Control here (`withRequestSessionCacheControl`).
+ */
+export function handleDataRequest(response: Response, { request }: { request: Request }): Response {
+  return withRequestSessionCacheControl(request, response)
+}
+
 export default function handleRequest(
   request: Request,
   responseStatusCode: number,
@@ -142,11 +153,16 @@ export default function handleRequest(
 
           responseHeaders.set('Content-Type', 'text/html')
 
+          // A URL that matches no route runs no middleware: its 404 gets the session
+          // Cache-Control here.
           resolve(
-            new Response(stream, {
-              headers: responseHeaders,
-              status: responseStatusCode,
-            }),
+            withRequestSessionCacheControl(
+              request,
+              new Response(stream, {
+                headers: responseHeaders,
+                status: responseStatusCode,
+              }),
+            ),
           )
 
           pipe(body)

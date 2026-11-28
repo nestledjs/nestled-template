@@ -16,7 +16,7 @@ import {
   type UploadOrganizationLogoMutation,
   RemoveOrganizationLogo,
 } from '@nestled-template/shared/sdk'
-import { useApolloClient, useReadQuery, type QueryRef, useMutation } from '@apollo/client/react'
+import { useApolloClient, useReadQuery, useMutation } from '@apollo/client/react'
 import { Avatar, AvatarUpload } from '@nestled-template/web-ui'
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
@@ -98,7 +98,7 @@ function hasPermission(permissions: readonly Permission[] | null | undefined, pe
 }
 
 export default function OrganizationSettings() {
-  const loaderData = useLoaderData() as { myOrganizationsQueryRef: QueryRef<MyOrganizationsQuery> }
+  const loaderData = useLoaderData<typeof loader>()
   const { data } = useReadQuery(loaderData.myOrganizationsQueryRef)
   const { activeOrganizationMember, user } = useGlobalCtx()
   const organizations = data?.myOrganizations || []

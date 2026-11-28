@@ -3,7 +3,7 @@ import { useLoaderData } from 'react-router'
 import { CalendarIcon, CheckCircleIcon, UserCircleIcon } from '@heroicons/react/24/outline'
 import { apolloLoader } from '@nestled-template/shared/apollo'
 import { Me, type MeQuery, ResendMyVerificationEmail } from '@nestled-template/shared/sdk'
-import { useReadQuery, QueryRef, useMutation } from '@apollo/client/react'
+import { useReadQuery, useMutation } from '@apollo/client/react'
 import { ExportDataSection, TransferOwnershipSection, DangerZoneSection } from './_shared-sections'
 
 export const loader = apolloLoader()(({ preloadQuery }) => {
@@ -12,7 +12,7 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
 })
 
 export default function AccountSettings() {
-  const loaderData = useLoaderData() as { meQueryRef: QueryRef<MeQuery> }
+  const loaderData = useLoaderData<typeof loader>()
   const { data } = useReadQuery(loaderData.meQueryRef)
   const user = data?.me
   const [isResendingEmail, setIsResendingEmail] = useState(false)

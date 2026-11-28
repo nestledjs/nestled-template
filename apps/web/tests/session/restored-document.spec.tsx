@@ -13,8 +13,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetActiveOrganizationSessionChange,
+  ACTIVE_ORGANIZATION_STORAGE_KEY,
   clearActiveOrganizationForSessionChange,
   makeClient,
+  storeActiveOrganizationId,
 } from '@nestled-template/shared/apollo'
 import { ErrorBoundary, Layout } from '../../app/root'
 import { OFFLINE_TITLE, SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
@@ -337,6 +339,30 @@ describe('a document load that is awaited', () => {
       expect(location.reload).toHaveBeenCalledTimes(1)
     },
   )
+
+  it.each(['/private', '/public'])(
+    'keeps the organization the next session chose when it loads the document again (%s)',
+    async path => {
+      await renderApp(path)
+      clearActiveOrganizationForSessionChange()
+      // Stored by the document this one was left for, after it loaded.
+      localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, 'org-of-the-next-user')
+      restore()
+
+      expect(page()).not.toBeVisible()
+      expect(location.reload).toHaveBeenCalledTimes(1)
+      expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBe('org-of-the-next-user')
+    },
+  )
+
+  it("still forgets the stored organization when another user's verdict reloads a document that was not leaving", async () => {
+    storeActiveOrganizationId('org-of-user-a')
+    await renderApp('/public')
+    verdict = USER_B
+    restore()
+    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
+    expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBeNull()
+  })
 
   it('and offline it ends in the offline screen', async () => {
     await renderApp()

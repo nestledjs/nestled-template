@@ -1,4 +1,4 @@
-import { ExecutionContext, Injectable } from '@nestjs/common'
+import { ExecutionContext, Injectable, Logger } from '@nestjs/common'
 import { GqlExecutionContext } from '@nestjs/graphql'
 import { ThrottlerException, ThrottlerGuard, ThrottlerLimitDetail } from '@nestjs/throttler'
 
@@ -32,6 +32,62 @@ export class GqlThrottlerGuard extends ThrottlerGuard {
   ): Promise<void> {
     throw new ThrottlerException(
       'Too many attempts from this address. Please wait a while and try again.',
+    )
+  }
+}
+
+/**
+ * The same guard, keyed by the authenticated user instead of the client address. Available as a
+ * tool: no template resolver uses it.
+ *
+ * On an operation already behind `GqlAuthGuard`, the account is the meaningful subject. An address
+ * key is too loose (one user rotating addresses gets a fresh bucket each time) and too tight (an
+ * office behind one NAT address shares a single bucket). Use it on authenticated mutations that
+ * cost something to serve, such as one that sends mail.
+ *
+ * ORDER MATTERS: declare it after the auth guard, `@UseGuards(GqlAuthGuard, GqlUserThrottlerGuard)`.
+ * Nest runs guards in the order listed, so listing this one first runs it before `req.user` exists,
+ * and every caller falls back to the address bucket. `assertUserKeyed` logs a warning when that
+ * happens rather than degrading quietly.
+ *
+ * It reuses the `signup` throttler AuthModule registers rather than a second named one:
+ * `ThrottlerGuard` evaluates every configured throttler, so a new one would also apply to
+ * `register`, `forgotPassword` and `resendVerificationEmail`. Buckets stay separate anyway, because
+ * the storage key includes the resolver class and handler name. Set a per-operation limit with
+ * `@Throttle({ signup: { limit, ttl } })`.
+ */
+@Injectable()
+export class GqlUserThrottlerGuard extends GqlThrottlerGuard {
+  private readonly logger = new Logger(GqlUserThrottlerGuard.name)
+
+  protected override async getTracker(req: Record<string, unknown>): Promise<string> {
+    const userId = (req['user'] as { id?: string } | undefined)?.id
+    if (userId) {
+      return `user:${userId}`
+    }
+    this.assertUserKeyed()
+    return `ip:${await super.getTracker(req)}`
+  }
+
+  /**
+   * Reached only when the guard runs without an authenticated request: it was declared before the
+   * auth guard, or used on a resolver without one. The limit still applies, keyed by address, so the
+   * operation is never left unthrottled; the warning is there because the weaker key is a
+   * misconfiguration, not a design choice.
+   */
+  private assertUserKeyed(): void {
+    this.logger.warn(
+      'GqlUserThrottlerGuard ran with no authenticated user; falling back to IP keying. ' +
+        'Declare it after GqlAuthGuard in @UseGuards to key by account.',
+    )
+  }
+
+  protected override async throwThrottlingException(
+    _context: ExecutionContext,
+    _detail: ThrottlerLimitDetail,
+  ): Promise<void> {
+    throw new ThrottlerException(
+      'Too many requests from this account. Please wait a while and try again.',
     )
   }
 }

@@ -352,7 +352,9 @@ describe('AcceptInvitation Component', () => {
           variables: { input: { token: 'second-token' } },
         })
       })
-      expect(screen.getByText('Welcome!')).toBeInTheDocument()
+      // In flight: accepting, not yet joined.
+      expect(screen.getByText('Accepting your invitation')).toBeInTheDocument()
+      expect(screen.queryByText('Welcome!')).not.toBeInTheDocument()
     })
 
     it('ignores a superseded invitation that fails after the current one', async () => {
@@ -539,7 +541,9 @@ describe('AcceptInvitation Component', () => {
       await new Promise(resolve => setTimeout(resolve, 1800))
 
       expect(screen.queryByText('Members area')).not.toBeInTheDocument()
-      expect(screen.getByText('Welcome!')).toBeInTheDocument()
+      // The second invitation is still in flight: accepting, not joined.
+      expect(screen.getByText('Accepting your invitation')).toBeInTheDocument()
+      expect(screen.queryByText('Welcome!')).not.toBeInTheDocument()
     })
 
     it('redirects once when the effect re-runs after the acceptance succeeded', async () => {

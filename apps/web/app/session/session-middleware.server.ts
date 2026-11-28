@@ -202,6 +202,16 @@ function withSessionCacheControl(response: Response): Response {
 }
 
 /**
+ * `SESSION_CACHE_CONTROL` for a response the session middleware never sees, by the same rule: a URL
+ * that matches no route is answered (a 404 page, or a `.data` 404) without running any middleware.
+ * Called from entry.server for every document and `.data` response; where the middleware ran, it
+ * changes nothing. Anonymous responses are unchanged.
+ */
+export function withRequestSessionCacheControl(request: Request, response: Response): Response {
+  return sessionCookies(request).length > 0 ? withSessionCacheControl(response) : response
+}
+
+/**
  * The root route's middleware: judges the session once per request (document loads, client
  * navigations and revalidations alike, before any loader runs) and stores the verdict in
  * `sessionContext`. On a `signed-out/rejected` verdict it also expires both session cookie scopes

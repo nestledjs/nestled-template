@@ -12,7 +12,7 @@ import {
   RemoveUserAvatar,
   type UploadUserAvatarMutation,
 } from '@nestled-template/shared/sdk'
-import { useApolloClient, useReadQuery, type QueryRef, useMutation } from '@apollo/client/react'
+import { useApolloClient, useReadQuery, useMutation } from '@apollo/client/react'
 import { Form } from '@nestledjs/forms'
 import { FormFieldClass } from '@nestledjs/forms-core'
 import { formTheme } from '@nestled-template/shared/styles'
@@ -157,7 +157,7 @@ function AvatarSection({
 }
 
 export default function ProfileSettings() {
-  const loaderData = useLoaderData() as { meQueryRef: QueryRef<MeQuery> }
+  const loaderData = useLoaderData<typeof loader>()
   const { data } = useReadQuery(loaderData.meQueryRef)
   const user = data?.me
   const client = useApolloClient()

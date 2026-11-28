@@ -1,0 +1,60 @@
+id: 2026-11-28-session-cache-control-unmatched-urls
+title: >-
+  A URL that matches no route is private, no-store too, when the request carries a session
+priority: normal
+area: web
+type: security
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-session-starts-in-fresh-document
+  - 2026-11-24-forward-duplicate-session-cookies
+
+intent: >
+  Every response to a request that carries a session cookie is `Cache-Control: private, no-store`
+  (`SESSION_CACHE_CONTROL`), set by the root route's session middleware. A URL that matches no
+  route runs no middleware: React Router answers it with the root ErrorBoundary's 404 (or a `.data`
+  404) directly, so that one response kept no Cache-Control. The 404 page is rendered with the root
+  layout, which can show whoever is signed in.
+
+
+  apps/web/app/session/session-middleware.server.ts gains `withRequestSessionCacheControl(request,
+  response)`, the middleware's own rule for one response. apps/web/app/entry.server.tsx applies it
+  to every document it renders and exports `handleDataRequest`, React Router's hook for every
+  `.data` response, which applies it too. Where the middleware ran it changes nothing; anonymous
+  responses are unchanged.
+
+
+  Specs: apps/web/tests/session/session-cache-control.spec.tsx (the production request handler
+  over HTTP).
+
+why: >
+  A shared cache or the browser's history could keep a signed-in variant of a 404 page.
+
+affectedPaths:
+  - apps/web/app/session/session-middleware.server.ts
+  - apps/web/app/entry.server.tsx
+  - apps/web/tests/session/session-cache-control.spec.tsx
+
+skipIf:
+  - The project has not adopted 2026-11-24-session-starts-in-fresh-document (no `SESSION_CACHE_CONTROL`).
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - >-
+    Against a production build: `curl -sI -H 'Cookie: <name>=x' <web>/no-such-page`, where `<name>`
+    is the project's own session cookie name (`VITE_COOKIE_NAME` on the web, `API_COOKIE_NAME` on
+    the API; the template's default is `__session`), shows `cache-control: private, no-store`, and
+    without the cookie no Cache-Control.
+
+agentHints:
+  - >
+    A project that already exports `handleDataRequest` from entry.server.tsx calls
+    `withRequestSessionCacheControl` on the response it returns there. One with a catch-all (`*`)
+    route under the root gets the header from the middleware already, for HTML; check `.data` too.
+  - >
+    Service workers. Cache Storage ignores `no-store`: a service worker that stores navigation
+    responses can serve a signed-in page offline, to whoever opens the browser next. The template
+    ships none. A project with one must never cache a navigation (or `.data`) response to a request
+    that carried a session cookie, or must exclude every private route and the root layout's data
+    from its caches, and should delete its caches on sign-out. Precaching static assets only is the
+    safe pattern. Record the trade-off (offline pages versus a shared device) in the project.

@@ -39,6 +39,7 @@ import {
   SERVER_TROUBLE_MESSAGE,
   SERVER_TROUBLE_TITLE,
 } from '../app/api-unavailable'
+import { renderInDataRouter } from './helpers/render-in-data-router'
 
 /**
  * The root ErrorBoundary's own `error` prop type, whatever the app declares it as (`unknown` here;
@@ -276,20 +277,20 @@ describe('root error boundary for a network error', () => {
 
   it('renders the recovering screen instead of a static one', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(<ErrorBoundary error={boundaryError(new TypeError('Failed to fetch'))} />)
+    renderInDataRouter(<ErrorBoundary error={boundaryError(new TypeError('Failed to fetch'))} />)
     expect(screen.getByRole('heading', { name: SERVER_DOWN })).toBeInTheDocument()
   })
 
   it('labels the button "Try again", not "Refresh Page"', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(<ErrorBoundary error={boundaryError(new TypeError('Load failed'))} />)
+    renderInDataRouter(<ErrorBoundary error={boundaryError(new TypeError('Load failed'))} />)
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
     expect(screen.queryByText(/refresh/i)).not.toBeInTheDocument()
   })
 
   it('treats a proxy 503 route response as a connectivity failure', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(
+    renderInDataRouter(
       <ErrorBoundary
         error={boundaryError(new ErrorResponseImpl(503, 'Service Unavailable', null))}
       />,
@@ -301,7 +302,7 @@ describe('root error boundary for a network error', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const reload = vi.fn()
     vi.stubGlobal('location', { ...globalThis.location, reload })
-    render(
+    renderInDataRouter(
       <ErrorBoundary error={boundaryError(new Error('Cannot read properties of undefined'))} />,
     )
 
@@ -662,8 +663,20 @@ describe('root error boundary for a route error response', () => {
     vi.unstubAllGlobals()
   })
 
+  it('renders a route 401 inside a data router (its retry revalidates)', () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+    renderInDataRouter(
+      <ErrorBoundary error={boundaryError(new ErrorResponseImpl(401, 'Unauthorized', null))} />,
+    )
+
+    expect(screen.getByText('401')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
   it('shows a not-found page for a 404', () => {
-    render(<ErrorBoundary error={boundaryError(new ErrorResponseImpl(404, 'Not Found', null))} />)
+    renderInDataRouter(
+      <ErrorBoundary error={boundaryError(new ErrorResponseImpl(404, 'Not Found', null))} />,
+    )
 
     expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
     expect(screen.getByText('404')).toBeInTheDocument()
@@ -674,7 +687,7 @@ describe('root error boundary for a route error response', () => {
   it('shows the status and its text for a 500', () => {
     const reload = vi.fn()
     vi.stubGlobal('location', { ...globalThis.location, reload })
-    render(
+    renderInDataRouter(
       <ErrorBoundary
         error={boundaryError(new ErrorResponseImpl(500, 'Internal Server Error', null))}
       />,
@@ -756,7 +769,7 @@ describe('offline vs server trouble', () => {
 
   it('says server trouble for the server-rendered 503 (the page reached the browser)', () => {
     networkDown()
-    render(
+    renderInDataRouter(
       <ErrorBoundary
         error={boundaryError(new ErrorResponseImpl(503, 'Service Unavailable', null))}
       />,

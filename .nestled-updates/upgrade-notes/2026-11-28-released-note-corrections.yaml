@@ -1,0 +1,79 @@
+id: 2026-11-28-released-note-corrections
+title: >-
+  Corrections to two released notes: fast-xml-parser also arrives through older @aws-sdk/xml-builder
+  releases, and the security events input differs per project
+priority: normal
+area: infra
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-dependency-alerts
+  - 2026-11-24-security-pages-typed-variables
+
+intent: >
+  Released notes are not rewritten, so the corrections are here. The template itself changes
+  nothing for this note.
+
+
+  1. 2026-11-24-dependency-alerts names one consumer of fast-xml-parser, @google-cloud/storage. A
+  project can have a second: @aws-sdk/xml-builder (pulled in by @aws-sdk/client-s3 and the other AWS
+  SDK v3 clients) pinned fast-xml-parser exactly up to 3.972.30 (5.7.3 there; 5.2.5 in earlier
+  releases), and depends on it no longer from 3.972.31 on. The template's lockfile resolves
+  3.972.37, so its only fast-xml-parser is the one under @google-cloud/storage. A project whose
+  lockfile still resolves an older xml-builder keeps a fast-xml-parser below 5.12.0 after applying
+  that note, because the note's temporary override is scoped to @google-cloud/storage.
+
+
+  2. 2026-11-24-security-pages-typed-variables describes the template's `SecurityEventPagingInput`
+  (`take`, `skip`, `orderDirection`; enum values ASC and DESC). The events input differs per
+  project: its type name, its fields (some have `orderBy`), and its enum names. Part 1 of that note
+  is a fix to the template's variables, not a list to copy, and the expected variables in
+  apps/web/tests/routes/settings/security-events-variables.spec.ts are the project's own.
+
+why: >
+  A project that followed the first note exactly could still report fast-xml-parser below 5.12.0 and
+  not know where it came from; one that followed the second literally could drop a field its own API
+  accepts.
+
+affectedPaths:
+  - package.json
+  - pnpm-lock.yaml
+  - apps/web/app/routes/settings/security.tsx
+  - apps/web/app/routes/settings/security.events.tsx
+  - apps/web/tests/routes/settings/security-events-variables.spec.ts
+
+skipIf:
+  - >-
+    Part 1: `pnpm why -r fast-xml-parser` lists no version below 5.12.0, and nothing under
+    @aws-sdk/xml-builder.
+  - >-
+    Part 2: the project's security pages and security-events-variables.spec.ts already match its own
+    api-schema.graphql (the 2026-11-24 note was applied against the project's own input).
+
+verification:
+  - pnpm why -r fast-xml-parser
+  - pnpm why -r @aws-sdk/xml-builder
+  - pnpm install --frozen-lockfile
+  - pnpm exec nx test web --skip-nx-cache
+  - pnpm build:api
+
+agentHints:
+  - >-
+    Part 1. Run `pnpm why -r fast-xml-parser`. If a version below 5.12.0 sits under
+    @aws-sdk/xml-builder, move the AWS SDK within the project's own ranges first:
+    `pnpm update -r "@aws-sdk/*"` (or the clients the project lists, such as @aws-sdk/client-s3 and
+    @aws-sdk/s3-request-presigner), then check that `pnpm why -r @aws-sdk/xml-builder` shows 3.972.31
+    or later and that fast-xml-parser is gone from under it. Only if the SDK cannot move, add a scoped
+    override `"@aws-sdk/xml-builder>fast-xml-parser": "5.12.0"` and say in the report why the SDK
+    stayed. Never override fast-xml-parser globally.
+  - >-
+    Part 1. An AWS SDK update can move many @smithy/* and @aws-sdk/* packages at once. Read the
+    lockfile diff, run the API build and the tests of whatever uses S3 or another AWS client, and
+    say in the report which services the merge redeploys (package.json and the lockfile changed).
+  - >-
+    Part 2. Read the security-events argument in the project's own api-schema.graphql before
+    changing the loaders or the spec. Keep the fields it has (an `orderBy` included), write enum
+    values with the generated SDK's names, and set the expected variables in
+    security-events-variables.spec.ts to what the project's loaders send. If the 2026-11-24 note was
+    applied by copying the template's variables, check whether that removed a field the project's API
+    accepts, and restore it.

@@ -13,7 +13,7 @@ import {
   type RevokeApiTokenMutationVariables,
 } from '@nestled-template/shared/sdk'
 import { useGlobalCtx } from '@nestled-template/web'
-import { useMutation, useReadQuery, type QueryRef } from '@apollo/client/react'
+import { useMutation, useReadQuery } from '@apollo/client/react'
 import { CreateTokenModal, McpSetupCards, NewTokenDisplay, TokenMeta } from './_mcp-shared'
 
 const AVAILABLE_TOOLS = [
@@ -27,9 +27,7 @@ export const loader = apolloLoader()(({ preloadQuery }) => {
 })
 
 export default function AiSettingsPage() {
-  const loaderData = useLoaderData() as {
-    tokensQueryRef: QueryRef<ListApiTokensQuery>
-  }
+  const loaderData = useLoaderData<typeof loader>()
   const { user, activeOrganization, activeOrganizationMember } = useGlobalCtx()
   const { data } = useReadQuery(loaderData.tokensQueryRef)
 

@@ -1,0 +1,65 @@
+id: 2026-11-28-apollo-operation-scan-follow-ups
+title: >-
+  The Apollo operation guard reads every app's app/ and src/ folder (a React Native app is covered
+  without an edit), and refuses a loader preload with fetchPolicy 'no-cache'
+priority: normal
+area: web
+type: correctness
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-security-pages-typed-variables
+  - 2026-11-28-loader-data-types-under-middleware
+
+intent: >
+  scripts/apollo-operation-types.spec.mjs, the guard that refuses an Apollo call whose variables are
+  left untyped, changes in two ways.
+
+
+  1. Folders. It read a fixed list, `CLIENT_FOLDERS`, whose only app folder was `apps/web/app`, so an
+  app a project added (a React Native or Expo app under `apps/<name>/src`, a second React Router app)
+  was never read, and its untyped calls passed. The list is now `CLIENT_LIBRARIES` (the libraries,
+  as before), and `clientFolders()` adds every `apps/<name>/app` and `apps/<name>/src` that exists
+  and holds Apollo client code (a file importing `@apollo/client` or the shared Apollo library).
+  Server apps are never read: a database client's `pool.query<Row>(sql, params)` has the shape the
+  guard refuses but is not an Apollo call. `SKIPPED_APP_FOLDERS`, exported from the spec, lists the
+  apps left out whatever they import (`apps/api` and `apps/api-e2e` in the template), and is the one
+  place a project adds its own.
+
+
+  2. `no-cache` preloads. A loader's `preloadQuery(Doc, { fetchPolicy: 'no-cache' })` keeps its
+  answer out of the browser's cache, so a later mutation or refetch of the same objects does not
+  update what the page shows. The template's intent for "always ask the API" is `network-only`,
+  which still writes the answer, and every template preload that asks the API uses it. The guard now
+  refuses a `preloadQuery` call whose options literal sets `fetchPolicy: 'no-cache'`. The template
+  has none; the check is for projects. Other calls are not affected: the session middleware's
+  server-side Me query and a `no-cache` mutation are deliberate.
+
+why: >
+  A guard that does not read a project's client folder reports nothing for it, which looks like a
+  pass. A `no-cache` preload shows stale data after the user changes it, and nothing points at the
+  fetch policy.
+
+affectedPaths:
+  - scripts/apollo-operation-types.spec.mjs
+
+verification:
+  - node --test scripts/apollo-operation-types.spec.mjs
+  - node --test scripts/*.spec.mjs
+
+agentHints:
+  - >-
+    This replaces the 2026-11-24-security-pages-typed-variables hint to add client folders to
+    `CLIENT_FOLDERS`: app folders are now found by themselves. Move a project's own client libraries
+    from its `CLIENT_FOLDERS` into `CLIENT_LIBRARIES`, and drop app folders from it.
+  - >-
+    The first run may report calls in an app that was never read before. Fix them as that note
+    says (drop the single type argument; the generated document types both), never by removing the
+    folder. If the project's API or another server app is not under `apps/api`, and it imports
+    `@apollo/client` (a server-side client of another API, say), add `apps/<name>` to
+    `SKIPPED_APP_FOLDERS` with a comment naming the reason. Do not skip an app that renders a UI.
+  - >-
+    For each `no-cache` preload it reports, change it to `network-only`, then check the page: it
+    should show fresh data on every load, and the new value after a mutation. If an answer truly
+    must not stay in the browser's cache, a preload is the wrong tool (it exists to hydrate the
+    cache): fetch it in the loader without Apollo's preload, or in the component, say so in the
+    report, and do not weaken the check.

@@ -1,0 +1,68 @@
+id: 2026-11-28-return-url-follow-ups
+title: >-
+  The return URL check is stricter about encoded paths, and a sign-in returns to the API host's MCP
+  authorization request
+priority: high
+area: web
+type: security
+delivery: code-patch
+applyAfter:
+  - 2026-11-24-session-hardening-follow-ups
+  - 2026-11-24-security-pages-typed-variables
+
+intent: >
+  Two changes to apps/web/app/session/return-url.ts.
+
+
+  1. Hardening. `isSignOutPath` normalises a return path once, the way a server would (one
+  percent-decode, dot segments resolved, slashes, path parameters, a trailing slash and case
+  dropped), and checks every reading of it, so an encoded separator counts as what it decodes to. A
+  path that still holds a percent-encoded ASCII character after that one decode is refused outright
+  (`safeReturnUrl` falls back to the dashboard). The repeated decode loop is gone. Ordinary paths,
+  including non-ASCII ones and any query string, are unchanged.
+
+
+  2. The MCP authorization flow. The API's `/api/mcp/authorize` sends a signed-out caller to
+  `/login?redirect=<the whole authorization URL>`. Where the API has a host of its own, that URL is
+  on the API host, and `safeReturnUrl` reduced it to a path on the web host, which does not exist
+  (404 after signing in). `safeReturnUrl(raw, apiOrigin)` now keeps exactly that URL whole: same
+  scheme, host and port as the configured API origin (`VITE_API_URL`, never the request), no
+  credentials, the path `/api/mcp/authorize` exactly; its fragment is dropped. Every other absolute
+  URL is reduced to a path on this origin as before, so no other off-origin target is reachable.
+
+
+  Specs: apps/web/tests/routes/_public/login.spec.tsx (`safeReturnUrl`).
+
+why: >
+  A crafted link could end a sign-in in a sign-out. And on a deployment with separate API and web
+  hosts, connecting an MCP client failed right after the user signed in.
+
+affectedPaths:
+  - apps/web/app/session/return-url.ts
+  - apps/web/tests/routes/_public/login.spec.tsx
+
+skipIf:
+  - The project has no apps/web/app/session/return-url.ts (it has not adopted 2026-11-24-session-hardening-follow-ups).
+
+verification:
+  - pnpm exec nx test web --skip-nx-cache
+  - >-
+    On a deployment with separate API and web hosts, add the MCP server to a client while signed
+    out: after signing in the browser goes to the API's consent hand-off, not a 404.
+
+agentHints:
+  - >
+    Take return-url.ts whole if the project has not changed it. A project that added its own
+    sign-out paths keeps them in `SIGN_OUT_PATHS`.
+  - >
+    Part 2 needs the MCP authorization server (libs/api/custom/src/lib/plugins/mcp). A project
+    without it skips part 2, or keeps the default argument, which changes nothing there. A project
+    whose MCP path is not `/api/mcp` changes `MCP_AUTHORIZE_PATH`; one whose web and API share an
+    origin sees no change.
+  - >
+    The web reads the API origin at build time (`VITE_API_URL`). If the API's public origin differs
+    from that value (a proxy in front of it), the URL the API builds does not match and is reduced to
+    a path as before: set `VITE_API_URL` to the API's public origin.
+  - >
+    Do not widen the allowance (another path, a prefix match, a host suffix): it is the one off-origin
+    target a sign-in may go to.
