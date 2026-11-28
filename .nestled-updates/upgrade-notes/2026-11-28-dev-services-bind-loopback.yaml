@@ -1,0 +1,63 @@
+id: 2026-11-28-dev-services-bind-loopback
+title: >-
+  Local development services (Postgres, test Postgres, Redis, MailHog) are published on 127.0.0.1
+  only, not on every network interface
+priority: high
+area: infra
+type: security
+delivery: code-patch
+
+intent: >
+  The defect. `.dev/docker-compose.yml` published every development service as
+  `'${PORT_VAR:-default}:<container port>'`, which Docker binds to 0.0.0.0: every network interface
+  of the machine. Docker writes its own firewall rules for published ports, so a host firewall such
+  as ufw does not block them. Any machine running the stack with a public address (a cloud
+  development box, a CI runner, a laptop on a shared network) exposed a Redis with no password, a
+  Postgres with the default development credentials, and MailHog's web UI with every captured
+  email. An exposed development Redis set up this way has been taken over by an internet worm and
+  used to run a cryptominer.
+
+
+  The fix. Prefix every published port in `.dev/docker-compose.yml` with `127.0.0.1:`:
+
+  `'127.0.0.1:${POSTGRES_PORT:-5432}:5432'`, `'127.0.0.1:${POSTGRES_TEST_PORT:-5433}:5432'`,
+  `'127.0.0.1:${REDIS_PORT:-6379}:6379'`, `'127.0.0.1:${MAILHOG_SMTP_PORT:-1025}:1025'` and
+  `'127.0.0.1:${MAILHOG_UI_PORT:-8025}:8025'`.
+
+  Keep each project's own port variables and defaults; only the bind address is added. Do the same
+  for any service the project added to its compose file (a worker, a search engine, a second
+  database). Volumes, service names and the compose network are unchanged, so containers that talk
+  to each other by service name are not affected, and tools on the host that use `localhost` or
+  `127.0.0.1` keep working.
+
+why: >
+  Development services have no authentication worth the name, and published on every interface
+  they are reachable by anyone who can reach the machine. Loopback binding keeps them reachable
+  from the machine itself, which is the only place they are meant to be used.
+
+affectedPaths:
+  - .dev/docker-compose.yml
+
+verification:
+  - "! grep -nE \"^[[:space:]]+-[[:space:]]+['\\\"]?[$][{][A-Z_]+_PORT\" .dev/docker-compose.yml"
+  - docker compose -f .dev/docker-compose.yml --profile '*' config --format json | node -e "const c=JSON.parse(require('fs').readFileSync(0));const bad=Object.entries(c.services).flatMap(([n,s])=>(s.ports||[]).filter(p=>p.host_ip!=='127.0.0.1').map(p=>n+':'+p.published));if(bad.length){console.error('not on loopback:',bad.join(', '));process.exit(1)}console.log('all published ports on 127.0.0.1')"
+
+agentHints:
+  - >-
+    Before changing anything, search the repo and its scripts for anything that reaches these
+    services through the machine's own network address or from another machine (a remote database
+    GUI, a second box, a container started outside this compose file with host networking). Those
+    stop working after the change by design; say so in your report rather than widening the bind.
+  - >-
+    If a client on the host fails with ECONNREFUSED on ::1 after the change, it resolved `localhost`
+    to IPv6 first and did not fall back. Use `127.0.0.1` in that client's URL rather than binding
+    the service to `::1` or to every interface.
+  - >-
+    A running stack keeps its old bindings until its containers are recreated. Run
+    `docker compose -f .dev/docker-compose.yml up -d` (it recreates the changed services; data
+    volumes are kept) and check `docker ps`, which should show `127.0.0.1:<port>->` for every
+    service. Say in your report that existing checkouts and development boxes need this.
+  - >-
+    Optional, not part of this note: a password on the development Redis
+    (`command: redis-server --requirepass ...` and a matching REDIS_URL). It changes every
+    checkout's .env, so it is left to a later note.
