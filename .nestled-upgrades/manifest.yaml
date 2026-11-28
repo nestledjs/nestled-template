@@ -1,7 +1,7 @@
 schemaVersion: 1
 generatedAt: 2026-11-28
 channels:
-  canary: 2026.11.15
+  canary: 2026.11.16
   stable: 2026.11.15
 releases:
   - id: 2026.08.0
@@ -3120,3 +3120,200 @@ releases:
           - "A running stack keeps its old bindings until its containers are recreated. Run `docker compose -f .dev/docker-compose.yml up -d` (it recreates the changed services; data volumes are kept) and check `docker ps`, which should show `127.0.0.1:<port>->` for every service. Say in your report that existing checkouts and development boxes need this."
           - "Optional, not part of this note: a password on the development Redis (`command: redis-server --requirepass ...` and a matching REDIS_URL). It changes every checkout's .env, so it is left to a later note."
         patch: patches/2026-11-28-dev-services-bind-loopback.diff
+  - id: 2026.11.16
+    date: 2026-11-28
+    title: Session follow-ups, invitation sign-in, throttler tool, small fixes
+    templateCommit: 89d4d7b
+    notes:
+      - id: 2026-11-28-dev-redis-restart-policy
+        title: The development Redis comes back after a reboot like the other dev services; the dev Dockerfile says how a container reaches them now that they are on 127.0.0.1
+        delivery: code-patch
+        intent: "1. Restart policy. In `.dev/docker-compose.yml`, `postgres`, `postgres-test` and `mailhog` have `restart: unless-stopped`; `redis` had none, so after a reboot or a Docker restart every other service came back and Redis stayed down, and the API failed on its first Redis call rather than at start. `redis` gains `restart: unless-stopped`; its `127.0.0.1:` port binding is unchanged. scripts/dev-compose.spec.mjs checks that every service in the file has `restart: unless-stopped` and publishes its ports on 127.0.0.1 only. 2. Comment only. `.dev/Dockerfile` gains a comment on running the image against the development services: join the compose network (`docker run --network <compose project name>_default …`) and use the service names as hosts (`postgres`, `redis`, …) with the container ports. Since 2026-11-28-dev-services-bind-loopback the services are published on 127.0.0.1 only, so `host.docker.internal` still reaches them with Docker Desktop but not on Linux, where it is the bridge's address. The image and its build are unchanged."
+        area: infra
+        affectedPaths:
+          - .dev/docker-compose.yml
+          - .dev/Dockerfile
+          - scripts/dev-compose.spec.mjs
+        verification:
+          - node --test scripts/dev-compose.spec.mjs
+          - "docker compose -f .dev/docker-compose.yml --profile '*' config --format json | node -e \"const c=JSON.parse(require('fs').readFileSync(0));const bad=Object.entries(c.services).filter(([,s])=>s.restart!=='unless-stopped').map(([n])=>n);if(bad.length){console.error('no restart policy:',bad.join(', '));process.exit(1)}console.log('every service restarts')\""
+        skipIf:
+          - "Part 1: the project's dev Redis already has a restart policy (or the project has no dev Redis). Part 2 still applies wherever the project documents how a container reaches the dev services."
+        agentHints:
+          - "Add `restart: unless-stopped` to the project's own services in the compose file too (a worker, a search engine, a second database), and keep each port's `127.0.0.1:` prefix. If a service is meant to stay down unless started by hand, keep it without the policy and add a comment saying so; the spec then needs that service named as an exception, with the reason."
+          - "A running stack picks up the policy only when its containers are recreated: run `docker compose -f .dev/docker-compose.yml up -d`, which recreates the changed services and keeps the data volumes. Say in your report that existing checkouts and development boxes need this."
+          - "The Dockerfile change is a comment. If the project's own docs, scripts or Dockerfile tell users to reach the dev database or Redis through `host.docker.internal`, change them the same way. The compose network is `<name>_default`, where `<name>` is the `name:` at the top of the compose file."
+          - scripts/dev-compose.spec.mjs reads the compose file with the `yaml` package, already a root dependency of the template; check the project has it (`pnpm why yaml`) before adding the spec.
+        applyAfter:
+          - 2026-11-28-dev-services-bind-loopback
+        patch: patches/2026-11-28-dev-redis-restart-policy.diff
+      - id: 2026-11-28-gql-user-throttler-guard
+        title: "A per-account GraphQL rate limit is available: GqlUserThrottlerGuard keys on the signed-in user instead of the client address (a tool only; no template resolver uses it)"
+        delivery: code-patch
+        intent: "The template's only GraphQL rate limit, `GqlThrottlerGuard`, keys on the client address. That suits the signed-out mutations it guards (register, forgotPassword, resendVerificationEmail), but not a signed-in operation that costs something to serve, such as one that sends mail: one account rotating addresses gets a fresh bucket each time, and everyone behind one office NAT address shares a single bucket. libs/api/utils/src/lib/guards/gql-throttler.guard.ts gains `GqlUserThrottlerGuard`, beside `GqlThrottlerGuard` and built on it: - It keys on the authenticated user (`user:<id>`). Only when there is no `req.user` does it fall back to the address (`ip:<address>`), so the operation is never left unthrottled, and the two kinds of key cannot collide. - `assertUserKeyed` logs a warning on that fallback. It is reached only when the guard runs before the auth guard, or on a resolver without one, which is a misconfiguration rather than a choice. Declare it after the auth guard: `@UseGuards(GqlAuthGuard, GqlUserThrottlerGuard)`. Nest runs guards in the order listed. - It reuses the `signup` throttler AuthModule registers rather than adding a named one. `ThrottlerGuard` evaluates every configured throttler, so a second one would also start applying to the three signed-out mutations. Buckets stay separate anyway, because the storage key includes the resolver class and handler name. Set an operation's own limit with `@Throttle({ signup: { limit, ttl } })`. - The limit message names the account rather than the address. Two consequences of sharing that throttler: `SIGNUP_THROTTLE_ENABLED=false` turns off every per-account limit along with the signup ones, and an operation without its own `@Throttle` gets the signup limit, which is tight: 3 requests an hour by default (`SIGNUP_THROTTLE_LIMIT`, `SIGNUP_THROTTLE_TTL`). No template resolver uses it, so nothing changes at runtime. The spec beside it covers the user key, the separation of two accounts behind one address, the address fallback and its warning, and the message."
+        area: api
+        affectedPaths:
+          - libs/api/utils/src/lib/guards/gql-throttler.guard.ts
+          - libs/api/utils/src/lib/guards/gql-throttler.guard.spec.ts
+        verification:
+          - pnpm exec nx test api-utils --skip-nx-cache
+          - pnpm exec nx typecheck api-utils --skip-nx-cache
+          - pnpm exec nx build api --skip-nx-cache
+        skipIf:
+          - "The project already has a GraphQL throttler guard keyed on the authenticated user (look for a `getTracker` override that reads `req.user`). Compare it with this one: keep it if it also warns on the address fallback and reuses the existing named throttler; otherwise adapt it to do both."
+        agentHints:
+          - Add the class and its spec cases; do not apply the guard to any resolver as part of this note. Choosing which operations get a per-account limit is a product decision for the project.
+          - "The guard's private logger is named `userKeyLogger`, not `logger`: @nestjs/throttler 6.7 declares a protected `logger` on ThrottlerGuard, so a private field named `logger` fails to compile (TS2415) on 6.7 and later. Keep the name, and update the spec's `Object.defineProperty(guard, 'userKeyLogger', …)` with it."
+          - "When a project adopts it, list it after the auth guard, `@UseGuards(GqlAuthGuard, GqlUserThrottlerGuard)`, and give the operation its own limit with `@Throttle({ signup: { limit, ttl } })` (ttl in milliseconds). Where the auth guard is already on the resolver class (`@UseGuards(GqlAuthGuard)` above the class, as on the storage resolver), put only `@UseGuards(GqlUserThrottlerGuard)` on the method: class guards run before method guards, and listing both again runs the token validation and the organization lookup twice."
+          - "A warning \"ran with no authenticated user\" in the logs means the order is wrong or the resolver has no auth guard. On a `@Public()` resolver every anonymous request takes the address fallback, so the warning is logged once per such request: use `GqlThrottlerGuard` there instead."
+          - "The guard needs the throttler that AuthModule registers (`ThrottlerModule.forRootAsync`, named `signup`). If the project registers it elsewhere or under another name, use that name in `@Throttle`, and do not add a second named throttler. The module's `skipIf` turns this guard off as well: with `SIGNUP_THROTTLE_ENABLED=false` (the API e2e setup) it limits nothing."
+          - If the project's request user has its id under another field than `id`, change the one line in `getTracker` that reads it, and the spec's request objects to match.
+        patch: patches/2026-11-28-gql-user-throttler-guard.diff
+      - id: 2026-11-28-loader-data-types-under-middleware
+        title: useLoaderData<typeof loader>() types an Apollo loader's query refs under v8_middleware, so pages drop their casts; two specs no longer depend on the template's operations, and root ErrorBoundary renders in specs run inside a data router
+        delivery: code-patch
+        intent: "1. Loader data types. apps/web/app/react-router-route-module.d.ts declared `CreateServerLoaderArgs` as `LoaderFunctionArgs`. With `future.v8_middleware` (the template's react-router.config.ts), `LoaderFunctionArgs` has exactly the fields of React Router's client loader arguments, so `useLoaderData<typeof loader>()` took an `apolloLoader` loader for a client one and left each query ref wrapped in `unstable_SerializesTo<QueryRef<…>>`, which `useReadQuery` does not accept. Every page hid it with `useLoaderData() as { …: QueryRef<…> }`, a cast that stays silent when the loader changes. The declaration is now `Omit<import('react-router').LoaderFunctionArgs, 'pattern'>`: without one of those fields the loader takes the server branch, which unwraps the ref to `QueryRef<TData, TVariables>`. No runtime change; a loader that needs the route pattern reads it in a middleware. The casts go: the settings pages (account, ai, api-tokens, members, organization, preferences, profile, security, security.events) and routes/_authenticated/_layout.tsx now call `useLoaderData<typeof loader>()`, and the `QueryRef` and query-type imports that only served the casts are removed. apps/web/tests/apollo-loader-types.spec.ts asserts that `useLoaderData<typeof loader>()` of an `apolloLoader` loader is `{ ref: QueryRef<TData, TVariables> }`; it fails `nx typecheck web` with the old declaration. 2. Specs that every project had to rewrite. apollo-loader-types.spec.ts and tests/session/refused-render.spec.tsx used the template's own operations (`MySecurityEvents`, `UserPreferences`), so in a project whose API lacks them the first did not typecheck and the second failed. Each now defines its own small typed document, answered by the spec's own fetch stub, and passes unchanged in any project. 3. Data router for ErrorBoundary renders. Some branches of the root ErrorBoundary use router hooks: a route 401 revalidates with `useRevalidator`, which throws \"useRevalidator must be used within a data router\" outside one. apps/web/tests/api-availability.spec.tsx rendered the boundary bare, which worked only for the errors it happened to test. apps/web/tests/helpers/render-in-data-router.tsx (`renderInDataRouter`) renders an element as the only route of a memory data router, as the app does; every bare ErrorBoundary render in that spec uses it, and a new case renders a route 401."
+        area: web
+        affectedPaths:
+          - apps/web/app/react-router-route-module.d.ts
+          - apps/web/app/routes/_authenticated/_layout.tsx
+          - apps/web/app/routes/settings/account.tsx
+          - apps/web/app/routes/settings/ai.tsx
+          - apps/web/app/routes/settings/api-tokens.tsx
+          - apps/web/app/routes/settings/members.tsx
+          - apps/web/app/routes/settings/organization.tsx
+          - apps/web/app/routes/settings/preferences.tsx
+          - apps/web/app/routes/settings/profile.tsx
+          - apps/web/app/routes/settings/security.events.tsx
+          - apps/web/app/routes/settings/security.tsx
+          - apps/web/tests/apollo-loader-types.spec.ts
+          - apps/web/tests/session/refused-render.spec.tsx
+          - apps/web/tests/api-availability.spec.tsx
+          - apps/web/tests/helpers/render-in-data-router.tsx
+        verification:
+          - pnpm exec nx typecheck web --skip-nx-cache
+          - pnpm exec nx lint web
+          - pnpm exec nx test web --skip-nx-cache
+          - node --test scripts/apollo-operation-types.spec.mjs
+        skipIf:
+          - "Part 1: the project does not enable `future.v8_middleware`, or has no react-router-route-module.d.ts (then 2026-11-24-security-pages-typed-variables is not applied either; apply that first). Parts 2 and 3 still apply."
+        agentHints:
+          - "Change the declaration first and run `nx typecheck web` before touching a page: the spec's `useLoaderData` assertion should now pass. Then replace each `useLoaderData() as {…}` whose route loader is an `apolloLoader` with `useLoaderData<typeof loader>()`, and run typecheck again. A new error there is a real mismatch the cast hid (a renamed key, a ref of another query): fix the page or the loader, never restore the cast."
+          - Leave casts on routes whose loader is not an `apolloLoader` (the root loader, a loader returning a plain object read by another route) unless `useLoaderData<typeof loader>()` already types them; this note only removes the casts the declaration made unnecessary.
+          - If a project's loader reads `pattern` from its arguments, move that read into a middleware, or keep that one loader typed with React Router's `Route.LoaderArgs` and outside `apolloLoader`.
+          - "For the two specs, take the template's versions as they are; they import no generated operation. If the project changed what refused-render.spec.tsx asserts for its own routes, keep those changes and replace only the document and the fetch answer (`{ data: { widgets: [] } }`)."
+          - Use `renderInDataRouter` for any spec of the project's that renders the root ErrorBoundary outside a router, not only api-availability.spec.tsx.
+        applyAfter:
+          - 2026-11-24-security-pages-typed-variables
+          - 2026-11-24-restored-document-hidden-before-reload
+          - 2026-11-24-session-hardening-follow-ups
+          - 2026-11-24-session-spec-and-sonar-cleanup
+        patch: patches/2026-11-28-loader-data-types-under-middleware.diff
+      - id: 2026-11-28-apollo-operation-scan-follow-ups
+        title: The Apollo operation guard reads every app's app/ and src/ folder (a React Native app is covered without an edit), and refuses a loader preload with fetchPolicy 'no-cache'
+        delivery: code-patch
+        intent: "scripts/apollo-operation-types.spec.mjs, the guard that refuses an Apollo call whose variables are left untyped, changes in two ways. 1. Folders. It read a fixed list, `CLIENT_FOLDERS`, whose only app folder was `apps/web/app`, so an app a project added (a React Native or Expo app under `apps/<name>/src`, a second React Router app) was never read, and its untyped calls passed. The list is now `CLIENT_LIBRARIES` (the libraries, as before), and `clientFolders()` adds every `apps/<name>/app` and `apps/<name>/src` that exists and holds Apollo client code (a file importing `@apollo/client` or the shared Apollo library). Server apps are never read: a database client's `pool.query<Row>(sql, params)` has the shape the guard refuses but is not an Apollo call. `SKIPPED_APP_FOLDERS`, exported from the spec, lists the apps left out whatever they import (`apps/api` and `apps/api-e2e` in the template), and is the one place a project adds its own. 2. `no-cache` preloads. A loader's `preloadQuery(Doc, { fetchPolicy: 'no-cache' })` keeps its answer out of the browser's cache, so a later mutation or refetch of the same objects does not update what the page shows. The template's intent for \"always ask the API\" is `network-only`, which still writes the answer, and every template preload that asks the API uses it. The guard now refuses a `preloadQuery` call whose options literal sets `fetchPolicy: 'no-cache'`. The template has none; the check is for projects. Other calls are not affected: the session middleware's server-side Me query and a `no-cache` mutation are deliberate."
+        area: web
+        affectedPaths:
+          - scripts/apollo-operation-types.spec.mjs
+        verification:
+          - node --test scripts/apollo-operation-types.spec.mjs
+          - node --test scripts/*.spec.mjs
+        agentHints:
+          - "This replaces the 2026-11-24-security-pages-typed-variables hint to add client folders to `CLIENT_FOLDERS`: app folders are now found by themselves. Move a project's own client libraries from its `CLIENT_FOLDERS` into `CLIENT_LIBRARIES`, and drop app folders from it."
+          - The first run may report calls in an app that was never read before. Fix them as that note says (drop the single type argument; the generated document types both), never by removing the folder. If the project's API or another server app is not under `apps/api`, and it imports `@apollo/client` (a server-side client of another API, say), add `apps/<name>` to `SKIPPED_APP_FOLDERS` with a comment naming the reason. Do not skip an app that renders a UI.
+          - "For each `no-cache` preload it reports, change it to `network-only`, then check the page: it should show fresh data on every load, and the new value after a mutation. If an answer truly must not stay in the browser's cache, a preload is the wrong tool (it exists to hydrate the cache): fetch it in the loader without Apollo's preload, or in the component, say so in the report, and do not weaken the check."
+        applyAfter:
+          - 2026-11-24-security-pages-typed-variables
+          - 2026-11-28-loader-data-types-under-middleware
+        patch: patches/2026-11-28-apollo-operation-scan-follow-ups.diff
+      - id: 2026-11-28-return-url-follow-ups
+        title: The return URL check is stricter about encoded paths, and a sign-in returns to the API host's MCP authorization request
+        delivery: code-patch
+        intent: "Two changes to apps/web/app/session/return-url.ts. 1. Hardening. `isSignOutPath` normalises a return path once, the way a server would (one percent-decode, dot segments resolved, slashes, path parameters, a trailing slash and case dropped), and checks every reading of it, so an encoded separator counts as what it decodes to. A path that still holds a percent-encoded ASCII character after that one decode is refused outright (`safeReturnUrl` falls back to the dashboard). The repeated decode loop is gone. Ordinary paths, including non-ASCII ones and any query string, are unchanged. 2. The MCP authorization flow. The API's `/api/mcp/authorize` sends a signed-out caller to `/login?redirect=<the whole authorization URL>`. Where the API has a host of its own, that URL is on the API host, and `safeReturnUrl` reduced it to a path on the web host, which does not exist (404 after signing in). `safeReturnUrl(raw, apiOrigin)` now keeps exactly that URL whole: same scheme, host and port as the configured API origin (`VITE_API_URL`, never the request), no credentials, the path `/api/mcp/authorize` exactly; its fragment is dropped. Every other absolute URL is reduced to a path on this origin as before, so no other off-origin target is reachable. Specs: apps/web/tests/routes/_public/login.spec.tsx (`safeReturnUrl`)."
+        area: web
+        affectedPaths:
+          - apps/web/app/session/return-url.ts
+          - apps/web/tests/routes/_public/login.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - "On a deployment with separate API and web hosts, add the MCP server to a client while signed out: after signing in the browser goes to the API's consent hand-off, not a 404."
+        skipIf:
+          - The project has no apps/web/app/session/return-url.ts (it has not adopted 2026-11-24-session-hardening-follow-ups).
+        agentHints:
+          - Take return-url.ts whole if the project has not changed it. A project that added its own sign-out paths keeps them in `SIGN_OUT_PATHS`.
+          - Part 2 needs the MCP authorization server (libs/api/custom/src/lib/plugins/mcp). A project without it skips part 2, or keeps the default argument, which changes nothing there. A project whose MCP path is not `/api/mcp` changes `MCP_AUTHORIZE_PATH`; one whose web and API share an origin sees no change.
+          - "The web reads the API origin at build time (`VITE_API_URL`). If the API's public origin differs from that value (a proxy in front of it), the URL the API builds does not match and is reduced to a path as before: set `VITE_API_URL` to the API's public origin."
+          - "Do not widen the allowance (another path, a prefix match, a host suffix): it is the one off-origin target a sign-in may go to."
+        applyAfter:
+          - 2026-11-24-session-hardening-follow-ups
+          - 2026-11-24-security-pages-typed-variables
+        patch: patches/2026-11-28-return-url-follow-ups.diff
+      - id: 2026-11-28-session-cache-control-unmatched-urls
+        title: A URL that matches no route is private, no-store too, when the request carries a session
+        delivery: code-patch
+        intent: "Every response to a request that carries a session cookie is `Cache-Control: private, no-store` (`SESSION_CACHE_CONTROL`), set by the root route's session middleware. A URL that matches no route runs no middleware: React Router answers it with the root ErrorBoundary's 404 (or a `.data` 404) directly, so that one response kept no Cache-Control. The 404 page is rendered with the root layout, which can show whoever is signed in. apps/web/app/session/session-middleware.server.ts gains `withRequestSessionCacheControl(request, response)`, the middleware's own rule for one response. apps/web/app/entry.server.tsx applies it to every document it renders and exports `handleDataRequest`, React Router's hook for every `.data` response, which applies it too. Where the middleware ran it changes nothing; anonymous responses are unchanged. Specs: apps/web/tests/session/session-cache-control.spec.tsx (the production request handler over HTTP)."
+        area: web
+        affectedPaths:
+          - apps/web/app/session/session-middleware.server.ts
+          - apps/web/app/entry.server.tsx
+          - apps/web/tests/session/session-cache-control.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - "Against a production build: `curl -sI -H 'Cookie: <name>=x' <web>/no-such-page`, where `<name>` is the project's own session cookie name (`VITE_COOKIE_NAME` on the web, `API_COOKIE_NAME` on the API; the template's default is `__session`), shows `cache-control: private, no-store`, and without the cookie no Cache-Control."
+        skipIf:
+          - The project has not adopted 2026-11-24-session-starts-in-fresh-document (no `SESSION_CACHE_CONTROL`).
+        agentHints:
+          - A project that already exports `handleDataRequest` from entry.server.tsx calls `withRequestSessionCacheControl` on the response it returns there. One with a catch-all (`*`) route under the root gets the header from the middleware already, for HTML; check `.data` too.
+          - "Service workers. Cache Storage ignores `no-store`: a service worker that stores navigation responses can serve a signed-in page offline, to whoever opens the browser next. The template ships none. A project with one must never cache a navigation (or `.data`) response to a request that carried a session cookie, or must exclude every private route and the root layout's data from its caches, and should delete its caches on sign-out. Precaching static assets only is the safe pattern. Record the trade-off (offline pages versus a shared device) in the project."
+        applyAfter:
+          - 2026-11-24-session-starts-in-fresh-document
+          - 2026-11-24-forward-duplicate-session-cookies
+        patch: patches/2026-11-28-session-cache-control-unmatched-urls.diff
+      - id: 2026-11-28-session-guard-leaving-follow-ups
+        title: A document leaving for another session stays blank until it is replaced, and its reload keeps the new session's stored organization
+        delivery: code-patch
+        intent: "Two defects in apps/web/app/session/session-user-guard.tsx, both while a document load for another session (a sign-in, an emulation starting or ending) is on its way. 1. When the root verdict named another user while that load was pending, `SessionUserGuard` rendered nothing and waited up to `LEAVING_GRACE_MS` (10 s) for it (`leavingTimer`). A later verdict in that window (unknown, signed out, or the document's first user again) un-blocked the page, so the previous user's page could show until the navigation committed. The guard now also renders nothing while `leavingTimer` is set: until the document is replaced, or the grace runs out and the document is loaded again. 2. Every reload the guard makes went through `reloadDocumentOnce`, which called `clearActiveOrganizationForSessionChange()` and so removed the stored active organization. On a document that had already left for another session (the latched one: the sign-in form restored by Back, or the grace timer firing), that clear had already happened when it left, and what is stored since is the new session's own choice, made by the document it left for or by another tab. The reload wiped it. `reloadDocumentOnce` now clears only when `isLeavingForSessionChange()` is still false; a latched document is hidden and loaded again without touching storage. A document that was not leaving (another user's verdict after another tab signed in) still forgets the stored organization, as before, since it may be the previous user's. Visible in an app with no server-side active organization, where the stored one is the only record of the choice. Specs: apps/web/tests/session/session-user-guard.spec.tsx (\"a document already leaving for another session\") and apps/web/tests/session/restored-document.spec.tsx (\"a document load that is awaited\")."
+        area: web
+        affectedPaths:
+          - apps/web/app/session/session-user-guard.tsx
+          - apps/web/tests/session/session-user-guard.spec.tsx
+          - apps/web/tests/session/restored-document.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - "pnpm run verify:session-decisions"
+          - "In a production build with no server-side active organization: sign in, choose an organization, press Back to the sign-in form (it is hidden and loaded again), and the chosen organization is still selected."
+        skipIf:
+          - The project has no apps/web/app/session/session-user-guard.tsx.
+        agentHints:
+          - "Two lines: `blocked` gains `leavingTimer !== undefined`, and `reloadDocumentOnce` guards its `clearActiveOrganizationForSessionChange()` with `!isLeavingForSessionChange()`. A project whose guard has drifted applies the same two rules where its own block and reload live."
+          - "The cross-tab case where this document was not leaving keeps clearing: the stored organization may have been written back by this document's own signed-in shell for the previous user. Do not remove that clear."
+          - "A project whose root route has a `shouldRevalidate` should check its comment: since 2026-11-20-session-middleware the verdict is judged by the session middleware on every request, so a comment that says the root loader decides the session, or calls Me itself, is stale. The template has no root `shouldRevalidate`; comment only."
+        applyAfter:
+          - 2026-11-24-session-starts-in-fresh-document
+          - 2026-11-24-restored-document-hidden-before-reload
+        patch: patches/2026-11-28-session-guard-leaving-follow-ups.diff
+      - id: 2026-11-28-invitation-sign-in-new-document
+        title: A log-in on the invitation page accepts the invitation in a new document, once, and a late answer is ignored
+        delivery: code-patch
+        intent: "Two defects in the log-in tab of apps/web/app/routes/accept-invitation.tsx. 1. After the log-in succeeded, the page accepted the invitation in the same document and then loaded /members. That document was rendered for whoever was there before: its state, and `SessionUserGuard`, which reloads a document that learns of another user, belong to the previous session. The accept call could fail or be cut off, and if the new session's document then accepted as well, the single-use invitation failed the second time. Now a successful log-in calls `clearActiveOrganizationForSessionChange()` and replaces the document with the same invitation (`location.replace`); the new document, signed in, accepts it once through the automatic acceptance and goes on to /members. The old document accepts nothing from then on: the automatic acceptance returns early while `isLeavingForSessionChange()` is true. The invitation is accepted in exactly one document. A target that is the current address, or differs from it only in its fragment, is loaded with `location.reload()`: replacing it would only scroll, and the latched document would stay, sending no `x-organization-id`. If no new document has replaced this one after `LEAVING_GRACE_MS` (10 s, the user stopped the load), it is reloaded once, so the page never stays on \"Logging in…\". The page also said \"You've successfully joined\" while an acceptance was still pending, or while a signed-in page waited for its new document after a log-in. It now shows \"Accepting your invitation\" until the acceptance has succeeded in this document, and the joined screen only then. 2. The log-in's answer was acted on whenever it came. A late two-factor answer navigated to /login after the user had left the page, or when it showed another invitation link. The page now keeps the invitation it shows in a ref (null once it unmounts), and an answer for another one is ignored. A session that started after the user left still gets a new document, at the current address, and accepts nothing. Specs: apps/web/tests/routes/accept-invitation-sign-in.spec.tsx, the invitation case of apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx, and two cases of apps/web/tests/routes/accept-invitation.spec.tsx that asserted the joined screen for an acceptance still in flight."
+        area: web
+        affectedPaths:
+          - apps/web/app/routes/accept-invitation.tsx
+          - apps/web/tests/routes/accept-invitation-sign-in.spec.tsx
+          - apps/web/tests/routes/_public/sign-in-forgets-organization.spec.tsx
+          - apps/web/tests/routes/accept-invitation.spec.tsx
+        verification:
+          - pnpm exec nx test web --skip-nx-cache
+          - "pnpm run verify:session-decisions"
+          - "Signed out, open an invitation link, log in on its Login tab with the invited account: the page loads once more, says the invitation was accepted, goes to /members, and the API shows one acceptance."
+        skipIf:
+          - The project has no log-in form on its invitation page.
+        agentHints:
+          - "The sign-up tab is unchanged: registration accepts the invitation on the API, then loads /members."
+          - The automatic acceptance (for a user already signed in) still dedupes per token in `acceptancesRef`; keep that. The new early return only covers the document that is leaving.
+          - A project whose invitation page has no automatic acceptance for a signed-in user must add one (or accept in the new document some other way) before taking part 1, or the invitation is never accepted.
+        applyAfter:
+          - 2026-11-24-invitation-two-factor-sign-in
+          - 2026-11-28-session-guard-leaving-follow-ups
+        patch: patches/2026-11-28-invitation-sign-in-new-document.diff

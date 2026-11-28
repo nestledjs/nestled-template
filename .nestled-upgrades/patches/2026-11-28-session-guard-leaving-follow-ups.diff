@@ -1,0 +1,130 @@
+diff --git a/apps/web/app/session/session-user-guard.tsx b/apps/web/app/session/session-user-guard.tsx
+index 2f4dd38..b570da9 100644
+--- a/apps/web/app/session/session-user-guard.tsx
++++ b/apps/web/app/session/session-user-guard.tsx
+@@ -87,8 +87,10 @@ function reloadDocumentOnce(): void {
+   // No later verdict may show the page again, or end the wait for the new document.
+   restoredWith = undefined
+   hideDocument()
+-  // The stored organization is the previous user's too.
+-  clearActiveOrganizationForSessionChange()
++  // The stored organization is the previous user's too, unless this document already forgot it when
++  // it left for the new session (a sign-in, an emulation): whatever is stored since is the new
++  // session's own choice, from the document it left for or another tab, and must survive.
++  if (!isLeavingForSessionChange()) clearActiveOrganizationForSessionChange()
+   globalThis.location.reload()
+ }
+ 
+@@ -169,7 +171,10 @@ export function SessionUserGuard({
+   children,
+ }: Readonly<{ session: AppSessionVerdict | undefined; children: ReactNode }>) {
+   const userId = session?.kind === 'signed-in' ? session.user.id : undefined
+-  const blocked = reloading || belongsToAnotherUser(userId)
++  // While a document load for another session is awaited (`leavingTimer`), a later verdict (unknown,
++  // signed out, the first user again) does not show the page either: until that load replaces this
++  // document, or the grace runs out and this one is loaded again.
++  const blocked = reloading || leavingTimer !== undefined || belongsToAnotherUser(userId)
+   const waitedTooLong = useSyncExternalStore(
+     subscribeToStalled,
+     () => stalled,
+diff --git a/apps/web/tests/session/restored-document.spec.tsx b/apps/web/tests/session/restored-document.spec.tsx
+index 5936364..648a1b9 100644
+--- a/apps/web/tests/session/restored-document.spec.tsx
++++ b/apps/web/tests/session/restored-document.spec.tsx
+@@ -13,8 +13,10 @@ import {
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import {
+   __resetActiveOrganizationSessionChange,
++  ACTIVE_ORGANIZATION_STORAGE_KEY,
+   clearActiveOrganizationForSessionChange,
+   makeClient,
++  storeActiveOrganizationId,
+ } from '@nestled-template/shared/apollo'
+ import { ErrorBoundary, Layout } from '../../app/root'
+ import { OFFLINE_TITLE, SERVER_TROUBLE_TITLE } from '../../app/api-unavailable'
+@@ -338,6 +340,30 @@ describe('a document load that is awaited', () => {
+     },
+   )
+ 
++  it.each(['/private', '/public'])(
++    'keeps the organization the next session chose when it loads the document again (%s)',
++    async path => {
++      await renderApp(path)
++      clearActiveOrganizationForSessionChange()
++      // Stored by the document this one was left for, after it loaded.
++      localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, 'org-of-the-next-user')
++      restore()
++
++      expect(page()).not.toBeVisible()
++      expect(location.reload).toHaveBeenCalledTimes(1)
++      expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBe('org-of-the-next-user')
++    },
++  )
++
++  it("still forgets the stored organization when another user's verdict reloads a document that was not leaving", async () => {
++    storeActiveOrganizationId('org-of-user-a')
++    await renderApp('/public')
++    verdict = USER_B
++    restore()
++    await waitFor(() => expect(location.reload).toHaveBeenCalledTimes(1))
++    expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBeNull()
++  })
++
+   it('and offline it ends in the offline screen', async () => {
+     await renderApp()
+     clearActiveOrganizationForSessionChange()
+diff --git a/apps/web/tests/session/session-user-guard.spec.tsx b/apps/web/tests/session/session-user-guard.spec.tsx
+index a8fd847..aa1edb9 100644
+--- a/apps/web/tests/session/session-user-guard.spec.tsx
++++ b/apps/web/tests/session/session-user-guard.spec.tsx
+@@ -377,6 +377,50 @@ describe('a document already leaving for another session (sign-in, emulation sta
+     expect(location.reload).not.toHaveBeenCalled()
+   })
+ 
++  it.each([
++    ['an unknown verdict', UNKNOWN],
++    ['a signed-out verdict', NO_SESSION],
++    ['the first user again', USER_A],
++  ])(
++    'stays blank while that navigation is awaited, whatever comes next (%s)',
++    async (_l, later) => {
++      vi.useFakeTimers({ shouldAdvanceTime: true })
++      const { router } = await renderApp()
++      await showsUserA()
++      clearActiveOrganizationForSessionChange()
++      verdict = USER_B
++      answer = 'hold'
++      await act(() => router.revalidate())
++      expect(document.body.textContent).toBe('')
++
++      verdict = later
++      await act(() => router.revalidate())
++      await act(() => router.navigate('/settings/profile'))
++      await act(() => vi.advanceTimersByTimeAsync(LEAVING_GRACE_MS - 1000))
++
++      expect(rendered).toEqual([])
++      expect(document.body.textContent).toBe('')
++      expect(location.reload).not.toHaveBeenCalled()
++      await act(() => vi.advanceTimersByTimeAsync(2000))
++      expect(location.reload).toHaveBeenCalledTimes(1)
++      expect(document.body.textContent).toBe('')
++    },
++  )
++
++  it('keeps the organization the next session stored meanwhile when it loads the document', async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    const { router } = await renderApp()
++    clearActiveOrganizationForSessionChange()
++    verdict = USER_B
++    await act(() => router.revalidate())
++    // The next session's own document (this tab's navigation, or another tab) chose it.
++    localStorage.setItem(ACTIVE_ORGANIZATION_STORAGE_KEY, 'org-of-user-b')
++    await act(() => vi.advanceTimersByTimeAsync(LEAVING_GRACE_MS + 1000))
++
++    expect(location.reload).toHaveBeenCalledTimes(1)
++    expect(localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY)).toBe('org-of-user-b')
++  })
++
+   it('is loaded once if that navigation never happens, so the page cannot stay blank', async () => {
+     vi.useFakeTimers({ shouldAdvanceTime: true })
+     const { router } = await renderApp()
